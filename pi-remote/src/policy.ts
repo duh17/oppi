@@ -424,15 +424,12 @@ export class PolicyEngine {
     switch (tool) {
       case "bash":
         return (input as { command?: string }).command || "";
-      case "read":
-      case "write":
-        return (input as { path?: string }).path || "";
-      case "edit":
-        return (input as { path?: string }).path || "";
       case "grep":
         return (input as { pattern?: string }).pattern || "";
+      case "read":
+      case "write":
+      case "edit":
       case "find":
-        return (input as { path?: string }).path || "";
       case "ls":
         return (input as { path?: string }).path || "";
       default:
@@ -446,11 +443,11 @@ export class PolicyEngine {
       case "write":
       case "edit":
       case "find":
-      case "ls":
+      case "ls": {
         const path = (input as { path?: string }).path;
         return path ? [path] : [];
+      }
       case "bash":
-        // For bash, we'd need to extract paths from the command
         // For v1, skip path confinement on bash (covered by exec matching)
         return [];
       default:

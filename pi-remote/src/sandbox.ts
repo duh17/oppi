@@ -9,13 +9,13 @@
  *   /home/pi/.pi       ← pi agent state (bind mount from sandbox dir)
  *   /uv-cache          ← shared uv cache (bind mount)
  *
- * Host layout per user:
+ * Host layout per user (mounted as /home/pi/.pi/):
  *   <sandboxBaseDir>/<userId>/
- *   ├── agent/              # Pi config
+ *   ├── agent/              # Pi config (auth, models)
  *   │   ├── auth.json
- *   │   ├── models.json
- *   │   └── extensions/
- *   │       └── permission-gate/
+ *   │   └── models.json
+ *   ├── extensions/         # Pi extensions
+ *   │   └── permission-gate/
  *   ├── gate/               # Unix sockets for permission gate
  *   │   └── <sessionId>.sock
  *   └── workspace/          # User's working directory
@@ -139,15 +139,24 @@ export class SandboxManager {
 
   /**
    * Initialize sandbox directories and sync host config. Idempotent.
-   * Returns host-side paths for state, workspace, and gate dirs.
+   *
+   * Host layout (mirrors pi's expected ~/.pi/ structure):
+   *   <sandboxBaseDir>/<userId>/
+   *   ├── agent/              # auth.json, models.json
+   *   ├── extensions/         # pi extensions
+   *   │   └── permission-gate/
+   *   ├── gate/               # Unix sockets for permission gate
+   *   └── workspace/          # User's working directory
+   *
+   * The base dir is mounted as /home/pi/.pi/ so pi sees its expected paths.
    */
-  initUser(userId: string): { stateDir: string; workDir: string; gateDir: string } {
-    const base = join(this.config.sandboxBaseDir, userId);
-    const stateDir = join(base, "agent");
-    const workDir = join(base, "workspace");
-    const gateDir = join(base, "gate");
+  initUser(userId: string): { piDir: string; workDir: string; gateDir: string } {
+    const piDir = join(this.config.sandboxBaseDir, userId);
+    const agentDir = join(piDir, "agent");
+    const workDir = join(piDir, "workspace");
+    const gateDir = join(piDir, "gate");
 
-    for (const dir of [stateDir, workDir, gateDir]) {
+    for (const dir of [agentDir, workDir, gateDir]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
@@ -161,26 +170,26 @@ export class SandboxManager {
     // Sync auth.json from host pi (if newer)
     this.syncFile(
       join(homedir(), ".pi", "agent", "auth.json"),
-      join(stateDir, "auth.json"),
+      join(agentDir, "auth.json"),
       { mode: 0o600 },
     );
 
     // Sync models.json with localhost → host-gateway transform
     this.syncModels(
       join(homedir(), ".pi", "agent", "models.json"),
-      join(stateDir, "models.json"),
+      join(agentDir, "models.json"),
     );
 
     // Install permission-gate extension
     if (existsSync(EXTENSION_SRC)) {
-      const dest = join(stateDir, "extensions", "permission-gate");
+      const dest = join(piDir, "extensions", "permission-gate");
       // Always re-copy to pick up changes
       if (existsSync(dest)) rmSync(dest, { recursive: true });
       mkdirSync(dirname(dest), { recursive: true });
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    return { stateDir, workDir, gateDir };
+    return { piDir, workDir, gateDir };
   }
 
   // ─── Container Lifecycle ───
@@ -191,7 +200,7 @@ export class SandboxManager {
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
     const { sessionId, userId, model, gateSocketPath, env: extraEnv } = opts;
-    const { stateDir, workDir } = this.initUser(userId);
+    const { piDir, workDir } = this.initUser(userId);
 
     // Build pi args
     const piArgs = ["--mode", "rpc"];
@@ -215,14 +224,14 @@ export class SandboxManager {
 
     // Build container run args
     const args = [
-      "run", "--rm",
+      "run", "--rm", "-i",
       "--name", containerId,
       "-c", String(this.config.cpus),
       "-m", `${this.config.memoryMb}M`,
 
       // Mounts — resolve symlinks (container CLI doesn't follow them)
       "-v", `${realpath(workDir)}:${CONTAINER_WORK}`,
-      "-v", `${realpath(stateDir)}:${CONTAINER_PI_HOME}`,
+      "-v", `${realpath(piDir)}:${CONTAINER_PI_HOME}`,
       "-v", `${realpath(this.config.uvCacheDir)}:${CONTAINER_UV_CACHE}`,
 
       "-w", CONTAINER_WORK,

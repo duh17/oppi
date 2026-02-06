@@ -526,7 +526,7 @@ export class SessionManager extends EventEmitter {
     active.pendingResponses.clear();
 
     // Cancel pending UI requests
-    for (const [id, req] of active.pendingUIRequests) {
+    for (const [id] of active.pendingUIRequests) {
       active.process.stdin?.write(JSON.stringify({
         type: "extension_ui_response",
         id,

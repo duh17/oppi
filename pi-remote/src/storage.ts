@@ -12,13 +12,11 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import { nanoid } from "nanoid";
 import type { User, Session, SessionMessage, ServerConfig } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
-// Sandbox base dir moved to SandboxManager (src/sandbox.ts)
-// Storage only handles config, users, and session metadata.
 
 export class Storage {
   private dataDir: string;
@@ -57,7 +55,7 @@ export class Storage {
       port: 7749,
       host: "0.0.0.0",
       dataDir: this.dataDir,
-      defaultModel: "anthropic/claude-sonnet-4",
+      defaultModel: "anthropic/claude-sonnet-4-0",
       sessionTimeout: 60 * 60 * 1000, // 1 hour
     };
 
@@ -330,19 +328,5 @@ export class Storage {
 
   getDataDir(): string {
     return this.dataDir;
-  }
-
-  getHostname(): string {
-    // Try to get Tailscale hostname first
-    try {
-      const { execSync } = require("child_process");
-      const result = execSync("tailscale status --json", { encoding: "utf-8" });
-      const status = JSON.parse(result);
-      if (status.Self?.DNSName) {
-        return status.Self.DNSName.replace(/\.$/, ""); // Remove trailing dot
-      }
-    } catch {}
-
-    return hostname();
   }
 }
