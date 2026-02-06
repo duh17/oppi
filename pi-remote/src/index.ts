@@ -230,12 +230,9 @@ function cmdUsers(storage: Storage, action?: string, target?: string): void {
       ? new Date(user.lastSeen).toLocaleString()
       : "never";
     const sessions = storage.listUserSessions(user.id);
-    const sandboxDir = storage.getUserSandboxDir(user.id);
-    
     console.log(`  ${chalk.cyan("•")} ${chalk.bold(user.name)}`);
     console.log(`    ID:       ${chalk.dim(user.id)}`);
     console.log(`    Sessions: ${sessions.length}`);
-    console.log(`    Sandbox:  ${chalk.dim(sandboxDir)}`);
     console.log(`    Last seen: ${chalk.dim(lastSeen)}`);
     console.log("");
   }
@@ -252,8 +249,6 @@ function cmdStatus(storage: Storage): void {
   console.log("");
   console.log(`  Port:       ${config.port}`);
   console.log(`  Data:       ${chalk.dim(storage.getDataDir())}`);
-  console.log(`  Sandboxes:  ${chalk.dim(config.sandboxBaseDir)}`);
-  console.log(`  Script:     ${chalk.dim(config.sandboxScript)}`);
   console.log("");
 
   console.log("  " + chalk.bold("Tailscale"));

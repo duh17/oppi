@@ -1,5 +1,5 @@
 /**
- * Core types for pi-remote
+ * Core types for pi-remote.
  */
 
 // ─── User & Auth ───
@@ -22,12 +22,12 @@ export interface Session {
   createdAt: number;
   lastActivity: number;
   model?: string;
-  
+
   // Stats
   messageCount: number;
   tokens: { input: number; output: number };
   cost: number;
-  
+
   // Preview
   lastMessage?: string;
 }
@@ -38,7 +38,7 @@ export interface SessionMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
-  
+
   // For assistant messages
   model?: string;
   tokens?: { input: number; output: number };
@@ -51,8 +51,6 @@ export interface ServerConfig {
   port: number;
   host: string;
   dataDir: string;
-  sandboxScript: string;
-  sandboxBaseDir: string;  // Base dir for user sandboxes
   defaultModel: string;
   sessionTimeout: number; // Auto-stop after idle (ms)
 }
@@ -84,18 +82,22 @@ export interface SessionDetailResponse {
 
 // ─── WebSocket Messages ───
 
-// Client → Server
-export type ClientMessage =
-  | { type: "prompt"; message: string; images?: ImageAttachment[] }
-  | { type: "abort" }
-  | { type: "get_state" }
-  // Permission gate responses
-  | { type: "permission_response"; id: string; action: "allow" | "deny" };
-
 export interface ImageAttachment {
   data: string;      // base64
   mimeType: string;  // image/jpeg, image/png, etc.
 }
+
+// Client → Server
+export type ClientMessage =
+  | { type: "prompt"; message: string; images?: ImageAttachment[]; streamingBehavior?: "steer" | "followUp" }
+  | { type: "steer"; message: string }
+  | { type: "follow_up"; message: string }
+  | { type: "abort" }
+  | { type: "get_state" }
+  // Permission gate
+  | { type: "permission_response"; id: string; action: "allow" | "deny" }
+  // Extension UI dialog responses
+  | { type: "extension_ui_response"; id: string; value?: string; confirmed?: boolean; cancelled?: boolean };
 
 // Server → Client
 export type ServerMessage =
@@ -110,7 +112,7 @@ export type ServerMessage =
   | { type: "tool_end"; tool: string }
   | { type: "error"; error: string }
   | { type: "session_ended"; reason: string }
-  // Permission gate messages
+  // Permission gate
   | {
       type: "permission_request";
       id: string;
@@ -123,7 +125,28 @@ export type ServerMessage =
       timeoutAt: number;
     }
   | { type: "permission_expired"; id: string; reason: string }
-  | { type: "permission_cancelled"; id: string };
+  | { type: "permission_cancelled"; id: string }
+  // Extension UI forwarding
+  | {
+      type: "extension_ui_request";
+      id: string;
+      sessionId: string;
+      method: string;
+      title?: string;
+      options?: string[];
+      message?: string;
+      placeholder?: string;
+      prefill?: string;
+      timeout?: number;
+    }
+  | {
+      type: "extension_ui_notification";
+      method: string;
+      message?: string;
+      notifyType?: string;
+      statusKey?: string;
+      statusText?: string;
+    };
 
 // ─── Invite ───
 
@@ -131,5 +154,5 @@ export interface InviteData {
   host: string;
   port: number;
   token: string;
-  name: string; // Server name for display
+  name: string;
 }

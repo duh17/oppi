@@ -1,0 +1,339 @@
+/**
+ * Sandbox runtime — manages Apple container lifecycle for pi sessions.
+ *
+ * Self-contained: builds its own image, manages container lifecycle,
+ * handles mounts and environment. No external scripts.
+ *
+ * Container layout:
+ *   /work              ← user workspace (bind mount)
+ *   /home/pi/.pi       ← pi agent state (bind mount from sandbox dir)
+ *   /uv-cache          ← shared uv cache (bind mount)
+ *
+ * Host layout per user:
+ *   <sandboxBaseDir>/<userId>/
+ *   ├── agent/              # Pi config
+ *   │   ├── auth.json
+ *   │   ├── models.json
+ *   │   └── extensions/
+ *   │       └── permission-gate/
+ *   ├── gate/               # Unix sockets for permission gate
+ *   │   └── <sessionId>.sock
+ *   └── workspace/          # User's working directory
+ */
+
+import { spawn, execSync, type ChildProcess } from "node:child_process";
+import {
+  existsSync, mkdirSync, cpSync, readFileSync, writeFileSync,
+  rmSync, realpathSync, chmodSync, statSync,
+} from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+// ─── Constants ───
+
+const IMAGE_NAME = "pi-remote:local";
+const CONTAINER_PI_HOME = "/home/pi/.pi";
+const CONTAINER_WORK = "/work";
+const CONTAINER_UV_CACHE = "/uv-cache";
+const HOST_GATEWAY = "192.168.64.1"; // Apple container → host
+
+// Paths relative to this file
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SANDBOX_DIR = join(__dirname, "..", "sandbox");
+const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
+
+// ─── Types ───
+
+export interface SandboxConfig {
+  /** Base dir for all sandbox data. Default: ~/.pi-remote/sandboxes */
+  sandboxBaseDir: string;
+  /** Shared uv cache. Default: ~/.pi-remote/uv-cache */
+  uvCacheDir: string;
+  /** Container image name. Default: pi-remote:local */
+  image: string;
+  /** CPUs per container */
+  cpus: number;
+  /** Memory per container (MB) */
+  memoryMb: number;
+}
+
+export interface SpawnOptions {
+  sessionId: string;
+  userId: string;
+  model?: string;
+  /** Host-side gate socket path (must be inside a mounted directory) */
+  gateSocketPath?: string;
+  /** Extra env vars to pass to the container */
+  env?: Record<string, string>;
+}
+
+const DEFAULTS: SandboxConfig = {
+  sandboxBaseDir: join(homedir(), ".pi-remote", "sandboxes"),
+  uvCacheDir: join(homedir(), ".pi-remote", "uv-cache"),
+  image: IMAGE_NAME,
+  cpus: 4,
+  memoryMb: 2048,
+};
+
+// ─── SandboxManager ───
+
+export class SandboxManager {
+  readonly config: SandboxConfig;
+  private running: Map<string, { containerId: string; process: ChildProcess }> = new Map();
+
+  constructor(config?: Partial<SandboxConfig>) {
+    this.config = { ...DEFAULTS, ...config };
+  }
+
+  // ─── Image Management ───
+
+  imageExists(): boolean {
+    try {
+      const out = execSync("container image list", { encoding: "utf-8" });
+      // Image list format: "pi-remote              local              digest..."
+      const name = this.config.image.split(":")[0];
+      const tag = this.config.image.split(":")[1] || "latest";
+      // Check for name and tag on the same line
+      return out.split("\n").some(line => {
+        const parts = line.trim().split(/\s+/);
+        return parts[0] === name && parts[1] === tag;
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  async buildImage(): Promise<void> {
+    const containerfile = join(SANDBOX_DIR, "Containerfile");
+    if (!existsSync(containerfile)) {
+      throw new Error(`Containerfile not found: ${containerfile}`);
+    }
+
+    console.log(`[sandbox] Building image ${this.config.image}...`);
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn("container", [
+        "build", "-t", this.config.image, "-f", containerfile, SANDBOX_DIR,
+      ], { stdio: "inherit" });
+
+      proc.on("exit", (code) => {
+        if (code === 0) {
+          console.log(`[sandbox] ✓ Image ${this.config.image} built`);
+          resolve();
+        } else {
+          reject(new Error(`Image build failed (exit ${code})`));
+        }
+      });
+      proc.on("error", reject);
+    });
+  }
+
+  async ensureImage(): Promise<void> {
+    if (!this.imageExists()) {
+      await this.buildImage();
+    }
+  }
+
+  // ─── User Sandbox Setup ───
+
+  /**
+   * Initialize sandbox directories and sync host config. Idempotent.
+   * Returns host-side paths for state, workspace, and gate dirs.
+   */
+  initUser(userId: string): { stateDir: string; workDir: string; gateDir: string } {
+    const base = join(this.config.sandboxBaseDir, userId);
+    const stateDir = join(base, "agent");
+    const workDir = join(base, "workspace");
+    const gateDir = join(base, "gate");
+
+    for (const dir of [stateDir, workDir, gateDir]) {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
+    }
+
+    // Ensure uv cache dir exists
+    if (!existsSync(this.config.uvCacheDir)) {
+      mkdirSync(this.config.uvCacheDir, { recursive: true });
+    }
+
+    // Sync auth.json from host pi (if newer)
+    this.syncFile(
+      join(homedir(), ".pi", "agent", "auth.json"),
+      join(stateDir, "auth.json"),
+      { mode: 0o600 },
+    );
+
+    // Sync models.json with localhost → host-gateway transform
+    this.syncModels(
+      join(homedir(), ".pi", "agent", "models.json"),
+      join(stateDir, "models.json"),
+    );
+
+    // Install permission-gate extension
+    if (existsSync(EXTENSION_SRC)) {
+      const dest = join(stateDir, "extensions", "permission-gate");
+      // Always re-copy to pick up changes
+      if (existsSync(dest)) rmSync(dest, { recursive: true });
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(EXTENSION_SRC, dest, { recursive: true });
+    }
+
+    return { stateDir, workDir, gateDir };
+  }
+
+  // ─── Container Lifecycle ───
+
+  /**
+   * Spawn pi inside an Apple container. Returns the ChildProcess
+   * with stdin/stdout/stderr piped for RPC communication.
+   */
+  spawnPi(opts: SpawnOptions): ChildProcess {
+    const { sessionId, userId, model, gateSocketPath, env: extraEnv } = opts;
+    const { stateDir, workDir } = this.initUser(userId);
+
+    // Build pi args
+    const piArgs = ["--mode", "rpc"];
+    if (model) {
+      const slash = model.indexOf("/");
+      if (slash > 0) {
+        piArgs.push("--provider", model.slice(0, slash));
+        piArgs.push("--model", model.slice(slash + 1));
+      } else {
+        piArgs.push("--model", model);
+      }
+    }
+
+    // Container-side gate socket path (gate dir is inside stateDir,
+    // which is mounted as /home/pi/.pi)
+    const containerGateSock = gateSocketPath
+      ? `${CONTAINER_PI_HOME}/gate/${sessionId}.sock`
+      : undefined;
+
+    const containerId = `pi-remote-${sessionId}`;
+
+    // Build container run args
+    const args = [
+      "run", "--rm",
+      "--name", containerId,
+      "-c", String(this.config.cpus),
+      "-m", `${this.config.memoryMb}M`,
+
+      // Mounts — resolve symlinks (container CLI doesn't follow them)
+      "-v", `${realpath(workDir)}:${CONTAINER_WORK}`,
+      "-v", `${realpath(stateDir)}:${CONTAINER_PI_HOME}`,
+      "-v", `${realpath(this.config.uvCacheDir)}:${CONTAINER_UV_CACHE}`,
+
+      "-w", CONTAINER_WORK,
+
+      // Environment
+      "-e", `SEARXNG_URL=http://${HOST_GATEWAY}:8888`,
+      "-e", `LMSTUDIO_URL=http://${HOST_GATEWAY}:1234`,
+      "-e", `UV_CACHE_DIR=${CONTAINER_UV_CACHE}`,
+      "-e", "PI_SANDBOX=1",
+      "-e", `PI_REMOTE_SESSION=${sessionId}`,
+      "-e", `PI_REMOTE_USER=${userId}`,
+    ];
+
+    if (containerGateSock) {
+      args.push("-e", `PI_REMOTE_GATE_SOCK=${containerGateSock}`);
+    }
+
+    // Extra env vars
+    if (extraEnv) {
+      for (const [k, v] of Object.entries(extraEnv)) {
+        args.push("-e", `${k}=${v}`);
+      }
+    }
+
+    // Image + pi entrypoint args
+    args.push(this.config.image, ...piArgs);
+
+    const proc = spawn("container", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.running.set(sessionId, { containerId, process: proc });
+    proc.on("exit", () => this.running.delete(sessionId));
+
+    return proc;
+  }
+
+  /**
+   * Stop a container gracefully, then force-kill.
+   */
+  async stopContainer(sessionId: string): Promise<void> {
+    const entry = this.running.get(sessionId);
+    if (!entry) return;
+
+    try {
+      execSync(`container stop ${entry.containerId}`, { timeout: 5000, stdio: "ignore" });
+    } catch {
+      try {
+        execSync(`container kill ${entry.containerId}`, { stdio: "ignore" });
+      } catch {}
+    }
+
+    this.running.delete(sessionId);
+  }
+
+  async stopAll(): Promise<void> {
+    await Promise.all(
+      Array.from(this.running.keys()).map(id => this.stopContainer(id)),
+    );
+  }
+
+  isRunning(sessionId: string): boolean {
+    return this.running.has(sessionId);
+  }
+
+  // ─── Convenience Getters ───
+
+  getGateDir(userId: string): string {
+    const gateDir = join(this.config.sandboxBaseDir, userId, "gate");
+    if (!existsSync(gateDir)) mkdirSync(gateDir, { recursive: true, mode: 0o700 });
+    return gateDir;
+  }
+
+  getWorkDir(userId: string): string {
+    const workDir = join(this.config.sandboxBaseDir, userId, "workspace");
+    if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
+    return workDir;
+  }
+
+  // ─── Helpers ───
+
+  private syncFile(src: string, dest: string, opts?: { mode?: number }): void {
+    if (!existsSync(src)) return;
+    if (!existsSync(dest) || isNewer(src, dest)) {
+      cpSync(src, dest);
+      if (opts?.mode) chmodSync(dest, opts.mode);
+    }
+  }
+
+  private syncModels(src: string, dest: string): void {
+    if (!existsSync(src)) return;
+    const content = readFileSync(src, "utf-8");
+    const transformed = content.replace(/http:\/\/localhost:/g, `http://${HOST_GATEWAY}:`);
+    writeFileSync(dest, transformed);
+  }
+}
+
+// ─── Utilities ───
+
+function isNewer(a: string, b: string): boolean {
+  try {
+    return statSync(a).mtimeMs > statSync(b).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+function realpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}

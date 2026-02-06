@@ -105,10 +105,18 @@ export class GateServer extends EventEmitter {
   }
 
   /**
-   * Create a Unix socket for a session. Returns the socket path.
+   * Create a Unix socket for a session. Returns the HOST socket path.
+   *
+   * @param dir — Directory to create the socket in. Defaults to /tmp/pi-remote-gate/.
+   *              When pi runs inside an Apple container, pass a dir inside the user's
+   *              sandbox so the socket is visible at the container mount point.
    */
-  createSessionSocket(sessionId: string, userId: string): string {
-    const socketPath = join(GATE_SOCKET_DIR, `${sessionId}.sock`);
+  createSessionSocket(sessionId: string, userId: string, dir?: string): string {
+    const socketDir = dir || GATE_SOCKET_DIR;
+    if (!existsSync(socketDir)) {
+      mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+    }
+    const socketPath = join(socketDir, `${sessionId}.sock`);
 
     // Clean up stale socket file
     if (existsSync(socketPath)) {

@@ -17,8 +17,8 @@ import { nanoid } from "nanoid";
 import type { User, Session, SessionMessage, ServerConfig } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
-const DEFAULT_SANDBOX_SCRIPT = join(homedir(), ".claude", "skills", "pi-sandbox", "run.sh");
-const DEFAULT_SANDBOX_BASE_DIR = join(homedir(), ".pi-remote-sandboxes");
+// Sandbox base dir moved to SandboxManager (src/sandbox.ts)
+// Storage only handles config, users, and session metadata.
 
 export class Storage {
   private dataDir: string;
@@ -57,8 +57,6 @@ export class Storage {
       port: 7749,
       host: "0.0.0.0",
       dataDir: this.dataDir,
-      sandboxScript: DEFAULT_SANDBOX_SCRIPT,
-      sandboxBaseDir: DEFAULT_SANDBOX_BASE_DIR,
       defaultModel: "anthropic/claude-sonnet-4",
       sessionTimeout: 60 * 60 * 1000, // 1 hour
     };
@@ -326,58 +324,6 @@ export class Storage {
     
     rmSync(path);
     return true;
-  }
-
-  // ─── User Sandbox ───
-
-  /**
-   * Get sandbox directory for a user (creates if needed)
-   * 
-   * Structure:
-   * ~/.pi-remote-sandboxes/<userId>/
-   * ├── agent/           # Pi config (auth, models, etc.)
-   * │   ├── auth.json
-   * │   └── models.json
-   * ├── workspace/       # User's working directory
-   * └── sessions/        # Pi session files
-   */
-  getUserSandboxDir(userId: string): string {
-    const userSandboxDir = join(this.config.sandboxBaseDir, userId);
-    const agentDir = join(userSandboxDir, "agent");
-    const workspaceDir = join(userSandboxDir, "workspace");
-    
-    // Create directories if needed
-    if (!existsSync(userSandboxDir)) {
-      mkdirSync(userSandboxDir, { recursive: true, mode: 0o700 });
-      mkdirSync(agentDir, { recursive: true });
-      mkdirSync(workspaceDir, { recursive: true });
-      
-      // Copy auth.json from main pi config if it exists
-      const mainAuthPath = join(homedir(), ".pi", "agent", "auth.json");
-      const userAuthPath = join(agentDir, "auth.json");
-      if (existsSync(mainAuthPath) && !existsSync(userAuthPath)) {
-        const authContent = readFileSync(mainAuthPath, "utf-8");
-        writeFileSync(userAuthPath, authContent, { mode: 0o600 });
-      }
-      
-      // Copy models.json if it exists
-      const mainModelsPath = join(homedir(), ".pi", "agent", "models.json");
-      const userModelsPath = join(agentDir, "models.json");
-      if (existsSync(mainModelsPath) && !existsSync(userModelsPath)) {
-        const modelsContent = readFileSync(mainModelsPath, "utf-8");
-        writeFileSync(userModelsPath, modelsContent);
-      }
-    }
-    
-    return userSandboxDir;
-  }
-
-  getUserWorkspaceDir(userId: string): string {
-    return join(this.getUserSandboxDir(userId), "workspace");
-  }
-
-  getUserAgentDir(userId: string): string {
-    return join(this.getUserSandboxDir(userId), "agent");
   }
 
   // ─── Helpers ───
