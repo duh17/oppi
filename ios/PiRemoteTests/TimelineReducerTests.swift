@@ -435,6 +435,346 @@ struct TimelineReducerTests {
         }
         #expect(action == .deny)
     }
+
+    // MARK: - loadFromTrace
+
+    @MainActor
+    @Test func loadFromTraceUserAndAssistant() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi there!", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadFromTrace(events)
+
+        #expect(reducer.items.count == 2)
+        guard case .userMessage(_, let userText, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage")
+            return
+        }
+        #expect(userText == "Hello")
+
+        guard case .assistantMessage(_, let assistantText, _) = reducer.items[1] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(assistantText == "Hi there!")
+    }
+
+    @MainActor
+    @Test func loadFromTraceToolCallAndResult() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: nil, tool: "bash", args: ["command": .string("ls -la")],
+                       output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "tr1", type: .toolResult, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: nil, tool: nil, args: nil, output: "file1.txt\nfile2.txt",
+                       toolCallId: "tc1", toolName: "bash", isError: false, thinking: nil),
+        ]
+        reducer.loadFromTrace(events)
+
+        #expect(reducer.items.count == 1)
+        guard case .toolCall(_, let tool, _, let preview, let bytes, let isError, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(preview.contains("file1.txt"))
+        #expect(bytes > 0)
+        #expect(!isError)
+        #expect(isDone)
+        // Full output stored in toolOutputStore
+        #expect(reducer.toolOutputStore.fullOutput(for: "tc1") == "file1.txt\nfile2.txt")
+    }
+
+    @MainActor
+    @Test func loadFromTraceThinking() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "t1", type: .thinking, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: nil, tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil,
+                       thinking: "Let me think about this carefully"),
+        ]
+        reducer.loadFromTrace(events)
+
+        #expect(reducer.items.count == 1)
+        guard case .thinking(_, let preview, let hasMore, let isDone) = reducer.items[0] else {
+            Issue.record("Expected thinking")
+            return
+        }
+        #expect(preview.contains("Let me think"))
+        #expect(!hasMore) // Short text, no truncation
+        #expect(isDone)   // Historical always done
+    }
+
+    @MainActor
+    @Test func loadFromTraceLongThinkingStoresFullText() {
+        let reducer = TimelineReducer()
+        let longThinking = String(repeating: "x", count: 600) // > maxPreviewLength
+        let events = [
+            TraceEvent(id: "t1", type: .thinking, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: nil, tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil,
+                       thinking: longThinking),
+        ]
+        reducer.loadFromTrace(events)
+
+        guard case .thinking(_, _, let hasMore, _) = reducer.items[0] else {
+            Issue.record("Expected thinking")
+            return
+        }
+        #expect(hasMore)
+        #expect(reducer.toolOutputStore.fullOutput(for: "t1") == longThinking)
+    }
+
+    @MainActor
+    @Test func loadFromTraceSystemAndCompaction() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "s1", type: .system, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Session started", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "c1", type: .compaction, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: nil, tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadFromTrace(events)
+
+        #expect(reducer.items.count == 2)
+        guard case .systemEvent(_, let msg1) = reducer.items[0] else {
+            Issue.record("Expected systemEvent for system type")
+            return
+        }
+        #expect(msg1 == "Session started")
+
+        guard case .systemEvent(_, let msg2) = reducer.items[1] else {
+            Issue.record("Expected systemEvent for compaction type")
+            return
+        }
+        #expect(msg2 == "Context compacted")
+    }
+
+    @MainActor
+    @Test func loadFromTraceToolResultErrorFlag() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: nil, tool: "bash", args: [:],
+                       output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "tr1", type: .toolResult, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: nil, tool: nil, args: nil, output: "error: command failed",
+                       toolCallId: "tc1", toolName: "bash", isError: true, thinking: nil),
+        ]
+        reducer.loadFromTrace(events)
+
+        guard case .toolCall(_, _, _, _, _, let isError, _) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isError)
+    }
+
+    @MainActor
+    @Test func loadFromTraceToolArgsStored() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: nil, tool: "read", args: ["path": .string("/etc/hosts")],
+                       output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadFromTrace(events)
+
+        let args = reducer.toolArgsStore.args(for: "tc1")
+        #expect(args?["path"] == .string("/etc/hosts"))
+    }
+
+    // MARK: - appendUserMessage
+
+    @MainActor
+    @Test func appendUserMessage() {
+        let reducer = TimelineReducer()
+        reducer.appendUserMessage("Hello from user")
+
+        #expect(reducer.items.count == 1)
+        guard case .userMessage(_, let text, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage")
+            return
+        }
+        #expect(text == "Hello from user")
+    }
+
+    // MARK: - processBatch tool output coalescing
+
+    @MainActor
+    @Test func processBatchCoalescesMultipleToolOutputs() {
+        let reducer = TimelineReducer()
+
+        // Start a tool, then send multiple outputs in a batch
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line1\n", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line2\n", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line3\n", isError: false),
+        ])
+
+        let fullOutput = reducer.toolOutputStore.fullOutput(for: "t1")
+        #expect(fullOutput == "line1\nline2\nline3\n")
+    }
+
+    @MainActor
+    @Test func processBatchToolOutputWithError() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "err\n", isError: true),
+        ])
+
+        guard case .toolCall(_, _, _, _, _, let isError, _) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isError, "Error flag should propagate when any chunk is error")
+    }
+
+    // MARK: - Thinking finalization stores full text
+
+    @MainActor
+    @Test func longThinkingStoresFullTextOnAgentEnd() {
+        let reducer = TimelineReducer()
+        let longThinking = String(repeating: "y", count: 600) // > maxPreviewLength
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.thinkingDelta(sessionId: "s1", delta: longThinking))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        guard case .thinking(let id, _, let hasMore, let isDone) = reducer.items[0] else {
+            Issue.record("Expected thinking")
+            return
+        }
+        #expect(hasMore)
+        #expect(isDone)
+        #expect(reducer.toolOutputStore.fullOutput(for: id) == longThinking)
+    }
+
+    // MARK: - Tool args stored on toolStart
+
+    @MainActor
+    @Test func toolStartStoresArgs() {
+        let reducer = TimelineReducer()
+        let args: [String: JSONValue] = ["command": .string("echo hello")]
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: args))
+
+        let stored = reducer.toolArgsStore.args(for: "t1")
+        #expect(stored?["command"] == .string("echo hello"))
+    }
+
+    @MainActor
+    @Test func toolStartEmptyArgsNotStored() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+
+        let stored = reducer.toolArgsStore.args(for: "t1")
+        #expect(stored == nil, "Empty args should not be stored")
+    }
+
+    // MARK: - loadFromREST system messages
+
+    @MainActor
+    @Test func loadFromRESTSystemMessages() {
+        let reducer = TimelineReducer()
+        let messages = [
+            SessionMessage.stub(id: "m1", sessionId: "s1", role: .system,
+                                content: "System initialized", timestamp: Date()),
+        ]
+        reducer.loadFromREST(messages)
+
+        #expect(reducer.items.count == 1)
+        guard case .systemEvent(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected systemEvent for system role")
+            return
+        }
+        #expect(msg == "System initialized")
+    }
+
+    // MARK: - ChatItem preview truncation
+
+    @MainActor
+    @Test func previewTruncatesLongText() {
+        let long = String(repeating: "x", count: 600)
+        let preview = ChatItem.preview(long)
+        #expect(preview.count == ChatItem.maxPreviewLength)
+        #expect(preview.hasSuffix("…"))
+    }
+
+    @MainActor
+    @Test func previewKeepsShortText() {
+        let short = "hello"
+        #expect(ChatItem.preview(short) == "hello")
+    }
+
+    // MARK: - ChatItem timestamps
+
+    @MainActor
+    @Test func chatItemTimestamps() {
+        let now = Date()
+        let user = ChatItem.userMessage(id: "1", text: "hi", timestamp: now)
+        #expect(user.timestamp == now)
+
+        let assistant = ChatItem.assistantMessage(id: "2", text: "hi", timestamp: now)
+        #expect(assistant.timestamp == now)
+
+        // Non-message items have no timestamp
+        let tool = ChatItem.toolCall(id: "3", tool: "bash", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true)
+        #expect(tool.timestamp == nil)
+
+        let thinking = ChatItem.thinking(id: "4", preview: "", hasMore: false)
+        #expect(thinking.timestamp == nil)
+
+        let perm = ChatItem.permission(PermissionRequest(
+            id: "5", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "x",
+            risk: .low, reason: "r",
+            timeoutAt: Date()
+        ))
+        #expect(perm.timestamp == nil)
+
+        let resolved = ChatItem.permissionResolved(id: "6", action: .allow)
+        #expect(resolved.timestamp == nil)
+
+        let system = ChatItem.systemEvent(id: "7", message: "x")
+        #expect(system.timestamp == nil)
+
+        let error = ChatItem.error(id: "8", message: "x")
+        #expect(error.timestamp == nil)
+    }
+
+    // MARK: - ToolArgsStore
+
+    @MainActor
+    @Test func toolArgsStoreClearAll() {
+        let store = ToolArgsStore()
+        store.set(["key": .string("val")], for: "t1")
+        #expect(store.args(for: "t1") != nil)
+
+        store.clearAll()
+        #expect(store.args(for: "t1") == nil)
+    }
 }
 
 // MARK: - SessionMessage factory for tests

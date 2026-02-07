@@ -22,6 +22,13 @@ actor APIClient {
         self.session = URLSession(configuration: config)
     }
 
+    /// Test-only init with custom URLSessionConfiguration.
+    init(baseURL: URL, token: String, configuration: URLSessionConfiguration) {
+        self.baseURL = baseURL
+        self.token = token
+        self.session = URLSession(configuration: configuration)
+    }
+
     // MARK: - Health & Auth
 
     /// Check server reachability.

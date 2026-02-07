@@ -73,4 +73,107 @@ struct JSONValueTests {
         let null: JSONValue = nil
         #expect(null == .null)
     }
+
+    // MARK: - Convenience accessors
+
+    @Test func stringValue() {
+        #expect(JSONValue.string("hi").stringValue == "hi")
+        #expect(JSONValue.number(42).stringValue == nil)
+        #expect(JSONValue.null.stringValue == nil)
+    }
+
+    @Test func numberValue() {
+        #expect(JSONValue.number(3.14).numberValue == 3.14)
+        #expect(JSONValue.string("x").numberValue == nil)
+        #expect(JSONValue.null.numberValue == nil)
+    }
+
+    @Test func boolValue() {
+        #expect(JSONValue.bool(true).boolValue == true)
+        #expect(JSONValue.bool(false).boolValue == false)
+        #expect(JSONValue.string("x").boolValue == nil)
+        #expect(JSONValue.null.boolValue == nil)
+    }
+
+    // MARK: - Summary for all types
+
+    @Test func summaryString() {
+        #expect(JSONValue.string("hello").summary() == "hello")
+    }
+
+    @Test func summaryIntegerNumber() {
+        // Whole numbers display without decimal
+        #expect(JSONValue.number(42).summary() == "42")
+    }
+
+    @Test func summaryFractionalNumber() {
+        #expect(JSONValue.number(3.14).summary() == "3.14")
+    }
+
+    @Test func summaryBool() {
+        #expect(JSONValue.bool(true).summary() == "true")
+        #expect(JSONValue.bool(false).summary() == "false")
+    }
+
+    @Test func summaryNull() {
+        #expect(JSONValue.null.summary() == "null")
+    }
+
+    @Test func summaryShortStringNoTruncation() {
+        let short = JSONValue.string("abc")
+        #expect(short.summary(maxLength: 80) == "abc")
+    }
+
+    // MARK: - Encode/decode round-trips for all types
+
+    @Test func encodeDecodeNull() throws {
+        let data = try JSONEncoder().encode(JSONValue.null)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(decoded == .null)
+    }
+
+    @Test func encodeDecodeBool() throws {
+        let data = try JSONEncoder().encode(JSONValue.bool(false))
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(decoded == .bool(false))
+    }
+
+    @Test func encodeDecodeArray() throws {
+        let arr: JSONValue = .array([.string("a"), .number(1), .null])
+        let data = try JSONEncoder().encode(arr)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(decoded == arr)
+    }
+
+    @Test func encodeDecodeNestedObject() throws {
+        let obj: JSONValue = .object(["inner": .object(["deep": .bool(true)])])
+        let data = try JSONEncoder().encode(obj)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(decoded == obj)
+    }
+
+    // MARK: - Literal conformances
+
+    @Test func floatLiteral() {
+        let f: JSONValue = 2.718
+        #expect(f == .number(2.718))
+    }
+
+    @Test func arrayLiteral() {
+        let a: JSONValue = ["x", 1, true]
+        guard case .array(let items) = a else {
+            Issue.record("Expected array")
+            return
+        }
+        #expect(items.count == 3)
+    }
+
+    @Test func dictionaryLiteral() {
+        let d: JSONValue = ["key": "val"]
+        guard case .object(let obj) = d else {
+            Issue.record("Expected object")
+            return
+        }
+        #expect(obj["key"] == .string("val"))
+    }
 }
