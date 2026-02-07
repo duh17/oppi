@@ -15,8 +15,8 @@ struct ChatItemRow: View {
         case .assistantMessage(_, let text, _):
             AssistantMessageBubble(text: text, isStreaming: isStreaming)
 
-        case .thinking(_, let preview, _):
-            ThinkingRow(preview: preview)
+        case .thinking(_, let preview, _, let isDone):
+            ThinkingRow(preview: preview, isDone: isDone)
 
         case .toolCall(let id, let tool, let args, let preview, let bytes, let isError, let isDone):
             ToolCallRow(
@@ -87,6 +87,7 @@ private struct AssistantMessageBubble: View {
 
 private struct ThinkingRow: View {
     let preview: String
+    var isDone: Bool = false
 
     var body: some View {
         HStack {
@@ -96,10 +97,16 @@ private struct ThinkingRow: View {
                     .foregroundStyle(.tokyoComment)
             } label: {
                 HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.tokyoPurple)
-                    Text("Thinking…")
+                    if isDone {
+                        Image(systemName: "brain")
+                            .font(.caption)
+                            .foregroundStyle(.tokyoPurple)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.tokyoPurple)
+                    }
+                    Text(isDone ? "Thought" : "Thinking…")
                         .font(.subheadline)
                         .foregroundStyle(.tokyoComment)
                 }

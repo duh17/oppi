@@ -116,7 +116,8 @@ final class TimelineReducer {
                 items.append(.thinking(
                     id: event.id,
                     preview: preview,
-                    hasMore: (event.thinking?.count ?? 0) > ChatItem.maxPreviewLength
+                    hasMore: (event.thinking?.count ?? 0) > ChatItem.maxPreviewLength,
+                    isDone: true  // Historical = always done
                 ))
 
             case .toolCall:
@@ -371,6 +372,12 @@ final class TimelineReducer {
     }
 
     private func finalizeThinking() {
+        // Mark the thinking item as done so the spinner stops
+        if let thinkingID = currentThinkingID,
+           let idx = items.firstIndex(where: { $0.id == thinkingID }),
+           case .thinking(let id, let preview, let hasMore, _) = items[idx] {
+            items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
+        }
         thinkingBuffer = ""
         currentThinkingID = nil
     }

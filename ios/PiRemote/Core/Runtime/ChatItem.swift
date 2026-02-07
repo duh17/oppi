@@ -9,7 +9,7 @@ import Foundation
 enum ChatItem: Identifiable, Equatable {
     case userMessage(id: String, text: String, timestamp: Date)
     case assistantMessage(id: String, text: String, timestamp: Date)
-    case thinking(id: String, preview: String, hasMore: Bool)
+    case thinking(id: String, preview: String, hasMore: Bool, isDone: Bool = false)
     case toolCall(
         id: String,
         tool: String,
@@ -28,7 +28,7 @@ enum ChatItem: Identifiable, Equatable {
         switch self {
         case .userMessage(let id, _, _): return id
         case .assistantMessage(let id, _, _): return id
-        case .thinking(let id, _, _): return id
+        case .thinking(let id, _, _, _): return id
         case .toolCall(let id, _, _, _, _, _, _): return id
         case .permission(let request): return request.id
         case .permissionResolved(let id, _): return id
