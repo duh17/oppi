@@ -33,7 +33,7 @@ struct TimelineReducerTests {
         reducer.process(.agentEnd(sessionId: "s1"))
 
         #expect(reducer.items.count == 2) // thinking + assistant
-        guard case .thinking(_, let preview, _) = reducer.items[0] else {
+        guard case .thinking(_, let preview, _, _) = reducer.items[0] else {
             Issue.record("Expected thinking")
             return
         }
@@ -174,6 +174,266 @@ struct TimelineReducerTests {
             return
         }
         #expect(text == "Hello")
+    }
+
+    // MARK: - Edge Cases
+
+    @MainActor
+    @Test func doubleAgentStartPreservesFirstTurnItems() {
+        let reducer = TimelineReducer()
+
+        // First turn starts, text is upserted into items
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "partial "))
+
+        // Second agentStart without agentEnd (reconnect mid-stream).
+        // The reducer clears its internal buffers but preserves already-appended
+        // items — removing visible content would lose data.
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "fresh response"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+        // Both items exist: the partial from the first turn and the full second turn
+        #expect(assistantItems.count == 2)
+        guard case .assistantMessage(_, let first, _) = assistantItems[0],
+              case .assistantMessage(_, let second, _) = assistantItems[1] else {
+            Issue.record("Expected two assistant messages")
+            return
+        }
+        #expect(first == "partial ")
+        #expect(second == "fresh response")
+    }
+
+    @MainActor
+    @Test func resetThenReconnectProducesCleanTimeline() {
+        let reducer = TimelineReducer()
+
+        // Simulate normal reconnect: reset + fresh load
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "stale data"))
+
+        // App calls reset() on session switch (as ChatView.connectToSession does)
+        reducer.reset()
+
+        reducer.process(.agentStart(sessionId: "s2"))
+        reducer.process(.textDelta(sessionId: "s2", delta: "fresh"))
+        reducer.process(.agentEnd(sessionId: "s2"))
+
+        #expect(reducer.items.count == 1)
+        guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
+            Issue.record("Expected single assistant message")
+            return
+        }
+        #expect(text == "fresh")
+    }
+
+    @MainActor
+    @Test func agentEndWithoutContentProducesNoItems() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // No text deltas → no assistant message or thinking item
+        #expect(reducer.items.isEmpty)
+    }
+
+    @MainActor
+    @Test func toolEndForUnknownIdIsIgnored() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        // toolEnd with no matching toolStart — should not crash
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "nonexistent"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // No items created (the toolEnd just finds no matching index)
+        #expect(reducer.items.isEmpty)
+    }
+
+    @MainActor
+    @Test func toolOutputForUnknownIdIsStoredButNoItemCreated() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        // toolOutput with no matching toolStart — output is stored but no item update
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "orphan", output: "data", isError: false))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // The output was stored in toolOutputStore but no toolCall item exists
+        let toolItems = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
+        }
+        #expect(toolItems.isEmpty)
+        // Output is still in the store (no crash, no data loss)
+        #expect(reducer.toolOutputStore.fullOutput(for: "orphan") == "data")
+    }
+
+    @MainActor
+    @Test func eventsAfterSessionEndedStillAppend() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
+        reducer.process(.sessionEnded(sessionId: "s1", reason: "stopped"))
+
+        // sessionEnded finalizes assistant message + appends system event
+        #expect(reducer.items.count == 2)
+
+        // Additional events after session ended should still be processed
+        // (the reducer doesn't gate on session state)
+        reducer.process(.error(sessionId: "s1", message: "late error"))
+        #expect(reducer.items.count == 3)
+    }
+
+    @MainActor
+    @Test func resetClearsEverything() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "result", isError: false))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let preResetVersion = reducer.renderVersion
+        reducer.reset()
+
+        #expect(reducer.items.isEmpty)
+        #expect(reducer.streamingAssistantID == nil)
+        #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.renderVersion > preResetVersion)
+    }
+
+    @MainActor
+    @Test func processBatchMixedEvents() {
+        let reducer = TimelineReducer()
+
+        // Batch with interleaved delta and non-delta events
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .thinkingDelta(sessionId: "s1", delta: "hmm "),
+            .thinkingDelta(sessionId: "s1", delta: "ok"),
+            .textDelta(sessionId: "s1", delta: "Answer: "),
+            .textDelta(sessionId: "s1", delta: "42"),
+            .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "echo hi"]),
+            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "hi\n", isError: false),
+            .toolEnd(sessionId: "s1", toolEventId: "t1"),
+            .textDelta(sessionId: "s1", delta: "Done."),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        // Expected: thinking, assistant("Answer: 42"), toolCall, assistant("Done.")
+        #expect(reducer.items.count == 4)
+
+        guard case .thinking(_, let preview, _, _) = reducer.items[0] else {
+            Issue.record("Expected thinking, got \(reducer.items[0])")
+            return
+        }
+        #expect(preview.contains("hmm ok"))
+
+        guard case .assistantMessage(_, let text1, _) = reducer.items[1] else {
+            Issue.record("Expected assistant message before tool")
+            return
+        }
+        #expect(text1 == "Answer: 42")
+
+        guard case .toolCall(_, let tool, _, _, _, _, let isDone) = reducer.items[2] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(isDone)
+
+        guard case .assistantMessage(_, let text2, _) = reducer.items[3] else {
+            Issue.record("Expected assistant message after tool")
+            return
+        }
+        #expect(text2 == "Done.")
+    }
+
+    @MainActor
+    @Test func orphanedToolIsClosedOnAgentEnd() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: [:]))
+        // No toolEnd before agentEnd
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        guard case .toolCall(_, _, _, _, _, _, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(isDone, "Orphaned tool should be marked done on agentEnd")
+    }
+
+    @MainActor
+    @Test func appendSystemEvent() {
+        let reducer = TimelineReducer()
+
+        reducer.appendSystemEvent("Session force-stopped")
+
+        #expect(reducer.items.count == 1)
+        guard case .systemEvent(_, let msg) = reducer.items[0] else {
+            Issue.record("Expected systemEvent")
+            return
+        }
+        #expect(msg == "Session force-stopped")
+    }
+
+    @MainActor
+    @Test func multipleAgentTurns() {
+        let reducer = TimelineReducer()
+
+        // Turn 1
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "First"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // Turn 2
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Second"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistants = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+        #expect(assistants.count == 2)
+
+        guard case .assistantMessage(_, let t1, _) = assistants[0],
+              case .assistantMessage(_, let t2, _) = assistants[1] else {
+            Issue.record("Expected two assistant messages")
+            return
+        }
+        #expect(t1 == "First")
+        #expect(t2 == "Second")
+    }
+
+    @MainActor
+    @Test func permissionExpiredRendersAsDenied() {
+        let reducer = TimelineReducer()
+        let perm = PermissionRequest(
+            id: "p1", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "bash: ls",
+            risk: .low, reason: "Read",
+            timeoutAt: Date().addingTimeInterval(60)
+        )
+
+        reducer.process(.permissionRequest(perm))
+        reducer.process(.permissionExpired(id: "p1"))
+
+        guard case .permissionResolved(_, let action) = reducer.items[0] else {
+            Issue.record("Expected permissionResolved after expiry")
+            return
+        }
+        #expect(action == .deny)
     }
 }
 
