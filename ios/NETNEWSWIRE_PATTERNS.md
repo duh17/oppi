@@ -11,7 +11,7 @@ Legend:
 
 ## 0) Reliability Values (adopt explicitly)
 
-Mirror NetNewsWire’s priority order in team docs and code review:
+Mirror NetNewsWire's priority order in team docs and code review:
 
 - [ ] No data loss
 - [ ] No crashes
@@ -21,7 +21,7 @@ Mirror NetNewsWire’s priority order in team docs and code review:
 
 Implementation steps:
 - [ ] Add this priority order to `ios/DESIGN.md` and top-level `DESIGN.md`
-- [ ] Add PR checklist item: “Does this improve/maintain reliability ladder?”
+- [ ] Add PR checklist item: "Does this improve/maintain reliability ladder?"
 
 ---
 
@@ -34,13 +34,13 @@ Implementation steps:
 - [x] `isConnected` derived from actual socket status
 - [ ] Add serialized operation queue for session transitions (`load history` -> `connect stream` -> `request state`)
 - [ ] Add reconnect backoff policy + cap + jitter docs
-- [ ] Add explicit stale-stream guard (ignore events for non-active session)
+- [x] Add explicit stale-stream guard (ignore events for non-active session)
 
 ### 1.2 Timeline rendering performance
 - [x] Auto-scroll now keyed off mutation version (`renderVersion`), not just item count
 - [ ] Cap total rendered timeline rows in-memory (windowing policy)
-- [ ] Cap per-tool stored output bytes with truncation metadata
-- [ ] Add “reconfigure visible rows only” optimization pass (avoid broad updates)
+- [x] Cap per-tool stored output bytes with truncation metadata
+- [ ] Add "reconfigure visible rows only" optimization pass (avoid broad updates)
 - [ ] Add frame-drop / render-latency instrumentation in debug builds
 
 ### 1.3 Extension UI and interaction completeness
@@ -59,10 +59,10 @@ Implementation steps:
 - [ ] Add explicit terminal-state banner after forced stop
 
 ### 1.5 Safety + input correctness
-- [ ] Use `SecureField` for manual token entry
-- [ ] Remove production force unwraps in app layer
-- [ ] VisionKit availability checks (`isSupported`, `isAvailable`) before scanner presentation
-- [ ] Add graceful fallback for scan-unavailable devices
+- [x] Use `SecureField` for manual token entry
+- [x] Remove production force unwraps in app layer
+- [x] VisionKit availability checks (`isSupported`, `isAvailable`) before scanner presentation
+- [x] Add graceful fallback for scan-unavailable devices
 
 ### 1.6 Accessibility + ergonomics
 - [ ] Audit all custom controls for VoiceOver labels/hints
@@ -71,14 +71,14 @@ Implementation steps:
 - [ ] Add hardware keyboard shortcuts for key actions (stop, approve/deny, focus input)
 
 ### 1.7 Lifecycle discipline (foreground/background)
-- [ ] Define and document foreground policy: refresh sessions, restore active session, request state
-- [ ] Define and document background policy: flush coalescer, cancel transient tasks, keep minimal state
+- [x] Define and document foreground policy: refresh sessions, restore active session, request state
+- [x] Define and document background policy: flush coalescer, cancel transient tasks, keep minimal state
 - [ ] Ensure all background->foreground resume paths are idempotent
 
 ### 1.8 State restoration (NetNewsWire-style)
-- [ ] Create typed `ChatRestorationState` (active session, tab, scroll anchor, composer draft, pending permission IDs)
-- [ ] Save on background and significant transitions
-- [ ] Restore on launch/foreground with migration strategy for schema changes
+- [x] Create typed `ChatRestorationState` (active session, tab, scroll anchor, composer draft, pending permission IDs)
+- [x] Save on background and significant transitions
+- [x] Restore on launch/foreground with migration strategy for schema changes
 - [ ] Add manual restoration matrix doc and QA checklist
 
 ---
@@ -105,7 +105,7 @@ Implementation steps:
 ## 3) macOS App Checklist (new target)
 
 ## 3.1 Product scope (decide before coding)
-- [ ] Decide v1 Mac role: 
+- [ ] Decide v1 Mac role:
   - client-only supervisor UI (recommended first)
   - or includes local server management
 - [ ] Confirm single-user vs multi-user assumptions for desktop use
@@ -139,7 +139,7 @@ Implementation steps:
 
 ---
 
-## 4) “Should we build the server in Swift with Apple container?”
+## 4) "Should we build the server in Swift with Apple container?"
 
 Short answer: **viable, but not required to ship a good macOS app**.
 
@@ -171,12 +171,12 @@ Short answer: **viable, but not required to ship a good macOS app**.
 
 ## 5) Concrete next 10 tasks (execution order)
 
-1. [ ] Add `ChatRestorationState` + persistence hooks
+1. [x] Add `ChatRestorationState` + persistence hooks
 2. [ ] Implement serialized session-stream operation queue
-3. [ ] Add VisionKit availability checks + fallback
-4. [ ] Replace token `TextField` with `SecureField`
-5. [ ] Remove production force unwraps in iOS target
-6. [ ] Add tool-output memory caps and truncation markers
+3. [x] Add VisionKit availability checks + fallback
+4. [x] Replace token `TextField` with `SecureField`
+5. [x] Remove production force unwraps in iOS target
+6. [x] Add tool-output memory caps and truncation markers
 7. [ ] Add duplicate-stop tap suppression and final-state banner
 8. [ ] Add activity replay backend endpoint for Live recovery
 9. [ ] Extract shared Swift core package for iOS/macOS
