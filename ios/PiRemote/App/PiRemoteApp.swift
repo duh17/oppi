@@ -15,6 +15,7 @@ struct PiRemoteApp: App {
                 .environment(connection.permissionStore)
                 .environment(connection.reducer)
                 .environment(connection.reducer.toolOutputStore)
+                .environment(connection.reducer.toolArgsStore)
                 .environment(navigation)
                 .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
@@ -46,7 +47,9 @@ struct PiRemoteApp: App {
 
         // Wire notification actions back to the connection
         notificationService.onPermissionResponse = { [weak connection] permissionId, action in
-            guard let connection else { return }
+            guard let connection else {
+                return
+            }
             Task {
                 try? await connection.respondToPermission(id: permissionId, action: action)
             }
@@ -57,7 +60,9 @@ struct PiRemoteApp: App {
 
         // Navigate to session when user taps a push notification body
         notificationService.onNavigateToPermission = { [weak connection] _, sessionId in
-            guard let connection, !sessionId.isEmpty else { return }
+            guard let connection, !sessionId.isEmpty else {
+                return
+            }
             connection.sessionStore.activeSessionId = sessionId
             navigation.selectedTab = .sessions
         }
@@ -86,7 +91,9 @@ struct PiRemoteApp: App {
         }
 
         // 3. Refresh session list
-        guard let api = connection.apiClient else { return }
+        guard let api = connection.apiClient else {
+            return
+        }
         do {
             let sessions = try await api.listSessions()
             connection.sessionStore.sessions = sessions

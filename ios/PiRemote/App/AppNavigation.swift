@@ -9,6 +9,5 @@ final class AppNavigation {
 
 enum AppTab: Hashable {
     case sessions
-    case live
     case settings
 }

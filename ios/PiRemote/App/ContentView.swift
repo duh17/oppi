@@ -18,11 +18,6 @@ struct ContentView: View {
                             SessionListView()
                         }
                     }
-                    SwiftUI.Tab("Live", systemImage: "list.bullet.rectangle", value: AppTab.live) {
-                        NavigationStack {
-                            LiveFeedView()
-                        }
-                    }
                     SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
                         NavigationStack {
                             SettingsView()
