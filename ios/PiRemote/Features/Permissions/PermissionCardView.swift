@@ -104,7 +104,7 @@ struct PermissionCardView: View {
         let feedback = UIImpactFeedbackGenerator(style: action == .allow ? .light : .heavy)
         feedback.impactOccurred()
 
-        Task {
+        Task { @MainActor in
             do {
                 try await connection.respondToPermission(id: request.id, action: action)
             } catch {

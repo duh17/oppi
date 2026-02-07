@@ -13,8 +13,10 @@ struct ChatView: View {
     @State private var isStopping = false
     @State private var showForceStop = false
     @State private var forceStopTask: Task<Void, Never>?
-    /// Bumped on appear to force `.task(id:)` restart even for same sessionId.
+    /// Bumped on re-appear to force `.task(id:)` restart even for same sessionId.
     @State private var connectionGeneration = 0
+    /// Tracks first appearance so initial connection doesn't double-start.
+    @State private var hasAppeared = false
     /// Set after initial load to trigger scroll-to-bottom.
     @State private var needsInitialScroll = false
 
@@ -28,6 +30,10 @@ struct ChatView: View {
 
     private var isStopped: Bool {
         session?.status == .stopped
+    }
+
+    private var pendingPermissions: [PermissionRequest] {
+        permissionStore.pending(for: sessionId)
     }
 
     var body: some View {
@@ -70,16 +76,15 @@ struct ChatView: View {
                 }
 
                 // Permission pill banner — taps scroll to first pending permission
-                if !permissionStore.pending(for: sessionId).isEmpty {
-                    PermissionPillBanner(count: permissionStore.pending(for: sessionId).count)
+                if !pendingPermissions.isEmpty {
+                    PermissionPillBanner(count: pendingPermissions.count)
                         .onTapGesture {
-                            if let firstPerm = reducer.items.first(where: {
-                                if case .permission = $0 { return true }
-                                return false
-                            }) {
-                                withAnimation {
-                                    proxy.scrollTo(firstPerm.id, anchor: .center)
-                                }
+                            guard let firstPendingId = pendingPermissions.first?.id else {
+                                return
+                            }
+
+                            withAnimation {
+                                proxy.scrollTo(firstPendingId, anchor: .center)
                             }
                         }
                 }
@@ -118,7 +123,16 @@ struct ChatView: View {
             await connectToSession()
         }
         .onAppear {
-            connectionGeneration += 1
+            if hasAppeared {
+                connectionGeneration &+= 1
+            } else {
+                hasAppeared = true
+                // Restore draft from background if available
+                if let draft = connection.composerDraft, !draft.isEmpty {
+                    inputText = draft
+                    connection.composerDraft = nil
+                }
+            }
         }
         .onChange(of: session?.status) { _, newStatus in
             if newStatus != .busy {
@@ -131,6 +145,9 @@ struct ChatView: View {
         .onDisappear {
             forceStopTask?.cancel()
             forceStopTask = nil
+            // Save draft before disconnect
+            let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            connection.composerDraft = draft.isEmpty ? nil : draft
             connection.disconnectSession()
         }
     }

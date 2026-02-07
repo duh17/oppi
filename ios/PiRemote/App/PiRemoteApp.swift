@@ -26,7 +26,10 @@ struct PiRemoteApp: App {
         switch phase {
         case .active:
             Task { await connection.reconnectIfNeeded() }
-        case .background, .inactive:
+        case .background:
+            connection.flushAndSuspend()
+            RestorationState.save(from: connection, navigation: navigation)
+        case .inactive:
             break
         @unknown default:
             break
@@ -43,7 +46,14 @@ struct PiRemoteApp: App {
         navigation.showOnboarding = false
         connection.configure(credentials: creds)
 
-        // 2. Refresh session list
+        // 2. Restore UI state (tab, active session, draft)
+        if let restored = RestorationState.load() {
+            navigation.selectedTab = AppTab(rawString: restored.selectedTab)
+            connection.sessionStore.activeSessionId = restored.activeSessionId
+            connection.composerDraft = restored.composerDraft
+        }
+
+        // 3. Refresh session list
         guard let api = connection.apiClient else { return }
         do {
             let sessions = try await api.listSessions()

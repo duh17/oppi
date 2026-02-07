@@ -1,4 +1,5 @@
 import SwiftUI
+import VisionKit
 
 struct OnboardingView: View {
     @Environment(ServerConnection.self) private var connection
@@ -7,6 +8,11 @@ struct OnboardingView: View {
     @State private var showScanner = false
     @State private var showManualEntry = false
     @State private var connectionTest: ConnectionTestState = .idle
+
+    /// VisionKit scanner requires camera + on-device ML support.
+    private var canScan: Bool {
+        DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+    }
 
     var body: some View {
         VStack(spacing: 32) {
@@ -31,16 +37,26 @@ struct OnboardingView: View {
             VStack(spacing: 16) {
                 switch connectionTest {
                 case .idle:
-                    Button("Scan QR Code") {
-                        showScanner = true
+                    if canScan {
+                        Button("Scan QR Code") {
+                            showScanner = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
 
-                    Button("Enter manually") {
-                        showManualEntry = true
+                    if canScan {
+                        Button("Enter manually") {
+                            showManualEntry = true
+                        }
+                        .font(.subheadline)
+                    } else {
+                        Button("Connect to Server") {
+                            showManualEntry = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                     }
-                    .font(.subheadline)
 
                 case .testing:
                     ProgressView("Testing connection…")
@@ -60,7 +76,11 @@ struct OnboardingView: View {
                             .foregroundStyle(.secondary)
 
                         Button("Try Again") {
-                            showScanner = true
+                            if canScan {
+                                showScanner = true
+                            } else {
+                                showManualEntry = true
+                            }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -88,12 +108,12 @@ struct OnboardingView: View {
         connectionTest = .testing
 
         // Validate URL before attempting connection
-        guard URL(string: "http://\(credentials.host):\(credentials.port)") != nil else {
+        guard let baseURL = URL(string: "http://\(credentials.host):\(credentials.port)") else {
             connectionTest = .failed("Invalid server address: \(credentials.host):\(credentials.port)")
             return
         }
 
-        let api = APIClient(baseURL: credentials.baseURL, token: credentials.token)
+        let api = APIClient(baseURL: baseURL, token: credentials.token)
 
         do {
             let healthy = try await api.health()
@@ -154,9 +174,8 @@ private struct ManualEntryView: View {
                         .keyboardType(.numberPad)
                 }
                 Section("Auth") {
-                    TextField("Token", text: $token)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                    SecureField("Token", text: $token)
+                        .textContentType(.password)
                     TextField("Name", text: $name)
                 }
             }

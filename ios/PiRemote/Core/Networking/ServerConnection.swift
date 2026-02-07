@@ -37,6 +37,9 @@ final class ServerConnection {
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
 
+    /// Composer draft text — saved/restored across background cycles.
+    var composerDraft: String?
+
     init() {
         // Wire coalescer to reducer
         coalescer.onFlush = { [weak self] events in
@@ -77,6 +80,13 @@ final class ServerConnection {
         coalescer.flushNow()
         wsClient?.disconnect()
         activeSessionId = nil
+    }
+
+    /// Flush pending deltas on background transition.
+    /// Does NOT disconnect — the OS will suspend the stream, and
+    /// `reconnectIfNeeded` handles recovery on foreground.
+    func flushAndSuspend() {
+        coalescer.flushNow()
     }
 
     // MARK: - Actions
@@ -146,7 +156,13 @@ final class ServerConnection {
     // MARK: - Message Router
 
     /// Route a ServerMessage to the appropriate store or pipeline.
+    /// Ignores messages for non-active sessions (stale stream race).
     func handleServerMessage(_ message: ServerMessage, sessionId: String) {
+        guard sessionId == activeSessionId else {
+            logger.debug("Ignoring message for stale session \(sessionId) (active: \(self.activeSessionId ?? "none"))")
+            return
+        }
+
         switch message {
         // Direct state updates (not timeline events)
         case .connected(let session):

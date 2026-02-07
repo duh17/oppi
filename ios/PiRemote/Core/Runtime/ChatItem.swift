@@ -44,12 +44,61 @@ enum ChatItem: Identifiable, Equatable {
 ///
 /// ChatItem.toolCall only carries a ≤500 char preview and byte count.
 /// The full output is fetched on-demand when the user expands a tool call row.
+///
+/// Memory bounded: per-item cap of 256KB, total cap of 2MB.
+/// When total cap is exceeded, oldest items are evicted (FIFO).
 @MainActor @Observable
 final class ToolOutputStore {
+    /// Max bytes stored per tool call output.
+    static let perItemCap = 256 * 1024  // 256KB
+    /// Max total bytes across all stored outputs.
+    static let totalCap = 2 * 1024 * 1024  // 2MB
+    /// Suffix appended when output is truncated.
+    static let truncationMarker = "\n\n… [output truncated]"
+
     private var chunks: [String: String] = [:]
+    /// Insertion order for FIFO eviction.
+    private var insertionOrder: [String] = []
+    /// Running total of stored bytes.
+    private(set) var totalBytes: Int = 0
 
     func append(_ chunk: String, to itemID: String) {
-        chunks[itemID, default: ""] += chunk
+        let existing = chunks[itemID]
+        let existingBytes = existing?.utf8.count ?? 0
+
+        // Per-item cap: stop accumulating once hit
+        if existingBytes >= Self.perItemCap {
+            return
+        }
+
+        // Track insertion order
+        if existing == nil {
+            insertionOrder.append(itemID)
+        }
+
+        // Append chunk, truncating if it would exceed per-item cap
+        let remainingCap = Self.perItemCap - existingBytes
+        let chunkBytes = chunk.utf8.count
+        if chunkBytes <= remainingCap {
+            chunks[itemID, default: ""] += chunk
+            totalBytes += chunkBytes
+        } else {
+            // Truncate chunk to fit within per-item cap.
+            // Use prefix by character and check byte count to avoid splitting UTF-8.
+            var truncated = ""
+            var bytesSoFar = 0
+            for char in chunk {
+                let charBytes = String(char).utf8.count
+                if bytesSoFar + charBytes > remainingCap { break }
+                truncated.append(char)
+                bytesSoFar += charBytes
+            }
+            chunks[itemID, default: ""] += truncated + Self.truncationMarker
+            totalBytes += truncated.utf8.count + Self.truncationMarker.utf8.count
+        }
+
+        // Evict oldest items if total cap exceeded
+        evictIfNeeded()
     }
 
     func fullOutput(for itemID: String) -> String {
@@ -60,15 +109,31 @@ final class ToolOutputStore {
         chunks[itemID]?.utf8.count ?? 0
     }
 
-    /// Clear output for a session's items (memory management).
+    /// Clear output for specific items (memory management).
     func clear(itemIDs: Set<String>) {
         for id in itemIDs {
-            chunks.removeValue(forKey: id)
+            if let removed = chunks.removeValue(forKey: id) {
+                totalBytes -= removed.utf8.count
+            }
         }
+        insertionOrder.removeAll { itemIDs.contains($0) }
     }
 
     func clearAll() {
         chunks.removeAll()
+        insertionOrder.removeAll()
+        totalBytes = 0
+    }
+
+    // MARK: - Private
+
+    private func evictIfNeeded() {
+        while totalBytes > Self.totalCap, let oldest = insertionOrder.first {
+            insertionOrder.removeFirst()
+            if let removed = chunks.removeValue(forKey: oldest) {
+                totalBytes -= removed.utf8.count
+            }
+        }
     }
 }
 

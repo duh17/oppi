@@ -79,6 +79,10 @@ extension ClientMessage {
     /// Encode to JSON string for WebSocket send.
     func jsonString() throws -> String {
         let data = try jsonData()
-        return String(data: data, encoding: .utf8)!
+        // JSONEncoder always produces valid UTF-8, but guard defensively.
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(data, .init(codingPath: [], debugDescription: "JSON data is not valid UTF-8"))
+        }
+        return string
     }
 }
