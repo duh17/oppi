@@ -9,6 +9,7 @@ struct ChatInputBar: View {
     let isBusy: Bool
     let isStopping: Bool
     let showForceStop: Bool
+    let isForceStopInFlight: Bool
     let onSend: () -> Void
     let onStop: () -> Void
     let onForceStop: () -> Void
@@ -16,11 +17,23 @@ struct ChatInputBar: View {
     var body: some View {
         VStack(spacing: 8) {
             if showForceStop {
-                Button("Force Stop Session", role: .destructive) {
+                Button(role: .destructive) {
                     onForceStop()
+                } label: {
+                    if isForceStopInFlight {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(.tokyoRed)
+                            Text("Stopping…")
+                        }
+                    } else {
+                        Text("Force Stop Session")
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.tokyoRed)
+                .disabled(isForceStopInFlight)
             }
 
             HStack(spacing: 12) {

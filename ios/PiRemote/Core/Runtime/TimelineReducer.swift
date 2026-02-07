@@ -9,11 +9,12 @@ import Foundation
 /// - `agentStart`: clear turn buffers, begin new assistant context
 /// - `thinkingDelta`: append to thinking buffer, upsert thinking item
 /// - `textDelta`: append to assistant buffer, upsert assistant message
-/// - `toolStart`: append new toolCall item
+/// - `toolStart`: finalize pending assistant text, append new toolCall item
 /// - `toolOutput`: append to ToolOutputStore, update toolCall preview
 /// - `toolEnd`: mark toolCall as done
-/// - `agentEnd`: flush buffers, finalize assistant message
-/// - `error` / `sessionEnded`: flush, append terminal item
+/// - `agentEnd`: finalize assistant message, thinking, close orphaned tools
+/// - `error`: append error or system event item
+/// - `sessionEnded`: finalize assistant message, append system event
 @MainActor @Observable
 final class TimelineReducer {
     private(set) var items: [ChatItem] = []
@@ -36,8 +37,11 @@ final class TimelineReducer {
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
 
-    /// Separate store for full tool output.
+    /// Separate store for full tool output (and full thinking text).
     let toolOutputStore = ToolOutputStore()
+
+    /// Separate store for structured tool args.
+    let toolArgsStore = ToolArgsStore()
 
     // MARK: - Reset
 
@@ -49,6 +53,7 @@ final class TimelineReducer {
         currentAssistantID = nil
         currentThinkingID = nil
         toolOutputStore.clearAll()
+        toolArgsStore.clearAll()
         renderVersion &+= 1
     }
 
@@ -63,6 +68,7 @@ final class TimelineReducer {
         currentAssistantID = nil
         currentThinkingID = nil
         toolOutputStore.clearAll()
+        toolArgsStore.clearAll()
 
         for msg in messages {
             switch msg.role {
@@ -89,6 +95,7 @@ final class TimelineReducer {
         currentAssistantID = nil
         currentThinkingID = nil
         toolOutputStore.clearAll()
+        toolArgsStore.clearAll()
 
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -112,17 +119,23 @@ final class TimelineReducer {
                 ))
 
             case .thinking:
-                let preview = ChatItem.preview(event.thinking ?? "")
+                let thinking = event.thinking ?? ""
+                let preview = ChatItem.preview(thinking)
                 items.append(.thinking(
                     id: event.id,
                     preview: preview,
-                    hasMore: (event.thinking?.count ?? 0) > ChatItem.maxPreviewLength,
+                    hasMore: thinking.count > ChatItem.maxPreviewLength,
                     isDone: true  // Historical = always done
                 ))
+                // Store full thinking text for expand view
+                if thinking.count > ChatItem.maxPreviewLength {
+                    toolOutputStore.append(thinking, to: event.id)
+                }
 
             case .toolCall:
-                let argsSummary = event.args?.map { "\($0.key): \($0.value.summary())" }
-                    .joined(separator: ", ") ?? ""
+                let args = event.args ?? [:]
+                let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
+                    .joined(separator: ", ")
                 items.append(.toolCall(
                     id: event.id,
                     tool: event.tool ?? "unknown",
@@ -132,6 +145,10 @@ final class TimelineReducer {
                     isError: false,
                     isDone: true  // Historical = always done
                 ))
+                // Store structured args for smart rendering
+                if !args.isEmpty {
+                    toolArgsStore.set(args, for: event.id)
+                }
 
             case .toolResult:
                 let output = event.output ?? ""
@@ -271,6 +288,10 @@ final class TimelineReducer {
                 isError: false,
                 isDone: false
             ))
+            // Store structured args for smart rendering
+            if !args.isEmpty {
+                toolArgsStore.set(args, for: toolEventId)
+            }
 
         case .toolOutput(_, let toolEventId, let output, let isError):
             toolOutputStore.append(output, to: toolEventId)
@@ -307,6 +328,15 @@ final class TimelineReducer {
             text: text,
             timestamp: Date()
         ))
+        bumpRenderVersion()
+    }
+
+    // MARK: - System Events (from local actions)
+
+    /// Append a system event directly (not from the agent event pipeline).
+    /// Used for local-only events like force-stop confirmations.
+    func appendSystemEvent(_ message: String) {
+        items.append(.systemEvent(id: UUID().uuidString, message: message))
         bumpRenderVersion()
     }
 
@@ -365,7 +395,9 @@ final class TimelineReducer {
     }
 
     private func finalizeAssistantMessage() {
-        guard !assistantBuffer.isEmpty else { return }
+        guard !assistantBuffer.isEmpty else {
+            return
+        }
         upsertAssistantMessage()
         assistantBuffer = ""
         currentAssistantID = nil
@@ -377,6 +409,10 @@ final class TimelineReducer {
            let idx = items.firstIndex(where: { $0.id == thinkingID }),
            case .thinking(let id, let preview, let hasMore, _) = items[idx] {
             items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
+            // Store full thinking text for expand view
+            if thinkingBuffer.count > ChatItem.maxPreviewLength {
+                toolOutputStore.append(thinkingBuffer, to: thinkingID)
+            }
         }
         thinkingBuffer = ""
         currentThinkingID = nil
@@ -398,7 +434,9 @@ final class TimelineReducer {
     private func updateToolCallPreview(id: String, isError: Bool) {
         guard let idx = items.firstIndex(where: { $0.id == id }),
               case .toolCall(_, let tool, let args, _, _, let existingError, let isDone) = items[idx]
-        else { return }
+        else {
+            return
+        }
 
         let fullOutput = toolOutputStore.fullOutput(for: id)
         items[idx] = .toolCall(
@@ -415,7 +453,9 @@ final class TimelineReducer {
     private func updateToolCallDone(id: String) {
         guard let idx = items.firstIndex(where: { $0.id == id }),
               case .toolCall(_, let tool, let args, let preview, let bytes, let isErr, _) = items[idx]
-        else { return }
+        else {
+            return
+        }
 
         items[idx] = .toolCall(
             id: id, tool: tool, argsSummary: args,
