@@ -12,7 +12,6 @@ settings:
     TARGETED_DEVICE_FAMILY: 1
     INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     INFOPLIST_KEY_UILaunchScreen_Generation: true
-    INFOPLIST_KEY_NSCameraUsageDescription: "Pi Remote needs camera access to scan the server QR code."
     ENABLE_USER_SCRIPT_SANDBOXING: true
 targets:
   PiRemote:
@@ -42,6 +41,8 @@ targets:
         UIBackgroundModes:
           - remote-notification
         NSSupportsLiveActivities: true
+        NSCameraUsageDescription: "Pi Remote needs camera access to scan the server QR code."
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
     dependencies:
       - target: PiRemoteActivityExtension
         embed: true
