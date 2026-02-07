@@ -72,7 +72,7 @@ export class Server {
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
 
-    this.policy = new PolicyEngine("admin"); // Per-user in v2
+    this.policy = new PolicyEngine("container"); // Per-user in v2
     this.gate = new GateServer(this.policy);
     this.sandbox = new SandboxManager();
     this.push = createPushClient(apnsConfig);

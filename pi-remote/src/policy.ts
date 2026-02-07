@@ -135,119 +135,62 @@ function tokenize(input: string): string[] {
 
 // ─── Presets ───
 
-export const PRESET_ADMIN: PolicyPreset = {
-  name: "admin",
+/**
+ * Container preset — the default for pi-remote.
+ *
+ * Philosophy: the Apple container IS the security boundary.
+ * The policy only gates things the container can't protect against:
+ * - Credential exfiltration (API keys synced into container)
+ * - Destructive operations on bind-mounted workspace data
+ * - Escape attempts (sudo, privilege escalation)
+ *
+ * Everything else flows through. This mirrors how pi's permission-gate
+ * works on mac-studio (regex-matched dangerous patterns only), but even
+ * more permissive because there's no host system to damage.
+ */
+export const PRESET_CONTAINER: PolicyPreset = {
+  name: "container",
   hardDeny: [
-    { tool: "bash", pattern: "rm -rf /", action: "deny", label: "Prevent rm -rf /", risk: "critical" },
+    // Privilege escalation — can't escape container, but deny on principle
     { tool: "bash", exec: "sudo", action: "deny", label: "No sudo", risk: "critical" },
-    { tool: "bash", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH keys", risk: "critical" },
-    { tool: "write", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH keys", risk: "critical" },
-    { tool: "edit", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH keys", risk: "critical" },
-    { tool: "bash", pattern: "**/.env*", action: "deny", label: "Protect env files", risk: "high" },
-    { tool: "write", pattern: "**/.env*", action: "deny", label: "Protect env files", risk: "high" },
-    { tool: "edit", pattern: "**/.env*", action: "deny", label: "Protect env files", risk: "high" },
-    { tool: "write", pattern: ".env*", action: "deny", label: "Protect env files", risk: "high" },
-    { tool: "edit", pattern: ".env*", action: "deny", label: "Protect env files", risk: "high" },
+    { tool: "bash", exec: "doas", action: "deny", label: "No doas", risk: "critical" },
+    { tool: "bash", pattern: "su -*root*", action: "deny", label: "No su root", risk: "critical" },
+
+    // Credential exfiltration — API keys are synced into ~/.pi/agent/auth.json
+    { tool: "bash", pattern: "*auth.json*", action: "deny", label: "Protect API keys", risk: "critical" },
+    { tool: "read", pattern: "**/agent/auth.json", action: "deny", label: "Protect API keys", risk: "critical" },
+    { tool: "bash", pattern: "*printenv*_KEY*", action: "deny", label: "Protect env secrets", risk: "critical" },
+    { tool: "bash", pattern: "*printenv*_SECRET*", action: "deny", label: "Protect env secrets", risk: "critical" },
+    { tool: "bash", pattern: "*printenv*_TOKEN*", action: "deny", label: "Protect env secrets", risk: "critical" },
+
+    // Fork bomb
+    { tool: "bash", pattern: "*:(){ :|:& };*", action: "deny", label: "Fork bomb", risk: "critical" },
   ],
   rules: [
-    // Safe reads
-    { tool: "read", action: "allow", label: "Read files", risk: "low" },
-    { tool: "grep", action: "allow", label: "Grep", risk: "low" },
-    { tool: "find", action: "allow", label: "Find", risk: "low" },
-    { tool: "ls", action: "allow", label: "List files", risk: "low" },
+    // ── Destructive operations → ask ──
+    // These can damage bind-mounted workspace data
 
-    // Safe bash commands
-    { tool: "bash", exec: "ls", action: "allow", risk: "low" },
-    { tool: "bash", exec: "cat", action: "allow", risk: "low" },
-    { tool: "bash", exec: "head", action: "allow", risk: "low" },
-    { tool: "bash", exec: "tail", action: "allow", risk: "low" },
-    { tool: "bash", exec: "wc", action: "allow", risk: "low" },
-    { tool: "bash", exec: "echo", action: "allow", risk: "low" },
-    { tool: "bash", exec: "grep", action: "allow", risk: "low" },
-    { tool: "bash", exec: "rg", action: "allow", risk: "low" },
-    { tool: "bash", exec: "find", action: "allow", risk: "low" },
-    { tool: "bash", exec: "which", action: "allow", risk: "low" },
-    { tool: "bash", exec: "pwd", action: "allow", risk: "low" },
-    { tool: "bash", exec: "date", action: "allow", risk: "low" },
-    { tool: "bash", exec: "uname", action: "allow", risk: "low" },
-    { tool: "bash", exec: "whoami", action: "allow", risk: "low" },
-    { tool: "bash", exec: "hostname", action: "allow", risk: "low" },
-    { tool: "bash", exec: "basename", action: "allow", risk: "low" },
-    { tool: "bash", exec: "dirname", action: "allow", risk: "low" },
-    { tool: "bash", exec: "realpath", action: "allow", risk: "low" },
-    { tool: "bash", exec: "stat", action: "allow", risk: "low" },
-    { tool: "bash", exec: "file", action: "allow", risk: "low" },
-    { tool: "bash", exec: "diff", action: "allow", risk: "low" },
-    { tool: "bash", exec: "sort", action: "allow", risk: "low" },
-    { tool: "bash", exec: "uniq", action: "allow", risk: "low" },
-    { tool: "bash", exec: "cut", action: "allow", risk: "low" },
-    { tool: "bash", exec: "tr", action: "allow", risk: "low" },
-    { tool: "bash", exec: "sed", action: "allow", risk: "low" },
-    { tool: "bash", exec: "awk", action: "allow", risk: "low" },
-    { tool: "bash", exec: "jq", action: "allow", risk: "low" },
-    { tool: "bash", exec: "ast-grep", action: "allow", risk: "low" },
+    // rm with force/recursive flags
+    { tool: "bash", exec: "rm", pattern: "rm *-*r*", action: "ask", label: "Recursive delete", risk: "high" },
+    { tool: "bash", exec: "rm", pattern: "rm *-*f*", action: "ask", label: "Force delete", risk: "high" },
 
-    // Safe git (read-only)
-    { tool: "bash", exec: "git", pattern: "git status*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git diff*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git log*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git branch*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git show*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git rev-parse*", action: "allow", risk: "low" },
-    { tool: "bash", exec: "git", pattern: "git ls-files*", action: "allow", risk: "low" },
+    // Git destructive operations
+    { tool: "bash", exec: "git", pattern: "git push*--force*", action: "ask", label: "Force push", risk: "high" },
+    { tool: "bash", exec: "git", pattern: "git push*-f*", action: "ask", label: "Force push", risk: "high" },
+    { tool: "bash", exec: "git", pattern: "git reset --hard*", action: "ask", label: "Hard reset", risk: "high" },
+    { tool: "bash", exec: "git", pattern: "git clean*-*f*", action: "ask", label: "Git clean", risk: "high" },
 
-    // Mutating git — ask
-    { tool: "bash", exec: "git", action: "ask", label: "Git mutation", risk: "medium" },
-
-    // Build tools — ask
-    { tool: "bash", exec: "npm", action: "ask", label: "npm command", risk: "medium" },
-    { tool: "bash", exec: "npx", action: "ask", label: "npx command", risk: "medium" },
-    { tool: "bash", exec: "pnpm", action: "ask", label: "pnpm command", risk: "medium" },
-    { tool: "bash", exec: "yarn", action: "ask", label: "yarn command", risk: "medium" },
-    { tool: "bash", exec: "cargo", action: "ask", label: "cargo command", risk: "medium" },
-    { tool: "bash", exec: "make", action: "ask", label: "make command", risk: "medium" },
-    { tool: "bash", exec: "uv", action: "ask", label: "uv command", risk: "medium" },
-    { tool: "bash", exec: "pip", action: "ask", label: "pip command", risk: "medium" },
-    { tool: "bash", exec: "go", action: "ask", label: "go command", risk: "medium" },
-
-    // Writes — ask (safe but worth confirming for non-trivial cases)
-    { tool: "write", action: "ask", label: "Write file", risk: "medium" },
-    { tool: "edit", action: "ask", label: "Edit file", risk: "medium" },
-
-    // Pipes and subshells — always ask
-    // (These are caught by the structural check in evaluate(), but explicit rule for clarity)
+    // Pipe to shell — matched structurally in evaluate(), not by glob.
+    // (Glob patterns can't express "curl ... | sh" reliably.)
   ],
-  defaultAction: "ask",
+  // Container provides isolation — allow by default
+  defaultAction: "allow",
 };
 
-export const PRESET_STANDARD: PolicyPreset = {
-  name: "standard",
-  hardDeny: [
-    { tool: "bash", exec: "sudo", action: "deny", label: "No sudo", risk: "critical" },
-    { tool: "bash", exec: "rm", action: "deny", label: "No rm", risk: "high" },
-    { tool: "bash", exec: "curl", action: "deny", label: "No curl", risk: "high" },
-    { tool: "bash", exec: "wget", action: "deny", label: "No wget", risk: "high" },
-    { tool: "bash", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH", risk: "critical" },
-    { tool: "write", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH", risk: "critical" },
-    { tool: "edit", pattern: "*/.ssh/*", action: "deny", label: "Protect SSH", risk: "critical" },
-  ],
-  rules: [
-    { tool: "read", action: "allow", risk: "low" },
-    { tool: "grep", action: "allow", risk: "low" },
-    { tool: "find", action: "allow", risk: "low" },
-    { tool: "ls", action: "allow", risk: "low" },
-    { tool: "bash", exec: "ls", action: "allow", risk: "low" },
-    { tool: "bash", exec: "cat", action: "allow", risk: "low" },
-    { tool: "bash", exec: "head", action: "allow", risk: "low" },
-    { tool: "bash", exec: "tail", action: "allow", risk: "low" },
-    { tool: "bash", exec: "grep", action: "allow", risk: "low" },
-    { tool: "bash", exec: "rg", action: "allow", risk: "low" },
-    { tool: "bash", exec: "find", action: "allow", risk: "low" },
-    { tool: "bash", exec: "wc", action: "allow", risk: "low" },
-  ],
-  defaultAction: "ask",
-};
-
+/**
+ * Restricted preset — read-only, no execution.
+ * For untrusted users or demo mode.
+ */
 export const PRESET_RESTRICTED: PolicyPreset = {
   name: "restricted",
   hardDeny: [
@@ -265,8 +208,7 @@ export const PRESET_RESTRICTED: PolicyPreset = {
 };
 
 export const PRESETS: Record<string, PolicyPreset> = {
-  admin: PRESET_ADMIN,
-  standard: PRESET_STANDARD,
+  container: PRESET_CONTAINER,
   restricted: PRESET_RESTRICTED,
 };
 
@@ -275,7 +217,7 @@ export const PRESETS: Record<string, PolicyPreset> = {
 export class PolicyEngine {
   private preset: PolicyPreset;
 
-  constructor(presetName: string = "admin") {
+  constructor(presetName: string = "container") {
     const preset = PRESETS[presetName];
     if (!preset) {
       throw new Error(`Unknown policy preset: ${presetName}. Available: ${Object.keys(PRESETS).join(", ")}`);
@@ -285,6 +227,14 @@ export class PolicyEngine {
 
   /**
    * Evaluate a tool call against the policy.
+   *
+   * Layered evaluation:
+   * 1. Hard denies (immutable — credential exfiltration, privilege escalation)
+   * 2. Rules (destructive operations on workspace data)
+   * 3. Default action (allow for container preset)
+   *
+   * Pipes and subshells are NOT auto-escalated. The container is the
+   * security boundary — `grep foo | wc -l` shouldn't need phone approval.
    */
   evaluate(req: GateRequest): PolicyDecision {
     const { tool, input } = req;
@@ -302,33 +252,26 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 1.5: Structural hazard check for bash
+    // Layer 1.5: Pipe-to-shell detection (structural, not glob-based)
+    // curl/wget piped to sh/bash is remote code execution — always ask.
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
       const parsed = parseBashCommand(command);
-
-      if (parsed.hasSubshell) {
-        return {
-          action: "ask",
-          reason: "Command contains subshell expansion",
-          risk: "high",
-          layer: "hard_deny",
-          ruleLabel: "Subshell detected",
-        };
-      }
-
-      if (parsed.hasPipe) {
-        return {
-          action: "ask",
-          reason: "Command contains pipe",
-          risk: "medium",
-          layer: "hard_deny",
-          ruleLabel: "Pipe detected",
-        };
+      if (parsed.hasPipe && /\|\s*(ba)?sh\b/.test(command)) {
+        const downloader = parsed.executable;
+        if (downloader === "curl" || downloader === "wget") {
+          return {
+            action: "ask",
+            reason: "Pipe to shell (remote code execution)",
+            risk: "high",
+            layer: "rule",
+            ruleLabel: "Pipe to shell",
+          };
+        }
       }
     }
 
-    // Layer 2: User rules (in order)
+    // Layer 2: Rules (destructive operations)
     for (const rule of this.preset.rules) {
       if (this.matchesRule(rule, tool, input)) {
         return {
@@ -345,7 +288,7 @@ export class PolicyEngine {
     return {
       action: this.preset.defaultAction,
       reason: "No matching rule — using default",
-      risk: "medium",
+      risk: "low",
       layer: "default",
     };
   }
@@ -400,11 +343,22 @@ export class PolicyEngine {
       return false;
     }
 
-    // Check pattern (glob match against the match target)
+    // Check pattern against the match target.
+    // For bash commands (which are strings, not paths), minimatch's path-separator
+    // handling breaks. Fall back to simple string inclusion if the glob doesn't match.
     if (rule.pattern) {
       const target = this.getMatchTarget(tool, input);
-      if (!minimatch(target, rule.pattern, { dot: true })) {
-        return false;
+      const globMatch = minimatch(target, rule.pattern, { dot: true });
+      if (!globMatch) {
+        // For bash commands, try simple substring match (strip leading/trailing *)
+        if (tool === "bash") {
+          const needle = rule.pattern.replace(/^\*+/, "").replace(/\*+$/, "");
+          if (!needle || !target.includes(needle)) {
+            return false;
+          }
+        } else {
+          return false;
+        }
       }
     }
 
