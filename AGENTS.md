@@ -29,7 +29,7 @@ If no concrete task given, read `README.md`, then ask which module to work on. B
 - `pi-remote/src/trace.ts` — pi session JSONL reader
 - `pi-remote/extensions/permission-gate/index.ts` — pi extension
 
-**ios:** Read `ios/CLAUDE.md` instead.
+**ios:** Read `ios/AGENTS.md` for full architecture and patterns.
 
 ## pi-remote Architecture
 
@@ -103,6 +103,37 @@ npx tsx test-policy.ts
 npx tsx test-gate.ts
 npx tsx test-gate-client.ts
 npx tsx test-e2e.ts
+```
+
+## iOS Quick Reference
+
+Read `ios/AGENTS.md` for full architecture, patterns, and code conventions.
+
+### Build + Test
+
+```bash
+cd ios
+xcodegen generate                # required after adding/removing files
+xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
+xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
+```
+
+### Deploy to Phone
+
+```bash
+# Build + install + launch on connected iPhone
+ios/scripts/build-install.sh --launch
+
+# Skip xcodegen (faster, use when no file additions)
+ios/scripts/build-install.sh --launch --skip-generate
+```
+
+### Device Logs
+
+```bash
+ios/scripts/collect-device-logs.sh --last 5m --include-debug --no-sudo
 ```
 
 ## Repeatable iOS Local Flow (tmux + deploy)
