@@ -51,7 +51,7 @@ struct SessionListView: View {
             .padding()
         }
         .sheet(isPresented: $showNewSession) {
-            NewSessionView()
+            WorkspacePickerView()
         }
     }
 
@@ -109,10 +109,19 @@ struct SessionRowView: View {
                 }
             }
 
-            HStack {
+            HStack(spacing: 4) {
+                if let wsName = session.workspaceName {
+                    Text(wsName)
+                        .font(.caption.bold())
+                        .foregroundStyle(.tokyoBlue)
+                    Text("•")
+                        .foregroundStyle(.secondary)
+                }
+
                 Text(session.status.rawValue)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
                 if let model = session.model {
                     Text("•")
                         .foregroundStyle(.secondary)

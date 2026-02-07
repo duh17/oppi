@@ -37,12 +37,14 @@ const SESSION_CONTAINER_PREFIX = "pi-remote-";
 const CONTAINER_PI_HOME = "/home/pi/.pi";
 const CONTAINER_WORK = "/work";
 const CONTAINER_UV_CACHE = "/uv-cache";
+const CONTAINER_MEMORY_DIR = "/home/pi/.config/dotfiles/shared/memory";
 const HOST_GATEWAY = "192.168.64.1"; // Apple container → host
 
 // Paths relative to this file
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOX_DIR = join(__dirname, "..", "sandbox");
 const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
+const MEMORY_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
 const BUNDLED_SKILLS_DIR = join(__dirname, "..", "skills");
 
 // ─── Built-in Skills ───
@@ -252,14 +254,23 @@ export class SandboxManager {
       join(agentDir, "settings.json"),
     );
 
-    // Install permission-gate extension to agent/extensions/ (pi auto-discovers from ~/.pi/agent/extensions/)
+    // Install extensions to agent/extensions/ (pi auto-discovers from ~/.pi/agent/extensions/)
+    const extensionsDir = join(agentDir, "extensions");
+    mkdirSync(extensionsDir, { recursive: true });
+
     if (existsSync(EXTENSION_SRC)) {
-      const dest = join(agentDir, "extensions", "permission-gate");
+      const dest = join(extensionsDir, "permission-gate");
       // Always re-copy to pick up changes
       if (existsSync(dest)) rmSync(dest, { recursive: true });
-      mkdirSync(dirname(dest), { recursive: true });
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
+
+    // Optional memory extension (workspace-controlled)
+    this.syncOptionalFile(
+      MEMORY_EXTENSION_SRC,
+      join(extensionsDir, "memory.ts"),
+      opts?.workspace?.memoryEnabled === true,
+    );
 
     // Sync skills — workspace-driven or fallback to defaults
     const requestedSkills = opts?.workspace?.skills ?? DEFAULT_SKILLS;
@@ -314,6 +325,9 @@ export class SandboxManager {
       ? realpath(resolveHomePath(workspace.hostMount))
       : realpath(workDir);
 
+    // Optional workspace memory mount (for remember/recall extension)
+    const memoryMount = this.resolveMemoryMount(userId, workspace);
+
     // Build container run args
     const args = [
       "run", "--rm", "-i",
@@ -336,6 +350,11 @@ export class SandboxManager {
       "-e", `PI_REMOTE_SESSION=${sessionId}`,
       "-e", `PI_REMOTE_USER=${userId}`,
     ];
+
+    if (memoryMount) {
+      args.push("-v", `${realpath(memoryMount.hostDir)}:${CONTAINER_MEMORY_DIR}`);
+      args.push("-e", `PI_REMOTE_MEMORY_NAMESPACE=${memoryMount.namespace}`);
+    }
 
     // Mount system prompt as read-only at /tmp/
     if (existsSync(systemPromptPath)) {
@@ -612,6 +631,10 @@ export class SandboxManager {
       ? `\n## Workspace Instructions\n\n${workspace.systemPrompt}\n`
       : "";
 
+    const memoryNote = workspace?.memoryEnabled
+      ? `\n## Memory\n\n- Persistent memory is enabled for this workspace (${workspace.memoryNamespace || `ws-${workspace.id}`}).\n- Use \`recall\` before re-investigating known topics.\n- Use \`remember\` for durable discoveries and decisions.\n`
+      : "";
+
     const prompt = `# Pi Remote Session
 
 You are running inside a **Pi Remote container** — a sandboxed coding
@@ -633,7 +656,7 @@ ${cliToolsList}
 
 Load a skill's SKILL.md with \`read\` when the task matches:
 ${skillsList}
-${wsPrompt}
+${wsPrompt}${memoryNote}
 ## Mobile output contract
 
 **The user is on their phone.** This changes how you work:
@@ -679,6 +702,41 @@ approve or deny it.
     }
   }
 
+  private syncOptionalFile(src: string, dest: string, enabled: boolean): void {
+    if (!enabled) {
+      if (existsSync(dest)) rmSync(dest);
+      return;
+    }
+
+    if (!existsSync(src)) {
+      console.log(`[sandbox] ⚠ Optional file not found, skipping: ${src}`);
+      return;
+    }
+
+    if (!existsSync(dest) || isNewer(src, dest)) {
+      cpSync(src, dest);
+    }
+  }
+
+  private resolveMemoryMount(userId: string, workspace?: Workspace): { hostDir: string; namespace: string } | null {
+    if (!workspace?.memoryEnabled) {
+      return null;
+    }
+
+    const namespace = sanitizeMemoryNamespace(workspace.memoryNamespace || `ws-${workspace.id}`);
+    const hostDir = join(this.config.sandboxBaseDir, "_memory", userId, namespace);
+    const journalDir = join(hostDir, "journal");
+
+    mkdirSync(journalDir, { recursive: true, mode: 0o700 });
+
+    const memoryFile = join(hostDir, "MEMORY.md");
+    if (!existsSync(memoryFile)) {
+      writeFileSync(memoryFile, "# Memory\n\n## Rules\n\n- Never store secrets, credentials, API keys, or passwords via `remember`\n");
+    }
+
+    return { hostDir, namespace };
+  }
+
   private syncModels(src: string, dest: string): void {
     if (!existsSync(src)) return;
     const content = readFileSync(src, "utf-8");
@@ -703,6 +761,24 @@ function realpath(p: string): string {
   } catch {
     return p;
   }
+}
+
+function sanitizeMemoryNamespace(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return "default";
+  }
+
+  const cleaned = trimmed
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!cleaned) {
+    return "default";
+  }
+
+  return cleaned.slice(0, 64);
 }
 
 /** Resolve ~ to home directory in a path string. */

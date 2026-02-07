@@ -1,0 +1,138 @@
+import SwiftUI
+
+/// Create a new workspace.
+struct WorkspaceCreateView: View {
+    @Environment(ServerConnection.self) private var connection
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var description = ""
+    @State private var icon = ""
+    @State private var selectedSkills: Set<String> = []
+    @State private var policyPreset = "container"
+    @State private var isCreating = false
+    @State private var error: String?
+
+    private var skills: [SkillInfo] {
+        connection.workspaceStore.skills
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Identity") {
+                    TextField("Name", text: $name)
+                        .autocorrectionDisabled()
+                    TextField("Description (optional)", text: $description)
+                    TextField("Icon — SF Symbol or emoji (optional)", text: $icon)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                }
+
+                Section("Skills") {
+                    if skills.isEmpty {
+                        Text("Loading skills…")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(skills) { skill in
+                            Button {
+                                if selectedSkills.contains(skill.name) {
+                                    selectedSkills.remove(skill.name)
+                                } else {
+                                    selectedSkills.insert(skill.name)
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 4) {
+                                            Text(skill.name)
+                                                .font(.body)
+
+                                            if !skill.containerSafe {
+                                                Image(systemName: "exclamationmark.triangle.fill")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.orange)
+                                            }
+                                        }
+
+                                        Text(skill.description)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: selectedSkills.contains(skill.name) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .tokyoBlue : .secondary)
+                                        .imageScale(.large)
+                                }
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                    }
+                }
+
+                Section("Policy") {
+                    Picker("Preset", selection: $policyPreset) {
+                        Text("Container").tag("container")
+                        Text("Restricted").tag("restricted")
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if let error {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("New Workspace")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        Task { await create() }
+                    }
+                    .disabled(name.isEmpty || isCreating)
+                }
+            }
+            .task { await loadSkills() }
+        }
+    }
+
+    private func loadSkills() async {
+        guard let api = connection.apiClient else { return }
+        if connection.workspaceStore.skills.isEmpty {
+            await connection.workspaceStore.load(api: api)
+        }
+    }
+
+    private func create() async {
+        guard let api = connection.apiClient else { return }
+        isCreating = true
+        error = nil
+
+        let request = CreateWorkspaceRequest(
+            name: name,
+            description: description.isEmpty ? nil : description,
+            icon: icon.isEmpty ? nil : icon,
+            skills: Array(selectedSkills),
+            policyPreset: policyPreset
+        )
+
+        do {
+            let workspace = try await api.createWorkspace(request)
+            connection.workspaceStore.upsert(workspace)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            isCreating = false
+        }
+    }
+}

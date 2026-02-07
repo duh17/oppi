@@ -393,6 +393,8 @@ export class Storage {
       policyPreset: req.policyPreset || "container",
       systemPrompt: req.systemPrompt,
       hostMount: req.hostMount,
+      memoryEnabled: req.memoryEnabled,
+      memoryNamespace: req.memoryEnabled ? (req.memoryNamespace || `ws-${id}`) : req.memoryNamespace,
       defaultModel: req.defaultModel,
       createdAt: now,
       updatedAt: now,
@@ -451,6 +453,11 @@ export class Storage {
     if (updates.policyPreset !== undefined) workspace.policyPreset = updates.policyPreset;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
+    if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
+    if (updates.memoryNamespace !== undefined) workspace.memoryNamespace = updates.memoryNamespace;
+    if (workspace.memoryEnabled && (!workspace.memoryNamespace || workspace.memoryNamespace.trim().length === 0)) {
+      workspace.memoryNamespace = `ws-${workspace.id}`;
+    }
     if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
     workspace.updatedAt = Date.now();
 
@@ -479,6 +486,8 @@ export class Storage {
       icon: "terminal",
       skills: ["searxng", "fetch", "web-browser"],
       policyPreset: "container",
+      memoryEnabled: true,
+      memoryNamespace: "general",
     });
 
     this.createWorkspace(userId, {
@@ -487,6 +496,8 @@ export class Storage {
       icon: "magnifyingglass",
       skills: ["searxng", "fetch", "web-browser", "deep-research", "youtube-transcript"],
       policyPreset: "container",
+      memoryEnabled: true,
+      memoryNamespace: "research",
     });
   }
 

@@ -35,6 +35,10 @@ export interface Workspace {
   systemPrompt?: string;     // Additional instructions appended to base prompt
   hostMount?: string;        // Host directory to mount as /work (e.g. "~/workspace/pios")
 
+  // Memory
+  memoryEnabled?: boolean;   // Enable remember/recall memory extension
+  memoryNamespace?: string;  // Same namespace => shared memory across workspaces
+
   // Defaults
   defaultModel?: string;     // Override server default for this workspace
 
@@ -113,6 +117,8 @@ export interface CreateWorkspaceRequest {
   policyPreset?: string;
   systemPrompt?: string;
   hostMount?: string;
+  memoryEnabled?: boolean;
+  memoryNamespace?: string;
   defaultModel?: string;
 }
 
@@ -124,6 +130,8 @@ export interface UpdateWorkspaceRequest {
   policyPreset?: string;
   systemPrompt?: string;
   hostMount?: string;
+  memoryEnabled?: boolean;
+  memoryNamespace?: string;
   defaultModel?: string;
 }
 

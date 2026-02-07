@@ -20,6 +20,7 @@ import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import type {
   User,
   Session,
+  Workspace,
   ClientMessage,
   ServerMessage,
   CreateSessionRequest,
@@ -278,6 +279,10 @@ export class Server {
     return session;
   }
 
+  private isValidMemoryNamespace(namespace: string): boolean {
+    return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(namespace);
+  }
+
   // ─── Auth ───
 
   private authenticate(req: IncomingMessage): User | null {
@@ -355,6 +360,11 @@ export class Server {
           return;
         }
 
+        if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
+          this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
+          return;
+        }
+
         const workspace = this.storage.createWorkspace(user.id, body);
         this.json(res, { workspace }, 201);
         return;
@@ -381,6 +391,11 @@ export class Server {
               this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
               return;
             }
+          }
+
+          if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
+            this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
+            return;
           }
 
           const updated = this.storage.updateWorkspace(user.id, wsId, body);
@@ -437,12 +452,21 @@ export class Server {
       if (path === "/sessions" && method === "POST") {
         const body = await this.parseBody<CreateSessionRequest>(req);
 
-        // Resolve workspace
-        let workspace = body.workspaceId
-          ? this.storage.getWorkspace(user.id, body.workspaceId)
-          : undefined;
+        // Resolve workspace. If none specified, default to first workspace.
+        this.storage.ensureDefaultWorkspaces(user.id);
+        let workspace: Workspace | undefined;
 
-        // If no workspace specified, use model from workspace default or body
+        if (body.workspaceId) {
+          workspace = this.storage.getWorkspace(user.id, body.workspaceId);
+          if (!workspace) {
+            this.error(res, 404, "Workspace not found");
+            return;
+          }
+        } else {
+          workspace = this.storage.listWorkspaces(user.id)[0];
+        }
+
+        // Session model preference: explicit request > workspace default > server default
         const model = body.model || workspace?.defaultModel;
 
         const session = this.storage.createSession(user.id, body.name, model);

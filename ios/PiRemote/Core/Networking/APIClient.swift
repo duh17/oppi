@@ -45,10 +45,10 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).sessions
     }
 
-    /// Create a new session.
-    func createSession(name: String? = nil, model: String? = nil) async throws -> Session {
-        struct Body: Encodable { let name: String?; let model: String? }
-        let data = try await post("/sessions", body: Body(name: name, model: model))
+    /// Create a new session, optionally tied to a workspace.
+    func createSession(name: String? = nil, model: String? = nil, workspaceId: String? = nil) async throws -> Session {
+        struct Body: Encodable { let name: String?; let model: String?; let workspaceId: String? }
+        let data = try await post("/sessions", body: Body(name: name, model: model, workspaceId: workspaceId))
         struct Response: Decodable { let session: Session }
         return try JSONDecoder().decode(Response.self, from: data).session
     }
@@ -93,6 +93,57 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).models
     }
 
+    // MARK: - Workspaces
+
+    /// List all workspaces for the authenticated user.
+    func listWorkspaces() async throws -> [Workspace] {
+        let data = try await get("/workspaces")
+        struct Response: Decodable { let workspaces: [Workspace] }
+        return try JSONDecoder().decode(Response.self, from: data).workspaces
+    }
+
+    /// Get a single workspace.
+    func getWorkspace(id: String) async throws -> Workspace {
+        let data = try await get("/workspaces/\(id)")
+        struct Response: Decodable { let workspace: Workspace }
+        return try JSONDecoder().decode(Response.self, from: data).workspace
+    }
+
+    /// Create a new workspace.
+    func createWorkspace(_ request: CreateWorkspaceRequest) async throws -> Workspace {
+        let data = try await post("/workspaces", body: request)
+        struct Response: Decodable { let workspace: Workspace }
+        return try JSONDecoder().decode(Response.self, from: data).workspace
+    }
+
+    /// Update an existing workspace.
+    func updateWorkspace(id: String, _ request: UpdateWorkspaceRequest) async throws -> Workspace {
+        let data = try await put("/workspaces/\(id)", body: request)
+        struct Response: Decodable { let workspace: Workspace }
+        return try JSONDecoder().decode(Response.self, from: data).workspace
+    }
+
+    /// Delete a workspace.
+    func deleteWorkspace(id: String) async throws {
+        _ = try await request("DELETE", path: "/workspaces/\(id)")
+    }
+
+    // MARK: - Skills
+
+    /// List available skills from the host's skill pool.
+    func listSkills() async throws -> [SkillInfo] {
+        let data = try await get("/skills")
+        struct Response: Decodable { let skills: [SkillInfo] }
+        return try JSONDecoder().decode(Response.self, from: data).skills
+    }
+
+    /// Rescan host skills (e.g. after adding a new skill on the server).
+    func rescanSkills() async throws -> [SkillInfo] {
+        let data = try await post("/skills/rescan", body: EmptyBody())
+        struct Response: Decodable { let skills: [SkillInfo] }
+        return try JSONDecoder().decode(Response.self, from: data).skills
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.
@@ -118,6 +169,12 @@ actor APIClient {
 
     private func post<T: Encodable>(_ path: String, body: T) async throws -> Data {
         let (data, response) = try await request("POST", path: path, body: body)
+        try checkStatus(response, data: data)
+        return data
+    }
+
+    private func put<T: Encodable>(_ path: String, body: T) async throws -> Data {
+        let (data, response) = try await request("PUT", path: path, body: body)
         try checkStatus(response, data: data)
         return data
     }
@@ -156,6 +213,34 @@ actor APIClient {
 
     private struct EmptyBody: Encodable {}
     private struct ServerError: Decodable { let error: String }
+}
+
+// MARK: - Workspace Request Types
+
+struct CreateWorkspaceRequest: Encodable {
+    let name: String
+    var description: String?
+    var icon: String?
+    let skills: [String]
+    var policyPreset: String?
+    var systemPrompt: String?
+    var hostMount: String?
+    var memoryEnabled: Bool?
+    var memoryNamespace: String?
+    var defaultModel: String?
+}
+
+struct UpdateWorkspaceRequest: Encodable {
+    var name: String?
+    var description: String?
+    var icon: String?
+    var skills: [String]?
+    var policyPreset: String?
+    var systemPrompt: String?
+    var hostMount: String?
+    var memoryEnabled: Bool?
+    var memoryNamespace: String?
+    var defaultModel: String?
 }
 
 // MARK: - Errors

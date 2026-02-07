@@ -91,7 +91,10 @@ struct PiRemoteApp: App {
             let sessions = try await api.listSessions()
             connection.sessionStore.sessions = sessions
 
-            // 4. Register for push notifications (after successful server connection)
+            // 4. Load workspaces + skills
+            await connection.workspaceStore.load(api: api)
+
+            // 5. Register for push notifications (after successful server connection)
             await PushRegistration.shared.requestAndRegister()
         } catch {
             // Offline — show cached state (empty for now)

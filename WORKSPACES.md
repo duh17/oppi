@@ -38,6 +38,10 @@ interface Workspace {
   systemPrompt?: string;    // Additional instructions appended to base prompt
   hostMount?: string;       // Host directory to mount as /work (e.g. "~/workspace/pios")
 
+  // Memory
+  memoryEnabled?: boolean;  // Enable remember/recall extension in this workspace
+  memoryNamespace?: string; // Same namespace => shared memory across workspaces
+
   // Defaults
   defaultModel?: string;    // Override server default for this workspace
 
@@ -80,6 +84,8 @@ const DEFAULT_WORKSPACES: Omit<Workspace, "id" | "userId" | "createdAt" | "updat
     icon: "terminal",
     skills: ["searxng", "fetch", "web-browser"],
     policyPreset: "container",
+    memoryEnabled: true,
+    memoryNamespace: "general",
   },
   {
     name: "research",
@@ -87,9 +93,22 @@ const DEFAULT_WORKSPACES: Omit<Workspace, "id" | "userId" | "createdAt" | "updat
     icon: "magnifyingglass",
     skills: ["searxng", "fetch", "web-browser", "deep-research", "youtube-transcript"],
     policyPreset: "container",
+    memoryEnabled: true,
+    memoryNamespace: "research",
   },
 ];
 ```
+
+### Shared Memory Across Workspaces
+
+`memoryEnabled` turns on the `remember`/`recall` memory extension for that
+workspace. Memory data is keyed by `memoryNamespace`.
+
+- Different namespace → isolated memory per workspace
+- Same namespace across multiple workspaces → shared memory pool
+
+Example: set both `coding` and `research` to `memoryNamespace: "shared-core"`
+if you want findings remembered in one workspace to be recallable in the other.
 
 ## Implementation
 

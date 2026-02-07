@@ -24,6 +24,7 @@ final class ServerConnection {
     // Stores
     let sessionStore = SessionStore()
     let permissionStore = PermissionStore()
+    let workspaceStore = WorkspaceStore()
 
     // Runtime pipeline
     let reducer = TimelineReducer()
@@ -150,6 +151,9 @@ final class ServerConnection {
         } catch {
             logger.error("Failed to refresh sessions: \(error)")
         }
+
+        // Refresh workspaces + skills
+        await workspaceStore.load(api: apiClient)
 
         // Refresh current session's message history
         do {

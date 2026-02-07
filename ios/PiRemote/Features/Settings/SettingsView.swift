@@ -24,6 +24,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Workspaces") {
+                NavigationLink {
+                    WorkspaceListView()
+                } label: {
+                    Label("Manage Workspaces", systemImage: "square.grid.2x2")
+                }
+            }
+
             Section("Account") {
                 Button("Disconnect & Sign Out", role: .destructive) {
                     signOut()

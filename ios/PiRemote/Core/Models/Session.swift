@@ -16,6 +16,8 @@ enum SessionStatus: String, Codable, Sendable {
 struct Session: Identifiable, Sendable, Equatable {
     let id: String
     let userId: String
+    var workspaceId: String?
+    var workspaceName: String?
     var name: String?
     var status: SessionStatus
     let createdAt: Date
@@ -42,7 +44,8 @@ struct TokenUsage: Codable, Sendable, Equatable {
 
 extension Session: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, userId, name, status, createdAt, lastActivity
+        case id, userId, workspaceId, workspaceName
+        case name, status, createdAt, lastActivity
         case model, messageCount, tokens, cost
         case contextTokens, contextWindow, lastMessage
     }
@@ -51,6 +54,8 @@ extension Session: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         userId = try c.decode(String.self, forKey: .userId)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
         name = try c.decodeIfPresent(String.self, forKey: .name)
         status = try c.decode(SessionStatus.self, forKey: .status)
         model = try c.decodeIfPresent(String.self, forKey: .model)
@@ -73,6 +78,8 @@ extension Session: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(userId, forKey: .userId)
+        try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
+        try c.encodeIfPresent(workspaceName, forKey: .workspaceName)
         try c.encodeIfPresent(name, forKey: .name)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(model, forKey: .model)
