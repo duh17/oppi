@@ -1,0 +1,60 @@
+name: PiRemote
+options:
+  bundleIdPrefix: dev.chenda
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.2"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: 1
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    INFOPLIST_KEY_UILaunchScreen_Generation: true
+    INFOPLIST_KEY_NSCameraUsageDescription: "Pi Remote needs camera access to scan the server QR code."
+    ENABLE_USER_SCRIPT_SANDBOXING: true
+targets:
+  PiRemote:
+    type: application
+    platform: iOS
+    sources:
+      - path: PiRemote
+        type: group
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.PiRemote
+        PRODUCT_NAME: PiRemote
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+    info:
+      path: PiRemote/Resources/Info.plist
+      properties:
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UILaunchScreen: {}
+  PiRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PiRemoteTests
+        type: group
+    dependencies:
+      - target: PiRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.PiRemoteTests
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_ALLOWED: "NO"
+schemes:
+  PiRemote:
+    build:
+      targets:
+        PiRemote: all
+        PiRemoteTests: [test]
+    test:
+      targets:
+        - PiRemoteTests

@@ -1,0 +1,234 @@
+import Foundation
+
+/// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
+///
+/// State machine that accumulates deltas into items, manages tool correlation,
+/// and produces the item array that drives the chat `LazyVStack`.
+///
+/// ## Transition Rules
+/// - `agentStart`: clear turn buffers, begin new assistant context
+/// - `thinkingDelta`: append to thinking buffer, upsert thinking item
+/// - `textDelta`: append to assistant buffer, upsert assistant message
+/// - `toolStart`: append new toolCall item
+/// - `toolOutput`: append to ToolOutputStore, update toolCall preview
+/// - `toolEnd`: mark toolCall as done
+/// - `agentEnd`: flush buffers, finalize assistant message
+/// - `error` / `sessionEnded`: flush, append terminal item
+@MainActor @Observable
+final class TimelineReducer {
+    private(set) var items: [ChatItem] = []
+
+    // Turn-local buffers (reset on agentStart, finalized on agentEnd)
+    private var currentAssistantID: String?
+    private var assistantBuffer: String = ""
+    private var currentThinkingID: String?
+    private var thinkingBuffer: String = ""
+
+    /// Expansion state — external from ChatItem payload to avoid Equatable cost.
+    var expandedItemIDs: Set<String> = []
+
+    /// Separate store for full tool output.
+    let toolOutputStore = ToolOutputStore()
+
+    // MARK: - Load from REST (reconnect)
+
+    /// Rebuild timeline from stored messages (after reconnect/foreground).
+    /// Only contains user/assistant/system messages — tool events are lost.
+    func loadFromREST(_ messages: [SessionMessage]) {
+        items.removeAll()
+        assistantBuffer = ""
+        thinkingBuffer = ""
+        currentAssistantID = nil
+        currentThinkingID = nil
+        toolOutputStore.clearAll()
+
+        for msg in messages {
+            switch msg.role {
+            case .user:
+                items.append(.userMessage(id: msg.id, text: msg.content, timestamp: msg.timestamp))
+            case .assistant:
+                items.append(.assistantMessage(id: msg.id, text: msg.content, timestamp: msg.timestamp))
+            case .system:
+                items.append(.systemEvent(id: msg.id, message: msg.content))
+            }
+        }
+    }
+
+    // MARK: - Process Agent Events
+
+    func process(_ event: AgentEvent) {
+        switch event {
+        case .agentStart:
+            clearTurnBuffers()
+            // New assistant turn — ID assigned on first text delta
+
+        case .agentEnd:
+            finalizeAssistantMessage()
+            finalizeThinking()
+            closeOrphanedTool()
+
+        case .textDelta(_, let delta):
+            assistantBuffer += delta
+            upsertAssistantMessage()
+
+        case .thinkingDelta(_, let delta):
+            thinkingBuffer += delta
+            upsertThinking()
+
+        case .toolStart(_, let toolEventId, let tool, let args):
+            let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
+                .joined(separator: ", ")
+            items.append(.toolCall(
+                id: toolEventId,
+                tool: tool,
+                argsSummary: ChatItem.preview(argsSummary),
+                outputPreview: "",
+                outputByteCount: 0,
+                isError: false,
+                isDone: false
+            ))
+
+        case .toolOutput(_, let toolEventId, let output, let isError):
+            toolOutputStore.append(output, to: toolEventId)
+            updateToolCallPreview(id: toolEventId, isError: isError)
+
+        case .toolEnd(_, let toolEventId):
+            updateToolCallDone(id: toolEventId)
+
+        case .permissionRequest(let request):
+            items.append(.permission(request))
+
+        case .permissionExpired(let id):
+            resolvePermission(id: id, action: .deny)
+
+        case .sessionEnded(_, let reason):
+            finalizeAssistantMessage()
+            items.append(.systemEvent(id: UUID().uuidString, message: "Session ended: \(reason)"))
+
+        case .error(_, let message):
+            // Check for retry pattern — render as system event, not error
+            if message.hasPrefix("Retrying (") {
+                items.append(.systemEvent(id: UUID().uuidString, message: message))
+            } else {
+                items.append(.error(id: UUID().uuidString, message: message))
+            }
+        }
+    }
+
+    // MARK: - User Message (from local prompt)
+
+    func appendUserMessage(_ text: String) {
+        items.append(.userMessage(
+            id: UUID().uuidString,
+            text: text,
+            timestamp: Date()
+        ))
+    }
+
+    // MARK: - Permission Resolution
+
+    func resolvePermission(id: String, action: PermissionAction) {
+        // Replace the permission item with a resolved badge
+        if let idx = items.firstIndex(where: { $0.id == id }) {
+            items[idx] = .permissionResolved(id: id, action: action)
+        }
+    }
+
+    // MARK: - Private
+
+    private func clearTurnBuffers() {
+        assistantBuffer = ""
+        thinkingBuffer = ""
+        currentAssistantID = nil
+        currentThinkingID = nil
+    }
+
+    private func upsertAssistantMessage() {
+        let id = currentAssistantID ?? UUID().uuidString
+        if currentAssistantID == nil { currentAssistantID = id }
+
+        let item = ChatItem.assistantMessage(
+            id: id,
+            text: assistantBuffer,
+            timestamp: Date()
+        )
+
+        if let idx = items.firstIndex(where: { $0.id == id }) {
+            items[idx] = item
+        } else {
+            items.append(item)
+        }
+    }
+
+    private func upsertThinking() {
+        let id = currentThinkingID ?? UUID().uuidString
+        if currentThinkingID == nil { currentThinkingID = id }
+
+        let preview = ChatItem.preview(thinkingBuffer)
+        let item = ChatItem.thinking(
+            id: id,
+            preview: preview,
+            hasMore: thinkingBuffer.count > ChatItem.maxPreviewLength
+        )
+
+        if let idx = items.firstIndex(where: { $0.id == id }) {
+            items[idx] = item
+        } else {
+            items.append(item)
+        }
+    }
+
+    private func finalizeAssistantMessage() {
+        guard !assistantBuffer.isEmpty else { return }
+        upsertAssistantMessage()
+        assistantBuffer = ""
+        currentAssistantID = nil
+    }
+
+    private func finalizeThinking() {
+        thinkingBuffer = ""
+        currentThinkingID = nil
+    }
+
+    private func closeOrphanedTool() {
+        // If the last tool item isn't marked done, mark it now
+        if let last = items.last,
+           case .toolCall(let id, let tool, let args, let preview, let bytes, let isErr, let isDone) = last,
+           !isDone {
+            items[items.count - 1] = .toolCall(
+                id: id, tool: tool, argsSummary: args,
+                outputPreview: preview, outputByteCount: bytes,
+                isError: isErr, isDone: true
+            )
+        }
+    }
+
+    private func updateToolCallPreview(id: String, isError: Bool) {
+        guard let idx = items.firstIndex(where: { $0.id == id }),
+              case .toolCall(_, let tool, let args, _, _, let existingError, let isDone) = items[idx]
+        else { return }
+
+        let fullOutput = toolOutputStore.fullOutput(for: id)
+        items[idx] = .toolCall(
+            id: id,
+            tool: tool,
+            argsSummary: args,
+            outputPreview: ChatItem.preview(fullOutput),
+            outputByteCount: fullOutput.utf8.count,
+            isError: existingError || isError,
+            isDone: isDone
+        )
+    }
+
+    private func updateToolCallDone(id: String) {
+        guard let idx = items.firstIndex(where: { $0.id == id }),
+              case .toolCall(_, let tool, let args, let preview, let bytes, let isErr, _) = items[idx]
+        else { return }
+
+        items[idx] = .toolCall(
+            id: id, tool: tool, argsSummary: args,
+            outputPreview: preview, outputByteCount: bytes,
+            isError: isErr, isDone: true
+        )
+    }
+}

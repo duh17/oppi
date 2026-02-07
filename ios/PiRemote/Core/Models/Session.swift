@@ -1,0 +1,127 @@
+import Foundation
+
+/// Session status matching server's `Session.status`.
+enum SessionStatus: String, Codable, Sendable {
+    case starting
+    case ready
+    case busy
+    case stopped
+    case error
+}
+
+/// Session model matching server's `Session` type.
+///
+/// Server sends timestamps as Unix milliseconds (not ISO 8601).
+/// Manual Decodable handles the conversion.
+struct Session: Identifiable, Sendable, Equatable {
+    let id: String
+    let userId: String
+    var name: String?
+    var status: SessionStatus
+    let createdAt: Date
+    var lastActivity: Date
+    var model: String?
+
+    var messageCount: Int
+    var tokens: TokenUsage
+    var cost: Double
+
+    var lastMessage: String?
+}
+
+struct TokenUsage: Codable, Sendable, Equatable {
+    var input: Int
+    var output: Int
+}
+
+// MARK: - Codable (Unix millisecond timestamps)
+
+extension Session: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id, userId, name, status, createdAt, lastActivity
+        case model, messageCount, tokens, cost, lastMessage
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        userId = try c.decode(String.self, forKey: .userId)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        status = try c.decode(SessionStatus.self, forKey: .status)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        messageCount = try c.decode(Int.self, forKey: .messageCount)
+        tokens = try c.decode(TokenUsage.self, forKey: .tokens)
+        cost = try c.decode(Double.self, forKey: .cost)
+        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
+
+        // Server sends Unix milliseconds
+        let createdMs = try c.decode(Double.self, forKey: .createdAt)
+        createdAt = Date(timeIntervalSince1970: createdMs / 1000)
+
+        let activityMs = try c.decode(Double.self, forKey: .lastActivity)
+        lastActivity = Date(timeIntervalSince1970: activityMs / 1000)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(userId, forKey: .userId)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encode(messageCount, forKey: .messageCount)
+        try c.encode(tokens, forKey: .tokens)
+        try c.encode(cost, forKey: .cost)
+        try c.encodeIfPresent(lastMessage, forKey: .lastMessage)
+        try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
+        try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)
+    }
+}
+
+/// A stored message in a session (user or assistant turn).
+struct SessionMessage: Identifiable, Codable, Sendable, Equatable {
+    let id: String
+    let sessionId: String
+    let role: MessageRole
+    let content: String
+    let timestamp: Date
+    var model: String?
+    var tokens: TokenUsage?
+    var cost: Double?
+
+    enum MessageRole: String, Codable, Sendable {
+        case user
+        case assistant
+        case system
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, sessionId, role, content, timestamp, model, tokens, cost
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        role = try c.decode(MessageRole.self, forKey: .role)
+        content = try c.decode(String.self, forKey: .content)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        tokens = try c.decodeIfPresent(TokenUsage.self, forKey: .tokens)
+        cost = try c.decodeIfPresent(Double.self, forKey: .cost)
+
+        let tsMs = try c.decode(Double.self, forKey: .timestamp)
+        timestamp = Date(timeIntervalSince1970: tsMs / 1000)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(role, forKey: .role)
+        try c.encode(content, forKey: .content)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(tokens, forKey: .tokens)
+        try c.encodeIfPresent(cost, forKey: .cost)
+        try c.encode(timestamp.timeIntervalSince1970 * 1000, forKey: .timestamp)
+    }
+}
