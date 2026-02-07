@@ -43,6 +43,12 @@ targets:
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: "Pi Remote needs camera access to scan the server QR code."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
     dependencies:
       - target: PiRemoteActivityExtension
         embed: true

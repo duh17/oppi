@@ -158,15 +158,6 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
     process.exit(1);
   }
 
-  // Check if user already exists
-  const existing = storage.listUsers().find(u => u.name.toLowerCase() === name.toLowerCase());
-  if (existing) {
-    console.log(chalk.yellow(`  User "${name}" already exists.`));
-    console.log(chalk.dim(`  Use 'pi-remote users regenerate ${name}' for a new token.`));
-    console.log("");
-    process.exit(1);
-  }
-
   const config = storage.getConfig();
   const hostname = getTailscaleHostname();
   
@@ -177,8 +168,12 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
     process.exit(1);
   }
 
-  // Create user
-  const user = storage.createUser(name);
+  // Reuse existing user or create new one
+  const existing = storage.listUsers().find(u => u.name.toLowerCase() === name.toLowerCase());
+  const user = existing ?? storage.createUser(name);
+  if (existing) {
+    console.log(chalk.dim(`  (showing QR for existing user "${name}")`));
+  }
 
   // Build invite data
   const inviteData: InviteData = {
@@ -188,6 +183,8 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
     name: hostname.split(".")[0], // Short name like "mac-studio"
   };
 
+  // QR payload is JSON (matches iOS app's JSONDecoder expectation)
+  const inviteJson = JSON.stringify(inviteData);
   const inviteUrl = `pi://connect?${new URLSearchParams({
     host: inviteData.host,
     port: inviteData.port.toString(),
@@ -201,7 +198,7 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
   console.log("  Scan this QR code with the Pi app:");
   console.log("");
 
-  qrcode.generate(inviteUrl, { small: true }, (qr) => {
+  qrcode.generate(inviteJson, { small: true }, (qr) => {
     // Indent QR code
     console.log(qr.split("\n").map(line => "     " + line).join("\n"));
   });
@@ -214,7 +211,7 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
   // Save QR as image if requested
   if (saveFile) {
     const outputPath = saveFile.endsWith(".png") ? saveFile : `${saveFile}.png`;
-    await QRCode.toFile(outputPath, inviteUrl, {
+    await QRCode.toFile(outputPath, inviteJson, {
       width: 400,
       margin: 2,
     });

@@ -180,6 +180,12 @@ export class SandboxManager {
       join(agentDir, "models.json"),
     );
 
+    // Sync settings.json from host pi (if present) — carries defaultModel, defaultProvider, etc.
+    this.syncFile(
+      join(homedir(), ".pi", "agent", "settings.json"),
+      join(agentDir, "settings.json"),
+    );
+
     // Install permission-gate extension to agent/extensions/ (pi auto-discovers from ~/.pi/agent/extensions/)
     if (existsSync(EXTENSION_SRC)) {
       const dest = join(agentDir, "extensions", "permission-gate");
