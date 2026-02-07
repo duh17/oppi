@@ -69,6 +69,38 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func assistantTextIsSplitAroundToolCall() {
+        let reducer = TimelineReducer()
+        let toolId = "tool-1"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "before"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "pwd"]))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+        reducer.process(.textDelta(sessionId: "s1", delta: "after"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        #expect(reducer.items.count == 3)
+
+        guard case .assistantMessage(_, let before, _) = reducer.items[0] else {
+            Issue.record("Expected first assistant message")
+            return
+        }
+        #expect(before == "before")
+
+        guard case .toolCall = reducer.items[1] else {
+            Issue.record("Expected tool call between assistant chunks")
+            return
+        }
+
+        guard case .assistantMessage(_, let after, _) = reducer.items[2] else {
+            Issue.record("Expected second assistant message")
+            return
+        }
+        #expect(after == "after")
+    }
+
+    @MainActor
     @Test func permissionInTimeline() {
         let reducer = TimelineReducer()
         let perm = PermissionRequest(

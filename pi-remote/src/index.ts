@@ -17,6 +17,7 @@ import QRCode from "qrcode";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
 import type { APNsConfig } from "./push.js";
@@ -67,18 +68,69 @@ function getTailscaleIp(): string | null {
   return null;
 }
 
+function getLocalHostname(): string | null {
+  try {
+    const localHostName = execSync("scutil --get LocalHostName", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (localHostName) {
+      return `${localHostName}.local`;
+    }
+  } catch {}
+
+  try {
+    const host = osHostname().trim();
+    if (!host) return null;
+    if (host.endsWith(".local")) return host;
+    return `${host.split(".")[0]}.local`;
+  } catch {}
+
+  return null;
+}
+
+function getLocalIp(): string | null {
+  const nets = networkInterfaces();
+
+  for (const iface of Object.values(nets)) {
+    if (!iface) continue;
+
+    for (const addr of iface) {
+      if (addr.family !== "IPv4") continue;
+      if (addr.internal) continue;
+      if (addr.address.startsWith("169.254.")) continue; // Link-local fallback
+      return addr.address;
+    }
+  }
+
+  return null;
+}
+
+function resolveInviteHost(hostOverride?: string): string | null {
+  if (hostOverride?.trim()) return hostOverride.trim();
+  return getTailscaleHostname() || getTailscaleIp() || getLocalHostname() || getLocalIp();
+}
+
+function shortHostLabel(host: string): string {
+  // Keep IPs as-is, trim FQDNs to first label.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host;
+  return host.split(".")[0] || host;
+}
+
 // ─── Commands ───
 
 async function cmdServe(storage: Storage): Promise<void> {
   printHeader();
 
   const config = storage.getConfig();
-  const hostname = getTailscaleHostname();
-  const ip = getTailscaleIp();
+  const tailscaleHostname = getTailscaleHostname();
+  const tailscaleIp = getTailscaleIp();
+  const localHostname = getLocalHostname();
+  const localIp = getLocalIp();
 
-  if (!hostname && !ip) {
-    console.log(chalk.yellow("  ⚠️  Tailscale not connected"));
-    console.log(chalk.dim("     Run 'tailscale up' first"));
+  if (!tailscaleHostname && !tailscaleIp) {
+    console.log(chalk.yellow("  ⚠️  Tailscale not connected (local network still works)"));
+    console.log(chalk.dim("     Run 'tailscale up' if you want remote/tailnet access"));
     console.log("");
   }
 
@@ -125,11 +177,17 @@ async function cmdServe(storage: Storage): Promise<void> {
   await server.start();
 
   console.log("");
-  if (hostname) {
-    console.log(`  Tailscale: ${chalk.cyan(hostname)}:${config.port}`);
+  if (tailscaleHostname) {
+    console.log(`  Tailscale: ${chalk.cyan(tailscaleHostname)}:${config.port}`);
   }
-  if (ip) {
-    console.log(`  IP:        ${chalk.dim(ip)}:${config.port}`);
+  if (tailscaleIp) {
+    console.log(`  Tail IP:   ${chalk.dim(tailscaleIp)}:${config.port}`);
+  }
+  if (localHostname) {
+    console.log(`  Local:     ${chalk.dim(localHostname)}:${config.port}`);
+  }
+  if (localIp) {
+    console.log(`  LAN IP:    ${chalk.dim(localIp)}:${config.port}`);
   }
   console.log(`  Data:      ${chalk.dim(storage.getDataDir())}`);
   console.log("");
@@ -148,24 +206,30 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log("");
 }
 
-async function cmdInvite(storage: Storage, name: string, saveFile?: string): Promise<void> {
+async function cmdInvite(storage: Storage, name: string, saveFile?: string, hostOverride?: string): Promise<void> {
   printHeader();
 
   if (!name) {
     console.log(chalk.red("  Error: Name required"));
-    console.log(chalk.dim("  Usage: pi-remote invite <name>"));
+    console.log(chalk.dim("  Usage: pi-remote invite <name> [--host <host>]"));
     console.log("");
     process.exit(1);
   }
 
   const config = storage.getConfig();
-  const hostname = getTailscaleHostname();
-  
-  if (!hostname) {
-    console.log(chalk.red("  Error: Tailscale not connected"));
-    console.log(chalk.dim("  Run 'tailscale up' first"));
+  const inviteHost = resolveInviteHost(hostOverride);
+
+  if (!inviteHost) {
+    console.log(chalk.red("  Error: Could not determine invite host"));
+    console.log(chalk.dim("  Pass --host <hostname-or-ip>, e.g. --host mac-studio.local"));
     console.log("");
     process.exit(1);
+  }
+
+  if (hostOverride?.trim()) {
+    console.log(chalk.dim(`  (using host override: ${inviteHost})`));
+  } else if (!inviteHost.endsWith(".ts.net")) {
+    console.log(chalk.dim(`  (using local-network host: ${inviteHost})`));
   }
 
   // Reuse existing user or create new one
@@ -177,10 +241,10 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string): Pro
 
   // Build invite data
   const inviteData: InviteData = {
-    host: hostname,
+    host: inviteHost,
     port: config.port,
     token: user.token,
-    name: hostname.split(".")[0], // Short name like "mac-studio"
+    name: shortHostLabel(inviteHost),
   };
 
   // QR payload is JSON (matches iOS app's JSONDecoder expectation)
@@ -289,6 +353,8 @@ function cmdStatus(storage: Storage): void {
   const config = storage.getConfig();
   const hostname = getTailscaleHostname();
   const ip = getTailscaleIp();
+  const localHostname = getLocalHostname();
+  const localIp = getLocalIp();
 
   console.log("  " + chalk.bold("Server Configuration"));
   console.log("");
@@ -303,6 +369,16 @@ function cmdStatus(storage: Storage): void {
     console.log(`  IP:        ${ip || chalk.dim("unknown")}`);
   } else {
     console.log(`  Status:    ${chalk.yellow("Not connected")}`);
+  }
+  console.log("");
+
+  console.log("  " + chalk.bold("Local Network"));
+  console.log("");
+  if (localHostname || localIp) {
+    console.log(`  Hostname:  ${localHostname || chalk.dim("unknown")}`);
+    console.log(`  IP:        ${localIp || chalk.dim("unknown")}`);
+  } else {
+    console.log(`  Status:    ${chalk.yellow("No active LAN interface detected")}`);
   }
   console.log("");
 
@@ -336,12 +412,14 @@ function cmdHelp(): void {
   console.log("  " + chalk.bold("Options:"));
   console.log("");
   console.log(`    ${chalk.dim("--save <file>")}      Save invite QR as PNG`);
+  console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in invite QR`);
   console.log(`    ${chalk.dim("--port <n>")}         Override port (default: 7749)`);
   console.log("");
   console.log("  " + chalk.bold("Examples:"));
   console.log("");
   console.log(`    ${chalk.dim("pi-remote serve")}`);
   console.log(`    ${chalk.dim('pi-remote invite "Wife" --save wife-invite.png')}`);
+  console.log(`    ${chalk.dim('pi-remote invite "Wife" --host mac-studio.local')}`);
   console.log(`    ${chalk.dim("pi-remote users remove Wife")}`);
   console.log("");
 }
@@ -380,7 +458,7 @@ async function main(): Promise<void> {
       break;
 
     case "invite":
-      await cmdInvite(storage, positional[0], flags.save);
+      await cmdInvite(storage, positional[0], flags.save, flags.host);
       break;
 
     case "users":

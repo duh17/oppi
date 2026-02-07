@@ -20,6 +20,7 @@ struct ChatInputBar: View {
                     onForceStop()
                 }
                 .font(.caption)
+                .foregroundStyle(.tokyoRed)
             }
 
             HStack(spacing: 12) {
@@ -30,6 +31,9 @@ struct ChatInputBar: View {
                 )
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.tokyoFg)
+                .tint(.tokyoBlue)
                 .disabled(isBusy)
 
                 if isBusy {
@@ -37,24 +41,31 @@ struct ChatInputBar: View {
                         if isStopping {
                             ProgressView()
                                 .controlSize(.small)
+                                .tint(.tokyoOrange)
                         } else {
                             Image(systemName: "stop.fill")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(.tokyoRed)
                         }
                     }
                     .disabled(isStopping)
                     .frame(width: 36, height: 36)
                 } else {
+                    let canSend = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     Button(action: onSend) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.title2)
+                            .foregroundStyle(canSend ? .tokyoBlue : .tokyoComment)
                     }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canSend)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+            )
         }
         .padding(.horizontal)
         .padding(.bottom, 8)

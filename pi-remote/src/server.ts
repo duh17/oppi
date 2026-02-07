@@ -14,6 +14,7 @@ import { SessionManager, type ExtensionUIResponse } from "./sessions.js";
 import { PolicyEngine } from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
 import { SandboxManager } from "./sandbox.js";
+import { SkillRegistry } from "./skills.js";
 import { readSessionTrace } from "./trace.js";
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import type {
@@ -22,6 +23,8 @@ import type {
   ClientMessage,
   ServerMessage,
   CreateSessionRequest,
+  CreateWorkspaceRequest,
+  UpdateWorkspaceRequest,
   RegisterDeviceTokenRequest,
   ApiError,
 } from "./types.js";
@@ -53,7 +56,21 @@ const AVAILABLE_MODELS: ModelInfo[] = [
 ];
 
 function getContextWindow(modelId: string): number {
-  return AVAILABLE_MODELS.find(m => m.id === modelId)?.contextWindow ?? 200000;
+  const known = AVAILABLE_MODELS.find(m => m.id === modelId)?.contextWindow;
+  if (known) {
+    return known;
+  }
+
+  // Generic model-id fallback, e.g. "...-272k" / "..._128k".
+  const match = modelId.match(/(\d{2,4})k\b/i);
+  if (match) {
+    const thousands = Number.parseInt(match[1], 10);
+    if (Number.isFinite(thousands) && thousands > 0) {
+      return thousands * 1000;
+    }
+  }
+
+  return 200000;
 }
 
 export class Server {
@@ -62,6 +79,7 @@ export class Server {
   private policy: PolicyEngine;
   private gate: GateServer;
   private sandbox: SandboxManager;
+  private skillRegistry: SkillRegistry;
   private push: PushClient;
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
@@ -72,9 +90,12 @@ export class Server {
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
 
-    this.policy = new PolicyEngine("container"); // Per-user in v2
+    this.policy = new PolicyEngine("container"); // Per-workspace in v2
     this.gate = new GateServer(this.policy);
     this.sandbox = new SandboxManager();
+    this.skillRegistry = new SkillRegistry();
+    this.skillRegistry.scan();
+    this.sandbox.setSkillRegistry(this.skillRegistry);
     this.push = createPushClient(apnsConfig);
     this.sessions = new SessionManager(storage, this.gate, this.sandbox);
 
@@ -244,9 +265,17 @@ export class Server {
     for (const user of this.storage.listUsers()) {
       const sessions = this.storage.listUserSessions(user.id);
       const match = sessions.find(s => s.id === sessionId);
-      if (match) return match;
+      if (match) return this.ensureSessionContextWindow(match);
     }
     return undefined;
+  }
+
+  private ensureSessionContextWindow(session: Session): Session {
+    if (!session.contextWindow || session.contextWindow <= 0) {
+      session.contextWindow = getContextWindow(session.model || "");
+      this.storage.saveSession(session);
+    }
+    return session;
   }
 
   // ─── Auth ───
@@ -267,7 +296,7 @@ export class Server {
     const method = req.method || "GET";
 
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
 
     if (method === "OPTIONS") { res.writeHead(204); res.end(); return; }
@@ -291,6 +320,79 @@ export class Server {
       if (path === "/models" && method === "GET") {
         this.json(res, { models: AVAILABLE_MODELS });
         return;
+      }
+
+      // Skills — available skill pool from host
+      if (path === "/skills" && method === "GET") {
+        this.json(res, { skills: this.skillRegistry.list() });
+        return;
+      }
+
+      // Rescan skills (e.g. after adding a new skill on host)
+      if (path === "/skills/rescan" && method === "POST") {
+        this.skillRegistry.scan();
+        this.json(res, { skills: this.skillRegistry.list() });
+        return;
+      }
+
+      // Workspaces
+      if (path === "/workspaces" && method === "GET") {
+        this.storage.ensureDefaultWorkspaces(user.id);
+        const workspaces = this.storage.listWorkspaces(user.id);
+        this.json(res, { workspaces });
+        return;
+      }
+
+      if (path === "/workspaces" && method === "POST") {
+        const body = await this.parseBody<CreateWorkspaceRequest>(req);
+        if (!body.name) { this.error(res, 400, "name required"); return; }
+        if (!body.skills || !Array.isArray(body.skills)) { this.error(res, 400, "skills array required"); return; }
+
+        // Validate skill names against registry
+        const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+        if (unknown.length > 0) {
+          this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
+          return;
+        }
+
+        const workspace = this.storage.createWorkspace(user.id, body);
+        this.json(res, { workspace }, 201);
+        return;
+      }
+
+      const wsMatch = path.match(/^\/workspaces\/([^/]+)$/);
+      if (wsMatch) {
+        const wsId = wsMatch[1];
+        const workspace = this.storage.getWorkspace(user.id, wsId);
+        if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
+
+        if (method === "GET") {
+          this.json(res, { workspace });
+          return;
+        }
+
+        if (method === "PUT") {
+          const body = await this.parseBody<UpdateWorkspaceRequest>(req);
+
+          // Validate skill names if updating
+          if (body.skills) {
+            const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+            if (unknown.length > 0) {
+              this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
+              return;
+            }
+          }
+
+          const updated = this.storage.updateWorkspace(user.id, wsId, body);
+          this.json(res, { workspace: updated });
+          return;
+        }
+
+        if (method === "DELETE") {
+          this.storage.deleteWorkspace(user.id, wsId);
+          this.json(res, { ok: true });
+          return;
+        }
       }
 
       // Device token registration (APNs + Live Activity)
@@ -325,16 +427,35 @@ export class Server {
       }
 
       if (path === "/sessions" && method === "GET") {
-        this.json(res, { sessions: this.storage.listUserSessions(user.id) });
+        const sessions = this.storage
+          .listUserSessions(user.id)
+          .map(session => this.ensureSessionContextWindow(session));
+        this.json(res, { sessions });
         return;
       }
 
       if (path === "/sessions" && method === "POST") {
         const body = await this.parseBody<CreateSessionRequest>(req);
-        const session = this.storage.createSession(user.id, body.name, body.model);
-        session.contextWindow = getContextWindow(session.model || "");
-        this.storage.saveSession(session);
-        this.json(res, { session }, 201);
+
+        // Resolve workspace
+        let workspace = body.workspaceId
+          ? this.storage.getWorkspace(user.id, body.workspaceId)
+          : undefined;
+
+        // If no workspace specified, use model from workspace default or body
+        const model = body.model || workspace?.defaultModel;
+
+        const session = this.storage.createSession(user.id, body.name, model);
+
+        // Attach workspace metadata to session
+        if (workspace) {
+          session.workspaceId = workspace.id;
+          session.workspaceName = workspace.name;
+          this.storage.saveSession(session);
+        }
+
+        const hydrated = this.ensureSessionContextWindow(session);
+        this.json(res, { session: hydrated }, 201);
         return;
       }
 
@@ -344,16 +465,21 @@ export class Server {
         const session = this.storage.getSession(user.id, sessionId);
         if (!session) { this.error(res, 404, "Session not found"); return; }
 
+        const hydratedSession = this.ensureSessionContextWindow(session);
+
         if (this.sessions.isActive(user.id, sessionId)) {
           await this.sessions.stopSession(user.id, sessionId);
         } else {
-          session.status = "stopped";
-          session.lastActivity = Date.now();
-          this.storage.saveSession(session);
+          hydratedSession.status = "stopped";
+          hydratedSession.lastActivity = Date.now();
+          this.storage.saveSession(hydratedSession);
         }
 
         const updatedSession = this.storage.getSession(user.id, sessionId);
-        this.json(res, { ok: true, session: updatedSession });
+        const hydratedUpdated = updatedSession
+          ? this.ensureSessionContextWindow(updatedSession)
+          : updatedSession;
+        this.json(res, { ok: true, session: hydratedUpdated });
         return;
       }
 
@@ -364,9 +490,10 @@ export class Server {
         const session = this.storage.getSession(user.id, sessionId);
         if (!session) { this.error(res, 404, "Session not found"); return; }
 
+        const hydratedSession = this.ensureSessionContextWindow(session);
         const sandboxBaseDir = this.sandbox.getBaseDir();
         const trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
-        this.json(res, { session, trace: trace || [] });
+        this.json(res, { session: hydratedSession, trace: trace || [] });
         return;
       }
 
@@ -376,9 +503,11 @@ export class Server {
         const session = this.storage.getSession(user.id, sessionId);
         if (!session) { this.error(res, 404, "Session not found"); return; }
 
+        const hydratedSession = this.ensureSessionContextWindow(session);
+
         if (method === "GET") {
           const messages = this.storage.getSessionMessages(user.id, sessionId);
-          this.json(res, { session, messages });
+          this.json(res, { session: hydratedSession, messages });
           return;
         }
 
@@ -456,8 +585,14 @@ export class Server {
     };
 
     try {
-      const activeSession = await this.sessions.startSession(user.id, session.id, user.name);
-      send({ type: "connected", session: activeSession });
+      // Resolve workspace for this session
+      const workspace = session.workspaceId
+        ? this.storage.getWorkspace(user.id, session.workspaceId)
+        : undefined;
+
+      const activeSession = await this.sessions.startSession(user.id, session.id, user.name, workspace);
+      const hydratedSession = this.ensureSessionContextWindow(activeSession);
+      send({ type: "connected", session: hydratedSession });
 
       // Send pending permission requests
       for (const pending of this.gate.getPendingForUser(user.id)) {
@@ -480,7 +615,7 @@ export class Server {
       ws.on("message", async (data) => {
         try {
           const msg = JSON.parse(data.toString()) as ClientMessage;
-          await this.handleClientMessage(user, activeSession, msg, send);
+          await this.handleClientMessage(user, hydratedSession, msg, send);
         } catch (err: any) {
           send({ type: "error", error: err.message });
         }
@@ -551,7 +686,9 @@ export class Server {
 
       case "get_state": {
         const active = this.sessions.getActiveSession(user.id, session.id);
-        if (active) send({ type: "state", session: active });
+        if (active) {
+          send({ type: "state", session: this.ensureSessionContextWindow(active) });
+        }
         break;
       }
 

@@ -1,12 +1,12 @@
 import Foundation
 
-/// Batches high-frequency text/thinking deltas for smooth 30fps rendering.
+/// Batches high-frequency stream deltas for smooth 30fps rendering.
 ///
 /// Rules:
-/// - `textDelta` / `thinkingDelta`: buffer and flush every 33ms
+/// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush every 33ms
 /// - All other events: flush buffer immediately, then deliver event
 ///
-/// This prevents per-token SwiftUI diff thrash while keeping tool starts,
+/// This prevents per-token/chunk SwiftUI diff thrash while keeping tool starts,
 /// permissions, and errors latency-free.
 @MainActor
 final class DeltaCoalescer {
@@ -20,7 +20,7 @@ final class DeltaCoalescer {
     func receive(_ event: AgentEvent) {
         switch event {
         // High-frequency: batch
-        case .textDelta, .thinkingDelta:
+        case .textDelta, .thinkingDelta, .toolOutput:
             buffer.append(event)
             scheduleFlushIfNeeded()
 
@@ -28,7 +28,6 @@ final class DeltaCoalescer {
         case .permissionRequest,
              .permissionExpired,
              .toolStart,
-             .toolOutput,
              .toolEnd,
              .agentStart,
              .agentEnd,

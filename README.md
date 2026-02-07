@@ -65,6 +65,64 @@ npx tsx src/index.ts invite "Wife" --save wife-invite.png
 2. Scans QR code
 3. Done! She can start chatting
 
+## iOS Build + Deploy from mac-studio (SSH/local network)
+
+One-time prerequisites on mac-studio:
+
+1. Pair iPhone with Xcode once (trust computer, enable Developer Mode)
+2. Enable wireless debugging / local-network pairing
+3. Ensure signing works locally in Xcode at least once
+
+Build + install directly on mac-studio:
+
+```bash
+./ios/scripts/build-install.sh --device <iphone-udid> --launch
+```
+
+Trigger the same flow remotely over SSH:
+
+```bash
+./scripts/ios-deploy-ssh.sh --host mac-studio -- --device <iphone-udid> --launch
+```
+
+Auto-redeploy on file changes (watch mode):
+
+```bash
+./scripts/ios-deploy-ssh.sh --watch -- --skip-generate --launch
+```
+
+If SSH signing fails (`errSecInternalComponent`), unlock keychain in the remote build:
+
+```bash
+ssh mac-studio '
+  export PI_KEYCHAIN_PASSWORD="<login-password>"
+  cd /Users/chenda/workspace/pios
+  ./ios/scripts/build-install.sh --unlock-keychain --device <iphone-udid> --launch
+'
+```
+
+### Debug logging for deploy + runtime
+
+Persist build/install/launch logs:
+
+```bash
+./ios/scripts/build-install.sh --logs-dir ~/Library/Logs/PiRemote --launch
+./scripts/ios-deploy-ssh.sh --local-log-dir ~/Library/Logs/PiRemote -- --logs-dir ~/Library/Logs/PiRemote --launch
+```
+
+Collect device OSLog entries for PiRemote:
+
+```bash
+./ios/scripts/collect-device-logs.sh --device <iphone-udid> --last 30m --include-debug
+```
+
+If `pi-remote invite` should use LAN instead of Tailscale:
+
+```bash
+cd pi-remote
+npx tsx src/index.ts invite "Chen" --host mac-studio.local
+```
+
 ## Onboarding Flow
 
 ### For You (One-Time Setup)
@@ -95,11 +153,12 @@ pi-remote invite "Wife" --save invite.png
 ## CLI Reference
 
 ```bash
-pi-remote serve              # Start the server
-pi-remote invite <name>      # Create invite QR
-pi-remote users              # List users
-pi-remote users remove <n>   # Remove a user
-pi-remote status             # Show server status
+pi-remote serve                    # Start the server
+pi-remote invite <name>            # Create invite QR
+pi-remote invite <name> --host ... # Force LAN/tailnet host in QR payload
+pi-remote users                    # List users
+pi-remote users remove <n>         # Remove a user
+pi-remote status                   # Show server status
 ```
 
 ## API

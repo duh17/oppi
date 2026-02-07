@@ -6,22 +6,28 @@
 
 ## Overview
 
-Pi Remote for iOS is the mobile supervision layer for pi coding agents running
-on a home server. The phone is the **permission authority** — not a terminal
-emulator, not a chat app. The agent works autonomously; you step in only when
-it needs approval for something dangerous.
+Pi Remote for iOS is the mobile workshop for pi coding agents running on a
+home server. Two roles: **permission authority** (approve dangerous actions)
+and **skill workshop** (build, refine, and curate what your agent can do).
 
 **Target:** iOS 26+ (Liquid Glass), SwiftUI, iPhone-only (portrait locked)
 
-**Core loop:**
+**Core loops:**
+
+Permission (safety):
 ```
 Notification: "pi wants to run `git push origin main`"
-→ Glance at your phone
-→ Tap Allow or Deny
-→ Back to life
+→ Glance at your phone → Tap Allow or Deny → Back to life
 ```
 
-Everything else (chat, session management, activity feed) supports this loop.
+Skills (growth):
+```
+"I need my agent to analyze Strava exports"
+→ Describe on phone → Agent builds skill → Test → Refine → Save
+→ Future sessions have it pre-loaded
+```
+
+Sessions, skills, and permissions are the three pillars of the app.
 
 ---
 
@@ -90,7 +96,8 @@ PiRemote/
 │   │   └── ServerConnection.swift # Connection state, reconnect, scenePhase
 │   │
 │   ├── Models/
-│   │   ├── Session.swift          # Session, SessionMessage
+│   │   ├── Session.swift          # Session, SessionMessage, SessionPurpose
+│   │   ├── Skill.swift            # Skill, SkillVersion, SkillState
 │   │   ├── Permission.swift       # PermissionRequest, risk levels
 │   │   ├── User.swift             # User, auth token
 │   │   ├── ServerConfig.swift     # Host, port, connection info
@@ -113,6 +120,7 @@ PiRemote/
 │   ├── Services/
 │   │   ├── SessionService.swift   # Session lifecycle management
 │   │   ├── PermissionService.swift # Permission queue + resolution
+│   │   ├── SkillService.swift     # Skill CRUD + version management
 │   │   ├── NotificationService.swift # APNs registration + handling
 │   │   └── KeychainService.swift  # Secure token storage
 │   │
@@ -148,8 +156,22 @@ PiRemote/
 │   │   ├── ExtensionDialogView.swift   # select/confirm/input dialogs
 │   │   └── ExtensionStatusView.swift   # Notification/status forwarding
 │   │
-│   ├── Live/
-│   │   └── LiveFeedView.swift     # Ephemeral cross-session live events
+│   ├── Skills/
+│   │   ├── SkillListView.swift         # Main Skills tab — grouped by state
+│   │   ├── SkillRowView.swift          # Skill card in list
+│   │   ├── SkillDetailView.swift       # Skill detail + files + versions
+│   │   ├── SkillCreationSheet.swift    # "+" flow → describe → start session
+│   │   ├── SkillSaveBanner.swift       # "Save as Skill" banner in chat
+│   │   └── VersionHistoryView.swift    # Version list + restore
+│   │
+│   ├── Files/
+│   │   ├── FileListView.swift          # Directory browser (session + skill)
+│   │   ├── FileRowView.swift           # Single file row
+│   │   ├── FilePreviewView.swift       # Router to type-specific previews
+│   │   ├── MarkdownPreviewView.swift   # Markdown rendering
+│   │   ├── HTMLPreviewView.swift       # WKWebView for HTML
+│   │   ├── ImagePreviewView.swift      # AsyncImage viewer
+│   │   └── CodePreviewView.swift       # Monospace text
 │   │
 │   └── Settings/
 │       ├── SettingsView.swift     # Server info, policy, about
@@ -189,6 +211,15 @@ final class PermissionStore {
 }
 
 @MainActor @Observable
+final class SkillStore {
+    var skills: [Skill] = []            // All skills (built-in + user)
+    var drafts: [SkillDraft] = []       // In-progress from sessions
+
+    var active: [Skill] { skills.filter { $0.state == .active || $0.state == .builtIn } }
+    var archived: [Skill] { skills.filter { $0.state == .archived } }
+}
+
+@MainActor @Observable
 final class AppNavigation {
     var selectedTab: Tab = .sessions
     var showOnboarding: Bool = true
@@ -203,7 +234,7 @@ enum ConnectionStatus {
 
 enum Tab: Hashable {
     case sessions
-    case activity
+    case skills
     case settings
 }
 ```
@@ -697,9 +728,9 @@ TabView(selection: $navigation.selectedTab) {
             SessionListView()
         }
     }
-    Tab("Live", systemImage: "list.bullet.rectangle", value: .activity) {
+    Tab("Skills", systemImage: "wrench.and.screwdriver", value: .skills) {
         NavigationStack {
-            LiveFeedView()
+            SkillListView()
         }
     }
     Tab("Settings", systemImage: "gear", value: .settings) {

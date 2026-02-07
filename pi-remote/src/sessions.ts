@@ -14,7 +14,7 @@
 import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import type { Session, SessionMessage, ServerMessage, ServerConfig } from "./types.js";
+import type { Session, SessionMessage, ServerMessage, ServerConfig, Workspace } from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
@@ -98,7 +98,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Start a new session — spawns pi in a container.
    */
-  async startSession(userId: string, sessionId: string, userName?: string): Promise<Session> {
+  async startSession(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
     const key = `${userId}/${sessionId}`;
 
     if (this.active.has(key)) {
@@ -108,7 +108,7 @@ export class SessionManager extends EventEmitter {
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-    const proc = await this.spawnPi(session, userName);
+    const proc = await this.spawnPi(session, userName, workspace);
 
     const activeSession: ActiveSession = {
       session,
@@ -131,7 +131,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Spawn pi inside a container via SandboxManager.
    */
-  private async spawnPi(session: Session, userName?: string): Promise<ChildProcess> {
+  private async spawnPi(session: Session, userName?: string, workspace?: Workspace): Promise<ChildProcess> {
     const key = `${session.userId}/${session.id}`;
 
     // Create gate TCP socket (extension connects from container to host)
@@ -143,6 +143,7 @@ export class SessionManager extends EventEmitter {
       userId: session.userId,
       userName,
       model: session.model,
+      workspace,
       gatePort,
     });
 

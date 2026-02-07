@@ -16,11 +16,40 @@ export interface User {
   liveActivityToken?: string;
 }
 
+// ─── Workspaces ───
+
+export interface Workspace {
+  id: string;
+  userId: string;
+  name: string;              // "coding", "research"
+  description?: string;      // shown in workspace picker
+  icon?: string;             // SF Symbol name or emoji
+
+  // Skills — which skills to sync into the session
+  skills: string[];          // ["searxng", "fetch", "ast-grep"]
+
+  // Permissions
+  policyPreset: string;      // "container" | "restricted"
+
+  // Context
+  systemPrompt?: string;     // Additional instructions appended to base prompt
+  hostMount?: string;        // Host directory to mount as /work (e.g. "~/workspace/pios")
+
+  // Defaults
+  defaultModel?: string;     // Override server default for this workspace
+
+  // Metadata
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Sessions ───
 
 export interface Session {
   id: string;
   userId: string;
+  workspaceId?: string;      // which workspace spawned this session
+  workspaceName?: string;    // denormalized for display
   name?: string;
   status: "starting" | "ready" | "busy" | "stopped" | "error";
   createdAt: number;
@@ -73,6 +102,29 @@ export interface ApiError {
 export interface CreateSessionRequest {
   name?: string;
   model?: string;
+  workspaceId?: string;
+}
+
+export interface CreateWorkspaceRequest {
+  name: string;
+  description?: string;
+  icon?: string;
+  skills: string[];
+  policyPreset?: string;
+  systemPrompt?: string;
+  hostMount?: string;
+  defaultModel?: string;
+}
+
+export interface UpdateWorkspaceRequest {
+  name?: string;
+  description?: string;
+  icon?: string;
+  skills?: string[];
+  policyPreset?: string;
+  systemPrompt?: string;
+  hostMount?: string;
+  defaultModel?: string;
 }
 
 export interface CreateSessionResponse {

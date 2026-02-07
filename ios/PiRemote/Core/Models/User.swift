@@ -16,19 +16,14 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     let name: String
 
     /// Base URL for REST and WebSocket connections.
-    var baseURL: URL {
-        // Host is validated during QR parse / manual entry
-        guard let url = URL(string: "http://\(host):\(port)") else {
-            fatalError("Invalid server credentials: host=\(host) port=\(port)")
-        }
-        return url
+    /// Returns `nil` for malformed host (corrupted QR, bad keychain data).
+    var baseURL: URL? {
+        URL(string: "http://\(host):\(port)")
     }
 
     /// WebSocket URL for a specific session.
-    func webSocketURL(sessionId: String) -> URL {
-        guard let url = URL(string: "ws://\(host):\(port)/sessions/\(sessionId)/stream") else {
-            fatalError("Invalid WebSocket URL for session \(sessionId)")
-        }
-        return url
+    /// Returns `nil` for malformed host.
+    func webSocketURL(sessionId: String) -> URL? {
+        URL(string: "ws://\(host):\(port)/sessions/\(sessionId)/stream")
     }
 }

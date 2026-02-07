@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Pi Remote needs camera access to scan the server QR code.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pi Remote needs local network access to connect to your Mac server.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

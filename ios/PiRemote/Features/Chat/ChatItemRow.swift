@@ -46,13 +46,19 @@ private struct UserMessageBubble: View {
     let text: String
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 60)
+        HStack(alignment: .top, spacing: 8) {
+            Text("❯")
+                .font(.system(.body, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.tokyoBlue)
+
             Text(text)
-                .padding(12)
-                .background(.tint.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.tokyoFg)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
     }
 }
 
@@ -63,13 +69,17 @@ private struct AssistantMessageBubble: View {
     var isStreaming: Bool = false
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
+            Text("π")
+                .font(.system(.body, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.tokyoPurple)
+
             MarkdownText(text, isStreaming: isStreaming)
-                .padding(12)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-            Spacer(minLength: 40)
+                .foregroundStyle(.tokyoFg)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
     }
 }
 
@@ -83,14 +93,15 @@ private struct ThinkingRow: View {
             DisclosureGroup {
                 Text(preview)
                     .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tokyoComment)
             } label: {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.small)
+                        .tint(.tokyoPurple)
                     Text("Thinking…")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tokyoComment)
                 }
             }
             Spacer(minLength: 40)
@@ -134,16 +145,17 @@ private struct ToolCallRow: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: isDone ? (isError ? "xmark.circle.fill" : "checkmark.circle.fill") : "play.circle.fill")
-                            .foregroundStyle(isError ? .red : isDone ? .green : .blue)
+                            .foregroundStyle(isError ? .tokyoRed : isDone ? .tokyoGreen : .tokyoBlue)
                             .font(.caption)
 
                         Text(tool)
                             .font(.caption.monospaced().bold())
+                            .foregroundStyle(.tokyoCyan)
 
                         if !argsSummary.isEmpty {
                             Text(argsSummary)
                                 .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.tokyoFgDim)
                                 .lineLimit(1)
                         }
 
@@ -152,12 +164,12 @@ private struct ToolCallRow: View {
                         if outputByteCount > 0 {
                             Text(formatBytes(outputByteCount))
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.tokyoComment)
                         }
 
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.tokyoComment)
                     }
                 }
                 .buttonStyle(.plain)
@@ -174,8 +186,12 @@ private struct ToolCallRow: View {
                 }
             }
             .padding(8)
-            .background(Color(.secondarySystemBackground).opacity(0.5))
+            .background(Color.tokyoBgHighlight.opacity(0.75))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+            )
             .contextMenu {
                 if !outputPreview.isEmpty {
                     Button("Copy Output", systemImage: "doc.on.doc") {
@@ -210,7 +226,7 @@ private struct ToolOutputContent: View {
             // Text output (truncated for display)
             Text(output.prefix(2000))
                 .font(.caption.monospaced())
-                .foregroundStyle(isError ? .red : .primary)
+                .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
                 .textSelection(.enabled)
 
             // Inline images
@@ -220,7 +236,7 @@ private struct ToolOutputContent: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.tertiarySystemBackground))
+        .background(Color.tokyoBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -236,11 +252,11 @@ private struct PermissionResolvedBadge: View {
             Text(action == .allow ? "Allowed" : "Denied")
                 .font(.caption.bold())
         }
-        .foregroundStyle(action == .allow ? .green : .red)
+        .foregroundStyle(action == .allow ? .tokyoGreen : .tokyoRed)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
-            (action == .allow ? Color.green : Color.red).opacity(0.1)
+            (action == .allow ? Color.tokyoGreen : Color.tokyoRed).opacity(0.18)
         )
         .clipShape(Capsule())
     }
@@ -254,11 +270,11 @@ struct SystemEventRow: View {
     var body: some View {
         HStack {
             Image(systemName: "info.circle")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tokyoComment)
                 .font(.caption)
             Text(message)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tokyoComment)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 4)
@@ -273,13 +289,14 @@ private struct ErrorRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(.tokyoRed)
             Text(message)
                 .font(.subheadline)
+                .foregroundStyle(.tokyoFg)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.red.opacity(0.1))
+        .background(Color.tokyoRed.opacity(0.18))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

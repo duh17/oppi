@@ -127,7 +127,10 @@ struct OnboardingView: View {
 
             // Save credentials and transition
             try KeychainService.saveCredentials(credentials)
-            connection.configure(credentials: credentials)
+            guard connection.configure(credentials: credentials) else {
+                connectionTest = .failed("Invalid server address")
+                return
+            }
 
             // Load sessions
             let sessions = try await api.listSessions()

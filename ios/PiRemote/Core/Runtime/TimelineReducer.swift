@@ -25,6 +25,7 @@ final class TimelineReducer {
     // Turn-local buffers (reset on agentStart, finalized on agentEnd)
     private var currentAssistantID: String?
     private var assistantBuffer: String = ""
+
     private var currentThinkingID: String?
     private var thinkingBuffer: String = ""
 
@@ -159,10 +160,71 @@ final class TimelineReducer {
 
     /// Process a batch of events with a single renderVersion bump.
     /// Use this from the coalescer to avoid per-event SwiftUI diffs.
+    ///
+    /// Perf note: text/thinking/tool-output deltas are high-frequency. In a
+    /// batch, append to local accumulators and upsert affected rows once.
     func processBatch(_ events: [AgentEvent]) {
-        for event in events {
-            processInternal(event)
+        var hasPendingAssistantUpsert = false
+        var hasPendingThinkingUpsert = false
+
+        var pendingToolOutputByID: [String: String] = [:]
+        var pendingToolOutputIsError: [String: Bool] = [:]
+        var pendingToolOutputOrder: [String] = []
+
+        func flushPendingUpserts() {
+            if hasPendingThinkingUpsert {
+                upsertThinking()
+                hasPendingThinkingUpsert = false
+            }
+
+            if hasPendingAssistantUpsert {
+                upsertAssistantMessage()
+                hasPendingAssistantUpsert = false
+            }
+
+            if !pendingToolOutputOrder.isEmpty {
+                for toolEventId in pendingToolOutputOrder {
+                    if let output = pendingToolOutputByID[toolEventId], !output.isEmpty {
+                        toolOutputStore.append(output, to: toolEventId)
+                    }
+                    updateToolCallPreview(
+                        id: toolEventId,
+                        isError: pendingToolOutputIsError[toolEventId] ?? false
+                    )
+                }
+                pendingToolOutputByID.removeAll(keepingCapacity: true)
+                pendingToolOutputIsError.removeAll(keepingCapacity: true)
+                pendingToolOutputOrder.removeAll(keepingCapacity: true)
+            }
         }
+
+        for event in events {
+            switch event {
+            case .textDelta(_, let delta):
+                assistantBuffer += delta
+                hasPendingAssistantUpsert = true
+
+            case .thinkingDelta(_, let delta):
+                thinkingBuffer += delta
+                hasPendingThinkingUpsert = true
+
+            case .toolOutput(_, let toolEventId, let output, let isError):
+                if pendingToolOutputByID[toolEventId] == nil {
+                    pendingToolOutputOrder.append(toolEventId)
+                    pendingToolOutputByID[toolEventId] = output
+                    pendingToolOutputIsError[toolEventId] = isError
+                } else {
+                    pendingToolOutputByID[toolEventId, default: ""] += output
+                    pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || isError
+                }
+
+            default:
+                flushPendingUpserts()
+                processInternal(event)
+            }
+        }
+
+        flushPendingUpserts()
         bumpRenderVersion()
     }
 
@@ -192,6 +254,11 @@ final class TimelineReducer {
             upsertThinking()
 
         case .toolStart(_, let toolEventId, let tool, let args):
+            // Split assistant text around tool boundaries so chronology in the
+            // timeline matches execution order (text-before-tool, tool row,
+            // text-after-tool).
+            finalizeAssistantMessage()
+
             let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
                 .joined(separator: ", ")
             items.append(.toolCall(

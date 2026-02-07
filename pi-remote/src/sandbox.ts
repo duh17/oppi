@@ -27,6 +27,8 @@ import {
 import { join, dirname, relative } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import type { Workspace } from "./types.js";
+import type { SkillRegistry } from "./skills.js";
 
 // ─── Constants ───
 
@@ -45,17 +47,18 @@ const BUNDLED_SKILLS_DIR = join(__dirname, "..", "skills");
 
 // ─── Built-in Skills ───
 
-/** Skills synced into every session. Order: host dotfiles > bundled fallback. */
-const BUILT_IN_SKILLS = ["searxng", "fetch", "web-browser"] as const;
+/** Fallback skills when no workspace is configured. */
+const DEFAULT_SKILLS = ["searxng", "fetch", "web-browser"];
 
 /**
  * CLI shim binaries — scripts in skills that should be on $PATH.
  * Maps bin name → relative path from skills dir.
+ * Shims are created only for skills that are actually installed.
  */
-const SKILL_SHIMS: Record<string, string> = {
-  "search":      "searxng/scripts/search",
-  "fetch":       "fetch/scripts/fetch",
-  "fetch-allow": "fetch/scripts/fetch-allow",
+const SKILL_SHIMS: Record<string, { skill: string; path: string }> = {
+  "search":      { skill: "searxng", path: "searxng/scripts/search" },
+  "fetch":       { skill: "fetch",   path: "fetch/scripts/fetch" },
+  "fetch-allow": { skill: "fetch",   path: "fetch/scripts/fetch-allow" },
 };
 
 /** Default allowed domains for the fetch skill (container-safe defaults). */
@@ -108,6 +111,8 @@ export interface SpawnOptions {
   userId: string;
   userName?: string;
   model?: string;
+  /** Workspace configuration for this session. */
+  workspace?: Workspace;
   /** Gate TCP port on host (extension connects to host-gateway:port) */
   gatePort?: number;
   /** Extra env vars to pass to the container */
@@ -126,10 +131,16 @@ const DEFAULTS: SandboxConfig = {
 
 export class SandboxManager {
   readonly config: SandboxConfig;
+  private skillRegistry: SkillRegistry | null = null;
   private running: Map<string, { containerId: string; process: ChildProcess }> = new Map();
 
   constructor(config?: Partial<SandboxConfig>) {
     this.config = { ...DEFAULTS, ...config };
+  }
+
+  /** Wire up the skill registry for workspace-driven skill selection. */
+  setSkillRegistry(registry: SkillRegistry): void {
+    this.skillRegistry = registry;
   }
 
   /** Expose base dir for trace file reading. */
@@ -205,7 +216,7 @@ export class SandboxManager {
   initSession(
     userId: string,
     sessionId: string,
-    opts?: { userName?: string; model?: string },
+    opts?: { userName?: string; model?: string; workspace?: Workspace },
   ): { piDir: string; workDir: string } {
     const piDir = join(this.config.sandboxBaseDir, userId, sessionId);
     const agentDir = join(piDir, "agent");
@@ -250,14 +261,17 @@ export class SandboxManager {
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    // Sync built-in skills into session
-    const installedSkills = this.syncBuiltInSkills(agentDir);
+    // Sync skills — workspace-driven or fallback to defaults
+    const requestedSkills = opts?.workspace?.skills ?? DEFAULT_SKILLS;
+    const installedSkills = this.syncSkills(agentDir, requestedSkills);
 
     // Create shim binaries (bin/ on $PATH inside container)
-    this.createSkillShims(piDir, agentDir);
+    this.createSkillShims(piDir, agentDir, installedSkills);
 
     // Write default fetch allowlist (if not already present)
-    this.writeFetchAllowlist(piDir);
+    if (installedSkills.includes("fetch")) {
+      this.writeFetchAllowlist(piDir);
+    }
 
     // Generate session system prompt
     this.generateSystemPrompt(piDir, installedSkills, opts);
@@ -272,8 +286,8 @@ export class SandboxManager {
    * with stdin/stdout/stderr piped for RPC communication.
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
-    const { sessionId, userId, userName, model, gatePort, env: extraEnv } = opts;
-    const { piDir, workDir } = this.initSession(userId, sessionId, { userName, model });
+    const { sessionId, userId, userName, model, workspace, gatePort, env: extraEnv } = opts;
+    const { piDir, workDir } = this.initSession(userId, sessionId, { userName, model, workspace });
 
     // Build pi args
     const piArgs = ["--mode", "rpc"];
@@ -295,6 +309,11 @@ export class SandboxManager {
 
     const containerId = `pi-remote-${sessionId}`;
 
+    // Resolve work directory — workspace hostMount overrides default
+    const workMount = workspace?.hostMount
+      ? realpath(resolveHomePath(workspace.hostMount))
+      : realpath(workDir);
+
     // Build container run args
     const args = [
       "run", "--rm", "-i",
@@ -303,7 +322,7 @@ export class SandboxManager {
       "-m", `${this.config.memoryMb}M`,
 
       // Mounts — resolve symlinks (container CLI doesn't follow them)
-      "-v", `${realpath(workDir)}:${CONTAINER_WORK}`,
+      "-v", `${workMount}:${CONTAINER_WORK}`,
       "-v", `${realpath(piDir)}:${CONTAINER_PI_HOME}`,
       "-v", `${realpath(this.config.uvCacheDir)}:${CONTAINER_UV_CACHE}`,
 
@@ -439,11 +458,12 @@ export class SandboxManager {
   // ─── Skill Sync ───
 
   /**
-   * Copy built-in skills into the session's agent/skills/ directory.
-   * Source priority: host dotfiles > bundled fallback copies.
+   * Sync requested skills into the session's agent/skills/ directory.
+   *
+   * Source priority: SkillRegistry (host paths) > bundled fallback.
    * Returns list of skill names that were actually installed.
    */
-  private syncBuiltInSkills(agentDir: string): string[] {
+  private syncSkills(agentDir: string, requestedSkills: string[]): string[] {
     const skillsDir = join(agentDir, "skills");
     if (!existsSync(skillsDir)) {
       mkdirSync(skillsDir, { recursive: true });
@@ -452,16 +472,25 @@ export class SandboxManager {
     const hostSkillsDir = join(homedir(), ".pi", "agent", "skills");
     const installed: string[] = [];
 
-    for (const name of BUILT_IN_SKILLS) {
+    for (const name of requestedSkills) {
       const dest = join(skillsDir, name);
 
-      // Source priority: host dotfiles (dereference symlinks) > bundled
+      // Source priority: registry (exact host path) > host dotfiles > bundled
+      const registryPath = this.skillRegistry?.getPath(name);
       const hostSrc = join(hostSkillsDir, name);
       const bundledSrc = join(BUNDLED_SKILLS_DIR, name);
-      const src = existsSync(hostSrc) ? hostSrc : existsSync(bundledSrc) ? bundledSrc : null;
+
+      let src: string | null = null;
+      if (registryPath && existsSync(registryPath)) {
+        src = registryPath;
+      } else if (existsSync(hostSrc)) {
+        src = hostSrc;
+      } else if (existsSync(bundledSrc)) {
+        src = bundledSrc;
+      }
 
       if (!src) {
-        console.log(`[sandbox] ⚠ Skill "${name}" not found on host or in bundled, skipping`);
+        console.log(`[sandbox] ⚠ Skill "${name}" not found, skipping`);
         continue;
       }
 
@@ -475,7 +504,7 @@ export class SandboxManager {
     }
 
     if (installed.length > 0) {
-      console.log(`[sandbox] Synced ${installed.length} built-in skill(s): ${installed.join(", ")}`);
+      console.log(`[sandbox] Synced ${installed.length} skill(s): ${installed.join(", ")}`);
     }
 
     return installed;
@@ -484,20 +513,29 @@ export class SandboxManager {
   /**
    * Create symlink shims in bin/ so skill scripts are on $PATH.
    * Container has PATH="/home/pi/.pi/bin:..." so these are callable directly.
+   * Only creates shims for skills that were actually installed.
    */
-  private createSkillShims(piDir: string, agentDir: string): void {
+  private createSkillShims(piDir: string, agentDir: string, installedSkills: string[]): void {
     const binDir = join(piDir, "bin");
     if (!existsSync(binDir)) {
       mkdirSync(binDir, { recursive: true });
     }
 
-    for (const [binName, skillPath] of Object.entries(SKILL_SHIMS)) {
-      const target = join(agentDir, "skills", skillPath);
+    const installedSet = new Set(installedSkills);
+
+    for (const [binName, shim] of Object.entries(SKILL_SHIMS)) {
       const link = join(binDir, binName);
 
+      // Only create shim if the skill is installed in this session
+      if (!installedSet.has(shim.skill)) {
+        // Clean up stale shims from previous runs with different workspaces
+        if (existsSync(link)) rmSync(link);
+        continue;
+      }
+
+      const target = join(agentDir, "skills", shim.path);
       if (!existsSync(target)) continue;
 
-      // Use relative symlink so it works inside the container mount
       if (existsSync(link)) rmSync(link);
       const relTarget = relative(binDir, target);
       symlinkSync(relTarget, link);
@@ -529,30 +567,56 @@ export class SandboxManager {
 
   /**
    * Generate a session system prompt that tells the agent:
-   * - what environment it's in
+   * - what environment it's in (including workspace name)
    * - what tools/skills are available
+   * - workspace-specific instructions
    * - how to behave for a phone-based user (mobile output contract)
    */
   private generateSystemPrompt(
     piDir: string,
     installedSkills: string[],
-    opts?: { userName?: string; model?: string },
+    opts?: { userName?: string; model?: string; workspace?: Workspace },
   ): void {
     const skillsList = installedSkills.map((name) => {
+      // Try to get description from registry for richer skill docs
+      const info = this.skillRegistry?.get(name);
+      const desc = info?.description;
+
       if (name === "searxng") return "- **searxng** — `search \"query\"` for private web search";
       if (name === "fetch") return "- **fetch** — `fetch \"url\"` to extract readable content from URLs";
       if (name === "web-browser") return "- **web-browser** — headless Chrome automation (screenshots, navigation)";
+      if (desc) return `- **${name}** — ${desc}`;
       return `- **${name}**`;
     }).join("\n");
 
     const userName = opts?.userName ?? "the user";
     const modelNote = opts?.model ? `\nModel: ${opts.model}` : "";
+    const workspace = opts?.workspace;
+    const wsNote = workspace ? `\nWorkspace: **${workspace.name}**${workspace.description ? ` — ${workspace.description}` : ""}` : "";
+
+    // Build CLI tools section based on installed skills
+    const cliTools: string[] = [];
+    if (installedSkills.includes("searxng")) {
+      cliTools.push('- `search "query"` — SearXNG web search (private, self-hosted)');
+    }
+    if (installedSkills.includes("fetch")) {
+      cliTools.push('- `fetch "url"` — Extract readable content from URLs');
+      cliTools.push('- `fetch "url" --browser` — Force headless Chromium for JS-rendered pages');
+    }
+    cliTools.push("- Standard dev tools: git, rg, fd, jq, make, tree, sqlite, uv");
+
+    const cliToolsList = cliTools.join("\n");
+
+    // Workspace-specific instructions
+    const wsPrompt = workspace?.systemPrompt
+      ? `\n## Workspace Instructions\n\n${workspace.systemPrompt}\n`
+      : "";
 
     const prompt = `# Pi Remote Session
 
 You are running inside a **Pi Remote container** — a sandboxed coding
 environment managed from a mobile app. ${userName} interacts with you from
-their phone.${modelNote}
+their phone.${modelNote}${wsNote}
 
 ## Environment
 
@@ -563,16 +627,13 @@ their phone.${modelNote}
 
 ## CLI tools on PATH
 
-- \`search "query"\` — SearXNG web search (private, self-hosted)
-- \`fetch "url"\` — Extract readable content from URLs
-- \`fetch "url" --browser\` — Force headless Chromium for JS-rendered pages
-- Standard dev tools: git, rg, fd, jq, make, tree, sqlite, uv
+${cliToolsList}
 
 ## Skills
 
 Load a skill's SKILL.md with \`read\` when the task matches:
 ${skillsList}
-
+${wsPrompt}
 ## Mobile output contract
 
 **The user is on their phone.** This changes how you work:
@@ -642,4 +703,15 @@ function realpath(p: string): string {
   } catch {
     return p;
   }
+}
+
+/** Resolve ~ to home directory in a path string. */
+function resolveHomePath(p: string): string {
+  if (p.startsWith("~/")) {
+    return join(homedir(), p.slice(2));
+  }
+  if (p === "~") {
+    return homedir();
+  }
+  return p;
 }

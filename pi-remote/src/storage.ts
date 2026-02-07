@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { nanoid } from "nanoid";
-import type { User, Session, SessionMessage, ServerConfig } from "./types.js";
+import type { User, Session, SessionMessage, ServerConfig, Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
 
@@ -23,6 +23,7 @@ export class Storage {
   private configPath: string;
   private usersPath: string;
   private sessionsDir: string;
+  private workspacesDir: string;
   
   private config: ServerConfig;
   private users: Map<string, User> = new Map();
@@ -33,6 +34,7 @@ export class Storage {
     this.configPath = join(this.dataDir, "config.json");
     this.usersPath = join(this.dataDir, "users.json");
     this.sessionsDir = join(this.dataDir, "sessions");
+    this.workspacesDir = join(this.dataDir, "workspaces");
     
     this.ensureDirectories();
     this.config = this.loadConfig();
@@ -40,11 +42,10 @@ export class Storage {
   }
 
   private ensureDirectories(): void {
-    if (!existsSync(this.dataDir)) {
-      mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
-    }
-    if (!existsSync(this.sessionsDir)) {
-      mkdirSync(this.sessionsDir, { recursive: true });
+    for (const dir of [this.dataDir, this.sessionsDir, this.workspacesDir]) {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
     }
   }
 
@@ -370,6 +371,123 @@ export class Storage {
     
     rmSync(path);
     return true;
+  }
+
+  // ─── Workspaces ───
+
+  private getWorkspacePath(userId: string, workspaceId: string): string {
+    return join(this.workspacesDir, userId, `${workspaceId}.json`);
+  }
+
+  createWorkspace(userId: string, req: CreateWorkspaceRequest): Workspace {
+    const id = nanoid(8);
+    const now = Date.now();
+
+    const workspace: Workspace = {
+      id,
+      userId,
+      name: req.name,
+      description: req.description,
+      icon: req.icon,
+      skills: req.skills,
+      policyPreset: req.policyPreset || "container",
+      systemPrompt: req.systemPrompt,
+      hostMount: req.hostMount,
+      defaultModel: req.defaultModel,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.saveWorkspace(workspace);
+    return workspace;
+  }
+
+  saveWorkspace(workspace: Workspace): void {
+    const dir = join(this.workspacesDir, workspace.userId);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    const path = this.getWorkspacePath(workspace.userId, workspace.id);
+    writeFileSync(path, JSON.stringify(workspace, null, 2));
+  }
+
+  getWorkspace(userId: string, workspaceId: string): Workspace | undefined {
+    const path = this.getWorkspacePath(userId, workspaceId);
+    if (!existsSync(path)) return undefined;
+
+    try {
+      return JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      return undefined;
+    }
+  }
+
+  listWorkspaces(userId: string): Workspace[] {
+    const dir = join(this.workspacesDir, userId);
+    if (!existsSync(dir)) return [];
+
+    const workspaces: Workspace[] = [];
+
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
+        workspaces.push(ws);
+      } catch {}
+    }
+
+    return workspaces.sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  updateWorkspace(userId: string, workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
+    const workspace = this.getWorkspace(userId, workspaceId);
+    if (!workspace) return undefined;
+
+    if (updates.name !== undefined) workspace.name = updates.name;
+    if (updates.description !== undefined) workspace.description = updates.description;
+    if (updates.icon !== undefined) workspace.icon = updates.icon;
+    if (updates.skills !== undefined) workspace.skills = updates.skills;
+    if (updates.policyPreset !== undefined) workspace.policyPreset = updates.policyPreset;
+    if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
+    if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
+    if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
+    workspace.updatedAt = Date.now();
+
+    this.saveWorkspace(workspace);
+    return workspace;
+  }
+
+  deleteWorkspace(userId: string, workspaceId: string): boolean {
+    const path = this.getWorkspacePath(userId, workspaceId);
+    if (!existsSync(path)) return false;
+
+    rmSync(path);
+    return true;
+  }
+
+  /**
+   * Ensure a user has at least one workspace. Seeds defaults if empty.
+   */
+  ensureDefaultWorkspaces(userId: string): void {
+    const existing = this.listWorkspaces(userId);
+    if (existing.length > 0) return;
+
+    this.createWorkspace(userId, {
+      name: "general",
+      description: "General-purpose agent with web search and browsing",
+      icon: "terminal",
+      skills: ["searxng", "fetch", "web-browser"],
+      policyPreset: "container",
+    });
+
+    this.createWorkspace(userId, {
+      name: "research",
+      description: "Deep research with search, web, and transcription",
+      icon: "magnifyingglass",
+      skills: ["searxng", "fetch", "web-browser", "deep-research", "youtube-transcript"],
+      policyPreset: "container",
+    });
   }
 
   // ─── Helpers ───

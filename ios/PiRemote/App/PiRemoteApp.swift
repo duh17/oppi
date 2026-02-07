@@ -70,8 +70,13 @@ struct PiRemoteApp: App {
             return
         }
 
+        guard connection.configure(credentials: creds) else {
+            // Corrupted credentials — wipe and show onboarding
+            KeychainService.deleteCredentials()
+            navigation.showOnboarding = true
+            return
+        }
         navigation.showOnboarding = false
-        connection.configure(credentials: creds)
 
         // 2. Restore UI state (tab, active session, draft)
         if let restored = RestorationState.load() {

@@ -95,7 +95,11 @@ final class WebSocketClient {
     // MARK: - Private
 
     private func openWebSocket(sessionId: String, continuation: AsyncStream<ServerMessage>.Continuation) {
-        let url = credentials.webSocketURL(sessionId: sessionId)
+        guard let url = credentials.webSocketURL(sessionId: sessionId) else {
+            logger.error("Invalid WebSocket URL for session \(sessionId) — disconnecting")
+            disconnect()
+            return
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
 

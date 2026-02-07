@@ -38,9 +38,11 @@ struct MarkdownText: View {
                         options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
                     ) {
                         Text(attributed)
+                            .foregroundStyle(.tokyoFg)
                             .textSelection(.enabled)
                     } else {
                         Text(text)
+                            .foregroundStyle(.tokyoFg)
                             .textSelection(.enabled)
                     }
 
@@ -54,7 +56,7 @@ struct MarkdownText: View {
     private var plainText: some View {
         Text(content)
             .font(.body)
-            .textSelection(.enabled)
+            .foregroundStyle(.tokyoFg)
     }
 }
 
@@ -73,7 +75,7 @@ private struct CodeBlockView: View {
                 HStack {
                     Text(language ?? "code")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tokyoComment)
                     Spacer()
                     Button {
                         UIPasteboard.general.string = code
@@ -90,23 +92,28 @@ private struct CodeBlockView: View {
                         .font(.caption2)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tokyoFgDim)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color(.tertiarySystemBackground))
+                .background(Color.tokyoBgHighlight)
             }
 
             // Code content
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
                     .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tokyoFg)
                     .textSelection(.enabled)
                     .padding(12)
             }
         }
-        .background(Color(.secondarySystemBackground))
+        .background(Color.tokyoBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+        )
     }
 }
 

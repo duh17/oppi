@@ -4,10 +4,17 @@
 
 Pi Remote is a mobile-first agent supervision and control platform. It lets users
 interact with pi coding agents running on a home server, with fine-grained permission
-control from their phone.
+control and skill curation from their phone.
 
-**Core insight:** The phone isn't a terminal — it's the permission authority. The agent
-runs autonomously on the server. Dangerous actions require approval from your pocket.
+**Core insight:** The phone is your agent workshop. You build, refine, and curate
+what your agent can do. The permission gate keeps it safe while it learns.
+
+**Two pillars:**
+1. **Safety** — permission gate, policy engine, container sandbox. Dangerous actions
+   require approval from your pocket.
+2. **Growth** — skills that evolve through use, built by the agent, curated by you.
+   Every session can produce a reusable tool. Over time, your agent gets specialized
+   to your exact needs.
 
 ## Architecture
 

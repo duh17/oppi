@@ -44,12 +44,25 @@ struct ChatView: View {
 
     /// Context usage string like "44.4%/200k".
     private var contextDisplay: String? {
-        guard let tokens = session?.contextTokens, let window = session?.contextWindow, window > 0 else {
+        guard let window = resolvedContextWindow, window > 0 else {
             return nil
         }
-        let percent = Double(tokens) / Double(window) * 100
+
+        let used = max(
+            0,
+            session?.contextTokens ?? ((session?.tokens.input ?? 0) + (session?.tokens.output ?? 0))
+        )
+        let percent = Double(used) / Double(window) * 100
         let windowK = formatTokenCount(window)
         return String(format: "%.1f%%/%@", percent, windowK)
+    }
+
+    private var resolvedContextWindow: Int? {
+        if let window = session?.contextWindow, window > 0 {
+            return window
+        }
+        guard let model = session?.model else { return nil }
+        return inferContextWindow(from: model)
     }
 
     var body: some View {
@@ -60,24 +73,25 @@ struct ChatView: View {
                     if let context = contextDisplay {
                         Text(context)
                             .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tokyoFg)
                     }
 
                     if let model = modelShortName {
                         Text(model)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.tokyoFgDim)
                     }
 
                     if let cost = session?.cost, cost > 0 {
                         Spacer()
                         Text(String(format: "$%.3f", cost))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.tokyoFgDim)
                     }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 4)
-                .background(.ultraThinMaterial)
+                .background(Color.tokyoBgHighlight)
             }
 
             // Chat timeline + permission pill (inside ScrollViewReader for scroll-to)
@@ -103,6 +117,7 @@ struct ChatView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 8)
                 }
+                .background(Color.tokyoBg)
                 .onChange(of: reducer.renderVersion) { _, _ in
                     guard isNearBottom else { return }
                     withAnimation(nil) {
@@ -150,11 +165,12 @@ struct ChatView: View {
                 // Session ended — disabled input
                 Text("Session ended")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tokyoComment)
                     .frame(maxWidth: .infinity)
                     .padding()
             }
         }
+        .background(Color.tokyoBg.ignoresSafeArea())
         .navigationTitle(session?.name ?? "Session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -306,16 +322,45 @@ struct ChatView: View {
 
     private var statusColor: Color {
         switch session?.status {
-        case .ready: return .green
-        case .busy: return .yellow
-        case .starting: return .blue
-        case .error: return .red
-        case .stopped, .none: return .gray
+        case .ready: return .tokyoGreen
+        case .busy: return .tokyoYellow
+        case .starting: return .tokyoBlue
+        case .error: return .tokyoRed
+        case .stopped, .none: return .tokyoComment
         }
     }
 }
 
 // MARK: - Token Formatting
+
+/// Best-effort context window fallback when older sessions don't store it yet.
+private func inferContextWindow(from model: String) -> Int? {
+    let known: [String: Int] = [
+        "anthropic/claude-opus-4-6": 200_000,
+        "anthropic/claude-sonnet-4-0": 200_000,
+        "anthropic/claude-haiku-3-5": 200_000,
+        "openai/o3": 200_000,
+        "openai/o4-mini": 200_000,
+        "openai/gpt-4.1": 1_000_000,
+        "google/gemini-2.5-pro": 1_000_000,
+        "google/gemini-2.5-flash": 1_000_000,
+        "lmstudio/qwen3-32b": 32_768,
+        "lmstudio/deepseek-r1-0528-qwen3-8b": 32_768,
+    ]
+    if let value = known[model] {
+        return value
+    }
+
+    // Generic "...-272k" / "..._128k" model naming convention fallback.
+    if let match = model.range(of: #"(?i)(\d{2,4})k\b"#, options: .regularExpression) {
+        let raw = model[match].dropLast() // remove trailing k/K
+        if let thousands = Int(raw) {
+            return thousands * 1_000
+        }
+    }
+
+    return nil
+}
 
 /// Format token count as compact string: 200000 → "200k", 1000000 → "1M".
 private func formatTokenCount(_ count: Int) -> String {
@@ -344,15 +389,17 @@ private struct PermissionPillBanner: View {
     var body: some View {
         HStack {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(.tokyoOrange)
             Text("\(count) pending — tap to review")
                 .font(.subheadline.bold())
+                .foregroundStyle(.tokyoFg)
             Spacer()
             Image(systemName: "chevron.down")
                 .font(.caption)
+                .foregroundStyle(.tokyoComment)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .background(Color.tokyoBgHighlight)
     }
 }

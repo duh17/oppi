@@ -54,10 +54,18 @@ final class ServerConnection {
 
     // MARK: - Setup
 
-    func configure(credentials: ServerCredentials) {
+    /// Configure the connection with validated credentials.
+    /// Returns `false` if the credentials contain a malformed host.
+    @discardableResult
+    func configure(credentials: ServerCredentials) -> Bool {
+        guard let baseURL = credentials.baseURL else {
+            logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
+            return false
+        }
         self.credentials = credentials
-        self.apiClient = APIClient(baseURL: credentials.baseURL, token: credentials.token)
+        self.apiClient = APIClient(baseURL: baseURL, token: credentials.token)
         self.wsClient = WebSocketClient(credentials: credentials)
+        return true
     }
 
     // MARK: - Session Streaming
