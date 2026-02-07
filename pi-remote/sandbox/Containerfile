@@ -1,7 +1,7 @@
 # Pi Remote — sandboxed coding agent container.
 #
-# Slimmer than pi-sandbox (no research tools, PDF, Chromium).
-# Focused on coding: bash, git, ripgrep, fd, Node.js, Python, uv.
+# Full-capability image: coding tools + web research + content extraction.
+# Supports: search, fetch, web-browser skills out of the box.
 #
 # Build: container build -t pi-remote:local -f Containerfile .
 
@@ -25,6 +25,27 @@ RUN apk add --no-cache \
     py3-pip \
     tree \
     sqlite
+
+# ─── Headless Chromium (for web-browser skill) ───
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    font-noto-emoji
+ENV CHROME_BIN=/usr/bin/chromium-browser
+ENV CHROME_PATH=/usr/lib/chromium/
+
+# ─── Content extraction (for fetch skill) ───
+RUN npm install -g readability-cli
+
+# ─── Python research tools ───
+RUN pip install --no-cache-dir --break-system-packages \
+    beautifulsoup4 \
+    markdownify \
+    trafilatura \
+    httpx
 
 # ─── uv — fast Python package manager ───
 RUN wget -qO- https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \

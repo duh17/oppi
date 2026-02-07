@@ -456,7 +456,7 @@ export class Server {
     };
 
     try {
-      const activeSession = await this.sessions.startSession(user.id, session.id);
+      const activeSession = await this.sessions.startSession(user.id, session.id, user.name);
       send({ type: "connected", session: activeSession });
 
       // Send pending permission requests

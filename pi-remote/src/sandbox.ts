@@ -22,9 +22,9 @@
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import {
   existsSync, mkdirSync, cpSync, readFileSync, writeFileSync,
-  rmSync, realpathSync, chmodSync, statSync,
+  rmSync, realpathSync, chmodSync, statSync, symlinkSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +41,52 @@ const HOST_GATEWAY = "192.168.64.1"; // Apple container → host
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOX_DIR = join(__dirname, "..", "sandbox");
 const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
+const BUNDLED_SKILLS_DIR = join(__dirname, "..", "skills");
+
+// ─── Built-in Skills ───
+
+/** Skills synced into every session. Order: host dotfiles > bundled fallback. */
+const BUILT_IN_SKILLS = ["searxng", "fetch", "web-browser"] as const;
+
+/**
+ * CLI shim binaries — scripts in skills that should be on $PATH.
+ * Maps bin name → relative path from skills dir.
+ */
+const SKILL_SHIMS: Record<string, string> = {
+  "search":      "searxng/scripts/search",
+  "fetch":       "fetch/scripts/fetch",
+  "fetch-allow": "fetch/scripts/fetch-allow",
+};
+
+/** Default allowed domains for the fetch skill (container-safe defaults). */
+const DEFAULT_FETCH_ALLOWLIST = `# Fetch domain allowlist (pi-remote defaults)
+# Add entries: fetch --allow-domain example.com
+
+# Documentation
+docs.python.org
+doc.rust-lang.org
+developer.mozilla.org
+devdocs.io
+developer.apple.com
+
+# Code hosting
+github.com
+raw.githubusercontent.com
+gitlab.com
+
+# Knowledge
+en.wikipedia.org
+stackoverflow.com
+arxiv.org
+
+# Tech
+news.ycombinator.com
+go.dev
+pytorch.org
+huggingface.co
+docs.anthropic.com
+example.com
+`;
 
 // ─── Types ───
 
@@ -60,6 +106,7 @@ export interface SandboxConfig {
 export interface SpawnOptions {
   sessionId: string;
   userId: string;
+  userName?: string;
   model?: string;
   /** Gate TCP port on host (extension connects to host-gateway:port) */
   gatePort?: number;
@@ -146,13 +193,20 @@ export class SandboxManager {
    *
    * Host layout (mirrors pi's expected ~/.pi/ structure):
    *   <sandboxBaseDir>/<userId>/<sessionId>/
-   *   ├── agent/              # auth.json, models.json, extensions/
+   *   ├── agent/              # auth.json, models.json, extensions/, skills/
+   *   ├── bin/                # Shim binaries on $PATH
+   *   ├── .config/fetch/     # Fetch skill allowlist
+   *   ├── system-prompt.md    # Generated system prompt
    *   └── workspace/          # User's working directory
    *
    * Each session gets its own pi home dir so JSONL files, workspace,
    * and agent state are isolated between sessions.
    */
-  initSession(userId: string, sessionId: string): { piDir: string; workDir: string } {
+  initSession(
+    userId: string,
+    sessionId: string,
+    opts?: { userName?: string; model?: string },
+  ): { piDir: string; workDir: string } {
     const piDir = join(this.config.sandboxBaseDir, userId, sessionId);
     const agentDir = join(piDir, "agent");
     const workDir = join(piDir, "workspace");
@@ -196,6 +250,18 @@ export class SandboxManager {
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
+    // Sync built-in skills into session
+    const installedSkills = this.syncBuiltInSkills(agentDir);
+
+    // Create shim binaries (bin/ on $PATH inside container)
+    this.createSkillShims(piDir, agentDir);
+
+    // Write default fetch allowlist (if not already present)
+    this.writeFetchAllowlist(piDir);
+
+    // Generate session system prompt
+    this.generateSystemPrompt(piDir, installedSkills, opts);
+
     return { piDir, workDir };
   }
 
@@ -206,8 +272,8 @@ export class SandboxManager {
    * with stdin/stdout/stderr piped for RPC communication.
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
-    const { sessionId, userId, model, gatePort, env: extraEnv } = opts;
-    const { piDir, workDir } = this.initSession(userId, sessionId);
+    const { sessionId, userId, userName, model, gatePort, env: extraEnv } = opts;
+    const { piDir, workDir } = this.initSession(userId, sessionId, { userName, model });
 
     // Build pi args
     const piArgs = ["--mode", "rpc"];
@@ -219,6 +285,12 @@ export class SandboxManager {
       } else {
         piArgs.push("--model", model);
       }
+    }
+
+    // Append system prompt if generated
+    const systemPromptPath = join(piDir, "system-prompt.md");
+    if (existsSync(systemPromptPath)) {
+      piArgs.push("--append-system-prompt", "/tmp/system-prompt.md");
     }
 
     const containerId = `pi-remote-${sessionId}`;
@@ -245,6 +317,11 @@ export class SandboxManager {
       "-e", `PI_REMOTE_SESSION=${sessionId}`,
       "-e", `PI_REMOTE_USER=${userId}`,
     ];
+
+    // Mount system prompt as read-only at /tmp/
+    if (existsSync(systemPromptPath)) {
+      args.push("-v", `${realpath(systemPromptPath)}:/tmp/system-prompt.md:ro`);
+    }
 
     if (gatePort) {
       args.push("-e", `PI_REMOTE_GATE_HOST=${HOST_GATEWAY}`);
@@ -357,6 +434,178 @@ export class SandboxManager {
     const workDir = join(this.config.sandboxBaseDir, userId, sessionId, "workspace");
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
     return workDir;
+  }
+
+  // ─── Skill Sync ───
+
+  /**
+   * Copy built-in skills into the session's agent/skills/ directory.
+   * Source priority: host dotfiles > bundled fallback copies.
+   * Returns list of skill names that were actually installed.
+   */
+  private syncBuiltInSkills(agentDir: string): string[] {
+    const skillsDir = join(agentDir, "skills");
+    if (!existsSync(skillsDir)) {
+      mkdirSync(skillsDir, { recursive: true });
+    }
+
+    const hostSkillsDir = join(homedir(), ".pi", "agent", "skills");
+    const installed: string[] = [];
+
+    for (const name of BUILT_IN_SKILLS) {
+      const dest = join(skillsDir, name);
+
+      // Source priority: host dotfiles (dereference symlinks) > bundled
+      const hostSrc = join(hostSkillsDir, name);
+      const bundledSrc = join(BUNDLED_SKILLS_DIR, name);
+      const src = existsSync(hostSrc) ? hostSrc : existsSync(bundledSrc) ? bundledSrc : null;
+
+      if (!src) {
+        console.log(`[sandbox] ⚠ Skill "${name}" not found on host or in bundled, skipping`);
+        continue;
+      }
+
+      // Re-copy if source is newer or dest doesn't exist
+      if (!existsSync(dest) || isNewer(src, dest)) {
+        if (existsSync(dest)) rmSync(dest, { recursive: true });
+        cpSync(src, dest, { recursive: true, dereference: true });
+      }
+
+      installed.push(name);
+    }
+
+    if (installed.length > 0) {
+      console.log(`[sandbox] Synced ${installed.length} built-in skill(s): ${installed.join(", ")}`);
+    }
+
+    return installed;
+  }
+
+  /**
+   * Create symlink shims in bin/ so skill scripts are on $PATH.
+   * Container has PATH="/home/pi/.pi/bin:..." so these are callable directly.
+   */
+  private createSkillShims(piDir: string, agentDir: string): void {
+    const binDir = join(piDir, "bin");
+    if (!existsSync(binDir)) {
+      mkdirSync(binDir, { recursive: true });
+    }
+
+    for (const [binName, skillPath] of Object.entries(SKILL_SHIMS)) {
+      const target = join(agentDir, "skills", skillPath);
+      const link = join(binDir, binName);
+
+      if (!existsSync(target)) continue;
+
+      // Use relative symlink so it works inside the container mount
+      if (existsSync(link)) rmSync(link);
+      const relTarget = relative(binDir, target);
+      symlinkSync(relTarget, link);
+    }
+  }
+
+  /**
+   * Write a default fetch domain allowlist so fetch works out of the box.
+   * Skips if the user already has one synced.
+   */
+  private writeFetchAllowlist(piDir: string): void {
+    const configDir = join(piDir, ".config", "fetch");
+    const allowlistPath = join(configDir, "allowed_domains.txt");
+
+    if (existsSync(allowlistPath)) return;
+
+    // Try to sync from host first
+    const hostAllowlist = join(homedir(), ".config", "fetch", "allowed_domains.txt");
+    if (existsSync(hostAllowlist)) {
+      mkdirSync(configDir, { recursive: true });
+      cpSync(hostAllowlist, allowlistPath);
+      return;
+    }
+
+    // Fall back to sensible defaults
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(allowlistPath, DEFAULT_FETCH_ALLOWLIST);
+  }
+
+  /**
+   * Generate a session system prompt that tells the agent:
+   * - what environment it's in
+   * - what tools/skills are available
+   * - how to behave for a phone-based user (mobile output contract)
+   */
+  private generateSystemPrompt(
+    piDir: string,
+    installedSkills: string[],
+    opts?: { userName?: string; model?: string },
+  ): void {
+    const skillsList = installedSkills.map((name) => {
+      if (name === "searxng") return "- **searxng** — `search \"query\"` for private web search";
+      if (name === "fetch") return "- **fetch** — `fetch \"url\"` to extract readable content from URLs";
+      if (name === "web-browser") return "- **web-browser** — headless Chrome automation (screenshots, navigation)";
+      return `- **${name}**`;
+    }).join("\n");
+
+    const userName = opts?.userName ?? "the user";
+    const modelNote = opts?.model ? `\nModel: ${opts.model}` : "";
+
+    const prompt = `# Pi Remote Session
+
+You are running inside a **Pi Remote container** — a sandboxed coding
+environment managed from a mobile app. ${userName} interacts with you from
+their phone.${modelNote}
+
+## Environment
+
+- **Working directory:** \`/work\` (persists across container restarts)
+- **Pi agent state:** \`/home/pi/.pi\` (skills, extensions, config)
+- **Container:** Alpine Linux, Node.js 22, Python 3, Chromium
+- **Network:** Can reach host services via ${HOST_GATEWAY}
+
+## CLI tools on PATH
+
+- \`search "query"\` — SearXNG web search (private, self-hosted)
+- \`fetch "url"\` — Extract readable content from URLs
+- \`fetch "url" --browser\` — Force headless Chromium for JS-rendered pages
+- Standard dev tools: git, rg, fd, jq, make, tree, sqlite, uv
+
+## Skills
+
+Load a skill's SKILL.md with \`read\` when the task matches:
+${skillsList}
+
+## Mobile output contract
+
+**The user is on their phone.** This changes how you work:
+
+1. **Work autonomously.** Complete the full task before reporting back.
+   Don't pause for confirmation on intermediate steps.
+
+2. **Save output to files.** Never dump more than ~20 lines of output
+   inline. Write reports, code, data, and logs to \`/work\` and tell the
+   user the file path. They can browse \`/work\` on their phone.
+
+3. **End with a structured summary:**
+   - What you did (1–3 sentences)
+   - Files created or modified (list paths)
+   - Anything that needs their attention or next steps
+
+4. **For errors, be concise.** Show the key error message inline (1–3
+   lines). Save the full stack trace or log to a file if it's long.
+
+5. **Use brief progress markers** for multi-step work:
+   - "Searching for X..."
+   - "Found 12 results, analyzing..."
+   - "Done. Report saved to /work/report.md"
+
+## Permission gate
+
+Some tool calls require approval from the user's phone. When a call is
+gated, you'll get a clear message. Wait for the response — don't retry
+or work around it. The user sees the request on their phone and will
+approve or deny it.
+`;
+
+    writeFileSync(join(piDir, "system-prompt.md"), prompt);
   }
 
   // ─── Helpers ───

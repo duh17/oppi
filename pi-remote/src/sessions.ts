@@ -98,7 +98,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Start a new session — spawns pi in a container.
    */
-  async startSession(userId: string, sessionId: string): Promise<Session> {
+  async startSession(userId: string, sessionId: string, userName?: string): Promise<Session> {
     const key = `${userId}/${sessionId}`;
 
     if (this.active.has(key)) {
@@ -108,7 +108,7 @@ export class SessionManager extends EventEmitter {
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-    const proc = await this.spawnPi(session);
+    const proc = await this.spawnPi(session, userName);
 
     const activeSession: ActiveSession = {
       session,
@@ -131,7 +131,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Spawn pi inside a container via SandboxManager.
    */
-  private async spawnPi(session: Session): Promise<ChildProcess> {
+  private async spawnPi(session: Session, userName?: string): Promise<ChildProcess> {
     const key = `${session.userId}/${session.id}`;
 
     // Create gate TCP socket (extension connects from container to host)
@@ -141,6 +141,7 @@ export class SessionManager extends EventEmitter {
     const proc = this.sandbox.spawnPi({
       sessionId: session.id,
       userId: session.userId,
+      userName,
       model: session.model,
       gatePort,
     });
