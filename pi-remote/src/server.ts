@@ -293,7 +293,7 @@ export class Server {
     return user || null;
   }
 
-  // ─── HTTP Routes ───
+  // ─── HTTP Router ───
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -316,238 +316,241 @@ export class Server {
     }
 
     try {
-      if (path === "/me" && method === "GET") {
-        this.json(res, { user: user.id, name: user.name });
-        return;
-      }
-
-      // Model list
-      if (path === "/models" && method === "GET") {
-        this.json(res, { models: AVAILABLE_MODELS });
-        return;
-      }
-
-      // Skills — available skill pool from host
-      if (path === "/skills" && method === "GET") {
-        this.json(res, { skills: this.skillRegistry.list() });
-        return;
-      }
-
-      // Rescan skills (e.g. after adding a new skill on host)
-      if (path === "/skills/rescan" && method === "POST") {
-        this.skillRegistry.scan();
-        this.json(res, { skills: this.skillRegistry.list() });
-        return;
-      }
+      // Static routes
+      if (path === "/me" && method === "GET") return this.handleGetMe(user, res);
+      if (path === "/models" && method === "GET") return this.handleListModels(res);
+      if (path === "/skills" && method === "GET") return this.handleListSkills(res);
+      if (path === "/skills/rescan" && method === "POST") return this.handleRescanSkills(res);
 
       // Workspaces
-      if (path === "/workspaces" && method === "GET") {
-        this.storage.ensureDefaultWorkspaces(user.id);
-        const workspaces = this.storage.listWorkspaces(user.id);
-        this.json(res, { workspaces });
-        return;
-      }
-
-      if (path === "/workspaces" && method === "POST") {
-        const body = await this.parseBody<CreateWorkspaceRequest>(req);
-        if (!body.name) { this.error(res, 400, "name required"); return; }
-        if (!body.skills || !Array.isArray(body.skills)) { this.error(res, 400, "skills array required"); return; }
-
-        // Validate skill names against registry
-        const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
-        if (unknown.length > 0) {
-          this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
-          return;
-        }
-
-        if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
-          this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
-          return;
-        }
-
-        const workspace = this.storage.createWorkspace(user.id, body);
-        this.json(res, { workspace }, 201);
-        return;
-      }
+      if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(user, res);
+      if (path === "/workspaces" && method === "POST") return await this.handleCreateWorkspace(user, req, res);
 
       const wsMatch = path.match(/^\/workspaces\/([^/]+)$/);
       if (wsMatch) {
-        const wsId = wsMatch[1];
-        const workspace = this.storage.getWorkspace(user.id, wsId);
-        if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
-
-        if (method === "GET") {
-          this.json(res, { workspace });
-          return;
-        }
-
-        if (method === "PUT") {
-          const body = await this.parseBody<UpdateWorkspaceRequest>(req);
-
-          // Validate skill names if updating
-          if (body.skills) {
-            const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
-            if (unknown.length > 0) {
-              this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
-              return;
-            }
-          }
-
-          if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
-            this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
-            return;
-          }
-
-          const updated = this.storage.updateWorkspace(user.id, wsId, body);
-          this.json(res, { workspace: updated });
-          return;
-        }
-
-        if (method === "DELETE") {
-          this.storage.deleteWorkspace(user.id, wsId);
-          this.json(res, { ok: true });
-          return;
-        }
+        if (method === "GET") return this.handleGetWorkspace(user, wsMatch[1], res);
+        if (method === "PUT") return await this.handleUpdateWorkspace(user, wsMatch[1], req, res);
+        if (method === "DELETE") return this.handleDeleteWorkspace(user, wsMatch[1], res);
       }
 
-      // Device token registration (APNs + Live Activity)
-      if (path === "/me/device-token" && method === "POST") {
-        const body = await this.parseBody<RegisterDeviceTokenRequest>(req);
-        if (!body.deviceToken) {
-          this.error(res, 400, "deviceToken required");
-          return;
-        }
+      // Device tokens
+      if (path === "/me/device-token" && method === "POST") return await this.handleRegisterDeviceToken(user, req, res);
+      if (path === "/me/device-token" && method === "DELETE") return await this.handleDeleteDeviceToken(user, req, res);
 
-        const tokenType = body.tokenType || "apns";
-        if (tokenType === "liveactivity") {
-          this.storage.setLiveActivityToken(user.id, body.deviceToken);
-          console.log(`[push] Live Activity token registered for ${user.name}`);
-        } else {
-          this.storage.addDeviceToken(user.id, body.deviceToken);
-          console.log(`[push] Device token registered for ${user.name}`);
-        }
-
-        this.json(res, { ok: true });
-        return;
-      }
-
-      if (path === "/me/device-token" && method === "DELETE") {
-        const body = await this.parseBody<{ deviceToken: string }>(req);
-        if (body.deviceToken) {
-          this.storage.removeDeviceToken(user.id, body.deviceToken);
-          console.log(`[push] Device token removed for ${user.name}`);
-        }
-        this.json(res, { ok: true });
-        return;
-      }
-
-      if (path === "/sessions" && method === "GET") {
-        const sessions = this.storage
-          .listUserSessions(user.id)
-          .map(session => this.ensureSessionContextWindow(session));
-        this.json(res, { sessions });
-        return;
-      }
-
-      if (path === "/sessions" && method === "POST") {
-        const body = await this.parseBody<CreateSessionRequest>(req);
-
-        // Resolve workspace. If none specified, default to first workspace.
-        this.storage.ensureDefaultWorkspaces(user.id);
-        let workspace: Workspace | undefined;
-
-        if (body.workspaceId) {
-          workspace = this.storage.getWorkspace(user.id, body.workspaceId);
-          if (!workspace) {
-            this.error(res, 404, "Workspace not found");
-            return;
-          }
-        } else {
-          workspace = this.storage.listWorkspaces(user.id)[0];
-        }
-
-        // Session model preference: explicit request > workspace default > server default
-        const model = body.model || workspace?.defaultModel;
-
-        const session = this.storage.createSession(user.id, body.name, model);
-
-        // Attach workspace metadata to session
-        if (workspace) {
-          session.workspaceId = workspace.id;
-          session.workspaceName = workspace.name;
-          this.storage.saveSession(session);
-        }
-
-        const hydrated = this.ensureSessionContextWindow(session);
-        this.json(res, { session: hydrated }, 201);
-        return;
-      }
+      // Sessions
+      if (path === "/sessions" && method === "GET") return this.handleListSessions(user, res);
+      if (path === "/sessions" && method === "POST") return await this.handleCreateSession(user, req, res);
 
       const stopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
-      if (stopMatch && method === "POST") {
-        const sessionId = stopMatch[1];
-        const session = this.storage.getSession(user.id, sessionId);
-        if (!session) { this.error(res, 404, "Session not found"); return; }
+      if (stopMatch && method === "POST") return await this.handleStopSession(user, stopMatch[1], res);
 
-        const hydratedSession = this.ensureSessionContextWindow(session);
-
-        if (this.sessions.isActive(user.id, sessionId)) {
-          await this.sessions.stopSession(user.id, sessionId);
-        } else {
-          hydratedSession.status = "stopped";
-          hydratedSession.lastActivity = Date.now();
-          this.storage.saveSession(hydratedSession);
-        }
-
-        const updatedSession = this.storage.getSession(user.id, sessionId);
-        const hydratedUpdated = updatedSession
-          ? this.ensureSessionContextWindow(updatedSession)
-          : updatedSession;
-        this.json(res, { ok: true, session: hydratedUpdated });
-        return;
-      }
-
-      // Trace endpoint — full pi JSONL with tool calls
       const traceMatch = path.match(/^\/sessions\/([^/]+)\/trace$/);
-      if (traceMatch && method === "GET") {
-        const sessionId = traceMatch[1];
-        const session = this.storage.getSession(user.id, sessionId);
-        if (!session) { this.error(res, 404, "Session not found"); return; }
-
-        const hydratedSession = this.ensureSessionContextWindow(session);
-        const sandboxBaseDir = this.sandbox.getBaseDir();
-        const trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
-        this.json(res, { session: hydratedSession, trace: trace || [] });
-        return;
-      }
+      if (traceMatch && method === "GET") return this.handleGetSessionTrace(user, traceMatch[1], res);
 
       const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
       if (sessionMatch) {
-        const sessionId = sessionMatch[1];
-        const session = this.storage.getSession(user.id, sessionId);
-        if (!session) { this.error(res, 404, "Session not found"); return; }
-
-        const hydratedSession = this.ensureSessionContextWindow(session);
-
-        if (method === "GET") {
-          const messages = this.storage.getSessionMessages(user.id, sessionId);
-          this.json(res, { session: hydratedSession, messages });
-          return;
-        }
-
-        if (method === "DELETE") {
-          await this.sessions.stopSession(user.id, sessionId);
-          this.storage.deleteSession(user.id, sessionId);
-          this.json(res, { ok: true });
-          return;
-        }
+        if (method === "GET") return await this.handleGetSession(user, sessionMatch[1], res);
+        if (method === "DELETE") return await this.handleDeleteSession(user, sessionMatch[1], res);
       }
 
       this.error(res, 404, "Not found");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Internal error";
       console.error("HTTP error:", err);
-      this.error(res, 500, err.message || "Internal error");
+      this.error(res, 500, message);
     }
+  }
+
+  // ─── Route Handlers ───
+
+  private handleGetMe(user: User, res: ServerResponse): void {
+    this.json(res, { user: user.id, name: user.name });
+  }
+
+  private handleListModels(res: ServerResponse): void {
+    this.json(res, { models: AVAILABLE_MODELS });
+  }
+
+  private handleListSkills(res: ServerResponse): void {
+    this.json(res, { skills: this.skillRegistry.list() });
+  }
+
+  private handleRescanSkills(res: ServerResponse): void {
+    this.skillRegistry.scan();
+    this.json(res, { skills: this.skillRegistry.list() });
+  }
+
+  private handleListWorkspaces(user: User, res: ServerResponse): void {
+    this.storage.ensureDefaultWorkspaces(user.id);
+    const workspaces = this.storage.listWorkspaces(user.id);
+    this.json(res, { workspaces });
+  }
+
+  private async handleCreateWorkspace(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.parseBody<CreateWorkspaceRequest>(req);
+    if (!body.name) { this.error(res, 400, "name required"); return; }
+    if (!body.skills || !Array.isArray(body.skills)) { this.error(res, 400, "skills array required"); return; }
+
+    const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+    if (unknown.length > 0) {
+      this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
+      return;
+    }
+
+    if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
+      this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
+      return;
+    }
+
+    const workspace = this.storage.createWorkspace(user.id, body);
+    this.json(res, { workspace }, 201);
+  }
+
+  private handleGetWorkspace(user: User, wsId: string, res: ServerResponse): void {
+    const workspace = this.storage.getWorkspace(user.id, wsId);
+    if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
+    this.json(res, { workspace });
+  }
+
+  private async handleUpdateWorkspace(user: User, wsId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const workspace = this.storage.getWorkspace(user.id, wsId);
+    if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
+
+    const body = await this.parseBody<UpdateWorkspaceRequest>(req);
+
+    if (body.skills) {
+      const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+      if (unknown.length > 0) {
+        this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
+        return;
+      }
+    }
+
+    if (body.memoryNamespace && !this.isValidMemoryNamespace(body.memoryNamespace)) {
+      this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
+      return;
+    }
+
+    const updated = this.storage.updateWorkspace(user.id, wsId, body);
+    this.json(res, { workspace: updated });
+  }
+
+  private handleDeleteWorkspace(user: User, wsId: string, res: ServerResponse): void {
+    this.storage.deleteWorkspace(user.id, wsId);
+    this.json(res, { ok: true });
+  }
+
+  private async handleRegisterDeviceToken(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.parseBody<RegisterDeviceTokenRequest>(req);
+    if (!body.deviceToken) {
+      this.error(res, 400, "deviceToken required");
+      return;
+    }
+
+    const tokenType = body.tokenType || "apns";
+    if (tokenType === "liveactivity") {
+      this.storage.setLiveActivityToken(user.id, body.deviceToken);
+      console.log(`[push] Live Activity token registered for ${user.name}`);
+    } else {
+      this.storage.addDeviceToken(user.id, body.deviceToken);
+      console.log(`[push] Device token registered for ${user.name}`);
+    }
+
+    this.json(res, { ok: true });
+  }
+
+  private async handleDeleteDeviceToken(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.parseBody<{ deviceToken: string }>(req);
+    if (body.deviceToken) {
+      this.storage.removeDeviceToken(user.id, body.deviceToken);
+      console.log(`[push] Device token removed for ${user.name}`);
+    }
+    this.json(res, { ok: true });
+  }
+
+  private handleListSessions(user: User, res: ServerResponse): void {
+    const sessions = this.storage
+      .listUserSessions(user.id)
+      .map(session => this.ensureSessionContextWindow(session));
+    this.json(res, { sessions });
+  }
+
+  private async handleCreateSession(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.parseBody<CreateSessionRequest>(req);
+
+    this.storage.ensureDefaultWorkspaces(user.id);
+    let workspace: Workspace | undefined;
+
+    if (body.workspaceId) {
+      workspace = this.storage.getWorkspace(user.id, body.workspaceId);
+      if (!workspace) {
+        this.error(res, 404, "Workspace not found");
+        return;
+      }
+    } else {
+      workspace = this.storage.listWorkspaces(user.id)[0];
+    }
+
+    const model = body.model || workspace?.defaultModel;
+    const session = this.storage.createSession(user.id, body.name, model);
+
+    if (workspace) {
+      session.workspaceId = workspace.id;
+      session.workspaceName = workspace.name;
+      this.storage.saveSession(session);
+    }
+
+    const hydrated = this.ensureSessionContextWindow(session);
+    this.json(res, { session: hydrated }, 201);
+  }
+
+  private async handleStopSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) { this.error(res, 404, "Session not found"); return; }
+
+    const hydratedSession = this.ensureSessionContextWindow(session);
+
+    if (this.sessions.isActive(user.id, sessionId)) {
+      await this.sessions.stopSession(user.id, sessionId);
+    } else {
+      hydratedSession.status = "stopped";
+      hydratedSession.lastActivity = Date.now();
+      this.storage.saveSession(hydratedSession);
+    }
+
+    const updatedSession = this.storage.getSession(user.id, sessionId);
+    const hydratedUpdated = updatedSession
+      ? this.ensureSessionContextWindow(updatedSession)
+      : updatedSession;
+    this.json(res, { ok: true, session: hydratedUpdated });
+  }
+
+  private handleGetSessionTrace(user: User, sessionId: string, res: ServerResponse): void {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) { this.error(res, 404, "Session not found"); return; }
+
+    const hydratedSession = this.ensureSessionContextWindow(session);
+    const sandboxBaseDir = this.sandbox.getBaseDir();
+    const trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
+    this.json(res, { session: hydratedSession, trace: trace || [] });
+  }
+
+  private async handleGetSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) { this.error(res, 404, "Session not found"); return; }
+
+    const hydratedSession = this.ensureSessionContextWindow(session);
+    const messages = this.storage.getSessionMessages(user.id, sessionId);
+    this.json(res, { session: hydratedSession, messages });
+  }
+
+  private async handleDeleteSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) { this.error(res, 404, "Session not found"); return; }
+
+    await this.sessions.stopSession(user.id, sessionId);
+    this.storage.deleteSession(user.id, sessionId);
+    this.json(res, { ok: true });
   }
 
   private async parseBody<T>(req: IncomingMessage): Promise<T> {
