@@ -575,6 +575,11 @@ export class SessionManager extends EventEmitter {
 
       case "message_end": {
         const message = event.message;
+        const role = message?.role;
+
+        // Only persist assistant messages — user messages are already stored on prompt receipt
+        if (role === "user") break;
+
         const usage = this.extractUsage(message);
         const assistantText = this.extractAssistantText(message);
 

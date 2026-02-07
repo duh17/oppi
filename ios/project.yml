@@ -32,6 +32,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         INFOPLIST_KEY_NSSupportsLiveActivities: true
+    entitlements:
+      path: PiRemote/Resources/PiRemote.entitlements
     info:
       path: PiRemote/Resources/Info.plist
       properties:

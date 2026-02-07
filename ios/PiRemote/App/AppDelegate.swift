@@ -5,22 +5,22 @@ import UIKit
 /// SwiftUI's `App` protocol has no equivalent of
 /// `didRegisterForRemoteNotificationsWithDeviceToken`.
 /// This delegate bridges the gap.
+///
+/// @MainActor isolates this to the main thread, avoiding the
+/// `unsafeForcedSync` warning from @UIApplicationDelegateAdaptor.
+@MainActor
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        Task { @MainActor in
-            PushRegistration.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
-        }
+        PushRegistration.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
     }
 
     func application(
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        Task { @MainActor in
-            PushRegistration.shared.didFailToRegisterForRemoteNotifications(error: error)
-        }
+        PushRegistration.shared.didFailToRegisterForRemoteNotifications(error: error)
     }
 }
