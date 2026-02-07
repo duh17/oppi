@@ -26,6 +26,7 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import WebSocket from "ws";
 import { Storage } from "./src/storage.js";
 import { Server } from "./src/server.js";
@@ -41,6 +42,8 @@ const BASE = `http://127.0.0.1:${TEST_PORT}`;
 const CONTAINER_TIMEOUT = 90_000;
 // LLM round-trip
 const AGENT_TIMEOUT = 120_000;
+// Cap console streaming to keep test logs bounded if model gets verbose/stuck.
+const MAX_PRINTED_STREAM_CHARS = 2000;
 // Image build (first run only)
 const IMAGE_BUILD_TIMEOUT = 300_000;
 
@@ -51,6 +54,55 @@ let server: Server | null = null;
 let userToken = "";
 let passed = 0;
 let failed = 0;
+
+interface IntervalSummary {
+  count: number;
+  minMs: number;
+  maxMs: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+interface StreamMetrics {
+  promptToFirstEventMs?: number;
+  promptToAgentStartMs?: number;
+  promptToFirstTextMs?: number;
+  promptToFirstToolStartMs?: number;
+  promptToFirstPermissionMs?: number;
+  promptToAgentEndMs?: number;
+
+  eventCount: number;
+  textDeltaCount: number;
+  thinkingDeltaCount: number;
+  toolStartCount: number;
+  toolOutputCount: number;
+  permissionRequestCount: number;
+  errorCount: number;
+
+  eventInterval?: IntervalSummary;
+  textDeltaInterval?: IntervalSummary;
+}
+
+interface StopRunMetrics {
+  promptToAgentStartMs?: number;
+  promptToStopMs?: number;
+  stopToTerminalMs?: number;
+  promptToTerminalMs?: number;
+  stopTrigger?: string;
+  terminationType: "agent_end" | "session_ended";
+  eventCount: number;
+  permissionRequestCount: number;
+  errorCount: number;
+}
+
+interface StopRunResult {
+  events: ServerMessage[];
+  errors: string[];
+  permissionsApproved: number;
+  stopSent: boolean;
+  metrics: StopRunMetrics;
+}
 
 // ─── Test Helpers ───
 
@@ -70,6 +122,122 @@ function check(name: string, ok: boolean, detail?: string): void {
 
 function log(msg: string): void {
   console.log(`  ${msg}`);
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) {
+    return 0;
+  }
+
+  const index = (sorted.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+
+  if (lower === upper) {
+    return sorted[lower];
+  }
+
+  const weight = index - lower;
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * weight;
+}
+
+function summarizeIntervals(samples: number[]): IntervalSummary | undefined {
+  if (samples.length === 0) {
+    return undefined;
+  }
+
+  const sorted = [...samples].sort((a, b) => a - b);
+  let total = 0;
+  for (const sample of sorted) {
+    total += sample;
+  }
+
+  return {
+    count: sorted.length,
+    minMs: sorted[0],
+    maxMs: sorted[sorted.length - 1],
+    avgMs: total / sorted.length,
+    p50Ms: percentile(sorted, 0.50),
+    p95Ms: percentile(sorted, 0.95),
+  };
+}
+
+function formatMs(ms: number | undefined): string {
+  if (ms === undefined) {
+    return "n/a";
+  }
+  return `${ms.toFixed(1)}ms`;
+}
+
+function printIntervalSummary(name: string, summary: IntervalSummary | undefined): void {
+  if (!summary) {
+    log(`${name}: n/a`);
+    return;
+  }
+
+  log(
+    `${name}: n=${summary.count}, avg=${summary.avgMs.toFixed(1)}ms, `
+    + `p50=${summary.p50Ms.toFixed(1)}ms, p95=${summary.p95Ms.toFixed(1)}ms, `
+    + `max=${summary.maxMs.toFixed(1)}ms`,
+  );
+}
+
+function printRunMetrics(label: string, metrics: StreamMetrics): void {
+  log(`${label} performance:`);
+  log(`  prompt → first event: ${formatMs(metrics.promptToFirstEventMs)}`);
+  log(`  prompt → agent_start: ${formatMs(metrics.promptToAgentStartMs)}`);
+  log(`  prompt → first text_delta: ${formatMs(metrics.promptToFirstTextMs)}`);
+  log(`  prompt → first tool_start: ${formatMs(metrics.promptToFirstToolStartMs)}`);
+  log(`  prompt → first permission_request: ${formatMs(metrics.promptToFirstPermissionMs)}`);
+  log(`  prompt → agent_end: ${formatMs(metrics.promptToAgentEndMs)}`);
+
+  log(
+    "  event counts: "
+    + `total=${metrics.eventCount}, text=${metrics.textDeltaCount}, `
+    + `thinking=${metrics.thinkingDeltaCount}, tool_start=${metrics.toolStartCount}, `
+    + `tool_output=${metrics.toolOutputCount}, permissions=${metrics.permissionRequestCount}, `
+    + `errors=${metrics.errorCount}`,
+  );
+
+  printIntervalSummary("  all-event spacing", metrics.eventInterval);
+  printIntervalSummary("  text-delta spacing", metrics.textDeltaInterval);
+}
+
+function printStopRunMetrics(label: string, metrics: StopRunMetrics): void {
+  log(`${label} stop behavior:`);
+  log(`  termination: ${metrics.terminationType}`);
+  log(`  stop trigger: ${metrics.stopTrigger || "n/a"}`);
+  log(`  prompt → agent_start: ${formatMs(metrics.promptToAgentStartMs)}`);
+  log(`  prompt → stop sent: ${formatMs(metrics.promptToStopMs)}`);
+  log(`  stop sent → terminal: ${formatMs(metrics.stopToTerminalMs)}`);
+  log(`  prompt → terminal: ${formatMs(metrics.promptToTerminalMs)}`);
+  log(
+    "  event counts: "
+    + `total=${metrics.eventCount}, permissions=${metrics.permissionRequestCount}, `
+    + `errors=${metrics.errorCount}`,
+  );
+}
+
+function definedNumbers(values: Array<number | undefined>): number[] {
+  const nums: number[] = [];
+  for (const value of values) {
+    if (value !== undefined) {
+      nums.push(value);
+    }
+  }
+  return nums;
+}
+
+function average(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  let total = 0;
+  for (const value of values) {
+    total += value;
+  }
+  return total / values.length;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -159,6 +327,7 @@ function runAgent(
   tools: string[];
   permissionsApproved: number;
   errors: string[];
+  metrics: StreamMetrics;
 }> {
   return new Promise((resolve, reject) => {
     const events: ServerMessage[] = [];
@@ -167,57 +336,341 @@ function runAgent(
     const errors: string[] = [];
     let permissionsApproved = 0;
 
+    let promptSentAt = 0;
+    let firstEventAt: number | undefined;
+    let agentStartAt: number | undefined;
+    let firstTextAt: number | undefined;
+    let firstToolStartAt: number | undefined;
+    let firstPermissionAt: number | undefined;
+    let agentEndAt: number | undefined;
+
+    let lastEventAt: number | undefined;
+    let lastTextDeltaAt: number | undefined;
+
+    const eventIntervals: number[] = [];
+    const textDeltaIntervals: number[] = [];
+
+    let textDeltaCount = 0;
+    let thinkingDeltaCount = 0;
+    let toolStartCount = 0;
+    let toolOutputCount = 0;
+    let permissionRequestCount = 0;
+    let errorCount = 0;
+
+    let printedChars = 0;
+    let streamOutputTruncated = false;
+
     const timer = setTimeout(() => {
       ws.removeListener("message", onMessage);
       reject(new Error(`Agent timeout after ${Math.round(timeoutMs / 1000)}s`));
     }, timeoutMs);
 
+    function elapsed(timestamp: number | undefined): number | undefined {
+      if (timestamp === undefined || promptSentAt === 0) {
+        return undefined;
+      }
+      return timestamp - promptSentAt;
+    }
+
+    function writeBounded(text: string): void {
+      if (streamOutputTruncated) {
+        return;
+      }
+
+      const remaining = MAX_PRINTED_STREAM_CHARS - printedChars;
+      if (remaining <= 0) {
+        streamOutputTruncated = true;
+        log("  …stream output truncated…");
+        return;
+      }
+
+      const chunk = text.slice(0, remaining);
+      process.stdout.write(chunk);
+      printedChars += chunk.length;
+
+      if (chunk.length < text.length || printedChars >= MAX_PRINTED_STREAM_CHARS) {
+        streamOutputTruncated = true;
+        log("  …stream output truncated…");
+      }
+    }
+
     function onMessage(raw: WebSocket.RawData): void {
+      const receivedAt = performance.now();
       const msg = JSON.parse(raw.toString()) as ServerMessage;
       events.push(msg);
 
+      if (firstEventAt === undefined) {
+        firstEventAt = receivedAt;
+      }
+      if (lastEventAt !== undefined) {
+        eventIntervals.push(receivedAt - lastEventAt);
+      }
+      lastEventAt = receivedAt;
+
       switch (msg.type) {
+        case "agent_start":
+          if (agentStartAt === undefined) {
+            agentStartAt = receivedAt;
+          }
+          break;
         case "text_delta":
-          process.stdout.write(msg.delta);
+          textDeltaCount += 1;
+          if (firstTextAt === undefined) {
+            firstTextAt = receivedAt;
+          }
+          if (lastTextDeltaAt !== undefined) {
+            textDeltaIntervals.push(receivedAt - lastTextDeltaAt);
+          }
+          lastTextDeltaAt = receivedAt;
+
+          writeBounded(msg.delta);
           textChunks.push(msg.delta);
           break;
         case "thinking_delta":
+          thinkingDeltaCount += 1;
           // Dim output for thinking
-          process.stdout.write(`\x1b[2m${msg.delta}\x1b[0m`);
+          writeBounded(`\x1b[2m${msg.delta}\x1b[0m`);
           break;
         case "tool_start":
+          toolStartCount += 1;
+          if (firstToolStartAt === undefined) {
+            firstToolStartAt = receivedAt;
+          }
+
           log(`\n  🔧 ${msg.tool}(${JSON.stringify(msg.args).slice(0, 80)})`);
           tools.push(msg.tool);
           break;
         case "tool_output":
+          toolOutputCount += 1;
           // Show truncated tool output
-          if (msg.output.length <= 200) process.stdout.write(`  ${msg.output}`);
+          if (msg.output.length <= 200) writeBounded(`  ${msg.output}`);
           break;
         case "permission_request":
+          permissionRequestCount += 1;
+          if (firstPermissionAt === undefined) {
+            firstPermissionAt = receivedAt;
+          }
+
           log(`  🔒 Auto-approving: ${(msg as any).displaySummary}`);
           ws.send(JSON.stringify({
             type: "permission_response",
             id: (msg as any).id,
             action: "allow",
           }));
-          permissionsApproved++;
+          permissionsApproved += 1;
           break;
         case "error":
+          errorCount += 1;
           errors.push((msg as any).error);
           log(`  ⚠️  ${(msg as any).error}`);
           break;
-        case "agent_end":
+        case "agent_end": {
+          agentEndAt = receivedAt;
+
+          const metrics: StreamMetrics = {
+            promptToFirstEventMs: elapsed(firstEventAt),
+            promptToAgentStartMs: elapsed(agentStartAt),
+            promptToFirstTextMs: elapsed(firstTextAt),
+            promptToFirstToolStartMs: elapsed(firstToolStartAt),
+            promptToFirstPermissionMs: elapsed(firstPermissionAt),
+            promptToAgentEndMs: elapsed(agentEndAt),
+
+            eventCount: events.length,
+            textDeltaCount,
+            thinkingDeltaCount,
+            toolStartCount,
+            toolOutputCount,
+            permissionRequestCount,
+            errorCount,
+
+            eventInterval: summarizeIntervals(eventIntervals),
+            textDeltaInterval: summarizeIntervals(textDeltaIntervals),
+          };
+
           clearTimeout(timer);
           ws.removeListener("message", onMessage);
           console.log(""); // newline after streaming
-          resolve({ events, text: textChunks.join(""), tools, permissionsApproved, errors });
+          resolve({
+            events,
+            text: textChunks.join(""),
+            tools,
+            permissionsApproved,
+            errors,
+            metrics,
+          });
           break;
+        }
       }
     }
 
     ws.on("message", onMessage);
 
     // Send the prompt
+    promptSentAt = performance.now();
+    ws.send(JSON.stringify({ type: "prompt", message: prompt }));
+  });
+}
+
+/**
+ * Start a long-running turn, then send `stop` while the agent is still active.
+ * Resolves when the turn ends (`agent_end`) or session is force-stopped (`session_ended`).
+ */
+function runAgentWithMidStreamStop(
+  ws: WebSocket,
+  prompt: string,
+  timeoutMs = AGENT_TIMEOUT,
+): Promise<StopRunResult> {
+  return new Promise((resolve, reject) => {
+    const events: ServerMessage[] = [];
+    const errors: string[] = [];
+    let permissionsApproved = 0;
+
+    let promptSentAt = 0;
+    let agentStartAt: number | undefined;
+    let stopSentAt: number | undefined;
+    let terminalAt: number | undefined;
+    let stopTrigger: string | undefined;
+    let terminationType: "agent_end" | "session_ended" | undefined;
+
+    let permissionRequestCount = 0;
+    let errorCount = 0;
+
+    let fallbackStopTimer: NodeJS.Timeout | null = null;
+
+    const timer = setTimeout(() => {
+      ws.removeListener("message", onMessage);
+      clearFallbackTimer();
+      reject(new Error(`Mid-stream stop timeout after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+
+    function clearFallbackTimer(): void {
+      if (!fallbackStopTimer) {
+        return;
+      }
+
+      clearTimeout(fallbackStopTimer);
+      fallbackStopTimer = null;
+    }
+
+    function elapsed(timestamp: number | undefined): number | undefined {
+      if (timestamp === undefined || promptSentAt === 0) {
+        return undefined;
+      }
+      return timestamp - promptSentAt;
+    }
+
+    function sendStop(trigger: string): void {
+      if (stopSentAt !== undefined) {
+        return;
+      }
+
+      stopTrigger = trigger;
+      stopSentAt = performance.now();
+      log(`  ⏹️  sending stop (${trigger})`);
+      ws.send(JSON.stringify({ type: "stop" }));
+    }
+
+    function maybeStopOnStreamEvent(trigger: string): void {
+      if (agentStartAt === undefined) {
+        return;
+      }
+
+      sendStop(trigger);
+    }
+
+    function finish(): void {
+      clearTimeout(timer);
+      clearFallbackTimer();
+      ws.removeListener("message", onMessage);
+
+      const metrics: StopRunMetrics = {
+        promptToAgentStartMs: elapsed(agentStartAt),
+        promptToStopMs: elapsed(stopSentAt),
+        stopToTerminalMs:
+          stopSentAt !== undefined && terminalAt !== undefined
+            ? terminalAt - stopSentAt
+            : undefined,
+        promptToTerminalMs: elapsed(terminalAt),
+        stopTrigger,
+        terminationType: terminationType || "agent_end",
+        eventCount: events.length,
+        permissionRequestCount,
+        errorCount,
+      };
+
+      resolve({
+        events,
+        errors,
+        permissionsApproved,
+        stopSent: stopSentAt !== undefined,
+        metrics,
+      });
+    }
+
+    function onMessage(raw: WebSocket.RawData): void {
+      const now = performance.now();
+      const msg = JSON.parse(raw.toString()) as ServerMessage;
+      events.push(msg);
+
+      switch (msg.type) {
+        case "agent_start":
+          if (agentStartAt === undefined) {
+            agentStartAt = now;
+            fallbackStopTimer = setTimeout(() => {
+              sendStop("agent_start + 1200ms fallback");
+            }, 1200);
+          }
+          break;
+
+        case "text_delta":
+          maybeStopOnStreamEvent("first text_delta");
+          break;
+
+        case "thinking_delta":
+          maybeStopOnStreamEvent("first thinking_delta");
+          break;
+
+        case "tool_start":
+          maybeStopOnStreamEvent("first tool_start");
+          break;
+
+        case "tool_output":
+          maybeStopOnStreamEvent("first tool_output");
+          break;
+
+        case "permission_request":
+          permissionRequestCount += 1;
+          ws.send(JSON.stringify({
+            type: "permission_response",
+            id: (msg as any).id,
+            action: "allow",
+          }));
+          permissionsApproved += 1;
+          break;
+
+        case "error":
+          errorCount += 1;
+          errors.push((msg as any).error);
+          log(`  ⚠️  ${(msg as any).error}`);
+          break;
+
+        case "agent_end":
+          terminalAt = now;
+          terminationType = "agent_end";
+          finish();
+          break;
+
+        case "session_ended":
+          terminalAt = now;
+          terminationType = "session_ended";
+          finish();
+          break;
+      }
+    }
+
+    ws.on("message", onMessage);
+
+    promptSentAt = performance.now();
     ws.send(JSON.stringify({ type: "prompt", message: prompt }));
   });
 }
@@ -306,6 +759,11 @@ async function testHttpApi(): Promise<void> {
   // Detail
   const detail = await api("GET", `/sessions/${created.data.session?.id}`);
   check("GET /sessions/:id → correct session", detail.data.session?.id === created.data.session?.id);
+
+  // Stop (works even if session is not active yet)
+  const stopped = await api("POST", `/sessions/${created.data.session?.id}/stop`);
+  check("POST /sessions/:id/stop → 200", stopped.status === 200);
+  check("POST /sessions/:id/stop marks stopped", stopped.data.session?.status === "stopped");
 }
 
 async function testAgentSession(): Promise<string> {
@@ -354,11 +812,12 @@ async function testAgentSession(): Promise<string> {
 
   log(`  Tools used: ${run1.tools.join(", ")}`);
   log(`  Permissions auto-approved: ${run1.permissionsApproved} (expected: 0 for ls)`);
+  printRunMetrics("Run 1", run1.metrics);
 
   // ── Run 2: Permission-gated command ──
   log("\n── Run 2: Permission gate (npm — requires approval) ──\n");
   let run2 = await withTimeout(
-    runAgent(ws, "You MUST call the bash tool with command 'npm --version'. Report the version number."),
+    runAgent(ws, "You MUST call the bash tool with command 'npm --version'. Then reply with EXACTLY one line: VERSION:<result>."),
     AGENT_TIMEOUT,
     "agent run 2",
   );
@@ -367,7 +826,7 @@ async function testAgentSession(): Promise<string> {
   if (run2.tools.length === 0) {
     log("  ⟳ LLM didn't use tools — retrying with explicit prompt…");
     run2 = await withTimeout(
-      runAgent(ws, "Call the bash tool with command 'npm --version' right now."),
+      runAgent(ws, "Call bash with 'npm --version' now. Reply exactly: VERSION:<result>."),
       AGENT_TIMEOUT,
       "agent run 2 retry",
     );
@@ -386,6 +845,41 @@ async function testAgentSession(): Promise<string> {
 
   log(`  Tools used: ${run2.tools.join(", ")}`);
   log(`  Permissions auto-approved: ${run2.permissionsApproved}`);
+  printRunMetrics("Run 2", run2.metrics);
+
+  // ── Run 3: Mid-stream stop behavior ──
+  log("\n── Run 3: Mid-stream stop (loop prevention) ──\n");
+  const run3 = await withTimeout(
+    runAgentWithMidStreamStop(
+      ws,
+      "You MUST call bash with: for i in $(seq 1 300); do echo tick:$i; sleep 0.2; done\n"
+      + "Do not summarize until the command finishes.",
+      AGENT_TIMEOUT,
+    ),
+    AGENT_TIMEOUT,
+    "agent run 3 stop",
+  );
+
+  const run3Ended = run3.events.some((event) => event.type === "agent_end" || event.type === "session_ended");
+  check("Run 3: stop signal sent mid-turn", run3.stopSent === true);
+  check("Run 3: stop leads to terminal event", run3Ended);
+  check(
+    "Run 3: stop-to-terminal under 8s",
+    (run3.metrics.stopToTerminalMs || Number.POSITIVE_INFINITY) < 8000,
+    `stop-to-terminal=${formatMs(run3.metrics.stopToTerminalMs)}`,
+  );
+  check("Run 3: no errors", run3.errors.length === 0, run3.errors.join("; "));
+  printStopRunMetrics("Run 3", run3.metrics);
+
+  const runMetrics = [run1.metrics, run2.metrics];
+  const avgStart = average(definedNumbers(runMetrics.map((m) => m.promptToAgentStartMs)));
+  const avgFirstText = average(definedNumbers(runMetrics.map((m) => m.promptToFirstTextMs)));
+  const avgEnd = average(definedNumbers(runMetrics.map((m) => m.promptToAgentEndMs)));
+
+  log("Aggregate performance across runs:");
+  log(`  avg prompt → agent_start: ${formatMs(avgStart)}`);
+  log(`  avg prompt → first text_delta: ${formatMs(avgFirstText)}`);
+  log(`  avg prompt → agent_end: ${formatMs(avgEnd)}`);
 
   ws.close();
   return sessionId;

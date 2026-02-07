@@ -14,7 +14,7 @@
 import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import type { Session, ServerMessage, ServerConfig } from "./types.js";
+import type { Session, SessionMessage, ServerMessage, ServerConfig } from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
@@ -76,6 +76,15 @@ export class SessionManager extends EventEmitter {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
 
+  // Persist active session metadata in batches to avoid sync I/O on every event.
+  private dirtySessions: Set<string> = new Set();
+  private saveTimer: NodeJS.Timeout | null = null;
+  private readonly saveDebounceMs = 1000;
+
+  // Stop-loop safety: if abort does not settle, force-stop the session.
+  private abortFallbackTimers: Map<string, NodeJS.Timeout> = new Map();
+  private readonly abortFallbackMs = 5000;
+
   constructor(storage: Storage, gate: GateServer, sandbox: SandboxManager) {
     super();
     this.storage = storage;
@@ -113,7 +122,7 @@ export class SessionManager extends EventEmitter {
 
     session.status = "ready";
     session.lastActivity = Date.now();
-    this.storage.saveSession(session);
+    this.persistSessionNow(key, session);
     this.resetIdleTimer(key);
 
     return session;
@@ -237,7 +246,16 @@ export class SessionManager extends EventEmitter {
       this.broadcast(key, message);
     }
 
-    this.updateSessionFromEvent(active.session, data);
+    this.updateSessionFromEvent(key, active.session, data);
+
+    if (
+      data.type === "agent_start"
+      || data.type === "agent_end"
+      || data.type === "message_end"
+    ) {
+      this.broadcast(key, { type: "state", session: active.session });
+    }
+
     this.resetIdleTimer(key);
   }
 
@@ -302,6 +320,22 @@ export class SessionManager extends EventEmitter {
   // ─── RPC Commands ───
 
   /**
+   * Keep active in-memory session metadata in sync when server.ts stores
+   * a user message directly.
+   */
+  recordUserMessage(userId: string, sessionId: string, content: string, timestamp: number): void {
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) {
+      return;
+    }
+
+    active.session.messageCount += 1;
+    active.session.lastMessage = content.slice(0, 100);
+    active.session.lastActivity = timestamp;
+  }
+
+  /**
    * Send a prompt to pi. Handles streaming state.
    *
    * RPC rules:
@@ -355,9 +389,53 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Abort the current agent operation.
+   *
+   * If abort does not settle promptly, force-stop the session to break loops.
    */
   async sendAbort(userId: string, sessionId: string): Promise<void> {
-    this.sendRpcCommand(`${userId}/${sessionId}`, { type: "abort" });
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) {
+      return;
+    }
+
+    this.sendRpcCommand(key, { type: "abort" });
+
+    if (active.session.status === "busy") {
+      this.scheduleAbortFallback(key, userId, sessionId);
+    }
+  }
+
+  private scheduleAbortFallback(key: string, userId: string, sessionId: string): void {
+    this.clearAbortFallback(key);
+
+    const timer = setTimeout(() => {
+      this.abortFallbackTimers.delete(key);
+
+      const active = this.active.get(key);
+      if (!active || active.session.status !== "busy") {
+        return;
+      }
+
+      console.warn(`[session] abort timeout, force-stopping ${key}`);
+      this.broadcast(key, {
+        type: "error",
+        error: "Stop request timed out. Session was force-stopped.",
+      });
+      void this.stopSession(userId, sessionId);
+    }, this.abortFallbackMs);
+
+    this.abortFallbackTimers.set(key, timer);
+  }
+
+  private clearAbortFallback(key: string): void {
+    const timer = this.abortFallbackTimers.get(key);
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.abortFallbackTimers.delete(key);
   }
 
   /**
@@ -481,7 +559,9 @@ export class SessionManager extends EventEmitter {
   /**
    * Update session state from pi events.
    */
-  private updateSessionFromEvent(session: Session, event: any): void {
+  private updateSessionFromEvent(key: string, session: Session, event: any): void {
+    let shouldFlushNow = false;
+
     switch (event.type) {
       case "agent_start":
         session.status = "busy";
@@ -489,20 +569,132 @@ export class SessionManager extends EventEmitter {
 
       case "agent_end":
         session.status = "ready";
+        this.clearAbortFallback(key);
+        shouldFlushNow = true;
         break;
 
       case "message_end": {
-        const msg = event.message;
-        if (msg?.usage) {
-          session.tokens.input += msg.usage.input || 0;
-          session.tokens.output += msg.usage.output || 0;
-          session.cost += msg.usage.cost?.total || 0;
+        const message = event.message;
+        const usage = this.extractUsage(message);
+        const assistantText = this.extractAssistantText(message);
+
+        if (assistantText) {
+          const tokens = usage
+            ? { input: usage.input, output: usage.output }
+            : undefined;
+
+          this.appendMessage(session, {
+            role: "assistant",
+            content: assistantText,
+            timestamp: Date.now(),
+            model: session.model,
+            tokens,
+            cost: usage?.cost,
+          });
+        } else if (usage) {
+          session.tokens.input += usage.input;
+          session.tokens.output += usage.output;
+          session.cost += usage.cost;
         }
         break;
       }
     }
 
     session.lastActivity = Date.now();
+
+    if (shouldFlushNow) {
+      this.persistSessionNow(key, session);
+      return;
+    }
+
+    this.markSessionDirty(key);
+  }
+
+  private appendMessage(
+    session: Session,
+    message: Omit<SessionMessage, "id" | "sessionId">,
+  ): void {
+    this.storage.addSessionMessage(session.userId, session.id, message);
+
+    // Keep the active in-memory session aligned with persisted stats.
+    session.messageCount += 1;
+    session.lastMessage = message.content.slice(0, 100);
+    session.lastActivity = message.timestamp;
+
+    if (message.tokens) {
+      session.tokens.input += message.tokens.input;
+      session.tokens.output += message.tokens.output;
+    }
+
+    if (message.cost) {
+      session.cost += message.cost;
+    }
+  }
+
+  private extractAssistantText(message: any): string {
+    const content = message?.content;
+
+    if (typeof content === "string") {
+      return content;
+    }
+
+    if (!Array.isArray(content)) {
+      return "";
+    }
+
+    const textParts: string[] = [];
+    for (const part of content) {
+      const isTextPart = part?.type === "text" || part?.type === "output_text";
+      if (isTextPart && typeof part.text === "string") {
+        textParts.push(part.text);
+      }
+    }
+
+    return textParts.join("");
+  }
+
+  private extractUsage(message: any): { input: number; output: number; cost: number } | null {
+    const usage = message?.usage;
+    if (!usage) {
+      return null;
+    }
+
+    return {
+      input: usage.input || 0,
+      output: usage.output || 0,
+      cost: usage.cost?.total || 0,
+    };
+  }
+
+  private markSessionDirty(key: string): void {
+    this.dirtySessions.add(key);
+
+    if (this.saveTimer) {
+      return;
+    }
+
+    this.saveTimer = setTimeout(() => {
+      this.flushDirtySessions();
+    }, this.saveDebounceMs);
+  }
+
+  private flushDirtySessions(): void {
+    const keys = Array.from(this.dirtySessions);
+    this.dirtySessions.clear();
+    this.saveTimer = null;
+
+    for (const key of keys) {
+      const active = this.active.get(key);
+      if (!active) {
+        continue;
+      }
+
+      this.storage.saveSession(active.session);
+    }
+  }
+
+  private persistSessionNow(key: string, session: Session): void {
+    this.dirtySessions.delete(key);
     this.storage.saveSession(session);
   }
 
@@ -513,7 +705,7 @@ export class SessionManager extends EventEmitter {
     if (!active) return;
 
     active.session.status = "stopped";
-    this.storage.saveSession(active.session);
+    this.persistSessionNow(key, active.session);
 
     // Clean up gate socket
     this.gate.destroySessionSocket(active.session.id);
@@ -536,6 +728,7 @@ export class SessionManager extends EventEmitter {
 
     this.broadcast(key, { type: "session_ended", reason });
     this.clearIdleTimer(key);
+    this.clearAbortFallback(key);
     this.active.delete(key);
   }
 
@@ -565,6 +758,8 @@ export class SessionManager extends EventEmitter {
     const key = `${userId}/${sessionId}`;
     const active = this.active.get(key);
     if (!active) return;
+
+    this.clearAbortFallback(key);
 
     // Graceful: abort current operation
     try {

@@ -10,6 +10,10 @@ export interface User {
   token: string;
   createdAt: number;
   lastSeen?: number;
+  /** APNs device tokens (hex string). Multiple devices in future. */
+  deviceTokens?: string[];
+  /** ActivityKit push token for Live Activity updates (hex string). */
+  liveActivityToken?: string;
 }
 
 // ─── Sessions ───
@@ -93,6 +97,8 @@ export type ClientMessage =
   | { type: "steer"; message: string }
   | { type: "follow_up"; message: string }
   | { type: "abort" }
+  // Alias for mobile UX terminology.
+  | { type: "stop" }
   | { type: "get_state" }
   // Permission gate
   | { type: "permission_response"; id: string; action: "allow" | "deny" }
@@ -147,6 +153,15 @@ export type ServerMessage =
       statusKey?: string;
       statusText?: string;
     };
+
+// ─── Push ───
+
+export interface RegisterDeviceTokenRequest {
+  /** APNs device token (hex string from iOS) */
+  deviceToken: string;
+  /** "apns" for regular push, "liveactivity" for Live Activity push token */
+  tokenType?: "apns" | "liveactivity";
+}
 
 // ─── Invite ───
 

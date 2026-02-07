@@ -188,6 +188,54 @@ export class Storage {
     }
   }
 
+  // ─── Device Tokens ───
+
+  addDeviceToken(userId: string, token: string): void {
+    const user = this.users.get(userId);
+    if (!user) return;
+
+    if (!user.deviceTokens) user.deviceTokens = [];
+    // Deduplicate (same device re-registers)
+    if (!user.deviceTokens.includes(token)) {
+      user.deviceTokens.push(token);
+    }
+    this.saveUsers();
+  }
+
+  removeDeviceToken(userId: string, token: string): void {
+    const user = this.users.get(userId);
+    if (!user?.deviceTokens) return;
+
+    user.deviceTokens = user.deviceTokens.filter(t => t !== token);
+    this.saveUsers();
+  }
+
+  /** Remove a token from ALL users (token recycled by APNs). */
+  removeDeviceTokenGlobal(token: string): void {
+    for (const user of this.users.values()) {
+      if (user.deviceTokens?.includes(token)) {
+        user.deviceTokens = user.deviceTokens.filter(t => t !== token);
+      }
+    }
+    this.saveUsers();
+  }
+
+  getDeviceTokens(userId: string): string[] {
+    return this.users.get(userId)?.deviceTokens || [];
+  }
+
+  setLiveActivityToken(userId: string, token: string | null): void {
+    const user = this.users.get(userId);
+    if (!user) return;
+
+    user.liveActivityToken = token || undefined;
+    this.saveUsers();
+  }
+
+  getLiveActivityToken(userId: string): string | undefined {
+    return this.users.get(userId)?.liveActivityToken;
+  }
+
   // ─── Sessions ───
 
   private getSessionPath(userId: string, sessionId: string): string {

@@ -157,6 +157,10 @@ struct ChatView: View {
     private func connectToSession() async {
         sessionStore.activeSessionId = sessionId
 
+        // Start Live Activity for this session
+        let sessionName = session?.name ?? "Session"
+        LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
+
         // Load full trace (tool calls + results) or fall back to messages
         if let api = connection.apiClient {
             do {

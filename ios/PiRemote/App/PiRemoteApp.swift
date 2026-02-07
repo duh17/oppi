@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct PiRemoteApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var connection = ServerConnection()
     @State private var navigation = AppNavigation()
     @Environment(\.scenePhase) private var scenePhase
@@ -50,6 +51,16 @@ struct PiRemoteApp: App {
                 try? await connection.respondToPermission(id: permissionId, action: action)
             }
         }
+
+        // Configure push registration with the connection
+        PushRegistration.shared.configure(connection: connection)
+
+        // Navigate to session when user taps a push notification body
+        notificationService.onNavigateToPermission = { [weak connection] _, sessionId in
+            guard let connection, !sessionId.isEmpty else { return }
+            connection.sessionStore.activeSessionId = sessionId
+            navigation.selectedTab = .sessions
+        }
     }
 
     private func reconnectOnLaunch() async {
@@ -74,6 +85,9 @@ struct PiRemoteApp: App {
         do {
             let sessions = try await api.listSessions()
             connection.sessionStore.sessions = sessions
+
+            // 4. Register for push notifications (after successful server connection)
+            await PushRegistration.shared.requestAndRegister()
         } catch {
             // Offline — show cached state (empty for now)
         }

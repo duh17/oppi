@@ -18,6 +18,10 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
     /// The handler should route the response to the WebSocket.
     var onPermissionResponse: ((String, PermissionAction) -> Void)?
 
+    /// Called when the user taps the notification body (not an action button).
+    /// Navigate to the session containing this permission.
+    var onNavigateToPermission: ((String, String) -> Void)?  // (permissionId, sessionId)
+
     override private init() {
         super.init()
     }
@@ -119,6 +123,12 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
         if let action {
             Task { @MainActor in
                 onPermissionResponse?(permissionId, action)
+            }
+        } else {
+            // User tapped the notification body — navigate to the session
+            let sessionId = userInfo["sessionId"] as? String ?? ""
+            Task { @MainActor in
+                onNavigateToPermission?(permissionId, sessionId)
             }
         }
 

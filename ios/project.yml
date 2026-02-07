@@ -21,6 +21,8 @@ targets:
     sources:
       - path: PiRemote
         type: group
+      - path: Shared
+        type: group
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.PiRemote
@@ -29,13 +31,37 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
     info:
       path: PiRemote/Resources/Info.plist
       properties:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UILaunchScreen: {}
+        UIBackgroundModes:
+          - remote-notification
+        NSSupportsLiveActivities: true
+    dependencies:
+      - target: PiRemoteActivityExtension
+        embed: true
+  PiRemoteActivityExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PiRemoteActivityExtension
+        type: group
+      - path: Shared
+        type: group
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.PiRemote.ActivityExtension
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: PiRemote
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
   PiRemoteTests:
     type: bundle.unit-test
     platform: iOS
@@ -54,6 +80,7 @@ schemes:
     build:
       targets:
         PiRemote: all
+        PiRemoteActivityExtension: all
         PiRemoteTests: [test]
     test:
       targets:

@@ -41,11 +41,12 @@ final class ServerConnection {
     var composerDraft: String?
 
     init() {
-        // Wire coalescer to reducer
+        // Wire coalescer to reducer + Live Activity
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
             for event in events {
                 self.reducer.process(event)
+                LiveActivityManager.shared.updateFromEvent(event)
             }
         }
     }
@@ -80,6 +81,8 @@ final class ServerConnection {
         coalescer.flushNow()
         wsClient?.disconnect()
         activeSessionId = nil
+        // Don't end Live Activity on disconnect — it should persist
+        // on Lock Screen until the session actually ends.
     }
 
     /// Flush pending deltas on background transition.

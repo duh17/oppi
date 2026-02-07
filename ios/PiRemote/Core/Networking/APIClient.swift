@@ -84,6 +84,21 @@ actor APIClient {
         _ = try await request("DELETE", path: "/sessions/\(id)")
     }
 
+    // MARK: - Device Token
+
+    /// Register APNs device token with the server.
+    func registerDeviceToken(_ token: String, tokenType: String = "apns") async throws {
+        struct Body: Encodable { let deviceToken: String; let tokenType: String }
+        _ = try await post("/me/device-token", body: Body(deviceToken: token, tokenType: tokenType))
+    }
+
+    /// Unregister APNs device token.
+    func unregisterDeviceToken(_ token: String) async throws {
+        struct Body: Encodable { let deviceToken: String }
+        let (data, response) = try await request("DELETE", path: "/me/device-token", body: Body(deviceToken: token))
+        try checkStatus(response, data: data)
+    }
+
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {

@@ -14,11 +14,32 @@
 import chalk from "chalk";
 import qrcode from "qrcode-terminal";
 import QRCode from "qrcode";
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { join } from "node:path";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
+import type { APNsConfig } from "./push.js";
 import type { InviteData } from "./types.js";
+
+function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
+  const dataDir = storage.getDataDir();
+  const apnsConfigPath = join(dataDir, "apns.json");
+
+  if (!existsSync(apnsConfigPath)) return undefined;
+
+  try {
+    const raw = JSON.parse(readFileSync(apnsConfigPath, "utf-8"));
+    if (!raw.keyPath || !raw.keyId || !raw.teamId || !raw.bundleId) {
+      console.log(chalk.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"));
+      return undefined;
+    }
+    return raw as APNsConfig;
+  } catch (err: any) {
+    console.log(chalk.yellow(`  ⚠️  apns.json parse error: ${err.message}`));
+    return undefined;
+  }
+}
 
 function printHeader(): void {
   console.log("");
@@ -61,17 +82,44 @@ async function cmdServe(storage: Storage): Promise<void> {
     console.log("");
   }
 
-  const server = new Server(storage);
+  // Load APNs config from config file if present
+  const apnsConfig = loadAPNsConfig(storage);
+  const server = new Server(storage, apnsConfig);
+  let shuttingDown = false;
 
-  process.on("SIGINT", async () => {
-    console.log("\n\nShutting down...");
-    await server.stop();
-    process.exit(0);
+  async function shutdown(code: number, reason?: string): Promise<void> {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+
+    if (reason) {
+      console.log(`\n${reason}`);
+    }
+
+    await server.stop().catch((err: unknown) => {
+      console.error(chalk.red("Shutdown error:"), err);
+    });
+
+    process.exit(code);
+  }
+
+  process.on("SIGINT", () => {
+    void shutdown(0, "\nShutting down...");
   });
 
-  process.on("SIGTERM", async () => {
-    await server.stop();
-    process.exit(0);
+  process.on("SIGTERM", () => {
+    void shutdown(0);
+  });
+
+  process.on("uncaughtException", (err) => {
+    console.error(chalk.red("Uncaught exception:"), err);
+    void shutdown(1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error(chalk.red("Unhandled rejection:"), reason);
+    void shutdown(1);
   });
 
   await server.start();

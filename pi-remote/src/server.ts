@@ -15,12 +15,14 @@ import { PolicyEngine } from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
 import { SandboxManager } from "./sandbox.js";
 import { readSessionTrace } from "./trace.js";
+import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import type {
   User,
   Session,
   ClientMessage,
   ServerMessage,
   CreateSessionRequest,
+  RegisterDeviceTokenRequest,
   ApiError,
 } from "./types.js";
 
@@ -30,18 +32,20 @@ export class Server {
   private policy: PolicyEngine;
   private gate: GateServer;
   private sandbox: SandboxManager;
+  private push: PushClient;
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
 
   // Track WebSocket connections per user for permission/UI forwarding
   private userConnections: Map<string, Set<WebSocket>> = new Map();
 
-  constructor(storage: Storage) {
+  constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
 
     this.policy = new PolicyEngine("admin"); // Per-user in v2
     this.gate = new GateServer(this.policy);
     this.sandbox = new SandboxManager();
+    this.push = createPushClient(apnsConfig);
     this.sessions = new SessionManager(storage, this.gate, this.sandbox);
 
     this.httpServer = createServer((req, res) => this.handleHttp(req, res));
@@ -90,6 +94,7 @@ export class Server {
     await this.sessions.stopAll();
     await this.sandbox.cleanupOrphanedContainers();
     await this.gate.shutdown();
+    this.push.shutdown();
     this.wss.close();
     this.httpServer.close();
   }
@@ -117,11 +122,78 @@ export class Server {
 
   private broadcastToUser(userId: string, msg: ServerMessage): void {
     const conns = this.userConnections.get(userId);
-    if (!conns) return;
-    const json = JSON.stringify(msg);
-    for (const ws of conns) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(json, { compress: false });
+    const hasWS = conns && conns.size > 0 &&
+      Array.from(conns).some(ws => ws.readyState === WebSocket.OPEN);
+
+    if (hasWS) {
+      const json = JSON.stringify(msg);
+      for (const ws of conns!) {
+        if (ws.readyState === WebSocket.OPEN) ws.send(json, { compress: false });
+      }
+    } else {
+      // No WebSocket connected — fall back to push notification
+      this.pushFallback(userId, msg);
     }
+  }
+
+  /**
+   * Send a push notification when no WebSocket client is connected.
+   * Only fires for permission requests and session lifecycle events.
+   */
+  private pushFallback(userId: string, msg: ServerMessage): void {
+    const tokens = this.storage.getDeviceTokens(userId);
+    if (tokens.length === 0) return;
+
+    if (msg.type === "permission_request") {
+      const session = this.findSessionById(msg.sessionId);
+      for (const token of tokens) {
+        this.push.sendPermissionPush(token, {
+          permissionId: msg.id,
+          sessionId: msg.sessionId,
+          sessionName: session?.name,
+          tool: msg.tool,
+          displaySummary: msg.displaySummary,
+          risk: msg.risk,
+          reason: msg.reason,
+          timeoutAt: msg.timeoutAt,
+        }).then(ok => {
+          if (!ok) {
+            // Token might be expired — don't remove yet, APNs 410 handler does that
+          }
+        });
+      }
+    } else if (msg.type === "session_ended") {
+      const session = this.findSessionByReason(userId, msg);
+      for (const token of tokens) {
+        this.push.sendSessionEventPush(token, {
+          sessionId: session?.id || "unknown",
+          sessionName: session?.name,
+          event: "ended",
+          reason: msg.reason,
+        });
+      }
+    } else if (msg.type === "error") {
+      // Only push errors that aren't retries
+      if (!msg.error.startsWith("Retrying (")) {
+        for (const token of tokens) {
+          this.push.sendSessionEventPush(token, {
+            sessionId: "unknown",
+            event: "error",
+            reason: msg.error,
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Find session from a session_ended message context.
+   * We track which user's sessions are active to find the match.
+   */
+  private findSessionByReason(userId: string, _msg: ServerMessage): Session | undefined {
+    const sessions = this.storage.listUserSessions(userId);
+    // Return the most recently active session (best effort)
+    return sessions.find(s => s.status === "stopped") || sessions[0];
   }
 
   private trackConnection(userId: string, ws: WebSocket): void {
@@ -177,6 +249,37 @@ export class Server {
     try {
       if (path === "/me" && method === "GET") {
         this.json(res, { user: user.id, name: user.name });
+        return;
+      }
+
+      // Device token registration (APNs + Live Activity)
+      if (path === "/me/device-token" && method === "POST") {
+        const body = await this.parseBody<RegisterDeviceTokenRequest>(req);
+        if (!body.deviceToken) {
+          this.error(res, 400, "deviceToken required");
+          return;
+        }
+
+        const tokenType = body.tokenType || "apns";
+        if (tokenType === "liveactivity") {
+          this.storage.setLiveActivityToken(user.id, body.deviceToken);
+          console.log(`[push] Live Activity token registered for ${user.name}`);
+        } else {
+          this.storage.addDeviceToken(user.id, body.deviceToken);
+          console.log(`[push] Device token registered for ${user.name}`);
+        }
+
+        this.json(res, { ok: true });
+        return;
+      }
+
+      if (path === "/me/device-token" && method === "DELETE") {
+        const body = await this.parseBody<{ deviceToken: string }>(req);
+        if (body.deviceToken) {
+          this.storage.removeDeviceToken(user.id, body.deviceToken);
+          console.log(`[push] Device token removed for ${user.name}`);
+        }
+        this.json(res, { ok: true });
         return;
       }
 
