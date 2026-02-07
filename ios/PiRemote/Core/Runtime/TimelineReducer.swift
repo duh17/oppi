@@ -17,6 +17,11 @@ import Foundation
 /// - `sessionEnded`: finalize assistant message, append system event
 @MainActor @Observable
 final class TimelineReducer {
+    /// Maximum items before trimming oldest from the front.
+    static let maxItems = 500
+    /// Target count after trimming — keeps a buffer to avoid trimming on every event.
+    static let trimTarget = 400
+
     private(set) var items: [ChatItem] = []
 
     /// Incremented on timeline mutations so ChatView can react to row content
@@ -81,6 +86,7 @@ final class TimelineReducer {
             }
         }
 
+        trimIfNeeded()
         bumpRenderVersion()
     }
 
@@ -171,6 +177,7 @@ final class TimelineReducer {
             }
         }
 
+        trimIfNeeded()
         bumpRenderVersion()
     }
 
@@ -243,12 +250,14 @@ final class TimelineReducer {
         }
 
         flushPendingUpserts()
+        trimIfNeeded()
         bumpRenderVersion()
     }
 
     /// Process a single event. Bumps renderVersion once.
     func process(_ event: AgentEvent) {
         processInternal(event)
+        trimIfNeeded()
         bumpRenderVersion()
     }
 
@@ -330,6 +339,7 @@ final class TimelineReducer {
             text: text,
             timestamp: Date()
         ))
+        trimIfNeeded()
         bumpRenderVersion()
         return id
     }
@@ -346,6 +356,7 @@ final class TimelineReducer {
     /// Used for local-only events like force-stop confirmations.
     func appendSystemEvent(_ message: String) {
         items.append(.systemEvent(id: UUID().uuidString, message: message))
+        trimIfNeeded()
         bumpRenderVersion()
     }
 
@@ -471,6 +482,14 @@ final class TimelineReducer {
             outputPreview: preview, outputByteCount: bytes,
             isError: isErr, isDone: true
         )
+    }
+
+    /// Trim oldest items when count exceeds `maxItems`.
+    /// Preserves the most recent items so the visible (bottom) portion is unaffected.
+    private func trimIfNeeded() {
+        guard items.count > Self.maxItems else { return }
+        let removeCount = items.count - Self.trimTarget
+        items.removeFirst(removeCount)
     }
 
     private func bumpRenderVersion() {

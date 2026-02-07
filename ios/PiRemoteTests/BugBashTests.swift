@@ -297,10 +297,10 @@ struct BugBashTests {
 
         let trace = [
             decodeTrace("""
-            {"id":"e1","type":"tool_call","timestamp":"2025-01-01T00:00:00Z","tool":"bash","args":{"command":{"type":"string","value":"ls"}}}
+            {"id":"e1","type":"toolCall","timestamp":"2025-01-01T00:00:00Z","tool":"bash","args":{"command":{"type":"string","value":"ls"}}}
             """),
             decodeTrace("""
-            {"id":"e2","type":"tool_result","timestamp":"2025-01-01T00:00:01Z","toolCallId":"e1","output":"file.txt"}
+            {"id":"e2","type":"toolResult","timestamp":"2025-01-01T00:00:01Z","toolCallId":"e1","output":"file.txt"}
             """),
             decodeTrace("""
             {"id":"e3","type":"assistant","timestamp":"2025-01-01T00:00:02Z","text":"Here are the files"}

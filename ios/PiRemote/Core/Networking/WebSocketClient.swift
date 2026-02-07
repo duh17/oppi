@@ -195,7 +195,7 @@ final class WebSocketClient {
 
         let nextAttempt = attempt + 1
         status = .reconnecting(attempt: nextAttempt)
-        let delay = reconnectDelay(attempt: nextAttempt)
+        let delay = Self.reconnectDelay(attempt: nextAttempt)
         logger.info("Reconnecting in \(delay)s (attempt \(nextAttempt))")
 
         // Cancel old tasks
@@ -213,9 +213,12 @@ final class WebSocketClient {
         }
     }
 
-    /// Exponential backoff: 1, 2, 4, 8, 16, 30, 30, 30...
-    private func reconnectDelay(attempt: Int) -> TimeInterval {
-        min(pow(2, Double(attempt - 1)), 30)
+    /// Exponential backoff with jitter: 2^(attempt-1) seconds, capped at 30s, ±25% jitter.
+    /// Jitter prevents thundering herd when server restarts with multiple clients.
+    nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
+        let base = min(pow(2, Double(attempt - 1)), 30)
+        let jitterFactor = Double.random(in: 0.75...1.25)
+        return base * jitterFactor
     }
 }
 

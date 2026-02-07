@@ -14,6 +14,8 @@ struct ChatView: View {
     @State private var showForceStop = false
     @State private var isForceStopInFlight = false
     @State private var forceStopTask: Task<Void, Never>?
+    /// Auto-fetches session state from REST if WS `agentEnd` was lost after stop.
+    @State private var reconcileTask: Task<Void, Never>?
     /// Bumped on re-appear to force `.task(id:)` restart even for same sessionId.
     @State private var connectionGeneration = 0
     /// Tracks first appearance so initial connection doesn't double-start.
@@ -247,11 +249,15 @@ struct ChatView: View {
                 isForceStopInFlight = false
                 forceStopTask?.cancel()
                 forceStopTask = nil
+                reconcileTask?.cancel()
+                reconcileTask = nil
             }
         }
         .onDisappear {
             forceStopTask?.cancel()
             forceStopTask = nil
+            reconcileTask?.cancel()
+            reconcileTask = nil
             // Save draft before disconnect
             let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             connection.composerDraft = draft.isEmpty ? nil : draft
@@ -367,6 +373,29 @@ struct ChatView: View {
                     showForceStop = true
                 }
             }
+
+            // Safety net: if still busy after 10s, the WS agentEnd may have been lost.
+            // Fetch session state from REST to reconcile.
+            reconcileTask?.cancel()
+            reconcileTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                if isBusy {
+                    await reconcileSessionState()
+                }
+            }
+        }
+    }
+
+    /// Fetch session state from REST to reconcile a possibly-stale local status.
+    /// Called after stop timeout as a safety net for lost WS messages.
+    private func reconcileSessionState() async {
+        guard let api = connection.apiClient else { return }
+        do {
+            let (session, _) = try await api.getSession(id: sessionId)
+            sessionStore.upsert(session)
+        } catch {
+            // Silently fail — next foreground transition will retry
         }
     }
 

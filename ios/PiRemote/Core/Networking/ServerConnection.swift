@@ -41,6 +41,9 @@ final class ServerConnection {
     /// Composer draft text — saved/restored across background cycles.
     var composerDraft: String?
 
+    /// Timer that auto-dismisses extension dialogs after their timeout expires.
+    private var extensionTimeoutTask: Task<Void, Never>?
+
     init() {
         // Wire coalescer to reducer (batch) + Live Activity (throttled).
         // Single renderVersion bump per flush, not per event.
@@ -91,6 +94,10 @@ final class ServerConnection {
         coalescer.flushNow()
         wsClient?.disconnect()
         activeSessionId = nil
+        // Clear stale extension dialog — it's tied to the active session stream
+        activeExtensionDialog = nil
+        extensionTimeoutTask?.cancel()
+        extensionTimeoutTask = nil
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
     }
@@ -130,6 +137,8 @@ final class ServerConnection {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled))
         activeExtensionDialog = nil
+        extensionTimeoutTask?.cancel()
+        extensionTimeoutTask = nil
     }
 
     /// Request current state from server.
@@ -169,6 +178,11 @@ final class ServerConnection {
             && wsClient?.connectedSessionId == sessionId
 
         if !streamAlive {
+            // Clear stale extension dialog — server will re-send if still pending
+            activeExtensionDialog = nil
+            extensionTimeoutTask?.cancel()
+            extensionTimeoutTask = nil
+
             // Use trace endpoint for full history including tool calls.
             // Fall back to REST messages if trace endpoint is unavailable.
             do {
@@ -221,7 +235,9 @@ final class ServerConnection {
             sessionStore.upsert(session)
 
         case .extensionUIRequest(let request):
+            extensionTimeoutTask?.cancel()
             activeExtensionDialog = request
+            scheduleExtensionTimeout(request)
 
         case .extensionUINotification(_, let message, _, _, _):
             extensionToast = message
@@ -272,6 +288,21 @@ final class ServerConnection {
 
         case .error(let msg):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
+        }
+    }
+
+    // MARK: - Extension Timeout
+
+    /// Auto-dismiss extension dialog after its timeout expires.
+    /// The server has already given up waiting — we just clean up the UI.
+    private func scheduleExtensionTimeout(_ request: ExtensionUIRequest) {
+        guard let timeout = request.timeout, timeout > 0 else { return }
+        extensionTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            guard let self, self.activeExtensionDialog?.id == request.id else { return }
+            self.activeExtensionDialog = nil
+            self.extensionToast = "Extension request timed out"
         }
     }
 }

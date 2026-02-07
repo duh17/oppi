@@ -38,12 +38,12 @@ Implementation steps:
 - [x] Disconnect on `ChatView` disappear (`Features/Chat/ChatView.swift`)
 - [x] `isConnected` derived from actual socket status (`Core/Networking/ServerConnection.swift`)
 - [x] Add serialized operation queue for session transitions (`load history` -> `connect stream` -> `request state`) — `Task.isCancelled` guards after each async boundary in `connectToSession()` (`Features/Chat/ChatView.swift`)
-- [ ] Add reconnect backoff policy + cap + jitter docs
+- [x] Add reconnect backoff policy + cap + jitter — exponential backoff with 30s cap and ±25% jitter (`Core/Networking/WebSocketClient.swift`)
 - [x] Add explicit stale-stream guard (ignore events for non-active session) (`Core/Networking/ServerConnection.swift`)
 
 ### 1.2 Timeline rendering performance
 - [x] Auto-scroll now keyed off mutation version (`renderVersion`), not just item count (`Core/Runtime/TimelineReducer.swift`, `Features/Chat/ChatView.swift`)
-- [ ] Cap total rendered timeline rows in-memory (windowing policy)
+- [x] Cap total timeline items at 500, trim oldest to 400 on overflow (`Core/Runtime/TimelineReducer.swift`)
 - [x] Cap per-tool stored output bytes with truncation metadata (`Core/Runtime/ChatItem.swift`, `PiRemoteTests/ToolOutputStoreTests.swift`)
 - [ ] Add "reconfigure visible rows only" optimization pass (avoid broad updates)
 - [ ] Add frame-drop / render-latency instrumentation in debug builds
@@ -52,15 +52,15 @@ Implementation steps:
 - [x] Root-level sheet wired for `activeExtensionDialog` (`App/ContentView.swift`)
 - [x] Extension notification/toast surfaced (`App/ContentView.swift`)
 - [ ] Add richer extension dialog variants (editor multiline, confirm destructive style)
-- [ ] Add timeout UX for stale extension requests
-- [ ] Persist pending extension request IDs across foreground/background
+- [x] Add timeout UX for stale extension requests — auto-dismiss on `timeout` expiry + toast (`Core/Networking/ServerConnection.swift`)
+- [x] Clear stale extension dialog on disconnect and stream loss (`Core/Networking/ServerConnection.swift`)
 
 ### 1.4 Stop / force-stop robustness
 - [x] Stop sends explicit protocol `stop` (`Core/Models/ClientMessage.swift`, `Core/Networking/ServerConnection.swift`)
 - [x] Force-stop task cancellation cleanup added (`Features/Chat/ChatView.swift`)
 - [x] Force-stop failure surfaced to timeline (`Features/Chat/ChatView.swift`)
 - [x] Disable duplicate stop taps while in-flight (idempotent UI lock) — stop `.disabled(isStopping)`, force-stop `.disabled(isForceStopInFlight)` with spinner (`Features/Chat/ChatView.swift`, `Features/Chat/ChatInputBar.swift`)
-- [ ] Add server-state reconciliation after stop timeout (auto `get_state`)
+- [x] Add server-state reconciliation after stop timeout — auto-fetch session via REST after 10s (`Features/Chat/ChatView.swift`)
 - [x] Add explicit terminal-state banner after forced stop — "Session force-stopped" system event appended via `reducer.appendSystemEvent()` (`Features/Chat/ChatView.swift`, `Core/Runtime/TimelineReducer.swift`)
 
 ### 1.5 Safety + input correctness
