@@ -85,7 +85,7 @@ export function readSessionTraceByUuid(
 
 // ─── Parser ───
 
-function parseJsonl(content: string): TraceEvent[] {
+export function parseJsonl(content: string): TraceEvent[] {
   const events: TraceEvent[] = [];
   let eventCounter = 0;
 
