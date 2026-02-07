@@ -16,9 +16,10 @@ struct MarkdownText: View {
     }
 
     var body: some View {
-        if isStreaming && content.count > 2000 {
-            // During streaming of long content, use plain text to avoid
-            // re-parsing markdown on every delta flush.
+        if isStreaming {
+            // During streaming, skip markdown parsing entirely — the full
+            // AttributedString + code-block parse runs on every delta flush
+            // and is the #1 cause of UI jank.  Parse once on finalization.
             plainText
         } else {
             markdownText

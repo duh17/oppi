@@ -27,6 +27,12 @@ final class LiveActivityManager {
         elapsedSeconds: 0
     )
 
+    /// Throttle: true when a push is pending, coalesces rapid updates.
+    private var hasPendingPush = false
+    private var pushThrottleTask: Task<Void, Never>?
+    /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
+    private let pushThrottleInterval: Duration = .seconds(1)
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -86,6 +92,9 @@ final class LiveActivityManager {
 
         elapsedTimer?.cancel()
         elapsedTimer = nil
+        pushThrottleTask?.cancel()
+        pushThrottleTask = nil
+        hasPendingPush = false
         startTime = nil
 
         let finalState = PiSessionAttributes.ContentState(
@@ -162,8 +171,37 @@ final class LiveActivityManager {
 
     // MARK: - Private
 
+    /// Throttled push: coalesces rapid state changes into at most one
+    /// ActivityKit update per `pushThrottleInterval`.  Eliminates the
+    /// "Reporter disconnected" flood during fast streaming.
     private func pushUpdate() {
+        guard activeActivity != nil else { return }
+
+        // Mark dirty — the throttle task will pick up the latest state
+        hasPendingPush = true
+
+        // If a throttle window is already open, the pending flag is enough
+        guard pushThrottleTask == nil else { return }
+
+        // Fire immediately for the first update, then throttle
+        executePush()
+
+        pushThrottleTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.pushThrottleInterval ?? .seconds(1))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+
+            // If more updates arrived during the throttle window, push once more
+            if self.hasPendingPush {
+                self.executePush()
+            }
+            self.pushThrottleTask = nil
+        }
+    }
+
+    private func executePush() {
         guard let activity = activeActivity else { return }
+        hasPendingPush = false
 
         let state = currentState
         Task {

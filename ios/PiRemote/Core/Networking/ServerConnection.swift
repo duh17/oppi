@@ -41,11 +41,12 @@ final class ServerConnection {
     var composerDraft: String?
 
     init() {
-        // Wire coalescer to reducer + Live Activity
+        // Wire coalescer to reducer (batch) + Live Activity (throttled).
+        // Single renderVersion bump per flush, not per event.
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
+            self.reducer.processBatch(events)
             for event in events {
-                self.reducer.process(event)
                 LiveActivityManager.shared.updateFromEvent(event)
             }
         }

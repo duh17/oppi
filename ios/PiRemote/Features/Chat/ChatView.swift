@@ -85,8 +85,11 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(reducer.items) { item in
-                            ChatItemRow(item: item)
-                                .id(item.id)
+                            ChatItemRow(
+                                item: item,
+                                isStreaming: item.id == reducer.streamingAssistantID
+                            )
+                            .id(item.id)
                         }
 
                         // Invisible bottom sentinel for auto-scroll

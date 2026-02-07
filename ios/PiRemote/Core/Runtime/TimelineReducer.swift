@@ -28,6 +28,10 @@ final class TimelineReducer {
     private var currentThinkingID: String?
     private var thinkingBuffer: String = ""
 
+    /// The item ID currently being streamed (non-nil while deltas arrive).
+    /// Used by views to enable streaming-optimized rendering (e.g., plain text).
+    var streamingAssistantID: String? { currentAssistantID }
+
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
 
@@ -153,7 +157,22 @@ final class TimelineReducer {
 
     // MARK: - Process Agent Events
 
+    /// Process a batch of events with a single renderVersion bump.
+    /// Use this from the coalescer to avoid per-event SwiftUI diffs.
+    func processBatch(_ events: [AgentEvent]) {
+        for event in events {
+            processInternal(event)
+        }
+        bumpRenderVersion()
+    }
+
+    /// Process a single event. Bumps renderVersion once.
     func process(_ event: AgentEvent) {
+        processInternal(event)
+        bumpRenderVersion()
+    }
+
+    private func processInternal(_ event: AgentEvent) {
         switch event {
         case .agentStart:
             clearTurnBuffers()
@@ -210,8 +229,6 @@ final class TimelineReducer {
                 items.append(.error(id: UUID().uuidString, message: message))
             }
         }
-
-        bumpRenderVersion()
     }
 
     // MARK: - User Message (from local prompt)

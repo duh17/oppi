@@ -5,6 +5,7 @@ import SwiftUI
 /// Designed for `LazyVStack` — lightweight, stable ID, no expensive layout.
 struct ChatItemRow: View {
     let item: ChatItem
+    var isStreaming: Bool = false
 
     var body: some View {
         switch item {
@@ -12,7 +13,7 @@ struct ChatItemRow: View {
             UserMessageBubble(text: text)
 
         case .assistantMessage(_, let text, _):
-            AssistantMessageBubble(text: text)
+            AssistantMessageBubble(text: text, isStreaming: isStreaming)
 
         case .thinking(_, let preview, _):
             ThinkingRow(preview: preview)
