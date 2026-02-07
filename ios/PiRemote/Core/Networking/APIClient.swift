@@ -71,6 +71,14 @@ actor APIClient {
         return try await getSession(id: id).session
     }
 
+    /// Get the full trace (tool calls, results, thinking) from pi's JSONL.
+    func getSessionTrace(id: String) async throws -> (session: Session, trace: [TraceEvent]) {
+        let data = try await get("/sessions/\(id)/trace")
+        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return (response.session, response.trace)
+    }
+
     /// Delete a session permanently.
     func deleteSession(id: String) async throws {
         _ = try await request("DELETE", path: "/sessions/\(id)")

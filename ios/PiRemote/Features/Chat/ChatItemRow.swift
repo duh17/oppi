@@ -59,12 +59,11 @@ private struct UserMessageBubble: View {
 
 private struct AssistantMessageBubble: View {
     let text: String
+    var isStreaming: Bool = false
 
     var body: some View {
         HStack {
-            Text(text)
-                .font(.body.monospaced())
-                .textSelection(.enabled)
+            MarkdownText(text, isStreaming: isStreaming)
                 .padding(12)
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -166,14 +165,10 @@ private struct ToolCallRow: View {
                 if isExpanded {
                     let fullOutput = toolOutputStore.fullOutput(for: id)
                     if !fullOutput.isEmpty {
-                        Text(fullOutput.prefix(2000))
-                            .font(.caption.monospaced())
-                            .foregroundStyle(isError ? .red : .primary)
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.tertiarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        ToolOutputContent(
+                            output: fullOutput,
+                            isError: isError
+                        )
                     }
                 }
             }
@@ -197,6 +192,35 @@ private struct ToolCallRow: View {
         if bytes < 1024 { return "\(bytes)B" }
         if bytes < 1024 * 1024 { return "\(bytes / 1024)KB" }
         return String(format: "%.1fMB", Double(bytes) / (1024 * 1024))
+    }
+}
+
+// MARK: - Tool Output Content
+
+/// Renders tool output with inline image detection.
+private struct ToolOutputContent: View {
+    let output: String
+    let isError: Bool
+
+    var body: some View {
+        let images = ImageExtractor.extract(from: output)
+
+        VStack(alignment: .leading, spacing: 8) {
+            // Text output (truncated for display)
+            Text(output.prefix(2000))
+                .font(.caption.monospaced())
+                .foregroundStyle(isError ? .red : .primary)
+                .textSelection(.enabled)
+
+            // Inline images
+            ForEach(images) { image in
+                ImageBlobView(base64: image.base64, mimeType: image.mimeType)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.tertiarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

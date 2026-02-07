@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 // ─── Constants ───
 
 const IMAGE_NAME = "pi-remote:local";
+const SESSION_CONTAINER_PREFIX = "pi-remote-";
 const CONTAINER_PI_HOME = "/home/pi/.pi";
 const CONTAINER_WORK = "/work";
 const CONTAINER_UV_CACHE = "/uv-cache";
@@ -82,6 +83,11 @@ export class SandboxManager {
 
   constructor(config?: Partial<SandboxConfig>) {
     this.config = { ...DEFAULTS, ...config };
+  }
+
+  /** Expose base dir for trace file reading. */
+  getBaseDir(): string {
+    return this.config.sandboxBaseDir;
   }
 
   // ─── Image Management ───
@@ -263,16 +269,11 @@ export class SandboxManager {
    */
   async stopContainer(sessionId: string): Promise<void> {
     const entry = this.running.get(sessionId);
-    if (!entry) return;
-
-    try {
-      execSync(`container stop ${entry.containerId}`, { timeout: 5000, stdio: "ignore" });
-    } catch {
-      try {
-        execSync(`container kill ${entry.containerId}`, { stdio: "ignore" });
-      } catch {}
+    if (!entry) {
+      return;
     }
 
+    this.stopContainerById(entry.containerId);
     this.running.delete(sessionId);
   }
 
@@ -282,8 +283,65 @@ export class SandboxManager {
     );
   }
 
+  /**
+   * Best-effort cleanup for stale session containers left by crashes.
+   *
+   * Note: this targets only containers we create (`pi-remote-<sessionId>`).
+   */
+  async cleanupOrphanedContainers(): Promise<void> {
+    const tracked = new Set(Array.from(this.running.values()).map((entry) => entry.containerId));
+    const candidates = this.listRunningSessionContainerIds();
+    const orphaned = candidates.filter((containerId) => !tracked.has(containerId));
+
+    if (orphaned.length === 0) {
+      return;
+    }
+
+    console.log(`[sandbox] Cleaning up ${orphaned.length} orphan container(s)`);
+
+    for (const containerId of orphaned) {
+      this.stopContainerById(containerId);
+      console.log(`[sandbox] Stopped orphan ${containerId}`);
+    }
+  }
+
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
+  }
+
+  private listRunningSessionContainerIds(): string[] {
+    try {
+      const output = execSync("container list", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      const ids: string[] = [];
+      const lines = output.split("\n");
+
+      for (const line of lines.slice(1)) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          continue;
+        }
+
+        const containerId = trimmed.split(/\s+/)[0];
+        if (containerId.startsWith(SESSION_CONTAINER_PREFIX)) {
+          ids.push(containerId);
+        }
+      }
+
+      return ids;
+    } catch {
+      return [];
+    }
+  }
+
+  private stopContainerById(containerId: string): void {
+    try {
+      execSync(`container stop ${containerId}`, { timeout: 5000, stdio: "ignore" });
+      return;
+    } catch {}
+
+    try {
+      execSync(`container kill ${containerId}`, { stdio: "ignore" });
+    } catch {}
   }
 
   // ─── Convenience Getters ───

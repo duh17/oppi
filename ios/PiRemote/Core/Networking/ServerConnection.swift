@@ -109,6 +109,7 @@ final class ServerConnection {
         try await wsClient.send(.permissionResponse(id: id, action: action))
         permissionStore.resolve(id: id)
         reducer.resolvePermission(id: id, action: action)
+        PermissionNotificationService.shared.cancelNotification(permissionId: id)
     }
 
     /// Respond to an extension UI dialog.
@@ -180,10 +181,11 @@ final class ServerConnection {
         case .unknown:
             break  // Already logged in WebSocketClient
 
-        // Permission events → both store and pipeline
+        // Permission events → store + pipeline + notification
         case .permissionRequest(let perm):
             permissionStore.add(perm)
             coalescer.receive(.permissionRequest(perm))
+            PermissionNotificationService.shared.notifyIfBackgrounded(perm)
 
         case .permissionExpired(let id, _):
             permissionStore.expire(id: id)

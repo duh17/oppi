@@ -7,6 +7,11 @@ Legend:
 - `[ ]` pending
 - `[~]` in progress
 
+Status discipline:
+- Mark `[x]` only when behavior is implemented and verifiable in code/tests.
+- Use `[~]` when implementation exists but scope/documentation/coverage is partial.
+- Prefer adding file-path evidence inline for every `[x]` item.
+
 ---
 
 ## 0) Reliability Values (adopt explicitly)
@@ -28,41 +33,41 @@ Implementation steps:
 ## 1) iOS App Hardening (highest ROI)
 
 ### 1.1 Stream lifecycle, reconnect, state sync
-- [x] Chat stream ownership moved to `ChatView.task(id:)` (view owns `for await` loop)
-- [x] `ServerConnection` no longer owns hidden long-lived stream task
-- [x] Disconnect on `ChatView` disappear
-- [x] `isConnected` derived from actual socket status
+- [x] Chat stream ownership moved to `ChatView.task(id:)` (view owns `for await` loop) (`Features/Chat/ChatView.swift`)
+- [x] `ServerConnection` no longer owns hidden long-lived stream task (`Core/Networking/ServerConnection.swift`)
+- [x] Disconnect on `ChatView` disappear (`Features/Chat/ChatView.swift`)
+- [x] `isConnected` derived from actual socket status (`Core/Networking/ServerConnection.swift`)
 - [ ] Add serialized operation queue for session transitions (`load history` -> `connect stream` -> `request state`)
 - [ ] Add reconnect backoff policy + cap + jitter docs
-- [x] Add explicit stale-stream guard (ignore events for non-active session)
+- [x] Add explicit stale-stream guard (ignore events for non-active session) (`Core/Networking/ServerConnection.swift`)
 
 ### 1.2 Timeline rendering performance
-- [x] Auto-scroll now keyed off mutation version (`renderVersion`), not just item count
+- [x] Auto-scroll now keyed off mutation version (`renderVersion`), not just item count (`Core/Runtime/TimelineReducer.swift`, `Features/Chat/ChatView.swift`)
 - [ ] Cap total rendered timeline rows in-memory (windowing policy)
-- [x] Cap per-tool stored output bytes with truncation metadata
+- [x] Cap per-tool stored output bytes with truncation metadata (`Core/Runtime/ChatItem.swift`, `PiRemoteTests/ToolOutputStoreTests.swift`)
 - [ ] Add "reconfigure visible rows only" optimization pass (avoid broad updates)
 - [ ] Add frame-drop / render-latency instrumentation in debug builds
 
 ### 1.3 Extension UI and interaction completeness
-- [x] Root-level sheet wired for `activeExtensionDialog`
-- [x] Extension notification/toast surfaced
+- [x] Root-level sheet wired for `activeExtensionDialog` (`App/ContentView.swift`)
+- [x] Extension notification/toast surfaced (`App/ContentView.swift`)
 - [ ] Add richer extension dialog variants (editor multiline, confirm destructive style)
 - [ ] Add timeout UX for stale extension requests
 - [ ] Persist pending extension request IDs across foreground/background
 
 ### 1.4 Stop / force-stop robustness
-- [x] Stop sends explicit protocol `stop`
-- [x] Force-stop task cancellation cleanup added
-- [x] Force-stop failure surfaced to timeline
+- [x] Stop sends explicit protocol `stop` (`Core/Models/ClientMessage.swift`, `Core/Networking/ServerConnection.swift`)
+- [x] Force-stop task cancellation cleanup added (`Features/Chat/ChatView.swift`)
+- [x] Force-stop failure surfaced to timeline (`Features/Chat/ChatView.swift`)
 - [ ] Disable duplicate stop taps while in-flight (idempotent UI lock)
 - [ ] Add server-state reconciliation after stop timeout (auto `get_state`)
 - [ ] Add explicit terminal-state banner after forced stop
 
 ### 1.5 Safety + input correctness
-- [x] Use `SecureField` for manual token entry
-- [x] Remove production force unwraps in app layer
-- [x] VisionKit availability checks (`isSupported`, `isAvailable`) before scanner presentation
-- [x] Add graceful fallback for scan-unavailable devices
+- [x] Use `SecureField` for manual token entry (`Features/Onboarding/OnboardingView.swift`)
+- [~] Remove production force unwraps in app layer (remaining crash paths in `Core/Models/User.swift` via `fatalError`)
+- [x] VisionKit availability checks (`isSupported`, `isAvailable`) before scanner presentation (`Features/Onboarding/OnboardingView.swift`)
+- [x] Add graceful fallback for scan-unavailable devices (`Features/Onboarding/OnboardingView.swift`)
 
 ### 1.6 Accessibility + ergonomics
 - [ ] Audit all custom controls for VoiceOver labels/hints
@@ -71,14 +76,14 @@ Implementation steps:
 - [ ] Add hardware keyboard shortcuts for key actions (stop, approve/deny, focus input)
 
 ### 1.7 Lifecycle discipline (foreground/background)
-- [x] Define and document foreground policy: refresh sessions, restore active session, request state
-- [x] Define and document background policy: flush coalescer, cancel transient tasks, keep minimal state
+- [~] Foreground policy implemented in code (`PiRemoteApp.handleScenePhase`, `ServerConnection.reconnectIfNeeded`) but not fully documented in design docs
+- [~] Background policy implemented in code (`PiRemoteApp.handleScenePhase`, `ServerConnection.flushAndSuspend`, `RestorationState.save`) but not fully documented in design docs
 - [ ] Ensure all background->foreground resume paths are idempotent
 
 ### 1.8 State restoration (NetNewsWire-style)
-- [x] Create typed `ChatRestorationState` (active session, tab, scroll anchor, composer draft, pending permission IDs)
-- [x] Save on background and significant transitions
-- [x] Restore on launch/foreground with migration strategy for schema changes
+- [~] Create typed `RestorationState` (implemented: active session, tab, composer draft; pending: scroll anchor, pending permission IDs) (`Core/Services/RestorationState.swift`)
+- [~] Save on background and significant transitions (implemented on `.background`; additional transition hooks pending) (`App/PiRemoteApp.swift`)
+- [~] Restore on launch/foreground with migration strategy for schema changes (implemented: versioned schema + freshness window; foreground restoration still partial) (`Core/Services/RestorationState.swift`, `App/PiRemoteApp.swift`)
 - [ ] Add manual restoration matrix doc and QA checklist
 
 ---
@@ -171,11 +176,11 @@ Short answer: **viable, but not required to ship a good macOS app**.
 
 ## 5) Concrete next 10 tasks (execution order)
 
-1. [x] Add `ChatRestorationState` + persistence hooks
+1. [~] Add `RestorationState` + persistence hooks (core hooks done; scope incomplete)
 2. [ ] Implement serialized session-stream operation queue
 3. [x] Add VisionKit availability checks + fallback
 4. [x] Replace token `TextField` with `SecureField`
-5. [x] Remove production force unwraps in iOS target
+5. [~] Remove production force unwraps / crashy URL construction in iOS target
 6. [x] Add tool-output memory caps and truncation markers
 7. [ ] Add duplicate-stop tap suppression and final-state banner
 8. [ ] Add activity replay backend endpoint for Live recovery

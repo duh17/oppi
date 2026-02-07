@@ -14,6 +14,7 @@ import { SessionManager, type ExtensionUIResponse } from "./sessions.js";
 import { PolicyEngine } from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
 import { SandboxManager } from "./sandbox.js";
+import { readSessionTrace } from "./trace.js";
 import type {
   User,
   Session,
@@ -44,7 +45,7 @@ export class Server {
     this.sessions = new SessionManager(storage, this.gate, this.sandbox);
 
     this.httpServer = createServer((req, res) => this.handleHttp(req, res));
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
     this.httpServer.on("upgrade", (req, socket, head) => {
       this.handleUpgrade(req, socket, head);
@@ -70,6 +71,9 @@ export class Server {
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
+    // Best-effort cleanup from previous crashes before accepting connections.
+    await this.sandbox.cleanupOrphanedContainers();
+
     // Ensure container image exists (build if needed)
     await this.sandbox.ensureImage();
 
@@ -84,6 +88,7 @@ export class Server {
 
   async stop(): Promise<void> {
     await this.sessions.stopAll();
+    await this.sandbox.cleanupOrphanedContainers();
     await this.gate.shutdown();
     this.wss.close();
     this.httpServer.close();
@@ -115,7 +120,7 @@ export class Server {
     if (!conns) return;
     const json = JSON.stringify(msg);
     for (const ws of conns) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(json);
+      if (ws.readyState === WebSocket.OPEN) ws.send(json, { compress: false });
     }
   }
 
@@ -187,6 +192,38 @@ export class Server {
         return;
       }
 
+      const stopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
+      if (stopMatch && method === "POST") {
+        const sessionId = stopMatch[1];
+        const session = this.storage.getSession(user.id, sessionId);
+        if (!session) { this.error(res, 404, "Session not found"); return; }
+
+        if (this.sessions.isActive(user.id, sessionId)) {
+          await this.sessions.stopSession(user.id, sessionId);
+        } else {
+          session.status = "stopped";
+          session.lastActivity = Date.now();
+          this.storage.saveSession(session);
+        }
+
+        const updatedSession = this.storage.getSession(user.id, sessionId);
+        this.json(res, { ok: true, session: updatedSession });
+        return;
+      }
+
+      // Trace endpoint — full pi JSONL with tool calls
+      const traceMatch = path.match(/^\/sessions\/([^/]+)\/trace$/);
+      if (traceMatch && method === "GET") {
+        const sessionId = traceMatch[1];
+        const session = this.storage.getSession(user.id, sessionId);
+        if (!session) { this.error(res, 404, "Session not found"); return; }
+
+        const sandboxBaseDir = this.sandbox.getBaseDir();
+        const trace = readSessionTrace(sandboxBaseDir, user.id);
+        this.json(res, { session, trace: trace || [] });
+        return;
+      }
+
       const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
       if (sessionMatch) {
         const sessionId = sessionMatch[1];
@@ -239,6 +276,8 @@ export class Server {
   // ─── WebSocket ───
 
   private handleUpgrade(req: IncomingMessage, socket: any, head: Buffer): void {
+    socket.setNoDelay?.(true);
+
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const user = this.authenticate(req);
     if (!user) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
@@ -259,7 +298,9 @@ export class Server {
     this.trackConnection(user.id, ws);
 
     const send = (msg: ServerMessage) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg), { compress: false });
+      }
     };
 
     try {
@@ -287,7 +328,7 @@ export class Server {
       ws.on("message", async (data) => {
         try {
           const msg = JSON.parse(data.toString()) as ClientMessage;
-          await this.handleClientMessage(user, session, msg, send);
+          await this.handleClientMessage(user, activeSession, msg, send);
         } catch (err: any) {
           send({ type: "error", error: err.message });
         }
@@ -321,11 +362,13 @@ export class Server {
   ): Promise<void> {
     switch (msg.type) {
       case "prompt": {
+        const timestamp = Date.now();
         this.storage.addSessionMessage(user.id, session.id, {
           role: "user",
           content: msg.message,
-          timestamp: Date.now(),
+          timestamp,
         });
+        this.sessions.recordUserMessage(user.id, session.id, msg.message, timestamp);
 
         // RPC image format: { type: "image", data: "base64...", mimeType: "image/png" }
         const images = msg.images?.map(img => ({
@@ -350,6 +393,7 @@ export class Server {
         break;
 
       case "abort":
+      case "stop":
         await this.sessions.sendAbort(user.id, session.id);
         break;
 

@@ -157,17 +157,27 @@ struct ChatView: View {
     private func connectToSession() async {
         sessionStore.activeSessionId = sessionId
 
-        // Load message history first
+        // Load full trace (tool calls + results) or fall back to messages
         if let api = connection.apiClient {
             do {
-                let (session, messages) = try await api.getSession(id: sessionId)
+                let (session, trace) = try await api.getSessionTrace(id: sessionId)
                 sessionStore.upsert(session)
-                reducer.loadFromREST(messages)
-                if !messages.isEmpty {
+                if !trace.isEmpty {
+                    reducer.loadFromTrace(trace)
                     needsInitialScroll = true
                 }
             } catch {
-                // Continue without history
+                // Fall back to basic messages if trace endpoint unavailable
+                do {
+                    let (session, messages) = try await api.getSession(id: sessionId)
+                    sessionStore.upsert(session)
+                    reducer.loadFromREST(messages)
+                    if !messages.isEmpty {
+                        needsInitialScroll = true
+                    }
+                } catch {
+                    // Continue without history
+                }
             }
         }
 

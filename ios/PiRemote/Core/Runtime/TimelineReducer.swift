@@ -60,6 +60,84 @@ final class TimelineReducer {
         bumpRenderVersion()
     }
 
+    // MARK: - Load from Trace (full history including tool calls)
+
+    /// Rebuild timeline from full pi JSONL trace.
+    /// Includes tool calls, tool results, and thinking blocks.
+    func loadFromTrace(_ events: [TraceEvent]) {
+        items.removeAll()
+        assistantBuffer = ""
+        thinkingBuffer = ""
+        currentAssistantID = nil
+        currentThinkingID = nil
+        toolOutputStore.clearAll()
+
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        for event in events {
+            let date = dateFormatter.date(from: event.timestamp) ?? Date()
+
+            switch event.type {
+            case .user:
+                items.append(.userMessage(
+                    id: event.id,
+                    text: event.text ?? "",
+                    timestamp: date
+                ))
+
+            case .assistant:
+                items.append(.assistantMessage(
+                    id: event.id,
+                    text: event.text ?? "",
+                    timestamp: date
+                ))
+
+            case .thinking:
+                let preview = ChatItem.preview(event.thinking ?? "")
+                items.append(.thinking(
+                    id: event.id,
+                    preview: preview,
+                    hasMore: (event.thinking?.count ?? 0) > ChatItem.maxPreviewLength
+                ))
+
+            case .toolCall:
+                let argsSummary = event.args?.map { "\($0.key): \($0.value.summary())" }
+                    .joined(separator: ", ") ?? ""
+                items.append(.toolCall(
+                    id: event.id,
+                    tool: event.tool ?? "unknown",
+                    argsSummary: ChatItem.preview(argsSummary),
+                    outputPreview: "",
+                    outputByteCount: 0,
+                    isError: false,
+                    isDone: true  // Historical = always done
+                ))
+
+            case .toolResult:
+                let output = event.output ?? ""
+                // Match to the originating toolCall by toolCallId
+                let matchId = event.toolCallId ?? event.id
+                toolOutputStore.append(output, to: matchId)
+                updateToolCallPreview(id: matchId, isError: event.isError ?? false)
+
+            case .system:
+                items.append(.systemEvent(
+                    id: event.id,
+                    message: event.text ?? ""
+                ))
+
+            case .compaction:
+                items.append(.systemEvent(
+                    id: event.id,
+                    message: "Context compacted"
+                ))
+            }
+        }
+
+        bumpRenderVersion()
+    }
+
     // MARK: - Process Agent Events
 
     func process(_ event: AgentEvent) {

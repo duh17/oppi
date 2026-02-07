@@ -18,7 +18,10 @@ struct PiRemoteApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
                 }
-                .task { await reconnectOnLaunch() }
+                .task {
+                    await setupNotifications()
+                    await reconnectOnLaunch()
+                }
         }
     }
 
@@ -33,6 +36,19 @@ struct PiRemoteApp: App {
             break
         @unknown default:
             break
+        }
+    }
+
+    private func setupNotifications() async {
+        let notificationService = PermissionNotificationService.shared
+        await notificationService.setup()
+
+        // Wire notification actions back to the connection
+        notificationService.onPermissionResponse = { [weak connection] permissionId, action in
+            guard let connection else { return }
+            Task {
+                try? await connection.respondToPermission(id: permissionId, action: action)
+            }
         }
     }
 
