@@ -27,22 +27,23 @@ struct PermissionCardView: View {
             // Command display
             Text(request.displaySummary)
                 .font(.subheadline.monospaced())
+                .foregroundStyle(.tokyoFg)
                 .textSelection(.enabled)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.tertiarySystemBackground))
+                .background(Color.tokyoBgDark)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Reason
             Text(request.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tokyoFgDim)
 
             // Error banner
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.tokyoRed)
             }
 
             // Action buttons
@@ -56,11 +57,11 @@ struct PermissionCardView: View {
                         .padding(.vertical, 12)
                 }
                 .buttonStyle(.bordered)
-                .tint(.red)
+                .tint(.tokyoRed)
                 .disabled(isResolving)
 
-                // Critical risk: bordered (white bg) with red tint.
-                // Others: prominent (filled) with blue tint.
+                // Critical risk: bordered with red tint (force deliberate tap).
+                // Others: prominent (filled) green — safe default.
                 if request.risk == .critical {
                     Button {
                         resolve(.allow)
@@ -71,7 +72,7 @@ struct PermissionCardView: View {
                             .padding(.vertical, 12)
                     }
                     .buttonStyle(.bordered)
-                    .tint(.red)
+                    .tint(.tokyoOrange)
                     .disabled(isResolving)
                 } else {
                     Button {
@@ -83,6 +84,7 @@ struct PermissionCardView: View {
                             .padding(.vertical, 12)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.tokyoGreen)
                     .disabled(isResolving)
                 }
             }
@@ -90,10 +92,10 @@ struct PermissionCardView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Color.tokyoBgHighlight)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.riskColor(request.risk).opacity(0.3), lineWidth: 1)
+                        .strokeBorder(Color.riskColor(request.risk).opacity(0.4), lineWidth: 1)
                 )
         )
     }

@@ -10,7 +10,7 @@ struct RestorationState: Codable {
 
     let version: Int
     let activeSessionId: String?
-    let selectedTab: String  // "sessions", "live", "settings"
+    let selectedTab: String  // "sessions", "settings"
     let composerDraft: String?
     let timestamp: Date
 
@@ -58,14 +58,12 @@ extension AppTab {
     var rawString: String {
         switch self {
         case .sessions: return "sessions"
-        case .live: return "live"
         case .settings: return "settings"
         }
     }
 
     init(rawString: String) {
         switch rawString {
-        case "live": self = .live
         case "settings": self = .settings
         default: self = .sessions
         }

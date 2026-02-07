@@ -148,4 +148,36 @@ extension ChatItem {
         if text.count <= maxPreviewLength { return text }
         return String(text.prefix(maxPreviewLength - 1)) + "…"
     }
+
+    /// Timestamp for outline display.
+    var timestamp: Date? {
+        switch self {
+        case .userMessage(_, _, let ts): return ts
+        case .assistantMessage(_, _, let ts): return ts
+        default: return nil
+        }
+    }
+}
+
+// MARK: - ToolArgsStore
+
+/// Stores structured tool call arguments keyed by tool call ID.
+///
+/// Separate from ChatItem to avoid Equatable cost on the `[String: JSONValue]` dict.
+/// ToolCallRow reads from this to render tool-specific headers (bash command, file path, etc).
+@MainActor @Observable
+final class ToolArgsStore {
+    private var store: [String: [String: JSONValue]] = [:]
+
+    func set(_ args: [String: JSONValue], for id: String) {
+        store[id] = args
+    }
+
+    func args(for id: String) -> [String: JSONValue]? {
+        store[id]
+    }
+
+    func clearAll() {
+        store.removeAll()
+    }
 }

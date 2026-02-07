@@ -20,6 +20,11 @@ targets:
     sources:
       - path: PiRemote
         type: group
+        excludes:
+          - "Resources/AppIcon.icon"
+      - path: PiRemote/Resources/AppIcon.icon
+        type: folder
+        buildPhase: resources
       - path: Shared
         type: group
     settings:

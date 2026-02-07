@@ -1,13 +1,13 @@
 import SwiftUI
 
 extension Color {
-    /// Risk-tier color palette for permission cards.
+    /// Risk-tier color palette for permission cards — tokyo night variant.
     static func riskColor(_ risk: RiskLevel) -> Color {
         switch risk {
-        case .low: return .green
-        case .medium: return .yellow
-        case .high: return .orange
-        case .critical: return .red
+        case .low: return .tokyoGreen
+        case .medium: return .tokyoYellow
+        case .high: return .tokyoOrange
+        case .critical: return .tokyoRed
         }
     }
 }
