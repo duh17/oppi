@@ -144,7 +144,7 @@ final class ServerConnection {
     func reconnectIfNeeded() async {
         guard let apiClient, let sessionId = activeSessionId else { return }
 
-        // Refresh session list
+        // Refresh session list (doesn't touch timeline)
         do {
             let sessions = try await apiClient.listSessions()
             sessionStore.sessions = sessions
@@ -155,17 +155,49 @@ final class ServerConnection {
         // Refresh workspaces + skills
         await workspaceStore.load(api: apiClient)
 
-        // Refresh current session's message history
-        do {
-            let (session, messages) = try await apiClient.getSession(id: sessionId)
-            sessionStore.upsert(session)
-            reducer.loadFromREST(messages)
-        } catch {
-            logger.error("Failed to refresh session \(sessionId): \(error)")
+        // Sweep expired permissions (safety net for missed WS messages)
+        let expiredIds = permissionStore.sweepExpired()
+        for id in expiredIds {
+            reducer.resolvePermission(id: id, action: .deny)
+            PermissionNotificationService.shared.cancelNotification(permissionId: id)
         }
 
-        // Ask server for freshest state on active stream when possible.
-        if wsClient?.connectedSessionId == sessionId {
+        // Only rebuild timeline if the WebSocket stream died.
+        // If still connected, the stream is delivering live events —
+        // wiping items would clobber in-progress content.
+        let streamAlive = wsClient?.status == .connected
+            && wsClient?.connectedSessionId == sessionId
+
+        if !streamAlive {
+            // Use trace endpoint for full history including tool calls.
+            // Fall back to REST messages if trace endpoint is unavailable.
+            do {
+                let (session, trace) = try await apiClient.getSessionTrace(id: sessionId)
+                sessionStore.upsert(session)
+                if !trace.isEmpty {
+                    reducer.loadFromTrace(trace)
+                }
+            } catch {
+                do {
+                    let (session, messages) = try await apiClient.getSession(id: sessionId)
+                    sessionStore.upsert(session)
+                    reducer.loadFromREST(messages)
+                } catch {
+                    logger.error("Failed to refresh session \(sessionId): \(error)")
+                }
+            }
+        } else {
+            // Stream alive — just refresh session metadata without touching timeline
+            do {
+                let (session, _) = try await apiClient.getSession(id: sessionId)
+                sessionStore.upsert(session)
+            } catch {
+                logger.error("Failed to refresh session metadata: \(error)")
+            }
+        }
+
+        // Ask server for freshest state on active stream
+        if streamAlive {
             try? await requestState()
         }
     }
@@ -210,6 +242,8 @@ final class ServerConnection {
 
         case .permissionCancelled(let id):
             permissionStore.remove(id: id)
+            reducer.resolvePermission(id: id, action: .deny)
+            PermissionNotificationService.shared.cancelNotification(permissionId: id)
 
         // Agent events → pipeline
         case .agentStart:

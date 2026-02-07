@@ -322,12 +322,21 @@ final class TimelineReducer {
 
     // MARK: - User Message (from local prompt)
 
-    func appendUserMessage(_ text: String) {
+    @discardableResult
+    func appendUserMessage(_ text: String) -> String {
+        let id = UUID().uuidString
         items.append(.userMessage(
-            id: UUID().uuidString,
+            id: id,
             text: text,
             timestamp: Date()
         ))
+        bumpRenderVersion()
+        return id
+    }
+
+    /// Remove a specific item by ID (e.g., retract optimistic user message on send failure).
+    func removeItem(id: String) {
+        items.removeAll { $0.id == id }
         bumpRenderVersion()
     }
 

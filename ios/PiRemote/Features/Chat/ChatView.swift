@@ -328,12 +328,15 @@ struct ChatView: View {
         }
         inputText = ""
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        reducer.appendUserMessage(text)
+        let messageId = reducer.appendUserMessage(text)
 
         Task { @MainActor in
             do {
                 try await connection.sendPrompt(text)
             } catch {
+                // Retract the optimistic message and restore input text for retry
+                reducer.removeItem(id: messageId)
+                inputText = text
                 reducer.process(.error(sessionId: sessionId, message: "Failed to send: \(error.localizedDescription)"))
             }
         }

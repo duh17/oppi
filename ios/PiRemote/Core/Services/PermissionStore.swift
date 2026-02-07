@@ -37,4 +37,14 @@ final class PermissionStore {
     func pending(for sessionId: String) -> [PermissionRequest] {
         pending.filter { $0.sessionId == sessionId }
     }
+
+    /// Remove permissions whose timeout has passed.
+    /// Returns the IDs of removed permissions for timeline resolution.
+    func sweepExpired() -> [String] {
+        let now = Date()
+        let expired = pending.filter { $0.timeoutAt < now }
+        let ids = expired.map(\.id)
+        pending.removeAll { $0.timeoutAt < now }
+        return ids
+    }
 }
