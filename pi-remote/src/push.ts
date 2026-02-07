@@ -357,8 +357,9 @@ export function createPushClient(config?: APNsConfig): PushClient {
     const client = new APNsClient(config);
     console.log(`📱 APNs configured (${config.environment || "sandbox"}) — push notifications enabled`);
     return client;
-  } catch (err: any) {
-    console.error(`📱 APNs setup failed: ${err.message} — push notifications disabled`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`📱 APNs setup failed: ${message} — push notifications disabled`);
     return new NoopAPNsClient();
   }
 }

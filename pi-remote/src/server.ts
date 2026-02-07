@@ -7,6 +7,8 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { type Socket } from "node:net";
+import { type Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
@@ -565,7 +567,7 @@ export class Server {
     });
   }
 
-  private json(res: ServerResponse, data: any, status = 200): void {
+  private json(res: ServerResponse, data: Record<string, unknown>, status = 200): void {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(data));
   }
@@ -577,8 +579,8 @@ export class Server {
 
   // ─── WebSocket ───
 
-  private handleUpgrade(req: IncomingMessage, socket: any, head: Buffer): void {
-    socket.setNoDelay?.(true);
+  private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    (socket as Socket).setNoDelay?.(true);
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const user = this.authenticate(req);
@@ -643,8 +645,9 @@ export class Server {
         try {
           const msg = JSON.parse(data.toString()) as ClientMessage;
           await this.handleClientMessage(user, hydratedSession, msg, send);
-        } catch (err: any) {
-          send({ type: "error", error: err.message });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          send({ type: "error", error: message });
         }
       });
 
@@ -660,9 +663,10 @@ export class Server {
         this.untrackConnection(user.id, ws);
       });
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Setup error";
       console.error(`[ws] Setup error:`, err);
-      send({ type: "error", error: err.message });
+      send({ type: "error", error: message });
       this.untrackConnection(user.id, ws);
       ws.close();
     }

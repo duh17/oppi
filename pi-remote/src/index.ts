@@ -36,8 +36,9 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
       return undefined;
     }
     return raw as APNsConfig;
-  } catch (err: any) {
-    console.log(chalk.yellow(`  ⚠️  apns.json parse error: ${err.message}`));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(chalk.yellow(`  ⚠️  apns.json parse error: ${message}`));
     return undefined;
   }
 }
