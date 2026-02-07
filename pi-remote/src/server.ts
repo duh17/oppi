@@ -244,7 +244,12 @@ export class Server {
     if (path === "/health") { this.json(res, { ok: true }); return; }
 
     const user = this.authenticate(req);
-    if (!user) { this.error(res, 401, "Unauthorized"); return; }
+    if (!user) {
+      const auth = req.headers.authorization;
+      console.log(`[auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      this.error(res, 401, "Unauthorized");
+      return;
+    }
 
     try {
       if (path === "/me" && method === "GET") {
@@ -383,7 +388,13 @@ export class Server {
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const user = this.authenticate(req);
-    if (!user) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
+    if (!user) {
+      const auth = req.headers.authorization;
+      console.log(`[auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
     const match = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
     if (!match) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
