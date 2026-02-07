@@ -29,6 +29,8 @@ interface ActiveSession {
   pendingResponses: Map<string, (data: any) => void>;
   /** Pending extension UI requests keyed by request id */
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  /** Whether the post-first-prompt guard health check has been scheduled. */
+  guardCheckScheduled?: boolean;
 }
 
 /** Extension UI request from pi RPC (stdout) */
@@ -109,6 +111,27 @@ export class SessionManager extends EventEmitter {
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
     const proc = await this.spawnPi(session, userName, workspace);
+
+    // Validate sandbox — check that required extensions were synced
+    const { errors, warnings } = this.sandbox.validateSession(
+      userId, sessionId, { memoryEnabled: workspace?.memoryEnabled },
+    );
+
+    if (errors.length > 0) {
+      for (const e of errors) console.error(`[session:${sessionId}] bootstrap error: ${e}`);
+      for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+      session.status = "error";
+      session.warnings = [...errors, ...warnings];
+      this.storage.saveSession(session);
+      await this.sandbox.stopContainer(sessionId);
+      this.gate.destroySessionSocket(sessionId);
+      throw new Error(`Session bootstrap failed: ${errors[0]}`);
+    }
+
+    if (warnings.length > 0) {
+      session.warnings = warnings;
+      for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+    }
 
     const activeSession: ActiveSession = {
       session,
@@ -372,6 +395,14 @@ export class SessionManager extends EventEmitter {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
+    // Schedule guard health check after first prompt.
+    // Extension connects in before_agent_start (triggered by first prompt),
+    // so we can't check earlier.
+    if (!active.guardCheckScheduled) {
+      active.guardCheckScheduled = true;
+      this.scheduleGuardCheck(key, sessionId);
+    }
+
     this.sendRpcCommand(key, cmd);
   }
 
@@ -439,6 +470,39 @@ export class SessionManager extends EventEmitter {
     clearTimeout(timer);
     this.abortFallbackTimers.delete(key);
   }
+
+  // ─── Guard Health Check ───
+
+  /** Guard check delay — extension should connect within seconds of first prompt. */
+  private readonly guardCheckDelayMs = 10_000;
+
+  /**
+   * After the first prompt, check that the permission gate extension
+   * connected and reached "guarded" state. If not, surface a warning.
+   *
+   * Why after first prompt: the extension connects in `before_agent_start`
+   * which only fires when pi processes its first prompt.
+   */
+  private scheduleGuardCheck(key: string, sessionId: string): void {
+    setTimeout(() => {
+      const active = this.active.get(key);
+      if (!active) return; // Session already ended
+
+      const state = this.gate.getGuardState(sessionId);
+      if (state === "guarded") return; // Healthy
+
+      const warning = `Permission gate not connected (state: ${state}). Tool calls will be blocked.`;
+      if (!active.session.warnings) active.session.warnings = [];
+      if (!active.session.warnings.includes(warning)) {
+        active.session.warnings.push(warning);
+        console.warn(`[session:${sessionId}] ${warning}`);
+        this.broadcast(key, { type: "state", session: active.session });
+        this.persistSessionNow(key, active.session);
+      }
+    }, this.guardCheckDelayMs);
+  }
+
+  // ─── RPC Commands ───
 
   /**
    * Send a raw RPC command and optionally wait for its response.

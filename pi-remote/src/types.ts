@@ -71,6 +71,9 @@ export interface Session {
 
   // Preview
   lastMessage?: string;
+
+  // Health
+  warnings?: string[];       // bootstrap/runtime warnings surfaced to iOS
 }
 
 export interface SessionMessage {

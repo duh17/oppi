@@ -22,9 +22,13 @@
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import {
   existsSync, mkdirSync, cpSync, readFileSync, writeFileSync,
-  rmSync, realpathSync, chmodSync, statSync, symlinkSync,
+  rmSync, symlinkSync,
 } from "node:fs";
 import { join, dirname, relative } from "node:path";
+import {
+  syncFile, syncOptionalFile, copyFileDereferenced,
+  isNewer, resolvePath as realpath,
+} from "./sync.js";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Workspace } from "./types.js";
@@ -236,7 +240,7 @@ export class SandboxManager {
     }
 
     // Sync auth.json from host pi (if newer)
-    this.syncFile(
+    syncFile(
       join(homedir(), ".pi", "agent", "auth.json"),
       join(agentDir, "auth.json"),
       { mode: 0o600 },
@@ -249,7 +253,7 @@ export class SandboxManager {
     );
 
     // Sync settings.json from host pi (if present) — carries defaultModel, defaultProvider, etc.
-    this.syncFile(
+    syncFile(
       join(homedir(), ".pi", "agent", "settings.json"),
       join(agentDir, "settings.json"),
     );
@@ -266,7 +270,7 @@ export class SandboxManager {
     }
 
     // Optional memory extension (workspace-controlled)
-    this.syncOptionalFile(
+    syncOptionalFile(
       MEMORY_EXTENSION_SRC,
       join(extensionsDir, "memory.ts"),
       opts?.workspace?.memoryEnabled === true,
@@ -474,6 +478,54 @@ export class SandboxManager {
     return workDir;
   }
 
+  // ─── Session Validation ───
+
+  /**
+   * Validate a session sandbox after initSession() has run.
+   * Checks that required extensions and config files are present and readable.
+   *
+   * Returns errors (critical, session should not proceed) and warnings
+   * (non-critical, session can start with degraded functionality).
+   */
+  validateSession(
+    userId: string,
+    sessionId: string,
+    opts?: { memoryEnabled?: boolean },
+  ): { errors: string[]; warnings: string[] } {
+    const agentDir = join(this.config.sandboxBaseDir, userId, sessionId, "agent");
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Permission gate extension — required for tool call gating.
+    // Without it, every tool call is blocked ("Permission gate not connected").
+    const gateDir = join(agentDir, "extensions", "permission-gate");
+    if (!existsSync(gateDir)) {
+      errors.push("Permission gate extension directory missing");
+    } else {
+      if (!existsSync(join(gateDir, "index.ts"))) {
+        errors.push("Permission gate extension: index.ts not found");
+      }
+      if (!existsSync(join(gateDir, "package.json"))) {
+        errors.push("Permission gate extension: package.json missing");
+      }
+    }
+
+    // Memory extension — required only when workspace has memoryEnabled.
+    if (opts?.memoryEnabled) {
+      const memExt = join(agentDir, "extensions", "memory.ts");
+      if (!existsSync(memExt)) {
+        warnings.push("Memory extension not available (workspace has memoryEnabled=true)");
+      }
+    }
+
+    // Auth config — needed for API calls.
+    if (!existsSync(join(agentDir, "auth.json"))) {
+      warnings.push("auth.json not synced — API authentication may fail");
+    }
+
+    return { errors, warnings };
+  }
+
   // ─── Skill Sync ───
 
   /**
@@ -575,7 +627,7 @@ export class SandboxManager {
     const hostAllowlist = join(homedir(), ".config", "fetch", "allowed_domains.txt");
     if (existsSync(hostAllowlist)) {
       mkdirSync(configDir, { recursive: true });
-      cpSync(hostAllowlist, allowlistPath);
+      copyFileDereferenced(hostAllowlist, allowlistPath);
       return;
     }
 
@@ -694,30 +746,6 @@ approve or deny it.
 
   // ─── Helpers ───
 
-  private syncFile(src: string, dest: string, opts?: { mode?: number }): void {
-    if (!existsSync(src)) return;
-    if (!existsSync(dest) || isNewer(src, dest)) {
-      cpSync(src, dest);
-      if (opts?.mode) chmodSync(dest, opts.mode);
-    }
-  }
-
-  private syncOptionalFile(src: string, dest: string, enabled: boolean): void {
-    if (!enabled) {
-      if (existsSync(dest)) rmSync(dest);
-      return;
-    }
-
-    if (!existsSync(src)) {
-      console.log(`[sandbox] ⚠ Optional file not found, skipping: ${src}`);
-      return;
-    }
-
-    if (!existsSync(dest) || isNewer(src, dest)) {
-      cpSync(src, dest);
-    }
-  }
-
   private resolveMemoryMount(userId: string, workspace?: Workspace): { hostDir: string; namespace: string } | null {
     if (!workspace?.memoryEnabled) {
       return null;
@@ -746,22 +774,6 @@ approve or deny it.
 }
 
 // ─── Utilities ───
-
-function isNewer(a: string, b: string): boolean {
-  try {
-    return statSync(a).mtimeMs > statSync(b).mtimeMs;
-  } catch {
-    return false;
-  }
-}
-
-function realpath(p: string): string {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
-  }
-}
 
 function sanitizeMemoryNamespace(value: string): string {
   const trimmed = value.trim().toLowerCase();
