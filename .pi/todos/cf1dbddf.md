@@ -8,7 +8,7 @@
     "preview",
     "phase-1"
   ],
-  "status": "open",
+  "status": "backlog",
   "created_at": "2026-02-07T07:41:42.496Z"
 }
 

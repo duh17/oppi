@@ -8,7 +8,7 @@
     "api",
     "phase-2"
   ],
-  "status": "open",
+  "status": "backlog",
   "created_at": "2026-02-07T07:42:21.835Z"
 }
 

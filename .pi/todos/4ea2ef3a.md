@@ -6,7 +6,7 @@
     "protocol",
     "architecture"
   ],
-  "status": "open",
+  "status": "backlog",
   "created_at": "2026-02-07T06:43:36.244Z"
 }
 
