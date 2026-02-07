@@ -11,13 +11,11 @@
  *
  * Host layout per user (mounted as /home/pi/.pi/):
  *   <sandboxBaseDir>/<userId>/
- *   ├── agent/              # Pi config (auth, models)
+ *   ├── agent/              # Pi config (auth, models, extensions)
  *   │   ├── auth.json
- *   │   └── models.json
- *   ├── extensions/         # Pi extensions
- *   │   └── permission-gate/
- *   ├── gate/               # Unix sockets for permission gate
- *   │   └── <sessionId>.sock
+ *   │   ├── models.json
+ *   │   └── extensions/
+ *   │       └── permission-gate/
  *   └── workspace/          # User's working directory
  */
 
@@ -62,8 +60,8 @@ export interface SpawnOptions {
   sessionId: string;
   userId: string;
   model?: string;
-  /** Host-side gate socket path (must be inside a mounted directory) */
-  gateSocketPath?: string;
+  /** Gate TCP port on host (extension connects to host-gateway:port) */
+  gatePort?: number;
   /** Extra env vars to pass to the container */
   env?: Record<string, string>;
 }
@@ -142,21 +140,17 @@ export class SandboxManager {
    *
    * Host layout (mirrors pi's expected ~/.pi/ structure):
    *   <sandboxBaseDir>/<userId>/
-   *   ├── agent/              # auth.json, models.json
-   *   ├── extensions/         # pi extensions
-   *   │   └── permission-gate/
-   *   ├── gate/               # Unix sockets for permission gate
+   *   ├── agent/              # auth.json, models.json, extensions/
    *   └── workspace/          # User's working directory
    *
    * The base dir is mounted as /home/pi/.pi/ so pi sees its expected paths.
    */
-  initUser(userId: string): { piDir: string; workDir: string; gateDir: string } {
+  initUser(userId: string): { piDir: string; workDir: string } {
     const piDir = join(this.config.sandboxBaseDir, userId);
     const agentDir = join(piDir, "agent");
     const workDir = join(piDir, "workspace");
-    const gateDir = join(piDir, "gate");
 
-    for (const dir of [agentDir, workDir, gateDir]) {
+    for (const dir of [agentDir, workDir]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
@@ -180,16 +174,16 @@ export class SandboxManager {
       join(agentDir, "models.json"),
     );
 
-    // Install permission-gate extension
+    // Install permission-gate extension to agent/extensions/ (pi auto-discovers from ~/.pi/agent/extensions/)
     if (existsSync(EXTENSION_SRC)) {
-      const dest = join(piDir, "extensions", "permission-gate");
+      const dest = join(agentDir, "extensions", "permission-gate");
       // Always re-copy to pick up changes
       if (existsSync(dest)) rmSync(dest, { recursive: true });
       mkdirSync(dirname(dest), { recursive: true });
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    return { piDir, workDir, gateDir };
+    return { piDir, workDir };
   }
 
   // ─── Container Lifecycle ───
@@ -199,7 +193,7 @@ export class SandboxManager {
    * with stdin/stdout/stderr piped for RPC communication.
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
-    const { sessionId, userId, model, gateSocketPath, env: extraEnv } = opts;
+    const { sessionId, userId, model, gatePort, env: extraEnv } = opts;
     const { piDir, workDir } = this.initUser(userId);
 
     // Build pi args
@@ -213,12 +207,6 @@ export class SandboxManager {
         piArgs.push("--model", model);
       }
     }
-
-    // Container-side gate socket path (gate dir is inside stateDir,
-    // which is mounted as /home/pi/.pi)
-    const containerGateSock = gateSocketPath
-      ? `${CONTAINER_PI_HOME}/gate/${sessionId}.sock`
-      : undefined;
 
     const containerId = `pi-remote-${sessionId}`;
 
@@ -245,8 +233,9 @@ export class SandboxManager {
       "-e", `PI_REMOTE_USER=${userId}`,
     ];
 
-    if (containerGateSock) {
-      args.push("-e", `PI_REMOTE_GATE_SOCK=${containerGateSock}`);
+    if (gatePort) {
+      args.push("-e", `PI_REMOTE_GATE_HOST=${HOST_GATEWAY}`);
+      args.push("-e", `PI_REMOTE_GATE_PORT=${gatePort}`);
     }
 
     // Extra env vars
@@ -298,12 +287,6 @@ export class SandboxManager {
   }
 
   // ─── Convenience Getters ───
-
-  getGateDir(userId: string): string {
-    const gateDir = join(this.config.sandboxBaseDir, userId, "gate");
-    if (!existsSync(gateDir)) mkdirSync(gateDir, { recursive: true, mode: 0o700 });
-    return gateDir;
-  }
 
   getWorkDir(userId: string): string {
     const workDir = join(this.config.sandboxBaseDir, userId, "workspace");

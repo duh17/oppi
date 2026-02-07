@@ -125,16 +125,15 @@ export class SessionManager extends EventEmitter {
   private async spawnPi(session: Session): Promise<ChildProcess> {
     const key = `${session.userId}/${session.id}`;
 
-    // Create gate socket inside user's sandbox (visible in container)
-    const gateDir = this.sandbox.getGateDir(session.userId);
-    const gateSocketPath = this.gate.createSessionSocket(session.id, session.userId, gateDir);
+    // Create gate TCP socket (extension connects from container to host)
+    const gatePort = await this.gate.createSessionSocket(session.id, session.userId);
 
     // Spawn pi in container
     const proc = this.sandbox.spawnPi({
       sessionId: session.id,
       userId: session.userId,
       model: session.model,
-      gateSocketPath,
+      gatePort,
     });
 
     // Single readline consumer for stdout — handles all RPC events

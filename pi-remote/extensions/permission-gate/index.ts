@@ -2,13 +2,14 @@
  * Permission gate — pi extension.
  *
  * Hooks tool_call events and delegates permission decisions
- * to the pi-remote server via a Unix domain socket.
+ * to the pi-remote server via TCP.
  *
  * Env vars (set by pi-remote server on spawn):
- *   PI_REMOTE_GATE_SOCK  — Path to the session's Unix socket
- *   PI_REMOTE_SESSION     — Session ID
+ *   PI_REMOTE_GATE_HOST  — Host IP (192.168.64.1 for Apple containers)
+ *   PI_REMOTE_GATE_PORT  — TCP port on host
+ *   PI_REMOTE_SESSION    — Session ID
  *
- * Protocol: newline-delimited JSON over Unix socket.
+ * Protocol: newline-delimited JSON over TCP.
  */
 
 import { createConnection, type Socket } from "node:net";
@@ -67,25 +68,27 @@ interface ExtensionAPI {
 class GateClient {
   private socket: Socket | null = null;
   private readline: Readline | null = null;
-  private socketPath: string;
+  private host: string;
+  private port: number;
   private connected = false;
   private responseQueue: Map<string, (msg: ServerMessage) => void> = new Map();
   private messageBuffer: ServerMessage[] = [];
 
-  constructor(socketPath: string) {
-    this.socketPath = socketPath;
+  constructor(host: string, port: number) {
+    this.host = host;
+    this.port = port;
   }
 
   /**
-   * Connect to the gate socket.
+   * Connect to the gate TCP server.
    */
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`Gate socket connect timeout: ${this.socketPath}`));
+        reject(new Error(`Gate TCP connect timeout: ${this.host}:${this.port}`));
       }, CONNECT_TIMEOUT_MS);
 
-      this.socket = createConnection(this.socketPath, () => {
+      this.socket = createConnection({ host: this.host, port: this.port }, () => {
         clearTimeout(timer);
         this.connected = true;
         resolve();
@@ -192,17 +195,23 @@ class GateClient {
 // ─── Extension Entry Point ───
 
 export default function permissionGate(pi: ExtensionAPI): void {
-  const socketPath = process.env.PI_REMOTE_GATE_SOCK;
+  const gateHost = process.env.PI_REMOTE_GATE_HOST;
+  const gatePort = process.env.PI_REMOTE_GATE_PORT;
   const sessionId = process.env.PI_REMOTE_SESSION;
 
   // Not running under pi-remote — no-op
-  if (!socketPath) return;
+  if (!gateHost || !gatePort) return;
 
-  const client = new GateClient(socketPath);
+  const client = new GateClient(gateHost, parseInt(gatePort, 10));
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // ─── Handshake on agent start ───
   pi.on("before_agent_start", async () => {
+    // Only connect once (before_agent_start is called for each prompt)
+    if (client.isConnected()) {
+      return;
+    }
+
     try {
       await client.connect();
 

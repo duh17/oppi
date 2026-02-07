@@ -327,37 +327,65 @@ async function testAgentSession(): Promise<string> {
 
   // ── Run 1: Simple tool use (auto-allowed by policy) ──
   log("\n── Run 1: Tool use (ls — auto-allowed) ──\n");
-  const run1 = await withTimeout(
-    runAgent(ws, "List files in /work with ls -la. Keep your response to one sentence."),
+  let run1 = await withTimeout(
+    runAgent(ws, "Use the bash tool to run: ls -la /work\nRespond with one sentence about the output."),
     AGENT_TIMEOUT,
     "agent run 1",
   );
 
-  check("agent_start received", run1.events.some(e => e.type === "agent_start"));
-  check("agent_end received", run1.events.some(e => e.type === "agent_end"));
-  check("Got text output", run1.text.length > 0, `${run1.text.length} chars`);
-  check("No errors", run1.errors.length === 0, run1.errors.join("; "));
+  // Retry once if LLM didn't call tools (local model flakiness)
+  if (run1.tools.length === 0) {
+    log("  ⟳ LLM didn't use tools — retrying with explicit prompt…");
+    run1 = await withTimeout(
+      runAgent(ws, "You MUST call the bash tool with command 'ls -la /work'. Do it now."),
+      AGENT_TIMEOUT,
+      "agent run 1 retry",
+    );
+  }
 
-  log(`  Tools used: ${run1.tools.length > 0 ? run1.tools.join(", ") : "(none — text only)"}`);
-  log(`  Permissions auto-approved: ${run1.permissionsApproved}`);
+  check("Run 1: agent_start received", run1.events.some(e => e.type === "agent_start"));
+  check("Run 1: agent_end received", run1.events.some(e => e.type === "agent_end"));
+  check("Run 1: bash tool called", run1.tools.includes("bash"), `tools: [${run1.tools}]`);
+  check("Run 1: no errors", run1.errors.length === 0, run1.errors.join("; "));
+  check("Run 1: no gate-blocked output",
+    !run1.text.includes("Permission gate not connected"),
+    "extension should be connected before first tool call",
+  );
+
+  log(`  Tools used: ${run1.tools.join(", ")}`);
+  log(`  Permissions auto-approved: ${run1.permissionsApproved} (expected: 0 for ls)`);
 
   // ── Run 2: Permission-gated command ──
   log("\n── Run 2: Permission gate (npm — requires approval) ──\n");
-  const run2 = await withTimeout(
-    runAgent(ws, "Run `npm --version` and tell me the version number. Nothing else."),
+  let run2 = await withTimeout(
+    runAgent(ws, "You MUST call the bash tool with command 'npm --version'. Report the version number."),
     AGENT_TIMEOUT,
     "agent run 2",
   );
 
-  check("Run 2 completed", run2.events.some(e => e.type === "agent_end"));
-  check("Got text output", run2.text.length > 0);
-
-  // Permission gate is informational — extension may or may not be connected
-  if (run2.permissionsApproved > 0) {
-    log(`  ✓ Permission gate verified — ${run2.permissionsApproved} request(s) auto-approved`);
-  } else {
-    log("  ⚠  No permission requests seen (extension may not have connected to gate)");
+  // Retry once if LLM didn't call tools
+  if (run2.tools.length === 0) {
+    log("  ⟳ LLM didn't use tools — retrying with explicit prompt…");
+    run2 = await withTimeout(
+      runAgent(ws, "Call the bash tool with command 'npm --version' right now."),
+      AGENT_TIMEOUT,
+      "agent run 2 retry",
+    );
   }
+
+  check("Run 2: completed", run2.events.some(e => e.type === "agent_end"));
+  check("Run 2: bash tool called", run2.tools.includes("bash"), `tools: [${run2.tools}]`);
+  check("Run 2: permission gate approved npm",
+    run2.permissionsApproved > 0,
+    `expected ≥1 permission request, got ${run2.permissionsApproved}`,
+  );
+  check("Run 2: no gate-blocked output",
+    !run2.text.includes("Permission gate not connected"),
+    "extension must stay connected across prompts",
+  );
+
+  log(`  Tools used: ${run2.tools.join(", ")}`);
+  log(`  Permissions auto-approved: ${run2.permissionsApproved}`);
 
   ws.close();
   return sessionId;

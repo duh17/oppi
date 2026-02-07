@@ -1,10 +1,10 @@
 /**
- * Permission gate — Unix socket server for pi extension communication.
+ * Permission gate — TCP server for pi extension communication.
  *
- * Each pi session gets its own Unix domain socket at:
- *   /tmp/pi-remote-gate/<sessionId>.sock
+ * Each pi session gets its own TCP port on localhost. The extension
+ * inside the container connects to host-gateway (192.168.64.1) on that port.
  *
- * Protocol: newline-delimited JSON over the socket.
+ * Protocol: newline-delimited JSON over TCP.
  *
  * Extension → Server:
  *   { type: "guard_ready", sessionId, extensionVersion }
@@ -19,8 +19,6 @@
 
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
-import { mkdirSync, existsSync, unlinkSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import { PolicyEngine, type GateRequest, type PolicyDecision } from "./policy.js";
@@ -33,7 +31,7 @@ export interface SessionGuard {
   sessionId: string;
   userId: string;
   state: GuardState;
-  socketPath: string;
+  port: number;
   server: NetServer;
   client: Socket | null;
   lastHeartbeat: number;
@@ -82,9 +80,9 @@ type ExtensionMessage = GuardReadyMsg | GateCheckMsg | HeartbeatMsg;
 
 // ─── Constants ───
 
-const GATE_SOCKET_DIR = "/tmp/pi-remote-gate";
 const HEARTBEAT_TIMEOUT_MS = 45_000; // Extension sends every 15s, we expect within 45s
 const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
+const TCP_HOST = "0.0.0.0"; // Listen on all interfaces (containers connect via host-gateway)
 
 // ─── Gate Server ───
 
@@ -97,57 +95,44 @@ export class GateServer extends EventEmitter {
   constructor(policy: PolicyEngine) {
     super();
     this.policy = policy;
-
-    // Ensure socket directory exists
-    if (!existsSync(GATE_SOCKET_DIR)) {
-      mkdirSync(GATE_SOCKET_DIR, { recursive: true, mode: 0o700 });
-    }
   }
 
   /**
-   * Create a Unix socket for a session. Returns the HOST socket path.
-   *
-   * @param dir — Directory to create the socket in. Defaults to /tmp/pi-remote-gate/.
-   *              When pi runs inside an Apple container, pass a dir inside the user's
-   *              sandbox so the socket is visible at the container mount point.
+   * Create a TCP socket for a session. Returns a promise that resolves to the port number.
+   * The extension inside the container connects to host-gateway (192.168.64.1) on this port.
    */
-  createSessionSocket(sessionId: string, userId: string, dir?: string): string {
-    const socketDir = dir || GATE_SOCKET_DIR;
-    if (!existsSync(socketDir)) {
-      mkdirSync(socketDir, { recursive: true, mode: 0o700 });
-    }
-    const socketPath = join(socketDir, `${sessionId}.sock`);
+  async createSessionSocket(sessionId: string, userId: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const server = createServer((client) => {
+        this.handleConnection(sessionId, client);
+      });
 
-    // Clean up stale socket file
-    if (existsSync(socketPath)) {
-      unlinkSync(socketPath);
-    }
+      // Listen on localhost with a dynamic port (0 = OS assigns)
+      server.listen(0, TCP_HOST, () => {
+        const addr = server.address();
+        const port = typeof addr === "object" && addr ? addr.port : 0;
+        console.log(`[gate] TCP socket ready for ${sessionId}: ${TCP_HOST}:${port}`);
 
-    const server = createServer((client) => {
-      this.handleConnection(sessionId, client);
+        const guard: SessionGuard = {
+          sessionId,
+          userId,
+          state: "unguarded",
+          port,
+          server,
+          client: null,
+          lastHeartbeat: Date.now(),
+          heartbeatTimer: null,
+        };
+
+        this.guards.set(sessionId, guard);
+        resolve(port);
+      });
+
+      server.on("error", (err) => {
+        console.error(`[gate] TCP socket error for ${sessionId}:`, err);
+        reject(err);
+      });
     });
-
-    server.listen(socketPath, () => {
-      console.log(`[gate] Socket ready: ${socketPath}`);
-    });
-
-    server.on("error", (err) => {
-      console.error(`[gate] Socket error for ${sessionId}:`, err);
-    });
-
-    const guard: SessionGuard = {
-      sessionId,
-      userId,
-      state: "unguarded",
-      socketPath,
-      server,
-      client: null,
-      lastHeartbeat: Date.now(),
-      heartbeatTimer: null,
-    };
-
-    this.guards.set(sessionId, guard);
-    return socketPath;
   }
 
   /**
@@ -170,11 +155,6 @@ export class GateServer extends EventEmitter {
     // Close server
     guard.server.close();
 
-    // Remove socket file
-    if (existsSync(guard.socketPath)) {
-      unlinkSync(guard.socketPath);
-    }
-
     // Reject all pending decisions for this session
     for (const [id, decision] of this.pending) {
       if (decision.sessionId === sessionId) {
@@ -184,7 +164,7 @@ export class GateServer extends EventEmitter {
     }
 
     this.guards.delete(sessionId);
-    console.log(`[gate] Destroyed socket for ${sessionId}`);
+    console.log(`[gate] Destroyed socket for ${sessionId} (port ${guard.port})`);
   }
 
   /**
@@ -230,11 +210,6 @@ export class GateServer extends EventEmitter {
     for (const id of sessionIds) {
       this.destroySessionSocket(id);
     }
-
-    // Clean up the directory if empty
-    try {
-      rmSync(GATE_SOCKET_DIR, { recursive: true });
-    } catch {}
   }
 
   // ─── Connection Handling ───
