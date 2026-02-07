@@ -68,12 +68,19 @@ struct SessionListView: View {
     private func deleteSessions(at offsets: IndexSet) async {
         guard let api = connection.apiClient else { return }
         let sessionsToDelete = offsets.map { sessionStore.sessions[$0] }
+
+        // Optimistic local remove first for responsive UX
+        for session in sessionsToDelete {
+            sessionStore.remove(id: session.id)
+        }
+
+        // Then delete on server
         for session in sessionsToDelete {
             do {
                 try await api.deleteSession(id: session.id)
-                sessionStore.remove(id: session.id)
             } catch {
-                // Ignore — will refresh on next pull
+                // Re-add on failure — next refresh will reconcile
+                print("[delete] failed for \(session.id): \(error)")
             }
         }
     }

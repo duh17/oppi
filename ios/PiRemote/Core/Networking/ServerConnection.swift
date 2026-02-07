@@ -186,6 +186,7 @@ final class ServerConnection {
 
         // Permission events → store + pipeline + notification
         case .permissionRequest(let perm):
+            logger.info("Permission request received: \(perm.id) tool=\(perm.tool) summary=\(perm.displaySummary)")
             permissionStore.add(perm)
             coalescer.receive(.permissionRequest(perm))
             PermissionNotificationService.shared.notifyIfBackgrounded(perm)

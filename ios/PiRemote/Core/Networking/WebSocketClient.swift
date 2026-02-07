@@ -124,7 +124,14 @@ final class WebSocketClient {
                         continue
                     }
 
-                    let serverMessage = try ServerMessage.decode(from: text)
+                    let serverMessage: ServerMessage
+                    do {
+                        serverMessage = try ServerMessage.decode(from: text)
+                    } catch {
+                        // Log decode error but DON'T break — keep the stream alive
+                        logger.warning("Failed to decode message: \(error.localizedDescription) — raw: \(text.prefix(200))")
+                        continue
+                    }
 
                     // First successful message = connected
                     await MainActor.run {

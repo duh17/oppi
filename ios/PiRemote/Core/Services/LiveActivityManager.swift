@@ -73,7 +73,10 @@ final class LiveActivityManager {
 
             logger.info("Live Activity started for session \(sessionId)")
         } catch {
-            logger.error("Failed to start Live Activity: \(error)")
+            // Non-fatal: Live Activity is optional. Common failures:
+            // - ActivityAuthorizationError.visibility: user disabled in Settings
+            // - PermissionsError: missing entitlement or provisioning
+            logger.info("Live Activity unavailable: \(error.localizedDescription)")
         }
     }
 
