@@ -293,7 +293,7 @@ async function testHttpApi(): Promise<void> {
   check("GET /sessions → empty", empty.data.sessions?.length === 0);
 
   // Create session
-  const model = TEST_MODEL || "anthropic/claude-haiku-4-5";
+  const model = TEST_MODEL || "lmstudio/glm-4.7-flash-mlx";
   const created = await api("POST", "/sessions", { name: "e2e-test", model });
   check("POST /sessions → 201", created.status === 201);
   check("Response includes session id", !!created.data.session?.id);
