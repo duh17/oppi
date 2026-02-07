@@ -186,6 +186,66 @@ When changing the protocol:
 └── sessions/              # Pi session JSONL files
 ```
 
+## Debugging Pi Remote Sessions
+
+Inspect running sandboxed sessions from the host. Useful when a user reports issues from the iOS app.
+
+### Paths
+
+| What | Path |
+|------|------|
+| Server config | `~/.config/pi-remote/config.json` |
+| User list | `~/.config/pi-remote/users.json` |
+| Session state | `~/.config/pi-remote/sessions/<userId>/<sessionId>.json` |
+| JSONL trace | `~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/sessions/<workspace>/` |
+| Workspace files | `~/.pi-remote/sandboxes/<userId>/<sessionId>/workspace/` |
+| Agent config | `~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/` (auth.json, models.json, extensions/) |
+
+### REST API
+
+```bash
+# Health check
+curl http://localhost:7749/health
+
+# List sessions (needs user token from users.json)
+curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions
+
+# Session detail + trace
+curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions/<id>
+curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions/<id>/trace
+```
+
+### Container + Process
+
+```bash
+# Running containers
+ps aux | grep "pi-remote-<sessionId>"
+
+# Server logs (tmux window 6 in main session)
+tmux capture-pane -t main:6 -p | tail -40
+
+# Read last trace events
+tail -5 ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/sessions/*/*.jsonl
+```
+
+### Common Issues
+
+**Expired OAuth token** — Anthropic tokens are short-lived (~8h). Sandbox auth.json is only synced at session creation.
+```bash
+# Check expiry
+python3 -c "import json,datetime; d=json.load(open('$HOME/.pi-remote/sandboxes/<userId>/<sessionId>/agent/auth.json')); print(datetime.datetime.fromtimestamp(d['anthropic']['expires']/1000))"
+
+# Fix: re-sync from host
+cp ~/.pi/agent/auth.json ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/auth.json
+```
+
+**Broken extensions** — Check symlinks and extension config:
+```bash
+ls -la ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/extensions/
+```
+
+**Connect/disconnect cycling in server logs** — Usually the iOS app reconnecting on foreground. Check for rapid loops which may indicate auth or WebSocket handshake failures.
+
 ## Commits
 
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`

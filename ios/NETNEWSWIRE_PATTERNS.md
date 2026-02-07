@@ -37,7 +37,7 @@ Implementation steps:
 - [x] `ServerConnection` no longer owns hidden long-lived stream task (`Core/Networking/ServerConnection.swift`)
 - [x] Disconnect on `ChatView` disappear (`Features/Chat/ChatView.swift`)
 - [x] `isConnected` derived from actual socket status (`Core/Networking/ServerConnection.swift`)
-- [ ] Add serialized operation queue for session transitions (`load history` -> `connect stream` -> `request state`)
+- [x] Add serialized operation queue for session transitions (`load history` -> `connect stream` -> `request state`) — `Task.isCancelled` guards after each async boundary in `connectToSession()` (`Features/Chat/ChatView.swift`)
 - [ ] Add reconnect backoff policy + cap + jitter docs
 - [x] Add explicit stale-stream guard (ignore events for non-active session) (`Core/Networking/ServerConnection.swift`)
 
@@ -59,13 +59,13 @@ Implementation steps:
 - [x] Stop sends explicit protocol `stop` (`Core/Models/ClientMessage.swift`, `Core/Networking/ServerConnection.swift`)
 - [x] Force-stop task cancellation cleanup added (`Features/Chat/ChatView.swift`)
 - [x] Force-stop failure surfaced to timeline (`Features/Chat/ChatView.swift`)
-- [ ] Disable duplicate stop taps while in-flight (idempotent UI lock)
+- [x] Disable duplicate stop taps while in-flight (idempotent UI lock) — stop `.disabled(isStopping)`, force-stop `.disabled(isForceStopInFlight)` with spinner (`Features/Chat/ChatView.swift`, `Features/Chat/ChatInputBar.swift`)
 - [ ] Add server-state reconciliation after stop timeout (auto `get_state`)
-- [ ] Add explicit terminal-state banner after forced stop
+- [x] Add explicit terminal-state banner after forced stop — "Session force-stopped" system event appended via `reducer.appendSystemEvent()` (`Features/Chat/ChatView.swift`, `Core/Runtime/TimelineReducer.swift`)
 
 ### 1.5 Safety + input correctness
 - [x] Use `SecureField` for manual token entry (`Features/Onboarding/OnboardingView.swift`)
-- [~] Remove production force unwraps in app layer (remaining crash paths in `Core/Models/User.swift` via `fatalError`)
+- [x] Remove production force unwraps in app layer — `baseURL`/`webSocketURL` return `URL?`, no `fatalError`/`try!`/`as!` remain (`Core/Models/User.swift`, `Core/Networking/ServerConnection.swift`)
 - [x] VisionKit availability checks (`isSupported`, `isAvailable`) before scanner presentation (`Features/Onboarding/OnboardingView.swift`)
 - [x] Add graceful fallback for scan-unavailable devices (`Features/Onboarding/OnboardingView.swift`)
 
@@ -177,12 +177,12 @@ Short answer: **viable, but not required to ship a good macOS app**.
 ## 5) Concrete next 10 tasks (execution order)
 
 1. [~] Add `RestorationState` + persistence hooks (core hooks done; scope incomplete)
-2. [ ] Implement serialized session-stream operation queue
+2. [x] Implement serialized session-stream operation queue
 3. [x] Add VisionKit availability checks + fallback
 4. [x] Replace token `TextField` with `SecureField`
-5. [~] Remove production force unwraps / crashy URL construction in iOS target
+5. [x] Remove production force unwraps / crashy URL construction in iOS target
 6. [x] Add tool-output memory caps and truncation markers
-7. [ ] Add duplicate-stop tap suppression and final-state banner
+7. [x] Add duplicate-stop tap suppression and final-state banner
 8. [ ] Add activity replay backend endpoint for Live recovery
 9. [ ] Extract shared Swift core package for iOS/macOS
 10. [ ] Scaffold macOS app shell using shared core + same wire protocol
