@@ -93,6 +93,23 @@ export function parseBashCommand(command: string): ParsedCommand {
 }
 
 /**
+ * Match a bash command string against a glob-like pattern.
+ *
+ * Unlike minimatch (designed for file paths where '*' doesn't cross '/'),
+ * this treats the command as a flat string where '*' matches any characters
+ * including '/'. This ensures 'rm *-*r*' matches 'rm -rf /tmp/foo'.
+ *
+ * Supports: '*' (match anything), literal characters.
+ * Does NOT support: '?', '**', character classes.
+ */
+export function matchBashPattern(command: string, pattern: string): boolean {
+  // Convert glob pattern to regex: escape regex specials, then replace * with .*
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const regexStr = "^" + escaped.replace(/\*/g, ".*") + "$";
+  return new RegExp(regexStr).test(command);
+}
+
+/**
  * Basic shell tokenizer — splits on whitespace, respects single/double quotes.
  */
 function tokenize(input: string): string[] {
@@ -344,19 +361,19 @@ export class PolicyEngine {
     }
 
     // Check pattern against the match target.
-    // For bash commands (which are strings, not paths), minimatch's path-separator
-    // handling breaks. Fall back to simple string inclusion if the glob doesn't match.
     if (rule.pattern) {
       const target = this.getMatchTarget(tool, input);
-      const globMatch = minimatch(target, rule.pattern, { dot: true });
-      if (!globMatch) {
-        // For bash commands, try simple substring match (strip leading/trailing *)
-        if (tool === "bash") {
-          const needle = rule.pattern.replace(/^\*+/, "").replace(/\*+$/, "");
-          if (!needle || !target.includes(needle)) {
-            return false;
-          }
-        } else {
+
+      if (tool === "bash") {
+        // Bash commands are strings, not file paths. minimatch treats '/' as
+        // a path separator so '*' won't cross it — 'rm *-*r*' fails to match
+        // 'rm -rf /tmp/foo'. Convert the glob to a simple regex instead.
+        if (!matchBashPattern(target, rule.pattern)) {
+          return false;
+        }
+      } else {
+        // For file-path tools (read, write, edit), minimatch is appropriate.
+        if (!minimatch(target, rule.pattern, { dot: true })) {
           return false;
         }
       }

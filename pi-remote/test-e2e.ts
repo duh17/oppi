@@ -814,19 +814,33 @@ async function testAgentSession(): Promise<string> {
   log(`  Permissions auto-approved: ${run1.permissionsApproved} (expected: 0 for ls)`);
   printRunMetrics("Run 1", run1.metrics);
 
-  // ── Run 2: Permission-gated command ──
-  log("\n── Run 2: Permission gate (npm — requires approval) ──\n");
+  // ── Run 2: Permission-gated command (rm -rf triggers "ask") ──
+  //
+  // The container policy auto-allows most commands but flags destructive
+  // ones (rm -rf, git push --force, etc.) as "ask", which routes through
+  // the permission gate to the phone. Here we use rm -rf on a temp dir
+  // to deterministically trigger the gate and verify auto-approval works.
+  log("\n── Run 2: Permission gate (rm -rf — requires approval) ──\n");
+
+  // First, create a target dir so the rm has something to remove.
+  // This is a setup step — we don't assert on it.
+  await withTimeout(
+    runAgent(ws, "Call bash with exactly: mkdir -p /tmp/e2e-gate-test\nReply: OK"),
+    AGENT_TIMEOUT,
+    "agent run 2 setup",
+  );
+
   let run2 = await withTimeout(
-    runAgent(ws, "You MUST call the bash tool with command 'npm --version'. Then reply with EXACTLY one line: VERSION:<result>."),
+    runAgent(ws, "Call bash with exactly: rm -rf /tmp/e2e-gate-test\nReply: DONE"),
     AGENT_TIMEOUT,
     "agent run 2",
   );
 
-  // Retry once if LLM didn't call tools
+  // Retry once if LLM didn't call tools (local model flakiness)
   if (run2.tools.length === 0) {
     log("  ⟳ LLM didn't use tools — retrying with explicit prompt…");
     run2 = await withTimeout(
-      runAgent(ws, "Call bash with 'npm --version' now. Reply exactly: VERSION:<result>."),
+      runAgent(ws, "Call bash with 'rm -rf /tmp/e2e-gate-test' now. Reply: DONE"),
       AGENT_TIMEOUT,
       "agent run 2 retry",
     );
@@ -834,9 +848,9 @@ async function testAgentSession(): Promise<string> {
 
   check("Run 2: completed", run2.events.some(e => e.type === "agent_end"));
   check("Run 2: bash tool called", run2.tools.includes("bash"), `tools: [${run2.tools}]`);
-  check("Run 2: permission gate approved npm",
+  check("Run 2: permission gate triggered (rm -rf → ask)",
     run2.permissionsApproved > 0,
-    `expected ≥1 permission request, got ${run2.permissionsApproved}`,
+    `expected ≥1 permission request for rm -rf, got ${run2.permissionsApproved}`,
   );
   check("Run 2: no gate-blocked output",
     !run2.text.includes("Permission gate not connected"),
@@ -881,6 +895,19 @@ async function testAgentSession(): Promise<string> {
   log(`  avg prompt → first text_delta: ${formatMs(avgFirstText)}`);
   log(`  avg prompt → agent_end: ${formatMs(avgEnd)}`);
 
+  // ── Trace endpoint — verify JSONL was captured ──
+  log("\n── Trace endpoint ──\n");
+  const trace = await api("GET", `/sessions/${sessionId}/trace`);
+  check("GET /sessions/:id/trace → 200", trace.status === 200);
+  check("Trace has events", Array.isArray(trace.data.trace) && trace.data.trace.length > 0,
+    `got ${trace.data.trace?.length ?? 0} events`,
+  );
+  if (trace.data.trace?.length > 0) {
+    const types = [...new Set(trace.data.trace.map((e: { type: string }) => e.type))];
+    log(`  Trace event types: ${types.join(", ")}`);
+    log(`  Total trace events: ${trace.data.trace.length}`);
+  }
+
   ws.close();
   return sessionId;
 }
@@ -890,6 +917,11 @@ async function testCleanup(sessionId: string): Promise<void> {
 
   const del = await api("DELETE", `/sessions/${sessionId}`);
   check("DELETE /sessions/:id → 200", del.status === 200);
+
+  // Wait for async cleanup (pi process exit, gate teardown) to settle
+  // before making the next request. DELETE returns 200 immediately but
+  // the container teardown continues asynchronously.
+  await new Promise(r => setTimeout(r, 1000));
 
   const list = await api("GET", "/sessions");
   check("Sessions empty after delete", list.data.sessions?.length === 0);

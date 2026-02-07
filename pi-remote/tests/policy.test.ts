@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PolicyEngine, parseBashCommand } from "../src/policy.js";
+import { PolicyEngine, parseBashCommand, matchBashPattern } from "../src/policy.js";
 
 // ─── Bash Parsing ───
 
@@ -36,6 +36,44 @@ describe("parseBashCommand", () => {
     const p = parseBashCommand('grep "hello world" file.txt');
     expect(p.executable).toBe("grep");
     expect(p.args[0]).toBe("hello world");
+  });
+});
+
+// ─── matchBashPattern ───
+
+describe("matchBashPattern", () => {
+  it("matches rm -rf with absolute path", () => {
+    expect(matchBashPattern("rm -rf /tmp/test", "rm *-*r*")).toBe(true);
+  });
+
+  it("matches rm -rf with relative path", () => {
+    expect(matchBashPattern("rm -rf node_modules", "rm *-*r*")).toBe(true);
+  });
+
+  it("matches rm -f with absolute path", () => {
+    expect(matchBashPattern("rm -f /var/data/file.txt", "rm *-*f*")).toBe(true);
+  });
+
+  it("does not match rm without flags", () => {
+    expect(matchBashPattern("rm temp.txt", "rm *-*r*")).toBe(false);
+  });
+
+  it("matches git push --force", () => {
+    expect(matchBashPattern("git push --force origin main", "git push*--force*")).toBe(true);
+  });
+
+  it("does not match git push without force", () => {
+    expect(matchBashPattern("git push origin main", "git push*--force*")).toBe(false);
+  });
+
+  it("matches git reset --hard", () => {
+    expect(matchBashPattern("git reset --hard HEAD~3", "git reset --hard*")).toBe(true);
+  });
+
+  it("escapes regex special characters in pattern", () => {
+    // Pattern with chars that are regex-special should be treated literally
+    expect(matchBashPattern("echo (test)", "echo (test)")).toBe(true);
+    expect(matchBashPattern("echo [test]", "echo [test]")).toBe(true);
   });
 });
 
@@ -151,8 +189,18 @@ describe("PolicyEngine (container) — destructive ops → ask", () => {
     expect(d.action).toBe("ask");
   });
 
+  it("asks for rm -rf with absolute path", () => {
+    const d = container.evaluate({ tool: "bash", input: { command: "rm -rf /tmp/e2e-gate-test" }, toolCallId: "30a" });
+    expect(d.action).toBe("ask");
+  });
+
   it("asks for rm -f", () => {
     const d = container.evaluate({ tool: "bash", input: { command: "rm -f important.txt" }, toolCallId: "31" });
+    expect(d.action).toBe("ask");
+  });
+
+  it("asks for rm -f with absolute path", () => {
+    const d = container.evaluate({ tool: "bash", input: { command: "rm -f /var/data/important.txt" }, toolCallId: "31a" });
     expect(d.action).toBe("ask");
   });
 
