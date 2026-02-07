@@ -32,6 +32,10 @@ export interface Session {
   tokens: { input: number; output: number };
   cost: number;
 
+  // Context usage (pi TUI-style)
+  contextTokens?: number;   // input+output+cacheRead+cacheWrite from last message
+  contextWindow?: number;   // model's total context window
+
   // Preview
   lastMessage?: string;
 }

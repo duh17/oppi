@@ -36,8 +36,50 @@ struct ChatView: View {
         permissionStore.pending(for: sessionId)
     }
 
+    /// Short model display name (e.g. "claude-opus-4-6" from "anthropic/claude-opus-4-6").
+    private var modelShortName: String? {
+        guard let model = session?.model else { return nil }
+        return model.split(separator: "/").last.map(String.init) ?? model
+    }
+
+    /// Context usage string like "44.4%/200k".
+    private var contextDisplay: String? {
+        guard let tokens = session?.contextTokens, let window = session?.contextWindow, window > 0 else {
+            return nil
+        }
+        let percent = Double(tokens) / Double(window) * 100
+        let windowK = formatTokenCount(window)
+        return String(format: "%.1f%%/%@", percent, windowK)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            // Status bar — model + context usage (like pi TUI footer)
+            if modelShortName != nil || contextDisplay != nil {
+                HStack(spacing: 8) {
+                    if let context = contextDisplay {
+                        Text(context)
+                            .font(.caption.monospacedDigit())
+                    }
+
+                    if let model = modelShortName {
+                        Text(model)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let cost = session?.cost, cost > 0 {
+                        Spacer()
+                        Text(String(format: "$%.3f", cost))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+            }
+
             // Chat timeline + permission pill (inside ScrollViewReader for scroll-to)
             ScrollViewReader { proxy in
                 ScrollView {
@@ -268,6 +310,27 @@ struct ChatView: View {
         case .stopped, .none: return .gray
         }
     }
+}
+
+// MARK: - Token Formatting
+
+/// Format token count as compact string: 200000 → "200k", 1000000 → "1M".
+private func formatTokenCount(_ count: Int) -> String {
+    if count >= 1_000_000 {
+        let m = Double(count) / 1_000_000
+        if m == m.rounded() {
+            return String(format: "%.0fM", m)
+        }
+        return String(format: "%.1fM", m)
+    }
+    if count >= 1_000 {
+        let k = Double(count) / 1_000
+        if k == k.rounded() {
+            return String(format: "%.0fk", k)
+        }
+        return String(format: "%.1fk", k)
+    }
+    return "\(count)"
 }
 
 // MARK: - Permission Pill

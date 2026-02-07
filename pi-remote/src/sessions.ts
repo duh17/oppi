@@ -601,6 +601,11 @@ export class SessionManager extends EventEmitter {
           session.tokens.output += usage.output;
           session.cost += usage.cost;
         }
+
+        // Track context usage for status display (matches pi TUI calculation)
+        if (usage) {
+          session.contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+        }
         break;
       }
     }
@@ -658,7 +663,13 @@ export class SessionManager extends EventEmitter {
     return textParts.join("");
   }
 
-  private extractUsage(message: any): { input: number; output: number; cost: number } | null {
+  private extractUsage(message: any): {
+    input: number;
+    output: number;
+    cost: number;
+    cacheRead: number;
+    cacheWrite: number;
+  } | null {
     const usage = message?.usage;
     if (!usage) {
       return null;
@@ -668,6 +679,8 @@ export class SessionManager extends EventEmitter {
       input: usage.input || 0,
       output: usage.output || 0,
       cost: usage.cost?.total || 0,
+      cacheRead: usage.cacheRead || 0,
+      cacheWrite: usage.cacheWrite || 0,
     };
   }
 

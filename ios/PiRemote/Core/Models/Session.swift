@@ -26,6 +26,10 @@ struct Session: Identifiable, Sendable, Equatable {
     var tokens: TokenUsage
     var cost: Double
 
+    // Context usage (pi TUI-style status bar)
+    var contextTokens: Int?    // input+output+cacheRead+cacheWrite from last message
+    var contextWindow: Int?    // model's total context window
+
     var lastMessage: String?
 }
 
@@ -39,7 +43,8 @@ struct TokenUsage: Codable, Sendable, Equatable {
 extension Session: Codable {
     enum CodingKeys: String, CodingKey {
         case id, userId, name, status, createdAt, lastActivity
-        case model, messageCount, tokens, cost, lastMessage
+        case model, messageCount, tokens, cost
+        case contextTokens, contextWindow, lastMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +57,8 @@ extension Session: Codable {
         messageCount = try c.decode(Int.self, forKey: .messageCount)
         tokens = try c.decode(TokenUsage.self, forKey: .tokens)
         cost = try c.decode(Double.self, forKey: .cost)
+        contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
+        contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
 
         // Server sends Unix milliseconds
@@ -72,6 +79,8 @@ extension Session: Codable {
         try c.encode(messageCount, forKey: .messageCount)
         try c.encode(tokens, forKey: .tokens)
         try c.encode(cost, forKey: .cost)
+        try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
+        try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try c.encodeIfPresent(lastMessage, forKey: .lastMessage)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)
@@ -83,6 +92,7 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     let id: String
     let name: String
     let provider: String
+    let contextWindow: Int
 }
 
 /// A stored message in a session (user or assistant turn).

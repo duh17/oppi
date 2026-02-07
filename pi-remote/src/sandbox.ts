@@ -145,14 +145,15 @@ export class SandboxManager {
    * Initialize sandbox directories and sync host config. Idempotent.
    *
    * Host layout (mirrors pi's expected ~/.pi/ structure):
-   *   <sandboxBaseDir>/<userId>/
+   *   <sandboxBaseDir>/<userId>/<sessionId>/
    *   ├── agent/              # auth.json, models.json, extensions/
    *   └── workspace/          # User's working directory
    *
-   * The base dir is mounted as /home/pi/.pi/ so pi sees its expected paths.
+   * Each session gets its own pi home dir so JSONL files, workspace,
+   * and agent state are isolated between sessions.
    */
-  initUser(userId: string): { piDir: string; workDir: string } {
-    const piDir = join(this.config.sandboxBaseDir, userId);
+  initSession(userId: string, sessionId: string): { piDir: string; workDir: string } {
+    const piDir = join(this.config.sandboxBaseDir, userId, sessionId);
     const agentDir = join(piDir, "agent");
     const workDir = join(piDir, "workspace");
 
@@ -206,7 +207,7 @@ export class SandboxManager {
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
     const { sessionId, userId, model, gatePort, env: extraEnv } = opts;
-    const { piDir, workDir } = this.initUser(userId);
+    const { piDir, workDir } = this.initSession(userId, sessionId);
 
     // Build pi args
     const piArgs = ["--mode", "rpc"];
@@ -352,8 +353,8 @@ export class SandboxManager {
 
   // ─── Convenience Getters ───
 
-  getWorkDir(userId: string): string {
-    const workDir = join(this.config.sandboxBaseDir, userId, "workspace");
+  getWorkDir(userId: string, sessionId: string): string {
+    const workDir = join(this.config.sandboxBaseDir, userId, sessionId, "workspace");
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
     return workDir;
   }

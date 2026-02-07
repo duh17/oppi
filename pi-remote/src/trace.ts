@@ -39,12 +39,14 @@ export interface TraceEvent {
 // ─── JSONL Reader ───
 
 /**
- * Find and read the pi JSONL file for a given user's sandbox session.
+ * Find and read the pi JSONL file for a given session's sandbox.
+ *
+ * Layout: <sandboxBaseDir>/<userId>/<sessionId>/agent/sessions/--work--/*.jsonl
  *
  * Returns null if no JSONL found (session never ran, or sandbox cleaned up).
  */
-export function readSessionTrace(sandboxBaseDir: string, userId: string): TraceEvent[] | null {
-  const sessionsDir = join(sandboxBaseDir, userId, "agent", "sessions", "--work--");
+export function readSessionTrace(sandboxBaseDir: string, userId: string, sessionId: string): TraceEvent[] | null {
+  const sessionsDir = join(sandboxBaseDir, userId, sessionId, "agent", "sessions", "--work--");
 
   if (!existsSync(sessionsDir)) return null;
 

@@ -32,24 +32,29 @@ interface ModelInfo {
   id: string;
   name: string;
   provider: string;
+  contextWindow: number;
 }
 
 const AVAILABLE_MODELS: ModelInfo[] = [
   // Anthropic
-  { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic" },
-  { id: "anthropic/claude-sonnet-4-0", name: "Claude Sonnet 4", provider: "anthropic" },
-  { id: "anthropic/claude-haiku-3-5", name: "Claude Haiku 3.5", provider: "anthropic" },
+  { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", contextWindow: 200000 },
+  { id: "anthropic/claude-sonnet-4-0", name: "Claude Sonnet 4", provider: "anthropic", contextWindow: 200000 },
+  { id: "anthropic/claude-haiku-3-5", name: "Claude Haiku 3.5", provider: "anthropic", contextWindow: 200000 },
   // OpenAI
-  { id: "openai/o3", name: "o3", provider: "openai" },
-  { id: "openai/o4-mini", name: "o4-mini", provider: "openai" },
-  { id: "openai/gpt-4.1", name: "GPT-4.1", provider: "openai" },
+  { id: "openai/o3", name: "o3", provider: "openai", contextWindow: 200000 },
+  { id: "openai/o4-mini", name: "o4-mini", provider: "openai", contextWindow: 200000 },
+  { id: "openai/gpt-4.1", name: "GPT-4.1", provider: "openai", contextWindow: 1000000 },
   // Google
-  { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google" },
-  { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google" },
+  { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", contextWindow: 1000000 },
+  { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google", contextWindow: 1000000 },
   // LM Studio (local)
-  { id: "lmstudio/qwen3-32b", name: "Qwen3 32B", provider: "lmstudio" },
-  { id: "lmstudio/deepseek-r1-0528-qwen3-8b", name: "DeepSeek R1 8B", provider: "lmstudio" },
+  { id: "lmstudio/qwen3-32b", name: "Qwen3 32B", provider: "lmstudio", contextWindow: 32768 },
+  { id: "lmstudio/deepseek-r1-0528-qwen3-8b", name: "DeepSeek R1 8B", provider: "lmstudio", contextWindow: 32768 },
 ];
+
+function getContextWindow(modelId: string): number {
+  return AVAILABLE_MODELS.find(m => m.id === modelId)?.contextWindow ?? 200000;
+}
 
 export class Server {
   private storage: Storage;
@@ -327,6 +332,8 @@ export class Server {
       if (path === "/sessions" && method === "POST") {
         const body = await this.parseBody<CreateSessionRequest>(req);
         const session = this.storage.createSession(user.id, body.name, body.model);
+        session.contextWindow = getContextWindow(session.model || "");
+        this.storage.saveSession(session);
         this.json(res, { session }, 201);
         return;
       }
@@ -358,7 +365,7 @@ export class Server {
         if (!session) { this.error(res, 404, "Session not found"); return; }
 
         const sandboxBaseDir = this.sandbox.getBaseDir();
-        const trace = readSessionTrace(sandboxBaseDir, user.id);
+        const trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
         this.json(res, { session, trace: trace || [] });
         return;
       }
