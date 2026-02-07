@@ -12,6 +12,11 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var isStopping = false
     @State private var showForceStop = false
+    @State private var forceStopTask: Task<Void, Never>?
+    /// Bumped on appear to force `.task(id:)` restart even for same sessionId.
+    @State private var connectionGeneration = 0
+    /// Set after initial load to trigger scroll-to-bottom.
+    @State private var needsInitialScroll = false
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
@@ -27,7 +32,7 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Chat timeline
+            // Chat timeline + permission pill (inside ScrollViewReader for scroll-to)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -47,18 +52,37 @@ struct ChatView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 8)
                 }
-                .onChange(of: reducer.items.count) { _, _ in
-                    if isNearBottom {
+                .onChange(of: reducer.renderVersion) { _, _ in
+                    guard isNearBottom else { return }
+                    withAnimation(nil) {
+                        proxy.scrollTo("bottom-sentinel", anchor: .bottom)
+                    }
+                }
+                .onChange(of: needsInitialScroll) { _, needs in
+                    guard needs else { return }
+                    needsInitialScroll = false
+                    // Delay to let LazyVStack layout
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         withAnimation(nil) {
                             proxy.scrollTo("bottom-sentinel", anchor: .bottom)
                         }
                     }
                 }
-            }
 
-            // Permission pill banner
-            if !permissionStore.pending(for: sessionId).isEmpty {
-                PermissionPillBanner(count: permissionStore.pending(for: sessionId).count)
+                // Permission pill banner — taps scroll to first pending permission
+                if !permissionStore.pending(for: sessionId).isEmpty {
+                    PermissionPillBanner(count: permissionStore.pending(for: sessionId).count)
+                        .onTapGesture {
+                            if let firstPerm = reducer.items.first(where: {
+                                if case .permission = $0 { return true }
+                                return false
+                            }) {
+                                withAnimation {
+                                    proxy.scrollTo(firstPerm.id, anchor: .center)
+                                }
+                            }
+                        }
+                }
             }
 
             // Input bar
@@ -90,14 +114,24 @@ struct ChatView: View {
                     .frame(width: 10, height: 10)
             }
         }
-        .task(id: sessionId) {
+        .task(id: connectionGeneration) {
             await connectToSession()
+        }
+        .onAppear {
+            connectionGeneration += 1
         }
         .onChange(of: session?.status) { _, newStatus in
             if newStatus != .busy {
                 isStopping = false
                 showForceStop = false
+                forceStopTask?.cancel()
+                forceStopTask = nil
             }
+        }
+        .onDisappear {
+            forceStopTask?.cancel()
+            forceStopTask = nil
+            connection.disconnectSession()
         }
     }
 
@@ -112,13 +146,28 @@ struct ChatView: View {
                 let (session, messages) = try await api.getSession(id: sessionId)
                 sessionStore.upsert(session)
                 reducer.loadFromREST(messages)
+                if !messages.isEmpty {
+                    needsInitialScroll = true
+                }
             } catch {
                 // Continue without history
             }
         }
 
-        // Connect WebSocket for live streaming
-        connection.connectToSession(sessionId)
+        guard let stream = connection.streamSession(sessionId) else {
+            reducer.process(.error(sessionId: sessionId, message: "WebSocket unavailable"))
+            return
+        }
+
+        for await message in stream {
+            if Task.isCancelled {
+                break
+            }
+            connection.handleServerMessage(message, sessionId: sessionId)
+        }
+
+        // Ensure pending deltas are flushed when stream ends.
+        connection.disconnectSession()
     }
 
     private func sendPrompt() {
@@ -127,7 +176,7 @@ struct ChatView: View {
         inputText = ""
         reducer.appendUserMessage(text)
 
-        Task {
+        Task { @MainActor in
             do {
                 try await connection.sendPrompt(text)
             } catch {
@@ -140,21 +189,38 @@ struct ChatView: View {
         isStopping = true
         showForceStop = false
 
-        Task {
-            try? await connection.sendStop()
+        forceStopTask?.cancel()
+        forceStopTask = nil
 
-            // Show force-stop after 5s if still busy
-            try? await Task.sleep(for: .seconds(5))
-            if isBusy {
-                showForceStop = true
+        Task { @MainActor in
+            do {
+                try await connection.sendStop()
+            } catch {
+                isStopping = false
+                reducer.process(.error(sessionId: sessionId, message: "Failed to stop: \(error.localizedDescription)"))
+                return
+            }
+
+            forceStopTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                if isBusy {
+                    showForceStop = true
+                }
             }
         }
     }
 
     private func forceStopSession() {
         guard let api = connection.apiClient else { return }
-        Task {
-            _ = try? await api.stopSession(id: sessionId)
+
+        Task { @MainActor in
+            do {
+                let updatedSession = try await api.stopSession(id: sessionId)
+                sessionStore.upsert(updatedSession)
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "Force stop failed: \(error.localizedDescription)"))
+            }
         }
     }
 

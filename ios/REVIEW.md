@@ -1,234 +1,229 @@
-# Pi Remote iOS — Design Review (Final: Server Fixes Verified)
+# iOS Implementation Review — Phase 1
 
-Review of server changes against Round 5 issues, plus final pass on the
-complete iOS DESIGN.md + server codebase.
-
-**Verdict: Ship it. Server and iOS design are aligned. Build Phase 1.**
-
----
-
-## Round 5 Issue Resolution
-
-| # | Issue | Severity | Status | Notes |
-|---|-------|----------|--------|-------|
-| 1 | Auto-scroll mechanism | High | ✅ Fixed | DESIGN.md has sentinel pattern, `withAnimation(nil)`, jump-to-latest |
-| 2 | Server doesn't store assistant messages | **Critical** | ✅ Fixed | `extractAssistantText()` + `appendMessage()` on `message_end` |
-| 3 | `saveSession()` blocks event loop | Medium | ✅ Fixed | `markSessionDirty()` + 1s debounce, `persistSessionNow()` for lifecycle |
-| 4 | `__compaction`/`auto_retry` UI | Medium | ✅ Fixed | iOS design special-cases both; server unchanged (acceptable) |
-| 5 | `agent_end` stale stats | Low | ✅ Fixed | `{ type: "state", session }` broadcast after lifecycle events |
-| 6 | Non-text tool output dropped | Low | ✅ Documented | DESIGN.md notes v1 limitation |
-| 7 | `toolOutput` coalescer bypass | Low | ✅ Accepted | Kept as-is |
-
-All critical and medium issues are resolved. Clean work.
+**Reviewer**: Claude  
+**Date**: 2026-02-06  
+**Scope**: All 32 Swift files + project.yml (commit `7f9ad27`)  
+**Build**: ✅ (0 errors, 0 warnings) — Xcode 26.2, iPhone 17 Pro simulator  
+**Tests**: ✅ 34/34 passing  
 
 ---
 
-## Server Changes — Detailed Verification
+## Verdict: Solid foundation, ~12 issues to fix before first device test
 
-### Assistant Message Storage ✅
+The architecture is clean and well-structured. The event pipeline (ServerMessage → AgentEvent → DeltaCoalescer → TimelineReducer → ChatItem) is the right design. Models match the server wire format correctly. Stores are properly separated.
 
-`sessions.ts` `updateSessionFromEvent()` on `message_end`:
+The issues below are mostly "will crash at runtime" or "will silently break" — not architectural problems.
 
-```typescript
-const assistantText = this.extractAssistantText(message);
-if (assistantText) {
-    this.appendMessage(session, {
-        role: "assistant",
-        content: assistantText,
-        timestamp: Date.now(),
-        model: session.model,
-        tokens,
-        cost: usage?.cost,
-    });
+---
+
+## 🔴 High Severity (will crash or silently break)
+
+### 1. `stopSession` decodes wrong response shape
+
+**File**: `APIClient.swift:75-81`  
+**Server response**: `{ ok: true, session: Session }`  
+**Client code**:
+```swift
+struct Response: Decodable { let session: Session? }
+let response = try JSONDecoder().decode(Response.self, from: data)
+```
+This works because `session` is optional, but the *next line* falls back to `getSession()` if session is nil. The issue: the server always returns `session`, so the fallback is dead code and harmless. BUT the response also has `ok: true` which would fail decoding if `Decodable` was strict about unknown keys. Swift's `JSONDecoder` ignores unknown keys by default, so this actually works fine.
+
+**Severity**: Low (works by accident) — but the `Response` struct should include `ok` for correctness.
+
+### 2. `ChatView.connectToSession` — stream task never cancelled on re-navigation
+
+**File**: `ChatView.swift:118-140`  
+The `for await message in stream` loop is inside `.task(id: sessionId)`, which cancels when `sessionId` changes or the view disappears. Good. BUT `onDisappear` also calls `connection.disconnectSession()`, and the Task.isCancelled check inside the loop only fires on the *next* iteration. When the WebSocket disconnects, `ws.receive()` should throw, breaking the loop. This is fine.
+
+**Actual issue**: If the user quickly navigates back and forward to the same session, `.task(id: sessionId)` won't re-fire because the id didn't change. The stream will be gone (disconnected in `onDisappear`) but the task won't restart.
+
+**Fix**: Use a incrementing `@State var connectionGeneration` as the task id, bumped in `onAppear`.
+
+### 3. `PermissionCardView.resolve` swallows errors silently
+
+**File**: `PermissionCardView.swift:97-101`  
+```swift
+Task {
+    try? await connection.respondToPermission(id: request.id, action: action)
 }
 ```
+If the WebSocket is disconnected when the user taps Allow/Deny, the error is silently swallowed. The button shows as "resolving" forever (isResolving=true, never reset).
 
-`extractAssistantText()` handles both string content and content-block arrays
-(`text` and `output_text` part types). Correct — pi can return either format
-depending on the model.
+**Fix**: Catch the error, reset `isResolving`, show inline error or toast.
 
-`appendMessage()` both writes to storage AND syncs the in-memory session
-(messageCount, lastMessage, tokens, cost). The in-memory session stays
-authoritative for `saveSession()` overwrites. No double-counting — the
-on-disk session from `addSessionMessage()` and the in-memory session are
-incremented by the same amounts, and `saveSession()` always overwrites with
-the in-memory copy.
+### 4. `DeltaCoalescer.scheduleFlushIfNeeded` — `self?.flushInterval` captures optional
 
-`GET /sessions/:id` now returns user + assistant messages. Reconnect works.
-
-### Save Debouncing ✅
-
+**File**: `DeltaCoalescer.swift:50-55`  
+```swift
+flushTask = Task { @MainActor [weak self] in
+    try? await Task.sleep(for: self?.flushInterval ?? .milliseconds(33))
 ```
-text_delta → updateSessionFromEvent → markSessionDirty(key)
-                                          ↓ (1s timer)
-                                      flushDirtySessions()
-                                          ↓
-                                      storage.saveSession()
+This captures `[weak self]` but immediately uses `self?.flushInterval`. If self is deallocated before the sleep, it falls back to 33ms — which is fine. But the `Task` is `@MainActor` and `DeltaCoalescer` is already `@MainActor`, so `self` can't be deallocated while the task runs on the same actor. The `[weak self]` is unnecessary here but not harmful.
 
-agent_end → updateSessionFromEvent → persistSessionNow(key, session)
-                                     (immediate, cancels dirty flag)
+**Severity**: Cosmetic — no real issue.
+
+### 5. `WebSocketClient` reconnect reuses stale `continuation`
+
+**File**: `WebSocketClient.swift:171-188`  
+On reconnect, `attemptReconnect()` calls `openWebSocket(sessionId:, continuation:)` reusing `self.continuation`. This is correct — the original `AsyncStream.Continuation` is still valid and the consumer is still iterating. ✅
+
+But there's a timing issue: if `disconnect()` is called between the reconnect delay and the `openWebSocket` call, `self.continuation` will be `nil` (set to nil in `disconnect()`). The `guard let self, let cont = self.continuation` handles this. ✅
+
+### 6. `TimelineReducer.process(.toolOutput)` — O(n) scan on every output chunk
+
+**File**: `TimelineReducer.swift:96-97`  
+```swift
+func updateToolCallPreview(id: String, isError: Bool) {
+    guard let idx = items.firstIndex(where: { $0.id == id }),
 ```
+For large sessions (hundreds of items), this linear scan runs on every tool output chunk. With the DeltaCoalescer batching tool output at 0ms (immediate), this fires for every chunk.
 
-High-frequency events (deltas, tool output) queue a 1s batch. Lifecycle
-events (agent_end, session stop/start) flush immediately. Node event loop
-stays clear during streaming.
+**Fix (v2)**: Keep a `[String: Int]` index of item IDs to positions. For v1, this is acceptable — sessions rarely exceed ~100 items, and `firstIndex` on a small array is fast.
 
-One minor note: `addSessionMessage()` inside `appendMessage()` still does
-synchronous I/O. But this only fires on `message_end` (once per assistant
-turn, not per delta), so it doesn't affect streaming smoothness.
-
-### Session Stats Push ✅
-
-```typescript
-if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end") {
-    this.broadcast(key, { type: "state", session: active.session });
-}
-```
-
-The iOS client now receives fresh `Session` (with tokens, cost, status) via
-WebSocket at turn boundaries. No REST fetch needed to refresh session list
-rows. The `state` message fires after `updateSessionFromEvent`, so the
-session object has the latest values.
-
-Event ordering the client sees:
-```
-{ type: "agent_end" }                    ← reducer transitions to idle
-{ type: "state", session: { ... } }      ← sessionStore refreshes stats
-```
-
-Redundant signal, but the pipeline routes them to different stores
-(AgentEvent pipeline vs SessionStore), so no conflict.
-
-### Bonus Changes (Not From Review)
-
-The agents also shipped:
-
-1. **Abort fallback timer** — 5s after `abort`, if still busy, force-stops
-   the session and broadcasts an error. Cleaned up on `agent_end` and session
-   end. This matches the iOS design's "Force Stop Session" UX after ~5s.
-
-2. **`stop` ClientMessage alias** — `{ type: "stop" }` handled same as
-   `abort`. Matches the iOS design's stop button sending `"stop"`.
-
-3. **WebSocket performance** — `perMessageDeflate: false` (no compression
-   overhead on LAN), `{ compress: false }` on sends, `socket.setNoDelay(true)`
-   (disable Nagle on upgrade). All correct for low-latency local streaming.
-
-4. **`recordUserMessage()`** — Syncs in-memory session when `server.ts` stores
-   a user message via `storage.addSessionMessage()`. Prevents `messageCount`
-   and `lastMessage` from going stale on the active session object.
-
-5. **Active session reference fix** — `handleClientMessage` now receives
-   `activeSession` (live reference) instead of the initial `session` snapshot.
-   Previously the prompt handler used a stale copy.
-
-6. **REST `POST /sessions/:id/stop`** — Stops session without WebSocket.
-   Returns updated session. Handles both active (graceful stop) and inactive
-   (just set status) sessions.
-
-7. **Orphaned container cleanup** on server start and shutdown.
-
-All good additions. No issues.
+**Severity**: Low (v1 acceptable, note for v2).
 
 ---
 
-## Remaining Nits (None Blocking)
+## 🟡 Medium Severity (UX bugs, edge cases)
 
-### 1. `tool_output.isError` Never Populated (Cosmetic)
+### 7. `ChatView` — `isNearBottom` sentinel is unreliable for auto-scroll
 
-`types.ts` defines `isError?: boolean` on `tool_output`. The iOS design uses
-it for "Error output: auto-expanded, red tinted." But `translateEvent` never
-sets it:
+**File**: `ChatView.swift:44-46, 58-63`  
+```swift
+Color.clear.frame(height: 1)
+    .id("bottom-sentinel")
+    .onAppear { isNearBottom = true }
+    .onDisappear { isNearBottom = false }
+```
+The sentinel is 1pt tall inside `LazyVStack`. When the ScrollView hasn't rendered it yet (initial load, or user scrolled up), `onDisappear` fires setting `isNearBottom = false`, which disables auto-scroll. The `onChange(of: reducer.renderVersion)` then won't scroll.
 
-```typescript
-case "tool_execution_update": {
-    const content = event.partialResult?.content?.[0];
-    if (content?.type === "text") {
-        return { type: "tool_output", output: content.text };
-        //                                    ^ no isError
+**Real scenario**: User opens a busy session → messages load → sentinel was never visible → auto-scroll is disabled → user sees the top of the conversation, not the bottom.
+
+**Fix**: Initialize `isNearBottom = true` (already done ✅) and also scroll to bottom on initial load in `connectToSession()` after `loadFromREST`.
+
+### 8. Permission pill banner is not tappable
+
+**File**: `ChatView.swift:67-69`  
+```swift
+if !permissionStore.pending(for: sessionId).isEmpty {
+    PermissionPillBanner(count: permissionStore.pending(for: sessionId).count)
+}
+```
+The banner says "tap to review" but there's no tap gesture or scroll action. The permission cards are inline in the timeline, so the banner should scroll to the first pending permission.
+
+**Fix**: Add `onTapGesture` that scrolls to the first `.permission` item in `reducer.items` via `ScrollViewReader`.
+
+### 9. `OnboardingView.testConnection` — `APIClient` actor method called from MainActor
+
+**File**: `OnboardingView.swift:106-131`  
+`testConnection` creates a local `APIClient` actor and calls `await api.health()` and `await api.me()`. This crosses actor boundaries correctly. ✅
+
+But the local `APIClient` is never stored — it gets created, used, and discarded. The `URLSession` inside it will be deallocated, potentially cancelling in-flight requests. In practice, `await` ensures the requests complete before the function returns, so the URLSession stays alive for the duration. This is fine.
+
+### 10. `SessionStore.upsert` inserts at index 0 — doesn't maintain sort order
+
+**File**: `SessionStore.swift:23-27`  
+```swift
+func upsert(_ session: Session) {
+    if let idx = sessions.firstIndex(where: { $0.id == session.id }) {
+        sessions[idx] = session
+    } else {
+        sessions.insert(session, at: 0)
     }
 }
 ```
+New sessions go to index 0, but `sort()` is only called explicitly. The session list from `listSessions()` replaces the whole array (sorted by server). But `state` messages via WebSocket update individual sessions without re-sorting.
 
-**Impact:** Error tool output renders the same as normal output. The iOS
-client can't auto-expand errors because it can't distinguish them.
+**Effect**: A session that goes busy will stay in its current position instead of moving to the top.
 
-**v2 fix:** Check if pi's `tool_execution_end` event carries error status
-and backfill `isError` on the preceding output. Or: check `content.type`
-for error-specific types (if pi uses them).
+**Fix**: Call `sort()` after upsert, or accept the behavior (most session lists are short).
 
-**v1 workaround:** All tool output is collapsed by default. Users tap to
-expand. Acceptable — you lose the auto-expand affordance but nothing breaks.
+### 11. `NewSessionView` — hardcoded model list will go stale
 
-### 2. `auto_retry_start` Still Maps to `error` (Server-Side)
+**File**: `NewSessionView.swift:15-19`  
+```swift
+private let suggestedModels = [
+    "anthropic/claude-sonnet-4-0",
+    "anthropic/claude-opus-4-0",
+    "anthropic/claude-haiku-3-5",
+]
+```
+These model strings are hardcoded. The server's `defaultModel` from config isn't exposed in any API. When new models ship, the app needs an update.
 
-The iOS design handles this correctly (checks for "Retrying (" prefix and
-renders as info row instead of red error card). But the server-side mapping
-is conceptually wrong — retries aren't errors. This works for v1 because the
-iOS client special-cases it. For v2, consider a `system_notice` message type.
+**Fix (v2)**: Add `GET /models` endpoint on server, or at minimum fetch `defaultModel` from server config.
 
-### 3. Redundant Disk Write After `message_end`
+### 12. `ServerCredentials.baseURL` — force-unwrap on malformed host
 
-`appendMessage()` → `storage.addSessionMessage()` writes session+messages
-to disk. Then `markSessionDirty()` queues another write 1s later. The second
-write is redundant (reads back the same data and overwrites with identical
-in-memory session). Harmless — one extra file write per assistant turn.
+**File**: `User.swift:22-23`  
+```swift
+var baseURL: URL {
+    URL(string: "http://\(host):\(port)")!
+}
+```
+If `host` contains spaces or special characters (from a corrupted QR code), this will crash.
 
-If it bothers you: skip `markSessionDirty()` after `appendMessage()`. But
-not worth the code churn.
-
----
-
-## Server ↔ iOS Protocol Alignment
-
-Final check — every `ServerMessage` type has a corresponding iOS handler:
-
-| Server Message | iOS Handler | Verified |
-|---------------|-------------|----------|
-| `connected` | ConnectionState + SessionStore | ✅ |
-| `state` | SessionStore refresh | ✅ |
-| `agent_start` | AgentEvent.agentStart → reducer | ✅ |
-| `agent_end` | AgentEvent.agentEnd → reducer | ✅ |
-| `text_delta` | AgentEvent.textDelta → coalescer → reducer | ✅ |
-| `thinking_delta` | AgentEvent.thinkingDelta → coalescer → reducer | ✅ |
-| `tool_start` | AgentEvent.toolStart → ToolEventMapper → reducer | ✅ |
-| `tool_output` | AgentEvent.toolOutput → ToolOutputStore + reducer | ✅ |
-| `tool_end` | AgentEvent.toolEnd → reducer | ✅ |
-| `error` | AgentEvent.error → reducer (or system notice for retry) | ✅ |
-| `session_ended` | SessionStore status + inline system card | ✅ |
-| `permission_request` | PermissionStore + notification surface | ✅ |
-| `permission_expired` | PermissionStore removal + UI update | ✅ |
-| `permission_cancelled` | PermissionStore removal | ✅ |
-| `extension_ui_request` | ExtensionDialogView sheet | ✅ |
-| `extension_ui_notification` | ExtensionStatusView / ignore | ✅ |
-
-Every `ClientMessage` type has a server handler:
-
-| Client Message | Server Handler | Verified |
-|---------------|---------------|----------|
-| `prompt` | storage.addSessionMessage + sessions.sendPrompt | ✅ |
-| `steer` | sessions.sendSteer (v2, deferred) | ✅ |
-| `follow_up` | sessions.sendFollowUp (v2, deferred) | ✅ |
-| `abort` | sessions.sendAbort + fallback timer | ✅ |
-| `stop` | → abort alias | ✅ |
-| `get_state` | sessions.getActiveSession → send state | ✅ |
-| `permission_response` | gate.resolveDecision | ✅ |
-| `extension_ui_response` | sessions.respondToUIRequest | ✅ |
-
-No gaps. Protocol is fully aligned.
+**Fix**: Guard with optional or validate host during QR parse.
 
 ---
 
-## Final Verdict
+## 🟢 Low Severity (cosmetic, minor)
 
-**The design is ready. Start building.**
+### 13. `ContentView` uses `SwiftUI.Tab` fully-qualified to avoid `AppTab` collision
 
-- Server: all critical fixes landed, protocol is complete for v1
-- iOS design: comprehensive, realistic, accounts for edge cases
-- Performance: rendering pipeline will hit 60fps, debounced I/O won't stutter
-- Reconnect: works now that assistant messages are stored
-- Remaining nits are cosmetic and documented as v1 limitations
+**File**: `ContentView.swift:11-24`  
+The rename from `Tab` → `AppTab` was correct, but the `SwiftUI.Tab` qualification is a bit unusual. An alternative is `typealias PiTab = Tab` but `AppTab` is cleaner. Fine as-is.
 
-Build order: Phase 1 from the implementation plan. Start with networking +
-models + stores, then the permission card (the money feature), then chat view
-with streaming.
+### 14. `RiskLevel` extension in `Color+Risk.swift` — feature extension in wrong file
+
+**File**: `Color+Risk.swift:14-35`  
+The `RiskLevel` extensions (`label`, `systemImage`) are model logic, not color extensions. They should live in `Permission.swift` or a separate `RiskLevel+Display.swift`.
+
+**Severity**: File organization only.
+
+### 15. `LiveFeedView` shares `reducer.items` with `ChatView`
+
+**File**: `LiveFeedView.swift:9`  
+The Live tab shows the same items as the active chat session. If no session is connected, it's empty. If a session is connected, it shows the same timeline. This isn't really a "live cross-session feed" — it's a mirror.
+
+**v2 note**: This needs its own data source (activity log API) to be useful.
+
+### 16. Tests don't test `DeltaCoalescer` directly
+
+The DeltaCoalescer is tested indirectly through TimelineReducer tests (which feed events without coalescing). A direct test of batching behavior (verify that 10 rapid textDeltas produce fewer onFlush calls) would catch regressions.
+
+### 17. `SessionMessage.stub()` test helper uses raw JSON string interpolation
+
+**File**: `TimelineReducerTests.swift:147-155`  
+```swift
+let json = """
+{"id":"\(id)","sessionId":"\(sessionId)","role":"\(role.rawValue)","content":"\(content)","timestamp":\(tsMs)}
+"""
+```
+If `content` contains quotes or backslashes, the JSON is invalid. For test stubs this is fine (controlled inputs), but fragile.
+
+---
+
+## ✅ What's Good
+
+1. **ServerMessage decoder with `.unknown` fallback** — exactly right for forward-compat
+2. **Manual Codable implementations** — avoids the pitfalls of synthesized Codable with type discriminators
+3. **Unix-ms timestamp handling** — consistent across Session, SessionMessage, PermissionRequest
+4. **DeltaCoalescer design** — 33ms batch for text, immediate for everything else. Clean separation
+5. **ToolOutputStore** — full output separated from ChatItem keeps Equatable diffs cheap
+6. **ToolEventMapper** — client-generated UUIDs for sequential tools is the right v1 approach
+7. **WebSocket reconnect** with exponential backoff and max attempts
+8. **Permission card UX** — risk-differentiated button styles, haptics, countdown timer
+9. **Separate @Observable stores** — SessionStore/PermissionStore won't thrash each other
+10. **Test coverage** on the critical decoder paths — 34 tests covering all wire message types
+
+---
+
+## Recommended Fix Priority
+
+1. **#2** (re-navigation same session) — Will hit this in real use immediately  
+2. **#3** (permission resolve error) — Permission approval is the money feature  
+3. **#8** (permission pill not tappable) — UX promise not delivered  
+4. **#7** (auto-scroll on initial load) — First thing user sees  
+5. **#12** (force-unwrap URL) — Crash on bad QR  
+6. Rest: v2 backlog  

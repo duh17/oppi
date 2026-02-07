@@ -10,12 +10,16 @@ private let logger = Logger(subsystem: "dev.chenda.PiRemote", category: "Connect
 @MainActor @Observable
 final class ServerConnection {
     // Public state
-    private(set) var isConnected: Bool = false
     private(set) var credentials: ServerCredentials?
 
     // Networking
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
+
+    /// Derived connection state for UI badges.
+    var isConnected: Bool {
+        wsClient?.status == .connected
+    }
 
     // Stores
     let sessionStore = SessionStore()
@@ -27,7 +31,6 @@ final class ServerConnection {
     private let toolMapper = ToolEventMapper()
 
     // Stream lifecycle
-    private var streamTask: Task<Void, Never>?
     private var activeSessionId: String?
 
     // Extension UI
@@ -54,30 +57,23 @@ final class ServerConnection {
 
     // MARK: - Session Streaming
 
-    /// Connect to a session's WebSocket stream and start processing events.
-    func connectToSession(_ sessionId: String) {
-        guard let wsClient else { return }
+    /// Open a WebSocket stream for one session.
+    ///
+    /// The caller owns stream consumption and task lifecycle.
+    /// On stream termination, `WebSocketClient` disconnects via `onTermination`.
+    func streamSession(_ sessionId: String) -> AsyncStream<ServerMessage>? {
+        guard let wsClient else { return nil }
 
-        // Disconnect previous
+        // v1 one-stream policy
         disconnectSession()
 
         activeSessionId = sessionId
         toolMapper.reset()
-
-        let stream = wsClient.connect(sessionId: sessionId)
-
-        streamTask = Task { [weak self] in
-            for await message in stream {
-                guard let self, !Task.isCancelled else { break }
-                self.handleServerMessage(message, sessionId: sessionId)
-            }
-        }
+        return wsClient.connect(sessionId: sessionId)
     }
 
     /// Disconnect from the current session stream.
     func disconnectSession() {
-        streamTask?.cancel()
-        streamTask = nil
         coalescer.flushNow()
         wsClient?.disconnect()
         activeSessionId = nil
@@ -141,19 +137,20 @@ final class ServerConnection {
             logger.error("Failed to refresh session \(sessionId): \(error)")
         }
 
-        // Reconnect WebSocket
-        connectToSession(sessionId)
+        // Ask server for freshest state on active stream when possible.
+        if wsClient?.connectedSessionId == sessionId {
+            try? await requestState()
+        }
     }
 
     // MARK: - Message Router
 
     /// Route a ServerMessage to the appropriate store or pipeline.
-    private func handleServerMessage(_ message: ServerMessage, sessionId: String) {
+    func handleServerMessage(_ message: ServerMessage, sessionId: String) {
         switch message {
         // Direct state updates (not timeline events)
         case .connected(let session):
             sessionStore.upsert(session)
-            isConnected = true
 
         case .state(let session):
             sessionStore.upsert(session)

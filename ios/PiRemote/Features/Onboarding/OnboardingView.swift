@@ -87,6 +87,12 @@ struct OnboardingView: View {
     private func testConnection(_ credentials: ServerCredentials) async {
         connectionTest = .testing
 
+        // Validate URL before attempting connection
+        guard URL(string: "http://\(credentials.host):\(credentials.port)") != nil else {
+            connectionTest = .failed("Invalid server address: \(credentials.host):\(credentials.port)")
+            return
+        }
+
         let api = APIClient(baseURL: credentials.baseURL, token: credentials.token)
 
         do {

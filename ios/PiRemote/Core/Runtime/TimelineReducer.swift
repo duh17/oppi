@@ -18,6 +18,10 @@ import Foundation
 final class TimelineReducer {
     private(set) var items: [ChatItem] = []
 
+    /// Incremented on timeline mutations so ChatView can react to row content
+    /// updates (not only item insert/remove).
+    private(set) var renderVersion: Int = 0
+
     // Turn-local buffers (reset on agentStart, finalized on agentEnd)
     private var currentAssistantID: String?
     private var assistantBuffer: String = ""
@@ -52,6 +56,8 @@ final class TimelineReducer {
                 items.append(.systemEvent(id: msg.id, message: msg.content))
             }
         }
+
+        bumpRenderVersion()
     }
 
     // MARK: - Process Agent Events
@@ -113,6 +119,8 @@ final class TimelineReducer {
                 items.append(.error(id: UUID().uuidString, message: message))
             }
         }
+
+        bumpRenderVersion()
     }
 
     // MARK: - User Message (from local prompt)
@@ -123,6 +131,7 @@ final class TimelineReducer {
             text: text,
             timestamp: Date()
         ))
+        bumpRenderVersion()
     }
 
     // MARK: - Permission Resolution
@@ -131,6 +140,7 @@ final class TimelineReducer {
         // Replace the permission item with a resolved badge
         if let idx = items.firstIndex(where: { $0.id == id }) {
             items[idx] = .permissionResolved(id: id, action: action)
+            bumpRenderVersion()
         }
     }
 
@@ -230,5 +240,9 @@ final class TimelineReducer {
             outputPreview: preview, outputByteCount: bytes,
             isError: isErr, isDone: true
         )
+    }
+
+    private func bumpRenderVersion() {
+        renderVersion &+= 1
     }
 }

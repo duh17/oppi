@@ -10,6 +10,7 @@ struct PermissionCardView: View {
 
     @Environment(ServerConnection.self) private var connection
     @State private var isResolving = false
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,13 @@ struct PermissionCardView: View {
             Text(request.reason)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            // Error banner
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
 
             // Action buttons
             HStack(spacing: 12) {
@@ -92,11 +100,17 @@ struct PermissionCardView: View {
 
     private func resolve(_ action: PermissionAction) {
         isResolving = true
+        errorMessage = nil
         let feedback = UIImpactFeedbackGenerator(style: action == .allow ? .light : .heavy)
         feedback.impactOccurred()
 
         Task {
-            try? await connection.respondToPermission(id: request.id, action: action)
+            do {
+                try await connection.respondToPermission(id: request.id, action: action)
+            } catch {
+                isResolving = false
+                errorMessage = "Failed: \(error.localizedDescription)"
+            }
         }
     }
 }
