@@ -155,6 +155,10 @@ struct ChatView: View {
     // MARK: - Actions
 
     private func connectToSession() async {
+        // Disconnect any prior session and clear stale timeline
+        connection.disconnectSession()
+        reducer.reset()
+
         sessionStore.activeSessionId = sessionId
 
         // Start Live Activity for this session

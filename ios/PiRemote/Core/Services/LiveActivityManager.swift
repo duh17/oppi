@@ -37,10 +37,14 @@ final class LiveActivityManager {
         // End any existing activity first
         endIfNeeded()
 
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            logger.info("Live Activities not enabled")
+        let authInfo = ActivityAuthorizationInfo()
+        guard authInfo.areActivitiesEnabled else {
+            logger.info("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → PiRemote → Live Activities")
             return
         }
+
+        // Check frequent push permission too
+        logger.info("Live Activities enabled, frequentPushesEnabled=\(authInfo.frequentPushesEnabled)")
 
         let attributes = PiSessionAttributes(
             sessionId: sessionId,
@@ -56,10 +60,11 @@ final class LiveActivityManager {
         )
 
         do {
+            let content = ActivityContent(state: currentState, staleDate: nil)
             let activity = try Activity.request(
                 attributes: attributes,
-                content: .init(state: currentState, staleDate: nil),
-                pushType: .token
+                content: content,
+                pushType: nil  // Use nil initially; .token requires server APNs setup
             )
 
             self.activeActivity = activity
@@ -67,15 +72,6 @@ final class LiveActivityManager {
             startElapsedTimer()
 
             logger.info("Live Activity started for session \(sessionId)")
-
-            // Forward push token to server for remote updates
-            Task {
-                for await data in activity.pushTokenUpdates {
-                    let token = data.map { String(format: "%02x", $0) }.joined()
-                    logger.info("Live Activity push token: \(token.prefix(16))...")
-                    await PushRegistration.shared.sendTokenToServer(token, tokenType: "liveactivity")
-                }
-            }
         } catch {
             logger.error("Failed to start Live Activity: \(error)")
         }

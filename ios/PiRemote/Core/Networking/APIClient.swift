@@ -84,6 +84,15 @@ actor APIClient {
         _ = try await request("DELETE", path: "/sessions/\(id)")
     }
 
+    // MARK: - Models
+
+    /// Fetch available models from the server.
+    func listModels() async throws -> [ModelInfo] {
+        let data = try await get("/models")
+        struct Response: Decodable { let models: [ModelInfo] }
+        return try JSONDecoder().decode(Response.self, from: data).models
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.

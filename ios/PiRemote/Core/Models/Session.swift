@@ -78,6 +78,13 @@ extension Session: Codable {
     }
 }
 
+/// Model info returned by `GET /models`.
+struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let provider: String
+}
+
 /// A stored message in a session (user or assistant turn).
 struct SessionMessage: Identifiable, Codable, Sendable, Equatable {
     let id: String

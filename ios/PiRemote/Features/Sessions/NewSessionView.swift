@@ -6,15 +6,21 @@ struct NewSessionView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
-    @State private var model = "anthropic/claude-sonnet-4-0"
+    @State private var model = "anthropic/claude-opus-4-6"
     @State private var isCreating = false
     @State private var error: String?
+    @State private var availableModels: [ModelInfo] = []
+    @State private var isLoadingModels = true
 
-    private let suggestedModels = [
-        "anthropic/claude-sonnet-4-0",
-        "anthropic/claude-opus-4-0",
-        "anthropic/claude-haiku-3-5",
-    ]
+    /// Group models by provider for sectioned display.
+    private var groupedModels: [(provider: String, models: [ModelInfo])] {
+        let grouped = Dictionary(grouping: availableModels) { $0.provider }
+        let order = ["anthropic", "openai", "google", "lmstudio"]
+        return order.compactMap { provider in
+            guard let models = grouped[provider], !models.isEmpty else { return nil }
+            return (provider: provider, models: models)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -28,20 +34,34 @@ struct NewSessionView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
 
-                    ForEach(suggestedModels, id: \.self) { suggestion in
-                        Button {
-                            model = suggestion
-                        } label: {
-                            HStack {
-                                Text(suggestion.split(separator: "/").last.map(String.init) ?? suggestion)
-                                Spacer()
-                                if model == suggestion {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.tint)
+                    if isLoadingModels {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading models…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    ForEach(groupedModels, id: \.provider) { group in
+                        Section(providerDisplayName(group.provider)) {
+                            ForEach(group.models) { info in
+                                Button {
+                                    model = info.id
+                                } label: {
+                                    HStack {
+                                        Text(info.name)
+                                        Spacer()
+                                        if model == info.id {
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(.tint)
+                                        }
+                                    }
                                 }
+                                .foregroundStyle(.primary)
                             }
                         }
-                        .foregroundStyle(.primary)
                     }
                 }
 
@@ -66,7 +86,33 @@ struct NewSessionView: View {
                     .disabled(isCreating)
                 }
             }
+            .task { await loadModels() }
         }
+    }
+
+    private func providerDisplayName(_ provider: String) -> String {
+        switch provider {
+        case "anthropic": return "Anthropic"
+        case "openai": return "OpenAI"
+        case "google": return "Google"
+        case "lmstudio": return "LM Studio"
+        default: return provider.capitalized
+        }
+    }
+
+    private func loadModels() async {
+        guard let api = connection.apiClient else {
+            isLoadingModels = false
+            return
+        }
+
+        do {
+            availableModels = try await api.listModels()
+        } catch {
+            // Silently fall back — user can still type model ID manually
+        }
+
+        isLoadingModels = false
     }
 
     private func createSession() async {

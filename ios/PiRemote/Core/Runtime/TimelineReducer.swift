@@ -34,6 +34,19 @@ final class TimelineReducer {
     /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
 
+    // MARK: - Reset
+
+    /// Clear all state — call when switching sessions.
+    func reset() {
+        items.removeAll()
+        assistantBuffer = ""
+        thinkingBuffer = ""
+        currentAssistantID = nil
+        currentThinkingID = nil
+        toolOutputStore.clearAll()
+        renderVersion &+= 1
+    }
+
     // MARK: - Load from REST (reconnect)
 
     /// Rebuild timeline from stored messages (after reconnect/foreground).

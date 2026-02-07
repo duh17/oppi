@@ -26,6 +26,31 @@ import type {
   ApiError,
 } from "./types.js";
 
+// ─── Available Models ───
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+const AVAILABLE_MODELS: ModelInfo[] = [
+  // Anthropic
+  { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic" },
+  { id: "anthropic/claude-sonnet-4-0", name: "Claude Sonnet 4", provider: "anthropic" },
+  { id: "anthropic/claude-haiku-3-5", name: "Claude Haiku 3.5", provider: "anthropic" },
+  // OpenAI
+  { id: "openai/o3", name: "o3", provider: "openai" },
+  { id: "openai/o4-mini", name: "o4-mini", provider: "openai" },
+  { id: "openai/gpt-4.1", name: "GPT-4.1", provider: "openai" },
+  // Google
+  { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google" },
+  { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google" },
+  // LM Studio (local)
+  { id: "lmstudio/qwen3-32b", name: "Qwen3 32B", provider: "lmstudio" },
+  { id: "lmstudio/deepseek-r1-0528-qwen3-8b", name: "DeepSeek R1 8B", provider: "lmstudio" },
+];
+
 export class Server {
   private storage: Storage;
   private sessions: SessionManager;
@@ -254,6 +279,12 @@ export class Server {
     try {
       if (path === "/me" && method === "GET") {
         this.json(res, { user: user.id, name: user.name });
+        return;
+      }
+
+      // Model list
+      if (path === "/models" && method === "GET") {
+        this.json(res, { models: AVAILABLE_MODELS });
         return;
       }
 
