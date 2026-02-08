@@ -196,4 +196,61 @@ struct ToolEventMapperTests {
         }
         #expect(isError)
     }
+
+    // MARK: - Server-provided toolCallId
+
+    @MainActor
+    @Test func serverProvidedToolCallIdIsUsed() {
+        let mapper = ToolEventMapper()
+
+        let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
+        guard case .toolStart(_, let startId, _, _) = startEvent else {
+            Issue.record("Expected toolStart")
+            return
+        }
+        #expect(startId == "server-tc-1", "Should use server-provided toolCallId")
+
+        let outputEvent = mapper.output(sessionId: "s1", output: "data", isError: false, toolCallId: "server-tc-1")
+        guard case .toolOutput(_, let outputId, _, _) = outputEvent else {
+            Issue.record("Expected toolOutput")
+            return
+        }
+        #expect(outputId == "server-tc-1", "Output should use server-provided toolCallId")
+
+        let endEvent = mapper.end(sessionId: "s1", toolCallId: "server-tc-1")
+        guard case .toolEnd(_, let endId) = endEvent else {
+            Issue.record("Expected toolEnd")
+            return
+        }
+        #expect(endId == "server-tc-1", "End should use server-provided toolCallId")
+    }
+
+    @MainActor
+    @Test func outputFallsBackToCurrentToolWhenNoServerToolCallId() {
+        let mapper = ToolEventMapper()
+
+        // Start with server-provided ID
+        _ = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
+
+        // Output without server-provided ID falls back to current tool's ID
+        let outputEvent = mapper.output(sessionId: "s1", output: "data", isError: false)
+        guard case .toolOutput(_, let outputId, _, _) = outputEvent else {
+            Issue.record("Expected toolOutput")
+            return
+        }
+        #expect(outputId == "server-tc-1", "Should fall back to current tool's server-provided ID")
+    }
+
+    @MainActor
+    @Test func noServerIdGeneratesSyntheticUUID() {
+        let mapper = ToolEventMapper()
+
+        let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:])
+        guard case .toolStart(_, let id, _, _) = startEvent else {
+            Issue.record("Expected toolStart")
+            return
+        }
+        #expect(!id.isEmpty, "Should generate synthetic UUID when no server ID")
+        #expect(id != "server-tc-1", "Should not be a server-style ID")
+    }
 }

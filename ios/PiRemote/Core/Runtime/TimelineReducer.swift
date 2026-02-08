@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Reducer")
 
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///
@@ -31,6 +34,10 @@ final class TimelineReducer {
     // Turn-local buffers (reset on agentStart, finalized on agentEnd)
     private var currentAssistantID: String?
     private var assistantBuffer: String = ""
+    /// Stable timestamp for the streaming assistant message — avoids
+    /// creating a new Date() on every 33ms upsert, which would cause
+    /// unnecessary Equatable mismatches and ForEach re-diffs.
+    private var currentAssistantTimestamp: Date?
 
     private var currentThinkingID: String?
     private var thinkingBuffer: String = ""
@@ -189,6 +196,7 @@ final class TimelineReducer {
     /// Perf note: text/thinking/tool-output deltas are high-frequency. In a
     /// batch, append to local accumulators and upsert affected rows once.
     func processBatch(_ events: [AgentEvent]) {
+        let start = ContinuousClock.now
         var hasPendingAssistantUpsert = false
         var hasPendingThinkingUpsert = false
 
@@ -252,6 +260,10 @@ final class TimelineReducer {
         flushPendingUpserts()
         trimIfNeeded()
         bumpRenderVersion()
+        let elapsed = ContinuousClock.now - start
+        if elapsed > .milliseconds(5) {
+            perfLog.warning("processBatch slow: \(elapsed) for \(events.count) events, \(self.items.count) items")
+        }
     }
 
     /// Process a single event. Bumps renderVersion once.
@@ -320,11 +332,40 @@ final class TimelineReducer {
             items.append(.systemEvent(id: UUID().uuidString, message: "Session ended: \(reason)"))
 
         case .error(_, let message):
-            // Check for retry pattern — render as system event, not error
-            if message.hasPrefix("Retrying (") {
-                items.append(.systemEvent(id: UUID().uuidString, message: message))
+            items.append(.error(id: UUID().uuidString, message: message))
+
+        // Compaction
+        case .compactionStart(_, let reason):
+            let label = reason == "overflow" ? "Context overflow — compacting..." : "Compacting context..."
+            items.append(.systemEvent(id: UUID().uuidString, message: label))
+
+        case .compactionEnd(_, let aborted, let willRetry, let summary):
+            if aborted {
+                items.append(.systemEvent(id: UUID().uuidString, message: "Compaction cancelled"))
+            } else if willRetry {
+                items.append(.systemEvent(id: UUID().uuidString, message: "Context compacted — retrying..."))
             } else {
-                items.append(.error(id: UUID().uuidString, message: message))
+                let msg = summary.map { "Context compacted: \(String($0.prefix(100)))" } ?? "Context compacted"
+                items.append(.systemEvent(id: UUID().uuidString, message: msg))
+            }
+
+        // Retry
+        case .retryStart(_, let attempt, let maxAttempts, _, let errorMessage):
+            items.append(.systemEvent(id: UUID().uuidString, message: "Retrying (\(attempt)/\(maxAttempts)): \(errorMessage)"))
+
+        case .retryEnd(_, let success, _, let finalError):
+            if !success, let err = finalError {
+                items.append(.error(id: UUID().uuidString, message: "Retry failed: \(err)"))
+            }
+
+        // RPC results — model changes get a system event, others are silent
+        case .rpcResult(_, let command, _, let success, _, let error):
+            if !success, let err = error {
+                items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(err)"))
+            } else if command == "set_model" || command == "cycle_model" {
+                items.append(.systemEvent(id: UUID().uuidString, message: "Model changed"))
+            } else if command == "set_thinking_level" || command == "cycle_thinking_level" {
+                items.append(.systemEvent(id: UUID().uuidString, message: "Thinking level changed"))
             }
         }
     }
@@ -376,17 +417,21 @@ final class TimelineReducer {
         assistantBuffer = ""
         thinkingBuffer = ""
         currentAssistantID = nil
+        currentAssistantTimestamp = nil
         currentThinkingID = nil
     }
 
     private func upsertAssistantMessage() {
         let id = currentAssistantID ?? UUID().uuidString
-        if currentAssistantID == nil { currentAssistantID = id }
+        if currentAssistantID == nil {
+            currentAssistantID = id
+            currentAssistantTimestamp = Date()
+        }
 
         let item = ChatItem.assistantMessage(
             id: id,
             text: assistantBuffer,
-            timestamp: Date()
+            timestamp: currentAssistantTimestamp ?? Date()
         )
 
         if let idx = items.firstIndex(where: { $0.id == id }) {
@@ -485,11 +530,63 @@ final class TimelineReducer {
     }
 
     /// Trim oldest items when count exceeds `maxItems`.
-    /// Preserves the most recent items so the visible (bottom) portion is unaffected.
+    /// Prefer trimming non-conversation rows (tool/thinking/system/etc.) first
+    /// so long-running sessions keep user/assistant history longer.
     private func trimIfNeeded() {
         guard items.count > Self.maxItems else { return }
+
         let removeCount = items.count - Self.trimTarget
-        items.removeFirst(removeCount)
+        guard removeCount > 0 else { return }
+
+        var indicesToRemove: [Int] = []
+        indicesToRemove.reserveCapacity(removeCount)
+        var marked: Set<Int> = []
+
+        func mark(_ index: Int) {
+            guard indicesToRemove.count < removeCount else { return }
+            guard !marked.contains(index) else { return }
+            marked.insert(index)
+            indicesToRemove.append(index)
+        }
+
+        // Pass 1: drop oldest non-conversation rows first.
+        for (index, item) in items.enumerated() {
+            guard indicesToRemove.count < removeCount else { break }
+            switch item {
+            case .userMessage, .assistantMessage:
+                continue
+            default:
+                mark(index)
+            }
+        }
+
+        // Pass 2: if still over cap, drop oldest remaining rows.
+        if indicesToRemove.count < removeCount {
+            for index in items.indices {
+                guard indicesToRemove.count < removeCount else { break }
+                mark(index)
+            }
+        }
+
+        let removedToolLikeIDs = indicesToRemove.reduce(into: Set<String>()) { ids, index in
+            switch items[index] {
+            case .toolCall(let id, _, _, _, _, _, _),
+                 .thinking(let id, _, _, _):
+                ids.insert(id)
+            default:
+                break
+            }
+        }
+
+        for index in indicesToRemove.sorted(by: >) {
+            items.remove(at: index)
+        }
+
+        if !removedToolLikeIDs.isEmpty {
+            toolOutputStore.clear(itemIDs: removedToolLikeIDs)
+            toolArgsStore.clear(itemIDs: removedToolLikeIDs)
+            expandedItemIDs.subtract(removedToolLikeIDs)
+        }
     }
 
     private func bumpRenderVersion() {

@@ -41,6 +41,10 @@ final class ServerConnection {
     /// Composer draft text — saved/restored across background cycles.
     var composerDraft: String?
 
+    /// Current thinking level (tracked client-side from RPC responses).
+    /// Reset to `.medium` on session switch; updated by `cycle_thinking_level` responses.
+    var thinkingLevel: ThinkingLevel = .medium
+
     /// Timer that auto-dismisses extension dialogs after their timeout expires.
     private var extensionTimeoutTask: Task<Void, Never>?
 
@@ -86,6 +90,7 @@ final class ServerConnection {
 
         activeSessionId = sessionId
         toolMapper.reset()
+        thinkingLevel = .medium  // Reset to default; server state arrives via rpcResult
         return wsClient.connect(sessionId: sessionId)
     }
 
@@ -120,7 +125,7 @@ final class ServerConnection {
     /// Stop the current agent operation.
     func sendStop() async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stop)
+        try await wsClient.send(.stop())
     }
 
     /// Respond to a permission request.
@@ -144,7 +149,53 @@ final class ServerConnection {
     /// Request current state from server.
     func requestState() async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.getState)
+        try await wsClient.send(.getState())
+    }
+
+    /// Send any client message.
+    func send(_ message: ClientMessage) async throws {
+        guard let wsClient else { throw WebSocketError.notConnected }
+        try await wsClient.send(message)
+    }
+
+    // ── Model ──
+
+    func setModel(provider: String, modelId: String) async throws {
+        try await send(.setModel(provider: provider, modelId: modelId))
+    }
+
+    func cycleModel() async throws {
+        try await send(.cycleModel())
+    }
+
+    // ── Thinking ──
+
+    func setThinkingLevel(_ level: ThinkingLevel) async throws {
+        try await send(.setThinkingLevel(level: level))
+    }
+
+    func cycleThinkingLevel() async throws {
+        try await send(.cycleThinkingLevel())
+    }
+
+    // ── Session ──
+
+    func newSession() async throws {
+        try await send(.newSession())
+    }
+
+    func setSessionName(_ name: String) async throws {
+        try await send(.setSessionName(name: name))
+    }
+
+    func compact(instructions: String? = nil) async throws {
+        try await send(.compact(customInstructions: instructions))
+    }
+
+    // ── Bash ──
+
+    func runBash(_ command: String) async throws {
+        try await send(.bash(command: command))
     }
 
     // MARK: - Reconnect (foreground)
@@ -171,11 +222,20 @@ final class ServerConnection {
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
         }
 
-        // Only rebuild timeline if the WebSocket stream died.
-        // If still connected, the stream is delivering live events —
-        // wiping items would clobber in-progress content.
-        let streamAlive = wsClient?.status == .connected
-            && wsClient?.connectedSessionId == sessionId
+        // Treat connecting/reconnecting as alive for this session so foreground
+        // refresh does not race and clobber in-flight ChatView connect work.
+        let streamAttached = wsClient?.connectedSessionId == sessionId
+        let streamAlive: Bool
+        if streamAttached {
+            switch wsClient?.status {
+            case .connected, .connecting, .reconnecting:
+                streamAlive = true
+            default:
+                streamAlive = false
+            }
+        } else {
+            streamAlive = false
+        }
 
         if !streamAlive {
             // Clear stale extension dialog — server will re-send if still pending
@@ -183,13 +243,24 @@ final class ServerConnection {
             extensionTimeoutTask?.cancel()
             extensionTimeoutTask = nil
 
-            // Use trace endpoint for full history including tool calls.
-            // Fall back to REST messages if trace endpoint is unavailable.
             do {
-                let (session, trace) = try await apiClient.getSessionTrace(id: sessionId)
-                sessionStore.upsert(session)
-                if !trace.isEmpty {
+                let (traceSession, trace) = try await apiClient.getSessionTrace(id: sessionId)
+                sessionStore.upsert(traceSession)
+
+                if !trace.isEmpty, traceAppearsComplete(trace, messageCount: traceSession.messageCount) {
                     reducer.loadFromTrace(trace)
+                } else {
+                    do {
+                        let (restSession, messages) = try await apiClient.getSession(id: sessionId)
+                        sessionStore.upsert(restSession)
+                        reducer.loadFromREST(messages)
+                    } catch {
+                        if !trace.isEmpty {
+                            reducer.loadFromTrace(trace)
+                        } else {
+                            logger.error("Failed to refresh session \(sessionId): \(error)")
+                        }
+                    }
                 }
             } catch {
                 do {
@@ -210,10 +281,23 @@ final class ServerConnection {
             }
         }
 
-        // Ask server for freshest state on active stream
-        if streamAlive {
+        // Ask server for freshest state once the active stream is connected.
+        if streamAttached, wsClient?.status == .connected {
             try? await requestState()
         }
+    }
+
+    private func traceAppearsComplete(_ trace: [TraceEvent], messageCount: Int) -> Bool {
+        guard messageCount > 0 else {
+            return true
+        }
+
+        let traceMessageCount = trace.reduce(into: 0) { count, event in
+            if event.type == .user || event.type == .assistant {
+                count += 1
+            }
+        }
+        return traceMessageCount >= messageCount
     }
 
     // MARK: - Message Router
@@ -274,20 +358,48 @@ final class ServerConnection {
         case .thinkingDelta(let delta):
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
 
-        case .toolStart(let tool, let args):
-            coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args))
+        case .toolStart(let tool, let args, let toolCallId):
+            coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId))
 
-        case .toolOutput(let output, let isError):
-            coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError))
+        case .toolOutput(let output, let isError, let toolCallId):
+            coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
 
-        case .toolEnd:
-            coalescer.receive(toolMapper.end(sessionId: sessionId))
+        case .toolEnd(_, let toolCallId):
+            coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId))
 
         case .sessionEnded(let reason):
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
         case .error(let msg):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
+
+        // Compaction events → pipeline
+        case .compactionStart(let reason):
+            coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
+
+        case .compactionEnd(let aborted, let willRetry, let summary, _):
+            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary))
+
+        // Retry events → pipeline
+        case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
+            coalescer.receive(.retryStart(sessionId: sessionId, attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage))
+
+        case .retryEnd(let success, let attempt, let finalError):
+            coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
+
+        // RPC results → pipeline (for model changes, stats, etc.)
+        case .rpcResult(let command, let requestId, let success, let data, let error):
+            // Track thinking level from RPC responses
+            if success && (command == "cycle_thinking_level" || command == "set_thinking_level") {
+                if let levelStr = data?.objectValue?["level"]?.stringValue,
+                   let level = ThinkingLevel(rawValue: levelStr) {
+                    thinkingLevel = level
+                } else if command == "cycle_thinking_level" {
+                    // Server didn't return data — cycle locally
+                    thinkingLevel = thinkingLevel.next
+                }
+            }
+            coalescer.receive(.rpcResult(sessionId: sessionId, command: command, requestId: requestId, success: success, data: data, error: error))
         }
     }
 

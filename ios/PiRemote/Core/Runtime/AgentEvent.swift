@@ -16,6 +16,17 @@ enum AgentEvent: Sendable {
     case toolOutput(sessionId: String, toolEventId: String, output: String, isError: Bool)
     case toolEnd(sessionId: String, toolEventId: String)
 
+    // Compaction
+    case compactionStart(sessionId: String, reason: String)
+    case compactionEnd(sessionId: String, aborted: Bool, willRetry: Bool, summary: String?)
+
+    // Retry
+    case retryStart(sessionId: String, attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
+    case retryEnd(sessionId: String, success: Bool, attempt: Int, finalError: String?)
+
+    // RPC response (model change, stats, etc.)
+    case rpcResult(sessionId: String, command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
+
     case permissionRequest(PermissionRequest)
     case permissionExpired(id: String)
     case sessionEnded(sessionId: String, reason: String)

@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Coalescer")
 
 /// Batches high-frequency stream deltas for smooth 30fps rendering.
 ///
@@ -32,7 +35,12 @@ final class DeltaCoalescer {
              .agentStart,
              .agentEnd,
              .sessionEnded,
-             .error:
+             .error,
+             .compactionStart,
+             .compactionEnd,
+             .retryStart,
+             .retryEnd,
+             .rpcResult:
             flushNow()
             onFlush?([event])
         }
@@ -61,6 +69,7 @@ final class DeltaCoalescer {
         guard !buffer.isEmpty else { return }
         let events = buffer
         buffer.removeAll(keepingCapacity: true)
+        perfLog.debug("flush \(events.count) events")
         onFlush?(events)
     }
 }

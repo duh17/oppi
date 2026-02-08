@@ -182,6 +182,29 @@ struct ReliabilityTests {
     }
 
     @MainActor
+    @Test func timelineTrimPrefersConversationMessagesOverToolRows() {
+        let reducer = TimelineReducer()
+
+        for i in 0..<300 {
+            reducer.appendUserMessage("msg-\(i)")
+            let toolId = "t\(i)"
+            reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: [:]))
+            reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
+        }
+
+        let remainingMessages = reducer.items.compactMap { item -> String? in
+            guard case .userMessage(_, let text, _) = item else {
+                return nil
+            }
+            return text
+        }
+
+        #expect(remainingMessages.contains("msg-0"), "Oldest user messages should be retained when tool rows are trimmable")
+        #expect(remainingMessages.contains("msg-299"))
+        #expect(remainingMessages.count == 300)
+    }
+
+    @MainActor
     @Test func loadFromTraceRespectsCap() {
         let reducer = TimelineReducer()
 
