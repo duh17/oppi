@@ -276,12 +276,17 @@ private struct ToolCallRow: View {
             // Write tool: show written content
             FileContentView(content: content, filePath: toolFilePath)
         } else if isReadTool, !isError, !fullOutput.isEmpty {
-            // Read tool: show file content
-            FileContentView(
-                content: fullOutput,
-                filePath: toolFilePath,
-                startLine: readStartLine
-            )
+            // Read tool: show file content or image
+            if !ImageExtractor.extract(from: fullOutput).isEmpty {
+                // Image file — render via ToolOutputContent (handles data URIs)
+                ToolOutputContent(output: fullOutput, isError: false)
+            } else {
+                FileContentView(
+                    content: fullOutput,
+                    filePath: toolFilePath,
+                    startLine: readStartLine
+                )
+            }
         } else if !fullOutput.isEmpty {
             // Everything else: plain output
             ToolOutputContent(output: fullOutput, isError: isError)
@@ -431,6 +436,10 @@ private struct ToolCallRow: View {
 // MARK: - Tool Output Content
 
 /// Renders tool output with inline image detection and ANSI color support.
+///
+/// When image data URIs are detected, they are stripped from the text display
+/// and rendered as inline images below the text. If the output is purely
+/// image data (no remaining text), the text portion is suppressed entirely.
 private struct ToolOutputContent: View {
     let output: String
     let isError: Bool
@@ -438,17 +447,30 @@ private struct ToolOutputContent: View {
     var body: some View {
         let images = ImageExtractor.extract(from: output)
 
+        // Strip data URIs from text display to avoid showing raw base64
+        let strippedText: String = {
+            guard !images.isEmpty else { return output }
+            var text = output
+            // Remove in reverse order to preserve range validity
+            for image in images.reversed() {
+                text.removeSubrange(image.range)
+            }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+
         VStack(alignment: .leading, spacing: 8) {
-            // Text output with ANSI color parsing
-            let displayText = String(output.prefix(2000))
-            if isError {
-                Text(ANSIParser.strip(displayText))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.tokyoRed)
-                    .textSelection(.enabled)
-            } else {
-                Text(ANSIParser.attributedString(from: displayText))
-                    .textSelection(.enabled)
+            // Text output (only if there's non-image content)
+            if !strippedText.isEmpty {
+                let displayText = String(strippedText.prefix(2000))
+                if isError {
+                    Text(ANSIParser.strip(displayText))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoRed)
+                        .textSelection(.enabled)
+                } else {
+                    Text(ANSIParser.attributedString(from: displayText))
+                        .textSelection(.enabled)
+                }
             }
 
             // Inline images
@@ -461,8 +483,19 @@ private struct ToolOutputContent: View {
         .background(Color.tokyoBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contextMenu {
-            Button("Copy Output", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = output
+            if !strippedText.isEmpty {
+                Button("Copy Output", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = strippedText
+                }
+            }
+            if !images.isEmpty {
+                Button("Copy Image", systemImage: "photo") {
+                    if let first = images.first,
+                       let data = Data(base64Encoded: first.base64, options: .ignoreUnknownCharacters),
+                       let uiImage = UIImage(data: data) {
+                        UIPasteboard.general.image = uiImage
+                    }
+                }
             }
         }
     }

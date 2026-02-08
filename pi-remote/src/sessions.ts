@@ -1,8 +1,13 @@
 /**
  * Session manager — pi agent lifecycle over RPC.
  *
- * Each session spawns pi inside an Apple container via SandboxManager.
- * Communication uses pi's RPC protocol (JSON lines on stdin/stdout).
+ * Two runtime modes:
+ *   host:      pi runs directly on the Mac as a child process.
+ *   container: pi runs inside an Apple container via SandboxManager.
+ *
+ * Both modes use the same RPC protocol (JSON lines on stdin/stdout),
+ * permission gate (TCP), and WebSocket bridge. The iOS app sees no
+ * difference.
  *
  * Handles:
  * - Session lifecycle (start, stop, idle timeout)
@@ -11,19 +16,25 @@
  * - Response correlation for RPC commands
  */
 
-import { type ChildProcess } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
+import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Session, SessionMessage, ServerMessage, ServerConfig, Workspace } from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
+import type { AuthProxy } from "./auth-proxy.js";
 
 // ─── Types ───
 
 interface ActiveSession {
   session: Session;
   process: ChildProcess;
+  /** Runtime mode — determines how to stop the process. */
+  runtime: "host" | "container";
   subscribers: Set<(msg: ServerMessage) => void>;
   /** Pending RPC response callbacks keyed by request id */
   pendingResponses: Map<string, (data: any) => void>;
@@ -31,6 +42,14 @@ interface ActiveSession {
   pendingUIRequests: Map<string, ExtensionUIRequest>;
   /** Whether the post-first-prompt guard health check has been scheduled. */
   guardCheckScheduled?: boolean;
+  /**
+   * Tracks last partialResult text per toolCallId for delta computation.
+   *
+   * Pi RPC tool_execution_update sends partialResult with replace semantics
+   * (accumulated output so far). We compute deltas here so the client can
+   * use simple append semantics for tool_output events.
+   */
+  partialResults: Map<string, string>;
 }
 
 /** Extension UI request from pi RPC (stdout) */
@@ -74,9 +93,11 @@ export class SessionManager extends EventEmitter {
   private config: ServerConfig;
   private gate: GateServer;
   private sandbox: SandboxManager;
+  private authProxy: AuthProxy | null;
   private active: Map<string, ActiveSession> = new Map();
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
+  private readonly piExecutable: string;
 
   // Persist active session metadata in batches to avoid sync I/O on every event.
   private dirtySessions: Set<string> = new Set();
@@ -87,18 +108,20 @@ export class SessionManager extends EventEmitter {
   private abortFallbackTimers: Map<string, NodeJS.Timeout> = new Map();
   private readonly abortFallbackMs = 5000;
 
-  constructor(storage: Storage, gate: GateServer, sandbox: SandboxManager) {
+  constructor(storage: Storage, gate: GateServer, sandbox: SandboxManager, authProxy?: AuthProxy) {
     super();
     this.storage = storage;
     this.config = storage.getConfig();
     this.gate = gate;
     this.sandbox = sandbox;
+    this.authProxy = authProxy ?? null;
+    this.piExecutable = this.resolvePiExecutable();
   }
 
   // ─── Session Lifecycle ───
 
   /**
-   * Start a new session — spawns pi in a container.
+   * Start a new session — spawns pi on the host or in a container.
    */
   async startSession(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
     const key = `${userId}/${sessionId}`;
@@ -110,54 +133,160 @@ export class SessionManager extends EventEmitter {
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-    const proc = await this.spawnPi(session, userName, workspace);
+    const runtime = workspace?.runtime ?? "host";
+    const proc = runtime === "host"
+      ? await this.spawnPiHost(session, workspace)
+      : await this.spawnPiContainer(session, userName, workspace);
 
-    // Validate sandbox — check that required extensions were synced
-    const { errors, warnings } = this.sandbox.validateSession(
-      userId, sessionId, { memoryEnabled: workspace?.memoryEnabled },
-    );
+    // Validate sandbox (container mode only — host mode has no sandbox to validate)
+    if (runtime === "container") {
+      const { errors, warnings } = this.sandbox.validateSession(
+        userId, sessionId, { memoryEnabled: workspace?.memoryEnabled },
+      );
 
-    if (errors.length > 0) {
-      for (const e of errors) console.error(`[session:${sessionId}] bootstrap error: ${e}`);
-      for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
-      session.status = "error";
-      session.warnings = [...errors, ...warnings];
-      this.storage.saveSession(session);
-      await this.sandbox.stopContainer(sessionId);
-      this.gate.destroySessionSocket(sessionId);
-      throw new Error(`Session bootstrap failed: ${errors[0]}`);
-    }
+      if (errors.length > 0) {
+        for (const e of errors) console.error(`[session:${sessionId}] bootstrap error: ${e}`);
+        for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+        session.status = "error";
+        session.warnings = [...errors, ...warnings];
+        this.storage.saveSession(session);
+        await this.sandbox.stopContainer(sessionId);
+        this.gate.destroySessionSocket(sessionId);
+        throw new Error(`Session bootstrap failed: ${errors[0]}`);
+      }
 
-    if (warnings.length > 0) {
-      session.warnings = warnings;
-      for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+      if (warnings.length > 0) {
+        session.warnings = warnings;
+        for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+      }
     }
 
     const activeSession: ActiveSession = {
       session,
       process: proc,
+      runtime,
       subscribers: new Set(),
       pendingResponses: new Map(),
       pendingUIRequests: new Map(),
+      partialResults: new Map(),
     };
 
     this.active.set(key, activeSession);
 
     session.status = "ready";
+    session.runtime = runtime;
     session.lastActivity = Date.now();
     this.persistSessionNow(key, session);
     this.resetIdleTimer(key);
+
+    // Best-effort: capture pi session file/UUID from get_state so trace
+    // loading works for host runtime sessions too.
+    void this.bootstrapSessionState(key);
 
     return session;
   }
 
   /**
-   * Spawn pi inside a container via SandboxManager.
+   * Resolve the pi executable path for host runtime sessions.
+   *
+   * tmux/systemd launches may have a minimal PATH that does not include npm
+   * global bins. Prefer an explicit env override, then common install paths.
    */
-  private async spawnPi(session: Session, userName?: string, workspace?: Workspace): Promise<ChildProcess> {
+  private resolvePiExecutable(): string {
+    const envPath = process.env.PI_REMOTE_PI_BIN;
+    if (envPath && existsSync(envPath)) {
+      return envPath;
+    }
+
+    try {
+      const discovered = execSync("which pi", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      if (discovered.length > 0) {
+        return discovered;
+      }
+    } catch {
+      // Fall through to known locations
+    }
+
+    for (const candidate of ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"]) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    // Final fallback; spawn will surface ENOENT with actionable logs.
+    return "pi";
+  }
+
+  /**
+   * Spawn pi directly on the host — no container, no sandbox.
+   *
+   * Pi runs as the current user with full access to the host filesystem.
+   * The permission gate is the only security layer.
+   */
+  private async spawnPiHost(session: Session, workspace?: Workspace): Promise<ChildProcess> {
     const key = `${session.userId}/${session.id}`;
 
-    // Create gate TCP socket (extension connects from container to host)
+    // Create gate TCP socket (extension connects via localhost)
+    const gatePort = await this.gate.createSessionSocket(session.id, session.userId);
+
+    // Build pi args
+    const piArgs = ["--mode", "rpc"];
+    if (session.model) {
+      const slash = session.model.indexOf("/");
+      if (slash > 0) {
+        piArgs.push("--provider", session.model.slice(0, slash));
+        piArgs.push("--model", session.model.slice(slash + 1));
+      } else {
+        piArgs.push("--model", session.model);
+      }
+    }
+
+    // Resolve system prompt if workspace provides one
+    if (workspace?.systemPrompt) {
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const promptDir = join(homedir(), ".config", "pi-remote", "prompts");
+      mkdirSync(promptDir, { recursive: true });
+      const promptPath = join(promptDir, `${session.id}.md`);
+      writeFileSync(promptPath, workspace.systemPrompt);
+      piArgs.push("--append-system-prompt", promptPath);
+    }
+
+    // Working directory — workspace hostMount or home
+    const cwd = workspace?.hostMount
+      ? workspace.hostMount.replace(/^~/, homedir())
+      : homedir();
+
+    if (!existsSync(cwd)) {
+      throw new Error(`Host workspace path not found: ${cwd}`);
+    }
+
+    console.log(`[session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`);
+
+    const proc = spawn(this.piExecutable, piArgs, {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PI_REMOTE_SESSION: session.id,
+        PI_REMOTE_USER: session.userId,
+        PI_REMOTE_GATE_HOST: "127.0.0.1",
+        PI_REMOTE_GATE_PORT: String(gatePort),
+      },
+    });
+
+    return this.setupProcHandlers(key, session, proc);
+  }
+
+  /**
+   * Spawn pi inside a container via SandboxManager.
+   */
+  private async spawnPiContainer(session: Session, userName?: string, workspace?: Workspace): Promise<ChildProcess> {
+    const key = `${session.userId}/${session.id}`;
+
+    // Register session with auth proxy (proxy validates session tokens on API requests)
+    this.authProxy?.registerSession(session.id, session.userId);
+
+    // Create gate TCP socket (extension connects from container to host-gateway)
     const gatePort = await this.gate.createSessionSocket(session.id, session.userId);
 
     // Spawn pi in container
@@ -170,19 +299,41 @@ export class SessionManager extends EventEmitter {
       gatePort,
     });
 
+    return this.setupProcHandlers(key, session, proc);
+  }
+
+  /**
+   * Wire up RPC line handling, stderr logging, exit/error handlers,
+   * and wait for pi to be ready. Shared by host and container modes.
+   */
+  private async setupProcHandlers(key: string, session: Session, proc: ChildProcess): Promise<ChildProcess> {
     // Single readline consumer for stdout — handles all RPC events
     const rl = createInterface({ input: proc.stdout! });
     let readyResolve: (() => void) | null = null;
+    let readyReject: ((err: Error) => void) | null = null;
+
+    const settleReady = (err?: Error): void => {
+      if (err) {
+        const reject = readyReject;
+        readyResolve = null;
+        readyReject = null;
+        reject?.(err);
+        return;
+      }
+
+      const resolve = readyResolve;
+      readyResolve = null;
+      readyReject = null;
+      resolve?.();
+    };
 
     rl.on("line", (line) => {
       // If waiting for ready, any valid JSON means pi is up
-      if (readyResolve) {
+      if (readyResolve || readyReject) {
         try {
           const data = JSON.parse(line);
           if (data.type) {
-            const resolve = readyResolve;
-            readyResolve = null;
-            resolve();
+            settleReady();
           }
         } catch {}
       }
@@ -197,11 +348,17 @@ export class SessionManager extends EventEmitter {
 
     // Process exit
     proc.on("exit", (code) => {
+      if (readyReject) {
+        settleReady(new Error(`pi exited before ready: ${session.id} (${code ?? "null"})`));
+      }
       console.log(`[pi:${session.id}] exited (${code})`);
       this.handleSessionEnd(key, code === 0 ? "completed" : "error");
     });
 
     proc.on("error", (err) => {
+      if (readyReject) {
+        settleReady(new Error(`pi spawn error before ready: ${session.id} (${err.message})`));
+      }
       console.error(`[pi:${session.id}] spawn error:`, err);
       this.handleSessionEnd(key, "error");
     });
@@ -209,18 +366,23 @@ export class SessionManager extends EventEmitter {
     // Wait for pi to be ready (probe with get_state)
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        readyResolve = null;
-        reject(new Error(`Timeout waiting for pi: ${session.id}`));
+        settleReady(new Error(`Timeout waiting for pi: ${session.id}`));
       }, 30_000);
 
       readyResolve = () => {
         clearTimeout(timer);
         resolve();
       };
+      readyReject = (err) => {
+        clearTimeout(timer);
+        reject(err);
+      };
 
-      // Probe readiness after container boot
+      // Probe readiness
       setTimeout(() => {
-        proc.stdin?.write(JSON.stringify({ type: "get_state" }) + "\n");
+        if (!proc.killed) {
+          proc.stdin?.write(JSON.stringify({ type: "get_state" }) + "\n");
+        }
       }, 500);
     });
 
@@ -266,8 +428,8 @@ export class SessionManager extends EventEmitter {
     }
 
     // 3. Agent event — translate and broadcast
-    const message = this.translateEvent(data, active.session);
-    if (message) {
+    const messages = this.translateEvent(data, active);
+    for (const message of messages) {
       this.broadcast(key, message);
     }
 
@@ -409,15 +571,199 @@ export class SessionManager extends EventEmitter {
   /**
    * Send a steer message (interrupt agent after current tool).
    */
-  async sendSteer(userId: string, sessionId: string, message: string): Promise<void> {
-    this.sendRpcCommand(`${userId}/${sessionId}`, { type: "steer", message });
+  async sendSteer(
+    userId: string,
+    sessionId: string,
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    const cmd: Record<string, unknown> = { type: "steer", message };
+    if (images?.length) cmd.images = images;
+    this.sendRpcCommand(`${userId}/${sessionId}`, cmd);
   }
 
   /**
    * Send a follow-up message (delivered after agent finishes).
    */
-  async sendFollowUp(userId: string, sessionId: string, message: string): Promise<void> {
-    this.sendRpcCommand(`${userId}/${sessionId}`, { type: "follow_up", message });
+  async sendFollowUp(
+    userId: string,
+    sessionId: string,
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    const cmd: Record<string, unknown> = { type: "follow_up", message };
+    if (images?.length) cmd.images = images;
+    this.sendRpcCommand(`${userId}/${sessionId}`, cmd);
+  }
+
+  /**
+   * Best-effort bootstrap of pi session metadata (session file/UUID).
+   *
+   * Needed so stopped host sessions can still reconstruct trace history.
+   */
+  private async bootstrapSessionState(key: string): Promise<void> {
+    const active = this.active.get(key);
+    if (!active) return;
+
+    try {
+      const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+      if (this.applyPiStateSnapshot(active.session, data)) {
+        this.persistSessionNow(key, active.session);
+      }
+    } catch {
+      // Non-fatal; history falls back to stored SessionMessage list.
+    }
+  }
+
+  /**
+   * Refresh live pi state for an active session and return trace metadata.
+   * Used by REST trace endpoint to recover host-session traces.
+   */
+  async refreshSessionState(
+    userId: string,
+    sessionId: string,
+  ): Promise<{ sessionFile?: string; sessionId?: string } | null> {
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) return null;
+
+    try {
+      const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+      if (this.applyPiStateSnapshot(active.session, data)) {
+        this.persistSessionNow(key, active.session);
+      }
+      return {
+        sessionFile: active.session.piSessionFile,
+        sessionId: active.session.piSessionId,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Apply fields we care about from pi `get_state` response payload.
+   * Returns true if the session object changed.
+   */
+  private applyPiStateSnapshot(session: Session, state: any): boolean {
+    if (!state || typeof state !== "object") {
+      return false;
+    }
+
+    let changed = false;
+
+    if (typeof state.sessionFile === "string" && state.sessionFile.length > 0) {
+      if (session.piSessionFile !== state.sessionFile) {
+        session.piSessionFile = state.sessionFile;
+        changed = true;
+      }
+
+      const knownFiles = new Set(session.piSessionFiles || []);
+      if (!knownFiles.has(state.sessionFile)) {
+        session.piSessionFiles = [...knownFiles, state.sessionFile];
+        changed = true;
+      }
+    }
+
+    if (typeof state.sessionId === "string" && state.sessionId.length > 0) {
+      if (session.piSessionId !== state.sessionId) {
+        session.piSessionId = state.sessionId;
+        changed = true;
+      }
+    }
+
+    if (typeof state.sessionName === "string") {
+      const nextName = state.sessionName.trim();
+      if (nextName.length > 0 && session.name !== nextName) {
+        session.name = nextName;
+        changed = true;
+      }
+    }
+
+    const modelId = state.model?.id;
+    if (typeof modelId === "string" && modelId.length > 0 && session.model !== modelId) {
+      session.model = modelId;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  // ─── RPC Passthrough ───
+
+  /**
+   * Allowlisted RPC commands that can be forwarded from the client.
+   * Each maps to the pi RPC command type. Fire-and-forget commands
+   * (no response needed) are sent without correlation. Commands that
+   * return data are awaited and the result broadcast as rpc_result.
+   */
+  private static readonly RPC_PASSTHROUGH: ReadonlySet<string> = new Set([
+    // State
+    "get_state", "get_messages", "get_session_stats",
+    // Model
+    "set_model", "cycle_model", "get_available_models",
+    // Thinking
+    "set_thinking_level", "cycle_thinking_level",
+    // Session
+    "new_session", "set_session_name", "compact", "set_auto_compaction",
+    "fork", "get_fork_messages", "switch_session",
+    // Queue modes
+    "set_steering_mode", "set_follow_up_mode",
+    // Retry
+    "set_auto_retry", "abort_retry",
+    // Bash
+    "bash", "abort_bash",
+    // Commands
+    "get_commands",
+  ]);
+
+  /**
+   * Forward a client WebSocket message to pi as an RPC command.
+   *
+   * Used for commands that map 1:1 to pi RPC (model switching,
+   * thinking level, session management, etc.). The response is
+   * broadcast back as an `rpc_result` ServerMessage.
+   */
+  async forwardRpcCommand(
+    userId: string,
+    sessionId: string,
+    message: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const cmdType = message.type as string;
+    if (!SessionManager.RPC_PASSTHROUGH.has(cmdType)) {
+      throw new Error(`Command not allowed: ${cmdType}`);
+    }
+
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    try {
+      const data = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
+
+      if (cmdType === "get_state") {
+        if (this.applyPiStateSnapshot(active.session, data)) {
+          this.persistSessionNow(key, active.session);
+        }
+      }
+
+      this.broadcast(key, {
+        type: "rpc_result",
+        command: cmdType,
+        requestId,
+        success: true,
+        data,
+      });
+    } catch (err) {
+      this.broadcast(key, {
+        type: "rpc_result",
+        command: cmdType,
+        requestId,
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -553,72 +899,133 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Translate pi RPC events to our simplified WebSocket format.
+   *
+   * Tool events plumb the stable toolCallId from pi RPC so the client can
+   * correlate tool_start/tool_output/tool_end without synthesizing IDs.
+   *
+   * partialResult handling: pi RPC tool_execution_update sends partialResult
+   * with replace semantics (accumulated output so far). We compute deltas
+   * here so the client can use simple append semantics.
+   *
+   * Image handling: pi's Read tool returns image files as content blocks with
+   * type "image" (base64 + mimeType). We encode these as data URIs in the
+   * tool_output text so the iOS ImageExtractor can detect and render them.
    */
-  private translateEvent(event: any, session: Session): ServerMessage | null {
+  private translateEvent(event: any, active: ActiveSession): ServerMessage[] {
+    const session = active.session;
+
     switch (event.type) {
       case "agent_start":
-        return { type: "agent_start" };
+        return [{ type: "agent_start" }];
 
       case "agent_end":
-        return { type: "agent_end" };
+        return [{ type: "agent_end" }];
 
       case "message_update": {
         const evt = event.assistantMessageEvent;
         if (evt?.type === "text_delta") {
-          return { type: "text_delta", delta: evt.delta };
+          return [{ type: "text_delta", delta: evt.delta }];
         }
         if (evt?.type === "thinking_delta") {
-          return { type: "thinking_delta", delta: evt.delta };
+          return [{ type: "thinking_delta", delta: evt.delta }];
         }
-        return null;
+        return [];
       }
 
       case "tool_execution_start":
-        return {
+        return [{
           type: "tool_start",
           tool: event.toolName,
           args: event.args || {},
-        };
+          toolCallId: event.toolCallId,
+        }];
 
       case "tool_execution_update": {
-        const content = event.partialResult?.content?.[0];
-        if (content?.type === "text") {
-          return { type: "tool_output", output: content.text };
+        const contents = event.partialResult?.content;
+        if (!Array.isArray(contents) || contents.length === 0) return [];
+
+        const toolCallId: string | undefined = event.toolCallId;
+        const messages: ServerMessage[] = [];
+
+        for (const block of contents) {
+          if (block.type === "text") {
+            const fullText: string = block.text;
+
+            // Compute delta from last partialResult to avoid duplication.
+            // partialResult is accumulated (replace semantics) — we convert
+            // to delta so the client can append without duplicating output.
+            const key = toolCallId ?? "";
+            const lastText = active.partialResults.get(key) ?? "";
+            active.partialResults.set(key, fullText);
+            const delta = fullText.slice(lastText.length);
+
+            if (delta) {
+              messages.push({ type: "tool_output", output: delta, toolCallId });
+            }
+          } else if (block.type === "image" && block.data) {
+            // Encode image as data URI so iOS ImageExtractor can detect it.
+            // Pi sends: { type: "image", data: "base64...", mimeType: "image/png" }
+            const mime = block.mimeType || "image/png";
+            const dataUri = `data:${mime};base64,${block.data}`;
+            messages.push({ type: "tool_output", output: dataUri, toolCallId });
+          }
         }
-        return null;
+
+        return messages;
       }
 
-      case "tool_execution_end":
-        return {
+      case "tool_execution_end": {
+        const toolCallId: string | undefined = event.toolCallId;
+        active.partialResults.delete(toolCallId ?? "");
+        return [{
           type: "tool_end",
           tool: event.toolName,
-        };
+          toolCallId,
+        }];
+      }
 
       case "auto_compaction_start":
-        return { type: "tool_start", tool: "__compaction", args: { reason: event.reason } };
+        return [{ type: "compaction_start", reason: event.reason ?? "threshold" }];
 
       case "auto_compaction_end":
-        return { type: "tool_end", tool: "__compaction" };
+        return [{
+          type: "compaction_end",
+          aborted: event.aborted ?? false,
+          willRetry: event.willRetry ?? false,
+          summary: event.result?.summary,
+          tokensBefore: event.result?.tokensBefore,
+        }];
 
       case "auto_retry_start":
-        return {
-          type: "error",
-          error: `Retrying (${event.attempt}/${event.maxAttempts}): ${event.errorMessage}`,
-        };
+        return [{
+          type: "retry_start",
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          delayMs: event.delayMs,
+          errorMessage: event.errorMessage,
+        }];
+
+      case "auto_retry_end":
+        return [{
+          type: "retry_end",
+          success: event.success,
+          attempt: event.attempt,
+          finalError: event.finalError,
+        }];
 
       case "extension_error":
         console.error(`[pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`);
-        return null;
+        return [];
 
       case "response":
         // Uncorrelated responses (no id) — ignore unless error
         if (!event.success) {
-          return { type: "error", error: `${event.command}: ${event.error}` };
+          return [{ type: "error", error: `${event.command}: ${event.error}` }];
         }
-        return null;
+        return [];
 
       default:
-        return null;
+        return [];
     }
   }
 
@@ -791,8 +1198,9 @@ export class SessionManager extends EventEmitter {
     active.session.status = "stopped";
     this.persistSessionNow(key, active.session);
 
-    // Clean up gate socket
+    // Clean up gate socket and auth proxy registration
     this.gate.destroySessionSocket(active.session.id);
+    this.authProxy?.removeSession(active.session.id);
 
     // Reject pending RPC responses
     for (const [id, handler] of active.pendingResponses) {
@@ -850,9 +1258,18 @@ export class SessionManager extends EventEmitter {
       active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
     } catch {}
 
-    // Wait briefly then stop container
+    // Wait briefly then stop
     await new Promise(r => setTimeout(r, 1000));
-    await this.sandbox.stopContainer(sessionId);
+
+    if (active.runtime === "host") {
+      // Host mode: kill the process directly
+      if (!active.process.killed) {
+        active.process.kill("SIGTERM");
+      }
+    } else {
+      // Container mode: stop via sandbox
+      await this.sandbox.stopContainer(sessionId);
+    }
 
     this.handleSessionEnd(key, "stopped");
   }

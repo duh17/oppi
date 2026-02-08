@@ -50,9 +50,10 @@ enum ChatItem: Identifiable, Equatable {
 @MainActor @Observable
 final class ToolOutputStore {
     /// Max bytes stored per tool call output.
-    static let perItemCap = 256 * 1024  // 256KB
+    /// Sized for image data URIs — a typical screenshot is ~300-500KB as base64.
+    static let perItemCap = 512 * 1024  // 512KB
     /// Max total bytes across all stored outputs.
-    static let totalCap = 2 * 1024 * 1024  // 2MB
+    static let totalCap = 4 * 1024 * 1024  // 4MB
     /// Suffix appended when output is truncated.
     static let truncationMarker = "\n\n… [output truncated]"
 
@@ -175,6 +176,13 @@ final class ToolArgsStore {
 
     func args(for id: String) -> [String: JSONValue]? {
         store[id]
+    }
+
+    func clear(itemIDs: Set<String>) {
+        guard !itemIDs.isEmpty else { return }
+        for id in itemIDs {
+            store.removeValue(forKey: id)
+        }
     }
 
     func clearAll() {

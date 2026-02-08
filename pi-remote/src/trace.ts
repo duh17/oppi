@@ -39,30 +39,14 @@ export interface TraceEvent {
 // ─── JSONL Reader ───
 
 /**
- * Find and read the pi JSONL file for a given session's sandbox.
+ * Find and read the latest pi JSONL file for a session sandbox.
  *
- * Layout: <sandboxBaseDir>/<userId>/<sessionId>/agent/sessions/--work--/*.jsonl
- *
- * Returns null if no JSONL found (session never ran, or sandbox cleaned up).
+ * Layout:
+ *   <sandboxBaseDir>/<userId>/<sessionId>/agent/sessions/--work--/*.jsonl
  */
 export function readSessionTrace(sandboxBaseDir: string, userId: string, sessionId: string): TraceEvent[] | null {
   const sessionsDir = join(sandboxBaseDir, userId, sessionId, "agent", "sessions", "--work--");
-
-  if (!existsSync(sessionsDir)) return null;
-
-  // Find the most recent JSONL file (each pi run creates one)
-  const files = readdirSync(sessionsDir)
-    .filter(f => f.endsWith(".jsonl"))
-    .sort()  // Timestamp prefix makes alphabetical = chronological
-    .reverse();
-
-  if (files.length === 0) return null;
-
-  // Read the most recent session file
-  const jsonlPath = join(sessionsDir, files[0]);
-  const content = readFileSync(jsonlPath, "utf-8");
-
-  return parseJsonl(content);
+  return readTraceFromDir(sessionsDir);
 }
 
 /**
@@ -79,8 +63,58 @@ export function readSessionTraceByUuid(
   const file = readdirSync(sessionsDir).find(f => f.includes(piSessionUuid));
   if (!file) return null;
 
-  const content = readFileSync(join(sessionsDir, file), "utf-8");
-  return parseJsonl(content);
+  return readSessionTraceFromFile(join(sessionsDir, file));
+}
+
+/**
+ * Read and parse a trace from an absolute JSONL file path.
+ */
+export function readSessionTraceFromFile(jsonlPath: string): TraceEvent[] | null {
+  if (!existsSync(jsonlPath)) return null;
+
+  try {
+    const content = readFileSync(jsonlPath, "utf-8");
+    return parseJsonl(content);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read and merge traces from multiple explicit JSONL file paths.
+ */
+export function readSessionTraceFromFiles(jsonlPaths: string[]): TraceEvent[] | null {
+  const uniqueSorted = Array.from(new Set(jsonlPaths)).sort();
+  const merged: TraceEvent[] = [];
+
+  for (const path of uniqueSorted) {
+    const trace = readSessionTraceFromFile(path);
+    if (trace?.length) {
+      merged.push(...trace);
+    }
+  }
+
+  return merged.length > 0 ? merged : null;
+}
+
+function readTraceFromDir(sessionsDir: string): TraceEvent[] | null {
+  if (!existsSync(sessionsDir)) return null;
+
+  const files = readdirSync(sessionsDir)
+    .filter(f => f.endsWith(".jsonl"))
+    .sort(); // timestamp prefix => chronological order
+
+  if (files.length === 0) return null;
+
+  const merged: TraceEvent[] = [];
+  for (const file of files) {
+    const trace = readSessionTraceFromFile(join(sessionsDir, file));
+    if (trace?.length) {
+      merged.push(...trace);
+    }
+  }
+
+  return merged.length > 0 ? merged : null;
 }
 
 // ─── Parser ───
@@ -175,8 +209,18 @@ function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .filter((b: any) => (b.type === "text" || b.type === "output_text") && b.text)
-      .map((b: any) => b.text)
+      .map((b: any) => {
+        if ((b.type === "text" || b.type === "output_text") && b.text) {
+          return b.text;
+        }
+        // Image content blocks → data URI so iOS ImageExtractor can render them
+        if (b.type === "image" && b.data) {
+          const mime = b.mimeType || "image/png";
+          return `data:${mime};base64,${b.data}`;
+        }
+        return null;
+      })
+      .filter(Boolean)
       .join("\n");
   }
   return "";

@@ -251,6 +251,48 @@ describe("parseJsonl", () => {
     expect(events).toHaveLength(1);
     expect(events[0].args).toEqual({ path: "test.ts", content: "hello" });
   });
+
+  it("extracts image content blocks as data URIs in tool results", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "img-result",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tc-read-img",
+        toolName: "Read",
+        content: [
+          { type: "image", data: "iVBORw0KGgoAAAANS", mimeType: "image/png" },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("toolResult");
+    expect(events[0].output).toBe("data:image/png;base64,iVBORw0KGgoAAAANS");
+  });
+
+  it("extracts mixed text and image content blocks in tool results", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "mixed-result",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tc-mixed",
+        toolName: "Read",
+        content: [
+          { type: "text", text: "File: screenshot.png" },
+          { type: "image", data: "R0lGODlhAQABAIAAAP", mimeType: "image/gif" },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(1);
+    expect(events[0].output).toBe("File: screenshot.png\ndata:image/gif;base64,R0lGODlhAQABAIAAAP");
+  });
 });
 
 // ─── readSessionTrace integration ───
@@ -279,7 +321,7 @@ describe("readSessionTrace", () => {
     expect(result).toBeNull();
   });
 
-  it("reads the most recent JSONL file", () => {
+  it("merges all JSONL files in chronological order", () => {
     const dir = join(tmp, "user1", "sess1", "agent", "sessions", "--work--");
     mkdirSync(dir, { recursive: true });
 
@@ -301,8 +343,9 @@ describe("readSessionTrace", () => {
 
     const events = readSessionTrace(tmp, "user1", "sess1");
     expect(events).not.toBeNull();
-    expect(events).toHaveLength(1);
-    expect(events![0].text).toBe("new message");
+    expect(events).toHaveLength(2);
+    expect(events![0].text).toBe("old message");
+    expect(events![1].text).toBe("new message");
   });
 
   it("parses a full conversation from JSONL file", () => {
