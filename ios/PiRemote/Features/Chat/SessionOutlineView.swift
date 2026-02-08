@@ -7,6 +7,7 @@ import SwiftUI
 struct SessionOutlineView: View {
     let items: [ChatItem]
     let onSelect: (String) -> Void
+    var onFork: ((String) -> Void)?
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
@@ -92,6 +93,14 @@ struct SessionOutlineView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                if let onFork, isForkable(item) {
+                                    Button("Fork from here", systemImage: "arrow.triangle.branch") {
+                                        onFork(item.id)
+                                        dismiss()
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -106,6 +115,22 @@ struct SessionOutlineView: View {
                 }
             }
         }
+    }
+
+    /// Only persisted user/assistant messages can be forked from.
+    ///
+    /// Live in-flight rows use local UUID placeholders that the server
+    /// cannot resolve as fork ancestry entries.
+    private func isForkable(_ item: ChatItem) -> Bool {
+        guard isServerBackedEntryID(item.id) else { return false }
+        switch item {
+        case .userMessage, .assistantMessage: return true
+        default: return false
+        }
+    }
+
+    private func isServerBackedEntryID(_ id: String) -> Bool {
+        UUID(uuidString: id) == nil
     }
 
     // MARK: - Summary Text

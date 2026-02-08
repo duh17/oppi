@@ -8,7 +8,13 @@ struct ChatView: View {
     @Environment(PermissionStore.self) private var permissionStore
     @Environment(TimelineReducer.self) private var reducer
 
-    @State private var isNearBottom = true
+    /// Non-reactive scroll anchor. Using a reference type avoids triggering
+    /// SwiftUI body re-evaluations when the sentinel appears/disappears.
+    /// A `@State` Bool here creates a layout feedback loop: sentinel flickers
+    /// → state change → body re-eval → layout → sentinel flickers → freeze.
+    @State private var scrollAnchor = ScrollAnchorState()
+    /// Debounce task for scroll-to-bottom during streaming.
+    @State private var scrollTask: Task<Void, Never>?
     @State private var inputText = ""
     @State private var isStopping = false
     @State private var showForceStop = false
@@ -26,6 +32,12 @@ struct ChatView: View {
     @State private var scrollTargetID: String?
     /// Shows the session outline sheet.
     @State private var showOutline = false
+    /// Shows the model picker sheet.
+    @State private var showModelPicker = false
+    /// Shows the rename session alert.
+    @State private var showRenameAlert = false
+    /// Text field value for rename alert.
+    @State private var renameText = ""
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
@@ -43,65 +55,27 @@ struct ChatView: View {
         permissionStore.pending(for: sessionId)
     }
 
-    /// Short model display name (e.g. "claude-opus-4-6" from "anthropic/claude-opus-4-6").
-    private var modelShortName: String? {
-        guard let model = session?.model else { return nil }
-        return model.split(separator: "/").last.map(String.init) ?? model
-    }
-
-    /// Context usage string like "44.4%/200k".
-    private var contextDisplay: String? {
-        guard let window = resolvedContextWindow, window > 0 else {
-            return nil
-        }
-
-        let used = max(
-            0,
-            session?.contextTokens ?? ((session?.tokens.input ?? 0) + (session?.tokens.output ?? 0))
-        )
-        let percent = Double(used) / Double(window) * 100
-        let windowK = formatTokenCount(window)
-        return String(format: "%.1f%%/%@", percent, windowK)
-    }
-
-    private var resolvedContextWindow: Int? {
-        if let window = session?.contextWindow, window > 0 {
-            return window
-        }
-        guard let model = session?.model else { return nil }
-        return inferContextWindow(from: model)
-    }
-
     var body: some View {
         VStack(spacing: 0) {
-            // Status bar — model + context usage (like pi TUI footer)
-            if modelShortName != nil || contextDisplay != nil {
-                HStack(spacing: 8) {
-                    if let context = contextDisplay {
-                        Text(context)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tokyoFg)
-                    }
+            // Interactive toolbar — model, thinking, context, overflow menu
+            SessionToolbar(
+                session: session,
+                thinkingLevel: connection.thinkingLevel,
+                onModelTap: { showModelPicker = true },
+                onThinkingCycle: cycleThinkingLevel,
+                onCompact: compactContext,
+                onRename: {
+                    renameText = session?.name ?? ""
+                    showRenameAlert = true
+                },
+                onNewSession: newSessionInWorkspace
+            )
 
-                    if let model = modelShortName {
-                        Text(model)
-                            .font(.caption)
-                            .foregroundStyle(.tokyoFgDim)
-                    }
-
-                    if let cost = session?.cost, cost > 0 {
-                        Spacer()
-                        Text(String(format: "$%.3f", cost))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tokyoFgDim)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-                .background(Color.tokyoBgHighlight)
+            if let runtime = session?.runtime {
+                RuntimeModeStrip(runtime: runtime)
             }
 
-            // Chat timeline + permission pill (inside ScrollViewReader for scroll-to)
+            // Chat timeline + permission pill
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -119,12 +93,14 @@ struct ChatView: View {
                                 .id("working-indicator")
                         }
 
-                        // Invisible bottom sentinel for auto-scroll
+                        // Invisible bottom sentinel for auto-scroll.
+                        // Uses non-reactive scrollAnchor to avoid @State
+                        // toggling that can cause layout feedback loops.
                         Color.clear
                             .frame(height: 1)
                             .id("bottom-sentinel")
-                            .onAppear { isNearBottom = true }
-                            .onDisappear { isNearBottom = false }
+                            .onAppear { scrollAnchor.isNearBottom = true }
+                            .onDisappear { scrollAnchor.isNearBottom = false }
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -132,25 +108,33 @@ struct ChatView: View {
                 }
                 .background(Color.tokyoBg)
                 .overlay {
-                    // Empty state — only when truly empty (not loading)
                     if reducer.items.isEmpty && !isBusy {
                         ChatEmptyState()
                     }
                 }
                 .onChange(of: reducer.renderVersion) { _, _ in
-                    guard isNearBottom else {
-                        return
-                    }
-                    withAnimation(nil) {
-                        proxy.scrollTo("bottom-sentinel", anchor: .bottom)
+                    guard scrollAnchor.isNearBottom else { return }
+                    // Throttle: if a scroll is already scheduled, let it
+                    // complete instead of cancelling + restarting. The
+                    // debounce pattern (cancel + reschedule) creates a
+                    // cancel loop during 33ms streaming — the 150ms wait
+                    // is always interrupted, so the scroll never fires.
+                    guard scrollTask == nil else { return }
+                    scrollTask = Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(100))
+                        scrollTask = nil
+                        guard !Task.isCancelled else { return }
+                        // Re-check AFTER throttle — user may have scrolled
+                        // up during the wait, flipping isNearBottom to false.
+                        guard scrollAnchor.isNearBottom else { return }
+                        withAnimation(nil) {
+                            proxy.scrollTo("bottom-sentinel", anchor: .bottom)
+                        }
                     }
                 }
                 .onChange(of: needsInitialScroll) { _, needs in
-                    guard needs else {
-                        return
-                    }
+                    guard needs else { return }
                     needsInitialScroll = false
-                    // Delay to let LazyVStack layout
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         withAnimation(nil) {
                             proxy.scrollTo("bottom-sentinel", anchor: .bottom)
@@ -158,11 +142,8 @@ struct ChatView: View {
                     }
                 }
                 .onChange(of: scrollTargetID) { _, target in
-                    guard let target else {
-                        return
-                    }
+                    guard let target else { return }
                     scrollTargetID = nil
-                    // Brief delay to let sheet dismiss
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             proxy.scrollTo(target, anchor: .top)
@@ -170,14 +151,13 @@ struct ChatView: View {
                     }
                 }
 
-                // Permission pill banner — taps scroll to first pending permission
+                // Permission pill banner
                 if !pendingPermissions.isEmpty {
                     PermissionPillBanner(count: pendingPermissions.count)
                         .onTapGesture {
                             guard let firstPendingId = pendingPermissions.first?.id else {
                                 return
                             }
-
                             withAnimation {
                                 proxy.scrollTo(firstPendingId, anchor: .center)
                             }
@@ -196,6 +176,7 @@ struct ChatView: View {
                     showForceStop: showForceStop,
                     isForceStopInFlight: isForceStopInFlight,
                     onSend: sendPrompt,
+                    onBash: sendBashCommand,
                     onStop: stopAgent,
                     onForceStop: forceStopSession
                 )
@@ -222,20 +203,107 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showOutline) {
-            SessionOutlineView(items: reducer.items) { targetID in
-                scrollTargetID = targetID
+            SessionOutlineView(
+                items: reducer.items,
+                onSelect: { targetID in
+                    scrollTargetID = targetID
+                },
+                onFork: { entryId in
+                    // Guard against local in-flight IDs (UUID placeholders)
+                    // that are not valid ancestry entry IDs on the server.
+                    if UUID(uuidString: entryId) != nil {
+                        reducer.process(.error(sessionId: sessionId, message: "Wait for this turn to finish before forking."))
+                        return
+                    }
+
+                    Task {
+                        do {
+                            try await connection.send(.fork(entryId: entryId))
+                        } catch {
+                            reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showModelPicker) {
+            ModelPickerSheet(currentModel: session?.model) { model in
+                let previousModel = session?.model
+                let fullModelId = model.id.hasPrefix("\(model.provider)/")
+                    ? model.id
+                    : "\(model.provider)/\(model.id)"
+
+                // Optimistic model label update in toolbar.
+                if var optimistic = session {
+                    optimistic.model = fullModelId
+                    sessionStore.upsert(optimistic)
+                }
+
+                Task { @MainActor in
+                    do {
+                        // model.id is "provider/model-name" — strip prefix for RPC
+                        let modelId: String
+                        if model.id.hasPrefix("\(model.provider)/") {
+                            modelId = String(model.id.dropFirst(model.provider.count + 1))
+                        } else {
+                            modelId = model.id
+                        }
+                        try await connection.setModel(provider: model.provider, modelId: modelId)
+                        try? await connection.requestState()
+                    } catch {
+                        // Roll back optimistic model on failure.
+                        if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                            rollback.model = previousModel
+                            sessionStore.upsert(rollback)
+                        }
+                        reducer.process(.error(sessionId: sessionId, message: "Failed to set model: \(error.localizedDescription)"))
+                    }
+                }
             }
             .presentationDetents([.medium, .large])
         }
+        .alert("Rename Session", isPresented: $showRenameAlert) {
+            TextField("Session name", text: $renameText)
+            Button("Rename") {
+                let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+
+                let previousName = session?.name
+
+                // Optimistic title update in nav + session list.
+                if var optimistic = session {
+                    optimistic.name = name
+                    sessionStore.upsert(optimistic)
+                }
+
+                Task { @MainActor in
+                    do {
+                        try await connection.setSessionName(name)
+                        try? await connection.requestState()
+                    } catch {
+                        // Roll back optimistic rename on failure.
+                        if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                            rollback.name = previousName
+                            sessionStore.upsert(rollback)
+                        }
+                        reducer.process(.error(sessionId: sessionId, message: "Rename failed: \(error.localizedDescription)"))
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Enter a new name for this session.")
+        }
         .task(id: connectionGeneration) {
-            await connectToSession()
+            let generation = connectionGeneration
+            await connectToSession(generation: generation)
         }
         .onAppear {
             if hasAppeared {
                 connectionGeneration &+= 1
             } else {
                 hasAppeared = true
-                // Restore draft from background if available
                 if let draft = connection.composerDraft, !draft.isEmpty {
                     inputText = draft
                     connection.composerDraft = nil
@@ -258,7 +326,8 @@ struct ChatView: View {
             forceStopTask = nil
             reconcileTask?.cancel()
             reconcileTask = nil
-            // Save draft before disconnect
+            scrollTask?.cancel()
+            scrollTask = nil
             let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             connection.composerDraft = draft.isEmpty ? nil : draft
             connection.disconnectSession()
@@ -267,52 +336,47 @@ struct ChatView: View {
 
     // MARK: - Actions
 
-    private func connectToSession() async {
-        // Disconnect any prior session and clear stale timeline.
-        // This runs first to prevent stale data from a previous session
-        // bleeding into a new one on rapid switches.
+    @MainActor
+    private func connectToSession(generation: Int) async {
+        let switchingSessions = sessionStore.activeSessionId != sessionId
+
         connection.disconnectSession()
-        reducer.reset()
+        if switchingSessions {
+            reducer.reset()
+        }
 
         sessionStore.activeSessionId = sessionId
 
-        // Start Live Activity for this session
         let sessionName = session?.name ?? "Session"
         LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
 
-        // Load full trace (tool calls + results) or fall back to messages.
-        // Check Task.isCancelled after each async boundary to bail early
-        // when the user switches sessions during loading.
         if let api = connection.apiClient {
-            do {
-                let (session, trace) = try await api.getSessionTrace(id: sessionId)
-                guard !Task.isCancelled else { return }
-                sessionStore.upsert(session)
-                if !trace.isEmpty {
-                    reducer.loadFromTrace(trace)
-                    needsInitialScroll = true
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                // Fall back to basic messages if trace endpoint unavailable
-                do {
-                    let (session, messages) = try await api.getSession(id: sessionId)
-                    guard !Task.isCancelled else { return }
-                    sessionStore.upsert(session)
-                    reducer.loadFromREST(messages)
-                    if !messages.isEmpty {
-                        needsInitialScroll = true
-                    }
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    // Continue without history
-                }
-            }
+            _ = await loadBestAvailableHistory(api: api)
         }
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            disconnectIfCurrentGeneration(generation)
+            return
+        }
+
         guard let stream = connection.streamSession(sessionId) else {
             reducer.process(.error(sessionId: sessionId, message: "WebSocket unavailable"))
+            return
+        }
+
+        if Task.isCancelled {
+            disconnectIfCurrentGeneration(generation)
+            return
+        }
+
+        do {
+            try await connection.requestState()
+        } catch {
+            // Best-effort sync
+        }
+
+        if Task.isCancelled {
+            disconnectIfCurrentGeneration(generation)
             return
         }
 
@@ -323,27 +387,169 @@ struct ChatView: View {
             connection.handleServerMessage(message, sessionId: sessionId)
         }
 
-        // Ensure pending deltas are flushed when stream ends.
+        disconnectIfCurrentGeneration(generation)
+    }
+
+    @MainActor
+    @discardableResult
+    private func loadBestAvailableHistory(api: APIClient) async -> Bool {
+        do {
+            let (traceSession, trace) = try await api.getSessionTrace(id: sessionId)
+            guard !Task.isCancelled else {
+                return false
+            }
+            sessionStore.upsert(traceSession)
+
+            // Prefer full trace when it appears complete. If trace misses older
+            // turns (parser/file gaps), fall back to REST messages to preserve
+            // canonical conversation history.
+            if !trace.isEmpty, traceAppearsComplete(trace, messageCount: traceSession.messageCount) {
+                reducer.loadFromTrace(trace)
+                needsInitialScroll = true
+                return true
+            }
+
+            do {
+                let (restSession, messages) = try await api.getSession(id: sessionId)
+                guard !Task.isCancelled else {
+                    return false
+                }
+                sessionStore.upsert(restSession)
+                reducer.loadFromREST(messages)
+                needsInitialScroll = !messages.isEmpty
+                return true
+            } catch {
+                guard !Task.isCancelled else {
+                    return false
+                }
+                if !trace.isEmpty {
+                    reducer.loadFromTrace(trace)
+                    needsInitialScroll = true
+                    return true
+                }
+                return false
+            }
+        } catch {
+            guard !Task.isCancelled else {
+                return false
+            }
+
+            do {
+                let (restSession, messages) = try await api.getSession(id: sessionId)
+                guard !Task.isCancelled else {
+                    return false
+                }
+                sessionStore.upsert(restSession)
+                reducer.loadFromREST(messages)
+                needsInitialScroll = !messages.isEmpty
+                return true
+            } catch {
+                guard !Task.isCancelled else {
+                    return false
+                }
+                return false
+            }
+        }
+    }
+
+    private func traceAppearsComplete(_ trace: [TraceEvent], messageCount: Int) -> Bool {
+        guard messageCount > 0 else {
+            return true
+        }
+
+        let traceMessageCount = trace.reduce(into: 0) { count, event in
+            if event.type == .user || event.type == .assistant {
+                count += 1
+            }
+        }
+        return traceMessageCount >= messageCount
+    }
+
+    @MainActor
+    private func disconnectIfCurrentGeneration(_ generation: Int) {
+        guard generation == connectionGeneration else {
+            return
+        }
         connection.disconnectSession()
     }
 
     private func sendPrompt() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            return
-        }
+        guard !text.isEmpty else { return }
         inputText = ""
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        let messageId = reducer.appendUserMessage(text)
+
+        if isBusy {
+            // Steer the running agent — don't start a new turn.
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            reducer.appendSystemEvent("→ \(text)")
+
+            Task { @MainActor in
+                do {
+                    try await connection.send(.steer(message: text))
+                } catch {
+                    inputText = text
+                    reducer.process(.error(sessionId: sessionId, message: "Steer failed: \(error.localizedDescription)"))
+                }
+            }
+        } else {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            let messageId = reducer.appendUserMessage(text)
+
+            Task { @MainActor in
+                do {
+                    try await connection.sendPrompt(text)
+                } catch {
+                    reducer.removeItem(id: messageId)
+                    inputText = text
+                    reducer.process(.error(sessionId: sessionId, message: "Failed to send: \(error.localizedDescription)"))
+                }
+            }
+        }
+    }
+
+    private func sendBashCommand(_ command: String) {
+        inputText = ""
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // Show the command as a system event before output arrives
+        reducer.appendSystemEvent("$ \(command)")
 
         Task { @MainActor in
             do {
-                try await connection.sendPrompt(text)
+                try await connection.runBash(command)
             } catch {
-                // Retract the optimistic message and restore input text for retry
-                reducer.removeItem(id: messageId)
-                inputText = text
-                reducer.process(.error(sessionId: sessionId, message: "Failed to send: \(error.localizedDescription)"))
+                reducer.process(.error(sessionId: sessionId, message: "Bash failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func cycleThinkingLevel() {
+        Task {
+            do {
+                try await connection.cycleThinkingLevel()
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "Failed to cycle thinking: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func newSessionInWorkspace() {
+        Task { @MainActor in
+            do {
+                try await connection.newSession()
+                try? await connection.requestState()
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "New session failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func compactContext() {
+        Task { @MainActor in
+            do {
+                try await connection.compact()
+                try? await connection.requestState()
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "Compact failed: \(error.localizedDescription)"))
             }
         }
     }
@@ -366,16 +572,12 @@ struct ChatView: View {
 
             forceStopTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled else {
-                    return
-                }
+                guard !Task.isCancelled else { return }
                 if isBusy {
                     showForceStop = true
                 }
             }
 
-            // Safety net: if still busy after 10s, the WS agentEnd may have been lost.
-            // Fetch session state from REST to reconcile.
             reconcileTask?.cancel()
             reconcileTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(10))
@@ -387,22 +589,18 @@ struct ChatView: View {
         }
     }
 
-    /// Fetch session state from REST to reconcile a possibly-stale local status.
-    /// Called after stop timeout as a safety net for lost WS messages.
     private func reconcileSessionState() async {
         guard let api = connection.apiClient else { return }
         do {
             let (session, _) = try await api.getSession(id: sessionId)
             sessionStore.upsert(session)
         } catch {
-            // Silently fail — next foreground transition will retry
+            // Next foreground transition will retry
         }
     }
 
     private func forceStopSession() {
-        guard let api = connection.apiClient, !isForceStopInFlight else {
-            return
-        }
+        guard let api = connection.apiClient, !isForceStopInFlight else { return }
 
         isForceStopInFlight = true
 
@@ -417,57 +615,6 @@ struct ChatView: View {
             isForceStopInFlight = false
         }
     }
-
-}
-
-// MARK: - Token Formatting
-
-/// Best-effort context window fallback when older sessions don't store it yet.
-private func inferContextWindow(from model: String) -> Int? {
-    let known: [String: Int] = [
-        "anthropic/claude-opus-4-6": 200_000,
-        "anthropic/claude-sonnet-4-0": 200_000,
-        "anthropic/claude-haiku-3-5": 200_000,
-        "openai/o3": 200_000,
-        "openai/o4-mini": 200_000,
-        "openai/gpt-4.1": 1_000_000,
-        "google/gemini-2.5-pro": 1_000_000,
-        "google/gemini-2.5-flash": 1_000_000,
-        "lmstudio/qwen3-32b": 32_768,
-        "lmstudio/deepseek-r1-0528-qwen3-8b": 32_768,
-    ]
-    if let value = known[model] {
-        return value
-    }
-
-    // Generic "...-272k" / "..._128k" model naming convention fallback.
-    if let match = model.range(of: #"(?i)(\d{2,4})k\b"#, options: .regularExpression) {
-        let raw = model[match].dropLast() // remove trailing k/K
-        if let thousands = Int(raw) {
-            return thousands * 1_000
-        }
-    }
-
-    return nil
-}
-
-/// Format token count as compact string: 200000 → "200k", 1000000 → "1M".
-private func formatTokenCount(_ count: Int) -> String {
-    if count >= 1_000_000 {
-        let m = Double(count) / 1_000_000
-        if m == m.rounded() {
-            return String(format: "%.0fM", m)
-        }
-        return String(format: "%.1fM", m)
-    }
-    if count >= 1_000 {
-        let k = Double(count) / 1_000
-        if k == k.rounded() {
-            return String(format: "%.0fk", k)
-        }
-        return String(format: "%.1fk", k)
-    }
-    return "\(count)"
 }
 
 // MARK: - Empty State
@@ -481,6 +628,9 @@ private struct ChatEmptyState: View {
             Text("Send a message to start")
                 .font(.subheadline)
                 .foregroundStyle(.tokyoComment)
+            Text("Tip: prefix with $ for shell commands")
+                .font(.caption)
+                .foregroundStyle(.tokyoComment.opacity(0.6))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -521,8 +671,76 @@ private struct WorkingIndicator: View {
     private func dotOpacity(index: Int) -> Double {
         let offset = Double(index) / 3.0
         let adjusted = (phase + offset).truncatingRemainder(dividingBy: 1.0)
-        // Fade in from 0.3 to 1.0 and back
         return 0.3 + 0.7 * max(0, 1 - abs(adjusted - 0.5) * 4)
+    }
+}
+
+// MARK: - Runtime Mode Strip
+
+private struct RuntimeModeStrip: View {
+    let runtime: String
+
+    private var isHost: Bool { runtime == "host" }
+
+    private var icon: String {
+        isHost ? "exclamationmark.triangle.fill" : "shippingbox.fill"
+    }
+
+    private var title: String {
+        isHost ? "HOST MODE" : "CONTAINER MODE"
+    }
+
+    private var subtitle: String {
+        isHost
+            ? "Direct access to macOS host filesystem and tools"
+            : "Isolated workspace runtime"
+    }
+
+    private var foreground: Color {
+        isHost ? .tokyoOrange : .tokyoGreen
+    }
+
+    private var background: Color {
+        isHost ? .tokyoOrange.opacity(0.20) : .tokyoGreen.opacity(0.18)
+    }
+
+    private var border: Color {
+        isHost ? .tokyoOrange.opacity(0.8) : .tokyoGreen.opacity(0.75)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption.bold())
+                .foregroundStyle(foreground)
+
+            Text(title)
+                .font(.caption.monospaced().bold())
+                .foregroundStyle(foreground)
+
+            Text("•")
+                .font(.caption)
+                .foregroundStyle(.tokyoComment)
+
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.tokyoFgDim)
+
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 7)
+        .background(background)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(border)
+                .frame(height: 1)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(border)
+                .frame(height: 1)
+        }
     }
 }
 
@@ -548,7 +766,6 @@ private struct SessionEndedFooter: View {
                 if let session {
                     Spacer()
 
-                    // Token + cost summary
                     let totalTokens = session.tokens.input + session.tokens.output
                     if totalTokens > 0 {
                         Text(formatTokenCount(totalTokens) + " tokens")
@@ -567,6 +784,21 @@ private struct SessionEndedFooter: View {
             .padding(.vertical, 8)
         }
     }
+}
+
+// MARK: - Scroll Anchor (non-reactive)
+
+/// Tracks whether the user is near the bottom of the scroll view.
+///
+/// Deliberately NOT `@Observable` — mutations must NOT trigger SwiftUI
+/// body re-evaluations. A reactive version (`@State Bool`) creates a
+/// feedback loop: sentinel onAppear/onDisappear toggles state → body
+/// re-evaluates → layout pass → sentinel visibility changes → loop.
+///
+/// This class is stored in `@State` (reference survives re-renders)
+/// but property changes are invisible to SwiftUI's observation system.
+private final class ScrollAnchorState {
+    var isNearBottom = true
 }
 
 // MARK: - Permission Pill
