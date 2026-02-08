@@ -71,6 +71,18 @@ extension JSONValue {
         return nil
     }
 
+    /// Extract object value, or nil.
+    var objectValue: [String: JSONValue]? {
+        if case .object(let o) = self { return o }
+        return nil
+    }
+
+    /// Extract array value, or nil.
+    var arrayValue: [JSONValue]? {
+        if case .array(let a) = self { return a }
+        return nil
+    }
+
     /// One-line summary for tool args display. Truncated to `maxLength`.
     func summary(maxLength: Int = 80) -> String {
         let raw: String

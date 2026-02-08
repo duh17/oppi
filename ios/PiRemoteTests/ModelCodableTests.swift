@@ -19,6 +19,7 @@ struct SessionCodableTests {
             "createdAt": 1700000000000,
             "lastActivity": 1700003600000,
             "model": "claude-sonnet-4-20250514",
+            "runtime": "container",
             "messageCount": 5,
             "tokens": {"input": 100, "output": 50},
             "cost": 0.01,
@@ -36,6 +37,7 @@ struct SessionCodableTests {
         #expect(session.name == "Test Session")
         #expect(session.status == .busy)
         #expect(session.model == "claude-sonnet-4-20250514")
+        #expect(session.runtime == "container")
         #expect(session.messageCount == 5)
         #expect(session.tokens.input == 100)
         #expect(session.tokens.output == 50)
@@ -69,6 +71,7 @@ struct SessionCodableTests {
         #expect(session.workspaceName == nil)
         #expect(session.name == nil)
         #expect(session.model == nil)
+        #expect(session.runtime == nil)
         #expect(session.contextTokens == nil)
         #expect(session.contextWindow == nil)
         #expect(session.lastMessage == nil)
@@ -86,6 +89,7 @@ struct SessionCodableTests {
             "createdAt": 1700000000000,
             "lastActivity": 1700001000000,
             "model": "claude-sonnet-4-20250514",
+            "runtime": "host",
             "messageCount": 10,
             "tokens": {"input": 200, "output": 100},
             "cost": 0.05,
@@ -371,6 +375,7 @@ struct WorkspaceCodableTests {
             "name": "Development",
             "description": "Dev workspace",
             "icon": "hammer",
+            "runtime": "host",
             "skills": ["searxng", "fetch"],
             "policyPreset": "restricted",
             "systemPrompt": "You are helpful",
@@ -388,6 +393,7 @@ struct WorkspaceCodableTests {
         #expect(ws.name == "Development")
         #expect(ws.description == "Dev workspace")
         #expect(ws.icon == "hammer")
+        #expect(ws.runtime == "host")
         #expect(ws.skills == ["searxng", "fetch"])
         #expect(ws.policyPreset == "restricted")
         #expect(ws.systemPrompt == "You are helpful")
@@ -415,6 +421,7 @@ struct WorkspaceCodableTests {
         #expect(ws.id == "w2")
         #expect(ws.description == nil)
         #expect(ws.icon == nil)
+        #expect(ws.runtime == "container")
         #expect(ws.skills.isEmpty)
         #expect(ws.policyPreset == "container") // default
         #expect(ws.systemPrompt == nil)
@@ -429,7 +436,7 @@ struct WorkspaceCodableTests {
         {
             "id": "w3", "userId": "u1", "name": "RT",
             "description": "test", "icon": "star",
-            "skills": ["fetch"], "policyPreset": "container",
+            "runtime": "host", "skills": ["fetch"], "policyPreset": "container",
             "systemPrompt": "prompt", "hostMount": "/work",
             "memoryEnabled": false, "memoryNamespace": "ns",
             "defaultModel": "model-1",
@@ -451,6 +458,7 @@ struct WorkspaceCodableTests {
         """
         let ws = try JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
         #expect(ws.policyPreset == "container")
+        #expect(ws.runtime == "container")
     }
 }
 

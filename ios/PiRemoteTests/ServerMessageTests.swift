@@ -82,12 +82,26 @@ struct ServerMessageTests {
         {"type":"tool_start","tool":"bash","args":{"command":"ls -la"}}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args) = msg else {
+        guard case .toolStart(let tool, let args, let toolCallId) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
         #expect(tool == "bash")
         #expect(args["command"] == .string("ls -la"))
+        #expect(toolCallId == nil)
+    }
+
+    @Test func decodesToolStartWithToolCallId() throws {
+        let json = """
+        {"type":"tool_start","tool":"bash","args":{"command":"ls"},"toolCallId":"tc-42"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .toolStart(let tool, _, let toolCallId) = msg else {
+            Issue.record("Expected .toolStart")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(toolCallId == "tc-42")
     }
 
     @Test func decodesToolOutput() throws {
@@ -95,12 +109,25 @@ struct ServerMessageTests {
         {"type":"tool_output","output":"total 42\\ndrwxr-xr-x"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let output, let isError) = msg else {
+        guard case .toolOutput(let output, let isError, let toolCallId) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
         #expect(output.contains("total 42"))
         #expect(!isError)
+        #expect(toolCallId == nil)
+    }
+
+    @Test func decodesToolOutputWithToolCallId() throws {
+        let json = """
+        {"type":"tool_output","output":"data","toolCallId":"tc-42"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .toolOutput(_, _, let toolCallId) = msg else {
+            Issue.record("Expected .toolOutput")
+            return
+        }
+        #expect(toolCallId == "tc-42")
     }
 
     @Test func decodesToolOutputWithError() throws {
@@ -108,7 +135,7 @@ struct ServerMessageTests {
         {"type":"tool_output","output":"command not found","isError":true}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(_, let isError) = msg else {
+        guard case .toolOutput(_, let isError, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -117,11 +144,22 @@ struct ServerMessageTests {
 
     @Test func decodesToolEnd() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"bash"}"#)
-        guard case .toolEnd(let tool) = msg else {
+        guard case .toolEnd(let tool, let toolCallId) = msg else {
             Issue.record("Expected .toolEnd")
             return
         }
         #expect(tool == "bash")
+        #expect(toolCallId == nil)
+    }
+
+    @Test func decodesToolEndWithToolCallId() throws {
+        let msg = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"bash","toolCallId":"tc-42"}"#)
+        guard case .toolEnd(let tool, let toolCallId) = msg else {
+            Issue.record("Expected .toolEnd")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(toolCallId == "tc-42")
     }
 
     // MARK: - Permissions
@@ -245,7 +283,7 @@ struct ServerMessageTests {
     @Test func toolStartWithNullArgsDefaultsToEmpty() throws {
         let json = #"{"type":"tool_start","tool":"read"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args) = msg else {
+        guard case .toolStart(let tool, let args, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -256,7 +294,7 @@ struct ServerMessageTests {
     @Test func toolOutputDefaultsIsErrorToFalse() throws {
         let json = #"{"type":"tool_output","output":"data"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolOutput(let output, let isError) = msg else {
+        guard case .toolOutput(let output, let isError, _) = msg else {
             Issue.record("Expected .toolOutput")
             return
         }
@@ -315,6 +353,97 @@ struct ServerMessageTests {
         #expect(message == "Building...")
         #expect(notifyType == "info")
     }
+
+    // MARK: - RPC Result
+
+    @Test func decodesRpcResult() throws {
+        let json = """
+        {"type":"rpc_result","command":"set_model","requestId":"req-1","success":true,"data":{"id":"claude-sonnet-4"}}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .rpcResult(let command, let requestId, let success, let data, let error) = msg else {
+            Issue.record("Expected .rpcResult")
+            return
+        }
+        #expect(command == "set_model")
+        #expect(requestId == "req-1")
+        #expect(success)
+        #expect(data != nil)
+        #expect(error == nil)
+    }
+
+    @Test func decodesRpcResultFailure() throws {
+        let json = """
+        {"type":"rpc_result","command":"bash","success":false,"error":"Permission denied"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .rpcResult(let command, _, let success, _, let error) = msg else {
+            Issue.record("Expected .rpcResult")
+            return
+        }
+        #expect(command == "bash")
+        #expect(!success)
+        #expect(error == "Permission denied")
+    }
+
+    // MARK: - Compaction
+
+    @Test func decodesCompactionStart() throws {
+        let msg = try ServerMessage.decode(from: #"{"type":"compaction_start","reason":"threshold"}"#)
+        guard case .compactionStart(let reason) = msg else {
+            Issue.record("Expected .compactionStart")
+            return
+        }
+        #expect(reason == "threshold")
+    }
+
+    @Test func decodesCompactionEnd() throws {
+        let json = """
+        {"type":"compaction_end","aborted":false,"willRetry":true,"summary":"Summarized context","tokensBefore":150000}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore) = msg else {
+            Issue.record("Expected .compactionEnd")
+            return
+        }
+        #expect(!aborted)
+        #expect(willRetry)
+        #expect(summary == "Summarized context")
+        #expect(tokensBefore == 150_000)
+    }
+
+    // MARK: - Retry
+
+    @Test func decodesRetryStart() throws {
+        let json = """
+        {"type":"retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"529 overloaded"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage) = msg else {
+            Issue.record("Expected .retryStart")
+            return
+        }
+        #expect(attempt == 1)
+        #expect(maxAttempts == 3)
+        #expect(delayMs == 2000)
+        #expect(errorMessage == "529 overloaded")
+    }
+
+    @Test func decodesRetryEnd() throws {
+        let json = """
+        {"type":"retry_end","success":false,"attempt":3,"finalError":"Max retries exceeded"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .retryEnd(let success, let attempt, let finalError) = msg else {
+            Issue.record("Expected .retryEnd")
+            return
+        }
+        #expect(!success)
+        #expect(attempt == 3)
+        #expect(finalError == "Max retries exceeded")
+    }
+
+    // MARK: - Full session
 
     @Test func connectedWithFullSessionFields() throws {
         let json = """

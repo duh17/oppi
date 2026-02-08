@@ -17,9 +17,20 @@ enum ServerMessage: Sendable, Equatable {
     case thinkingDelta(delta: String)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue])
-    case toolOutput(output: String, isError: Bool)
-    case toolEnd(tool: String)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?)
+    case toolEnd(tool: String, toolCallId: String?)
+
+    // RPC responses (from forwarded commands)
+    case rpcResult(command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
+
+    // Compaction
+    case compactionStart(reason: String)
+    case compactionEnd(aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?)
+
+    // Retry
+    case retryStart(attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
+    case retryEnd(success: Bool, attempt: Int, finalError: String?)
 
     // Permissions
     case permissionRequest(PermissionRequest)
@@ -63,7 +74,7 @@ extension ServerMessage: Decodable {
         // text_delta / thinking_delta
         case delta
         // tool_start / tool_end
-        case tool, args
+        case tool, args, toolCallId
         // tool_output
         case output, isError
         // error
@@ -74,6 +85,12 @@ extension ServerMessage: Decodable {
         case method, title, options, message, placeholder, prefill, timeout
         // extension_ui_notification
         case notifyType, statusKey, statusText
+        // rpc_result
+        case command, requestId, success, data
+        // compaction
+        case aborted, willRetry, summary, tokensBefore
+        // retry
+        case attempt, maxAttempts, delayMs, errorMessage, finalError
     }
 
     init(from decoder: Decoder) throws {
@@ -110,16 +127,51 @@ extension ServerMessage: Decodable {
         case "tool_start":
             let tool = try c.decode(String.self, forKey: .tool)
             let args = try c.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
-            self = .toolStart(tool: tool, args: args)
+            let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
+            self = .toolStart(tool: tool, args: args, toolCallId: tcId)
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
             let isErr = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
-            self = .toolOutput(output: output, isError: isErr)
+            let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
+            self = .toolOutput(output: output, isError: isErr, toolCallId: tcId)
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)
-            self = .toolEnd(tool: tool)
+            let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
+            self = .toolEnd(tool: tool, toolCallId: tcId)
+
+        case "rpc_result":
+            let cmd = try c.decode(String.self, forKey: .command)
+            let reqId = try c.decodeIfPresent(String.self, forKey: .requestId)
+            let success = try c.decode(Bool.self, forKey: .success)
+            let data = try c.decodeIfPresent(JSONValue.self, forKey: .data)
+            let error = try c.decodeIfPresent(String.self, forKey: .error)
+            self = .rpcResult(command: cmd, requestId: reqId, success: success, data: data, error: error)
+
+        case "compaction_start":
+            let reason = try c.decode(String.self, forKey: .reason)
+            self = .compactionStart(reason: reason)
+
+        case "compaction_end":
+            let aborted = try c.decodeIfPresent(Bool.self, forKey: .aborted) ?? false
+            let willRetry = try c.decodeIfPresent(Bool.self, forKey: .willRetry) ?? false
+            let summary = try c.decodeIfPresent(String.self, forKey: .summary)
+            let tokensBefore = try c.decodeIfPresent(Int.self, forKey: .tokensBefore)
+            self = .compactionEnd(aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore)
+
+        case "retry_start":
+            let attempt = try c.decode(Int.self, forKey: .attempt)
+            let maxAttempts = try c.decode(Int.self, forKey: .maxAttempts)
+            let delayMs = try c.decode(Int.self, forKey: .delayMs)
+            let errorMessage = try c.decode(String.self, forKey: .errorMessage)
+            self = .retryStart(attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage)
+
+        case "retry_end":
+            let success = try c.decode(Bool.self, forKey: .success)
+            let attempt = try c.decode(Int.self, forKey: .attempt)
+            let finalError = try c.decodeIfPresent(String.self, forKey: .finalError)
+            self = .retryEnd(success: success, attempt: attempt, finalError: finalError)
 
         case "error":
             let msg = try c.decode(String.self, forKey: .error)

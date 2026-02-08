@@ -23,6 +23,7 @@ struct Session: Identifiable, Sendable, Equatable {
     let createdAt: Date
     var lastActivity: Date
     var model: String?
+    var runtime: String?
 
     var messageCount: Int
     var tokens: TokenUsage
@@ -33,6 +34,8 @@ struct Session: Identifiable, Sendable, Equatable {
     var contextWindow: Int?    // model's total context window
 
     var lastMessage: String?
+
+    var isContainerRuntime: Bool { runtime == "container" }
 }
 
 struct TokenUsage: Codable, Sendable, Equatable {
@@ -46,7 +49,7 @@ extension Session: Codable {
     enum CodingKeys: String, CodingKey {
         case id, userId, workspaceId, workspaceName
         case name, status, createdAt, lastActivity
-        case model, messageCount, tokens, cost
+        case model, runtime, messageCount, tokens, cost
         case contextTokens, contextWindow, lastMessage
     }
 
@@ -59,6 +62,7 @@ extension Session: Codable {
         name = try c.decodeIfPresent(String.self, forKey: .name)
         status = try c.decode(SessionStatus.self, forKey: .status)
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
         messageCount = try c.decode(Int.self, forKey: .messageCount)
         tokens = try c.decode(TokenUsage.self, forKey: .tokens)
         cost = try c.decode(Double.self, forKey: .cost)
@@ -83,6 +87,7 @@ extension Session: Codable {
         try c.encodeIfPresent(name, forKey: .name)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encode(messageCount, forKey: .messageCount)
         try c.encode(tokens, forKey: .tokens)
         try c.encode(cost, forKey: .cost)

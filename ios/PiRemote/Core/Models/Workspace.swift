@@ -12,6 +12,9 @@ struct Workspace: Identifiable, Sendable, Equatable {
     var description: String?
     var icon: String?           // SF Symbol name or emoji
 
+    // Runtime
+    var runtime: String         // "container" | "host"
+
     // Skills
     var skills: [String]        // ["searxng", "fetch", "ast-grep"]
 
@@ -32,6 +35,8 @@ struct Workspace: Identifiable, Sendable, Equatable {
     // Metadata
     let createdAt: Date
     var updatedAt: Date
+
+    var isContainerRuntime: Bool { runtime == "container" }
 }
 
 // MARK: - Codable (Unix millisecond timestamps)
@@ -39,6 +44,7 @@ struct Workspace: Identifiable, Sendable, Equatable {
 extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, userId, name, description, icon
+        case runtime
         case skills, policyPreset
         case systemPrompt, hostMount
         case memoryEnabled, memoryNamespace
@@ -55,8 +61,10 @@ extension Workspace: Codable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         skills = try c.decode([String].self, forKey: .skills)
         policyPreset = try c.decodeIfPresent(String.self, forKey: .policyPreset) ?? "container"
-        systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
+        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
+            ?? ((hostMount == nil && policyPreset == "container") ? "container" : "host")
+        systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
@@ -75,6 +83,7 @@ extension Workspace: Codable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(icon, forKey: .icon)
+        try c.encode(runtime, forKey: .runtime)
         try c.encode(skills, forKey: .skills)
         try c.encode(policyPreset, forKey: .policyPreset)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)

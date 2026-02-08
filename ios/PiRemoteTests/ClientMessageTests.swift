@@ -13,12 +13,12 @@ struct ClientMessageTests {
     }
 
     @Test func encodesStop() throws {
-        let json = try decode(ClientMessage.stop)
+        let json = try decode(ClientMessage.stop())
         #expect(json["type"] as? String == "stop")
     }
 
     @Test func encodesGetState() throws {
-        let json = try decode(ClientMessage.getState)
+        let json = try decode(ClientMessage.getState())
         #expect(json["type"] as? String == "get_state")
     }
 
@@ -96,6 +96,68 @@ struct ClientMessageTests {
         let msg = ClientMessage.permissionResponse(id: "p1", action: .deny)
         let json = try decode(msg)
         #expect(json["action"] as? String == "deny")
+    }
+
+    // MARK: - New RPC Commands
+
+    @Test func encodesSetModel() throws {
+        let msg = ClientMessage.setModel(provider: "anthropic", modelId: "claude-sonnet-4")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_model")
+        #expect(json["provider"] as? String == "anthropic")
+        #expect(json["modelId"] as? String == "claude-sonnet-4")
+    }
+
+    @Test func encodesCycleModel() throws {
+        let json = try decode(ClientMessage.cycleModel())
+        #expect(json["type"] as? String == "cycle_model")
+    }
+
+    @Test func encodesSetThinkingLevel() throws {
+        let msg = ClientMessage.setThinkingLevel(level: .high)
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_thinking_level")
+        #expect(json["level"] as? String == "high")
+    }
+
+    @Test func encodesNewSession() throws {
+        let json = try decode(ClientMessage.newSession())
+        #expect(json["type"] as? String == "new_session")
+    }
+
+    @Test func encodesCompact() throws {
+        let msg = ClientMessage.compact(customInstructions: "focus on code")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "compact")
+        #expect(json["customInstructions"] as? String == "focus on code")
+    }
+
+    @Test func encodesBash() throws {
+        let msg = ClientMessage.bash(command: "ls -la")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "bash")
+        #expect(json["command"] as? String == "ls -la")
+    }
+
+    @Test func encodesRequestId() throws {
+        let msg = ClientMessage.getMessages(requestId: "req-42")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "get_messages")
+        #expect(json["requestId"] as? String == "req-42")
+    }
+
+    @Test func encodesSetSessionName() throws {
+        let msg = ClientMessage.setSessionName(name: "my-feature")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_session_name")
+        #expect(json["name"] as? String == "my-feature")
+    }
+
+    @Test func encodesSetSteeringMode() throws {
+        let msg = ClientMessage.setSteeringMode(mode: .oneAtATime)
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_steering_mode")
+        #expect(json["mode"] as? String == "one-at-a-time")
     }
 
     // MARK: - Helpers
