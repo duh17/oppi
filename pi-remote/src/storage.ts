@@ -383,14 +383,19 @@ export class Storage {
     const id = nanoid(8);
     const now = Date.now();
 
+    const policyPreset = req.policyPreset || "container";
+    const runtime = req.runtime
+      || ((!req.hostMount && policyPreset === "container") ? "container" : "host");
+
     const workspace: Workspace = {
       id,
       userId,
       name: req.name,
       description: req.description,
       icon: req.icon,
+      runtime,
       skills: req.skills,
-      policyPreset: req.policyPreset || "container",
+      policyPreset,
       systemPrompt: req.systemPrompt,
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
@@ -414,12 +419,33 @@ export class Storage {
     writeFileSync(path, JSON.stringify(workspace, null, 2));
   }
 
+  /**
+   * Runtime migration for legacy workspace records.
+   *
+   * Older records predate `runtime`. Those created with `policyPreset=container`
+   * were intended to run in containers, so prefer container unless a host mount
+   * explicitly indicates host runtime.
+   */
+  private inferWorkspaceRuntime(workspace: Workspace): "host" | "container" {
+    if (workspace.runtime === "host" || workspace.runtime === "container") {
+      return workspace.runtime;
+    }
+
+    if (!workspace.hostMount && workspace.policyPreset === "container") {
+      return "container";
+    }
+
+    return "host";
+  }
+
   getWorkspace(userId: string, workspaceId: string): Workspace | undefined {
     const path = this.getWorkspacePath(userId, workspaceId);
     if (!existsSync(path)) return undefined;
 
     try {
-      return JSON.parse(readFileSync(path, "utf-8"));
+      const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
+      ws.runtime = this.inferWorkspaceRuntime(ws);
+      return ws;
     } catch {
       return undefined;
     }
@@ -435,6 +461,7 @@ export class Storage {
       if (!file.endsWith(".json")) continue;
       try {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
+        ws.runtime = this.inferWorkspaceRuntime(ws);
         workspaces.push(ws);
       } catch {}
     }
@@ -449,6 +476,7 @@ export class Storage {
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined) workspace.description = updates.description;
     if (updates.icon !== undefined) workspace.icon = updates.icon;
+    if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
     if (updates.skills !== undefined) workspace.skills = updates.skills;
     if (updates.policyPreset !== undefined) workspace.policyPreset = updates.policyPreset;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;

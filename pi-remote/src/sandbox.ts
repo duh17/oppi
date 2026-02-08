@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Workspace } from "./types.js";
 import type { SkillRegistry } from "./skills.js";
+import type { AuthProxy } from "./auth-proxy.js";
 
 // ─── Constants ───
 
@@ -42,7 +43,12 @@ const CONTAINER_PI_HOME = "/home/pi/.pi";
 const CONTAINER_WORK = "/work";
 const CONTAINER_UV_CACHE = "/uv-cache";
 const CONTAINER_MEMORY_DIR = "/home/pi/.config/dotfiles/shared/memory";
-const HOST_GATEWAY = "192.168.64.1"; // Apple container → host
+
+// Internal network — no internet, only host-gateway access.
+// Prevents token exfiltration even if an agent reads credentials from disk.
+const INTERNAL_NETWORK_NAME = "pi-internal";
+const INTERNAL_NETWORK_SUBNET = "10.200.0.0/24";
+const HOST_GATEWAY = "10.200.0.1"; // Internal network gateway → host
 
 // Paths relative to this file
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -138,6 +144,7 @@ const DEFAULTS: SandboxConfig = {
 export class SandboxManager {
   readonly config: SandboxConfig;
   private skillRegistry: SkillRegistry | null = null;
+  private authProxy: AuthProxy | null = null;
   private running: Map<string, { containerId: string; process: ChildProcess }> = new Map();
 
   constructor(config?: Partial<SandboxConfig>) {
@@ -147,6 +154,11 @@ export class SandboxManager {
   /** Wire up the skill registry for workspace-driven skill selection. */
   setSkillRegistry(registry: SkillRegistry): void {
     this.skillRegistry = registry;
+  }
+
+  /** Wire up the auth proxy for credential isolation. */
+  setAuthProxy(proxy: AuthProxy): void {
+    this.authProxy = proxy;
   }
 
   /** Expose base dir for trace file reading. */
@@ -203,6 +215,23 @@ export class SandboxManager {
     }
   }
 
+  /**
+   * Ensure the internal container network exists.
+   * Internal network = no internet egress, only host-gateway access.
+   * Idempotent — safe to call on every server start.
+   */
+  ensureNetwork(): void {
+    try {
+      execSync(
+        `container network create --internal --subnet ${INTERNAL_NETWORK_SUBNET} ${INTERNAL_NETWORK_NAME}`,
+        { stdio: "ignore" },
+      );
+      console.log(`[sandbox] Created internal network ${INTERNAL_NETWORK_NAME} (${INTERNAL_NETWORK_SUBNET})`);
+    } catch {
+      // Already exists — expected on subsequent starts
+    }
+  }
+
   // ─── User Sandbox Setup ───
 
   /**
@@ -239,14 +268,12 @@ export class SandboxManager {
       mkdirSync(this.config.uvCacheDir, { recursive: true });
     }
 
-    // Sync auth.json from host pi (if newer)
-    syncFile(
-      join(homedir(), ".pi", "agent", "auth.json"),
-      join(agentDir, "auth.json"),
-      { mode: 0o600 },
-    );
+    // Auth isolation: write stub auth.json with proxy placeholders for
+    // substitute-mode providers, real credentials for passthrough-mode providers.
+    // If no auth proxy is configured, fall back to copying the real auth.json.
+    this.writeSessionAuth(agentDir, sessionId);
 
-    // Sync models.json with localhost → host-gateway transform
+    // Sync models.json — rewrite localhost → host-gateway, inject proxy baseUrls
     this.syncModels(
       join(homedir(), ".pi", "agent", "models.json"),
       join(agentDir, "models.json"),
@@ -336,6 +363,7 @@ export class SandboxManager {
     const args = [
       "run", "--rm", "-i",
       "--name", containerId,
+      "--network", INTERNAL_NETWORK_NAME,
       "-c", String(this.config.cpus),
       "-m", `${this.config.memoryMb}M`,
 
@@ -518,7 +546,7 @@ export class SandboxManager {
       }
     }
 
-    // Auth config — needed for API calls.
+    // Auth config — needed for API calls (may be a stub with proxy placeholders).
     if (!existsSync(join(agentDir, "auth.json"))) {
       warnings.push("auth.json not synced — API authentication may fail");
     }
@@ -765,10 +793,67 @@ approve or deny it.
     return { hostDir, namespace };
   }
 
+  /**
+   * Write session auth.json with credential isolation.
+   *
+   * The auth proxy builds stub credentials for each provider:
+   * - Anthropic: placeholder "proxy-<sessionId>" (SDK sends as x-api-key)
+   * - OpenAI-Codex: fake JWT with real account ID + embedded session ID
+   *   (SDK extracts chatgpt_account_id from JWT payload successfully)
+   *
+   * Real credentials never enter the container. The auth proxy on the
+   * host substitutes real tokens at request time.
+   *
+   * Falls back to copying the host auth.json if no auth proxy is configured.
+   */
+  private writeSessionAuth(agentDir: string, sessionId: string): void {
+    const destPath = join(agentDir, "auth.json");
+
+    if (!this.authProxy) {
+      // No proxy — fall back to direct copy (pre-isolation behavior)
+      syncFile(
+        join(homedir(), ".pi", "agent", "auth.json"),
+        destPath,
+        { mode: 0o600 },
+      );
+      return;
+    }
+
+    const stubAuth = this.authProxy.buildStubAuth(sessionId);
+    writeFileSync(destPath, JSON.stringify(stubAuth, null, 2), { mode: 0o600 });
+  }
+
+  /**
+   * Sync models.json from host with two transforms:
+   * 1. localhost → host-gateway (for local providers like LM Studio)
+   * 2. Inject proxy baseUrl for remote providers (Anthropic, OpenAI-Codex)
+   */
   private syncModels(src: string, dest: string): void {
     if (!existsSync(src)) return;
     const content = readFileSync(src, "utf-8");
-    const transformed = content.replace(/http:\/\/localhost:/g, `http://${HOST_GATEWAY}:`);
+
+    // Rewrite localhost → host-gateway (for local models)
+    let transformed = content.replace(/http:\/\/localhost:/g, `http://${HOST_GATEWAY}:`);
+
+    // Inject proxy baseUrl overrides for remote providers
+    if (this.authProxy) {
+      const proxiedProviders = this.authProxy.getProxiedProviders();
+      if (proxiedProviders.length > 0) {
+        const parsed = JSON.parse(transformed);
+        parsed.providers ??= {};
+        for (const authKey of proxiedProviders) {
+          const proxyUrl = this.authProxy.getProviderProxyUrl(authKey, HOST_GATEWAY);
+          if (proxyUrl) {
+            parsed.providers[authKey] = {
+              ...parsed.providers[authKey],
+              baseUrl: proxyUrl,
+            };
+          }
+        }
+        transformed = JSON.stringify(parsed, null, 2);
+      }
+    }
+
     writeFileSync(dest, transformed);
   }
 }

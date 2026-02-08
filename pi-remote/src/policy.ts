@@ -150,6 +150,63 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+// ─── Data Egress Detection ───
+
+/**
+ * Flags on curl/wget that indicate outbound data transfer.
+ * Matches short flags (-d, -F, -T) and long flags (--data, --form, etc.).
+ */
+const CURL_DATA_FLAGS = new Set([
+  "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode",
+  "-F", "--form", "--form-string",
+  "-T", "--upload-file",
+  "--json",
+]);
+
+const CURL_WRITE_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+const WGET_DATA_FLAGS = new Set(["--post-data", "--post-file"]);
+
+/**
+ * Detect if a parsed command sends data to an external service.
+ *
+ * Checks for curl/wget with data-sending flags or explicit write methods.
+ * Does NOT flag simple GET requests (curl https://example.com) — those
+ * are reads, not external actions on the user's behalf.
+ */
+export function isDataEgress(parsed: ParsedCommand): boolean {
+  if (parsed.executable === "curl") {
+    for (let i = 0; i < parsed.args.length; i++) {
+      const arg = parsed.args[i];
+
+      // Exact flag match: -d, --data, -F, --json, etc.
+      if (CURL_DATA_FLAGS.has(arg)) return true;
+
+      // Long flag with = : --data=value, --json=value
+      const eqIdx = arg.indexOf("=");
+      if (eqIdx > 0 && CURL_DATA_FLAGS.has(arg.slice(0, eqIdx))) return true;
+
+      // Explicit write method: -X POST, --request PUT
+      if (arg === "-X" || arg === "--request") {
+        const next = parsed.args[i + 1]?.toUpperCase();
+        if (next && CURL_WRITE_METHODS.has(next)) return true;
+      }
+    }
+    return false;
+  }
+
+  if (parsed.executable === "wget") {
+    for (const arg of parsed.args) {
+      if (WGET_DATA_FLAGS.has(arg)) return true;
+      const eqIdx = arg.indexOf("=");
+      if (eqIdx > 0 && WGET_DATA_FLAGS.has(arg.slice(0, eqIdx))) return true;
+    }
+    return false;
+  }
+
+  return false;
+}
+
 // ─── Presets ───
 
 /**
@@ -184,6 +241,36 @@ export const PRESET_CONTAINER: PolicyPreset = {
     { tool: "bash", pattern: "*:(){ :|:& };*", action: "deny", label: "Fork bomb", risk: "critical" },
   ],
   rules: [
+    // ── External actions → ask ──
+    // Anything that acts on the user's behalf on external services.
+    // The user sees these on their phone and approves/denies.
+    //
+    // Data egress (curl/wget with data flags) is matched structurally
+    // in evaluate(), not here. Same for pipe-to-shell.
+
+    // Git write operations (push to remotes)
+    { tool: "bash", exec: "git", pattern: "git push*", action: "ask", label: "Git push", risk: "medium" },
+    { tool: "bash", exec: "git", pattern: "git remote *add*", action: "ask", label: "Add git remote", risk: "medium" },
+    { tool: "bash", exec: "git", pattern: "git remote *set-url*", action: "ask", label: "Change git remote", risk: "medium" },
+
+    // Package publishing
+    { tool: "bash", exec: "npm", pattern: "npm publish*", action: "ask", label: "npm publish", risk: "high" },
+    { tool: "bash", exec: "npx", pattern: "npx *publish*", action: "ask", label: "npm publish", risk: "high" },
+    { tool: "bash", exec: "yarn", pattern: "yarn publish*", action: "ask", label: "yarn publish", risk: "high" },
+    { tool: "bash", exec: "pip", pattern: "pip *upload*", action: "ask", label: "pip upload", risk: "high" },
+    { tool: "bash", exec: "twine", pattern: "twine upload*", action: "ask", label: "PyPI upload", risk: "high" },
+
+    // Remote access (always external)
+    { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
+    { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
+    { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
+    { tool: "bash", exec: "rsync", action: "ask", label: "rsync transfer", risk: "medium" },
+
+    // Raw sockets
+    { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection", risk: "high" },
+    { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection", risk: "high" },
+    { tool: "bash", exec: "socat", action: "ask", label: "Socket relay", risk: "high" },
+
     // ── Destructive operations → ask ──
     // These can damage bind-mounted workspace data
 
@@ -196,9 +283,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
     { tool: "bash", exec: "git", pattern: "git push*-f*", action: "ask", label: "Force push", risk: "high" },
     { tool: "bash", exec: "git", pattern: "git reset --hard*", action: "ask", label: "Hard reset", risk: "high" },
     { tool: "bash", exec: "git", pattern: "git clean*-*f*", action: "ask", label: "Git clean", risk: "high" },
-
-    // Pipe to shell — matched structurally in evaluate(), not by glob.
-    // (Glob patterns can't express "curl ... | sh" reliably.)
   ],
   // Container provides isolation — allow by default
   defaultAction: "allow",
@@ -269,11 +353,13 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 1.5: Pipe-to-shell detection (structural, not glob-based)
-    // curl/wget piped to sh/bash is remote code execution — always ask.
+    // Layer 1.5: Structural heuristics (not glob-based)
+    // These catch patterns that glob rules can't express reliably.
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
       const parsed = parseBashCommand(command);
+
+      // Pipe to shell — curl/wget piped to sh/bash is remote code execution
       if (parsed.hasPipe && /\|\s*(ba)?sh\b/.test(command)) {
         const downloader = parsed.executable;
         if (downloader === "curl" || downloader === "wget") {
@@ -286,9 +372,22 @@ export class PolicyEngine {
           };
         }
       }
+
+      // Data egress — curl/wget with flags that send data externally.
+      // Catches: curl -d, curl --data, curl -F, curl --upload-file,
+      //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
+      if (isDataEgress(parsed)) {
+        return {
+          action: "ask",
+          reason: "Outbound data transfer",
+          risk: "medium",
+          layer: "rule",
+          ruleLabel: "Data egress",
+        };
+      }
     }
 
-    // Layer 2: Rules (destructive operations)
+    // Layer 2: Rules (external actions, destructive operations)
     for (const rule of this.preset.rules) {
       if (this.matchesRule(rule, tool, input)) {
         return {
