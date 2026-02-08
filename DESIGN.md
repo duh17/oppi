@@ -16,6 +16,11 @@ what your agent can do. The permission gate keeps it safe while it learns.
    Every session can produce a reusable tool. Over time, your agent gets specialized
    to your exact needs.
 
+> **Implementation note (Feb 2026):** For Apple containers, permission-gate transport
+> is TCP (per-session dynamic ports via host-gateway), not Unix sockets. Any UDS
+> references below are historical design context; use `IMPLEMENTATION.md` and
+> `WORKSPACE-CONTAINERS.md` as current execution truth.
+
 ## Architecture
 
 ```
@@ -49,7 +54,7 @@ what your agent can do. The permission gate keeps it safe while it learns.
 │  │                    │                                        │ │
 │  │                    ▼                                        │ │
 │  │  ┌─────────────────────────────────────────────────────┐   │ │
-│  │  │  Permission Gate (Unix socket, HTTP fallback)        │   │ │
+│  │  │  Permission Gate (TCP per session, host-gateway)     │   │ │
 │  │  │                                                      │   │ │
 │  │  │  1. Receives tool_call from pi extension             │   │ │
 │  │  │  2. Evaluates layered policy                         │   │ │
@@ -69,7 +74,7 @@ what your agent can do. The permission gate keeps it safe while it learns.
 │  │  permission-gate │      │  permission-gate │                   │
 │  │  extension       │      │  extension       │                   │
 │  │  (hooks tool_call│      │  (hooks tool_call│                   │
-│  │   → UDS to gate) │      │   → UDS to gate) │                   │
+│  │   → TCP gate)    │      │   → TCP gate)    │                   │
 │  └─────────────────┘      └─────────────────┘                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -85,17 +90,13 @@ delegates permission decisions to the pi-remote server.
 
 ### Extension ↔ Server Transport
 
-**Primary: Unix domain socket** (same host). Lower overhead, no network auth
-surface, file-permission access control. Each session gets its own socket:
+**Primary: TCP (current implementation)**. Each session gets a dynamic gate port
+on the host. The extension connects from inside the container to host-gateway
+(`192.168.64.1:<port>`).
 
-```
-/tmp/pi-remote-gate/<sessionId>.sock
-```
+**Fallback: HTTP** remains a possible future option for multi-host deployments.
 
-**Fallback: HTTP** for future multi-host deployments.
-
-The extension abstracts over both via a `GateTransport` interface, selected by
-env var:
+The extension can abstract transport behind a `GateTransport` interface.
 
 ```typescript
 interface GateTransport {
@@ -109,14 +110,15 @@ interface GateTransport {
 
 ```typescript
 export default function permissionGate(pi: ExtensionAPI) {
-  const socketPath = process.env.PI_REMOTE_GATE_SOCK;  // Unix socket
-  const gateUrl = process.env.PI_REMOTE_GATE_URL;      // HTTP fallback
+  const gateHost = process.env.PI_REMOTE_GATE_HOST; // host-gateway (e.g. 192.168.64.1)
+  const gatePort = process.env.PI_REMOTE_GATE_PORT; // per-session dynamic port
+  const gateUrl = process.env.PI_REMOTE_GATE_URL;   // optional future HTTP fallback
   const sessionId = process.env.PI_REMOTE_SESSION;
 
-  if (!socketPath && !gateUrl) return; // Not under pi-remote, no-op
+  if ((!gateHost || !gatePort) && !gateUrl) return; // Not under pi-remote, no-op
 
-  const transport = socketPath
-    ? new UnixSocketTransport(socketPath)
+  const transport = gateHost && gatePort
+    ? new TcpGateTransport(gateHost, Number(gatePort))
     : new HttpTransport(gateUrl!, process.env.PI_REMOTE_TOKEN!);
 
   // --- Handshake: prove extension is loaded ---
@@ -435,17 +437,17 @@ const gateToken = {
 };
 ```
 
-For Unix socket transport, the socket file permissions (`0600`) plus the
-per-session socket path provide access control. The gate token is still
-validated as defense-in-depth.
+For TCP transport, access control is primarily per-session dynamic ports
+allocated by the server and scoped to the active session lifecycle. A session
+gate token can still be layered as defense-in-depth.
 
 ---
 
 ## 4. Server Protocol
 
-### Internal Gate (Unix Socket + HTTP)
+### Internal Gate (TCP + optional HTTP)
 
-**Unix socket protocol:** newline-delimited JSON over the per-session socket.
+**TCP protocol:** newline-delimited JSON over the per-session connection.
 
 ```
 → Extension sends:
@@ -599,9 +601,8 @@ When the server spawns pi for a user, it sets up workspace access:
 ```typescript
 // In sessions.ts, spawnPi():
 
-// 1. Create socket for this session
-const socketPath = `/tmp/pi-remote-gate/${session.id}.sock`;
-await createGateSocket(socketPath, session);
+// 1. Create gate TCP server for this session
+const gatePort = await createGatePort(session.id, session.userId);
 
 // 2. Create symlinks from sandbox to real directories
 for (const ws of policy.workspaces) {
@@ -609,13 +610,13 @@ for (const ws of policy.workspaces) {
   await fs.symlink(ws.hostPath, linkPath);
 }
 
-// 3. Spawn pi with extension and socket path
+// 3. Spawn pi with extension and gate host/port
 const proc = spawn("pi", args, {
   cwd: path.join(sandboxDir, "workspace"),
   env: {
     ...process.env,
-    PI_REMOTE_GATE_SOCK: socketPath,
-    PI_REMOTE_TOKEN: session.gateToken,
+    PI_REMOTE_GATE_HOST: "192.168.64.1",
+    PI_REMOTE_GATE_PORT: String(gatePort),
     PI_REMOTE_USER: userId,
     PI_REMOTE_SESSION: session.id,
   },
@@ -633,7 +634,7 @@ Path safety for workspace checks:
 
 ### Phase 1: Permission Gate MVP
 1. `policy.ts` — Layered policy engine with bash parsing + workspace bounds
-2. `gate.ts` — Unix socket gate server (per-session sockets)
+2. `gate.ts` — TCP gate server (per-session dynamic ports)
 3. `permission-gate/index.ts` — Pi extension with handshake + heartbeat
 4. Server: WebSocket `permission_request`/`permission_response` protocol
 5. Server: guarded session state machine (`unguarded` → `guarded` → `fail-safe`)
@@ -666,12 +667,12 @@ Path safety for workspace checks:
 
 ## Key Design Decisions
 
-### Why Unix socket (not HTTP) for extension ↔ server?
-- Same-host IPC with minimal overhead
-- File-permission access control (no auth headers needed)
-- No network attack surface
-- Simpler than HTTP for newline-delimited JSON
-- HTTP kept as fallback for future multi-host deployments
+### Why TCP gate (not UDS) for extension ↔ server?
+- Apple container mounts can fail with UDS (`ENOTSUP`) in this setup
+- Per-session dynamic TCP ports work reliably from container → host-gateway
+- Still simple newline-delimited JSON protocol
+- Clean per-session isolation via dedicated listener per session
+- HTTP can still be layered later if multi-host transport is needed
 
 ### Why layered policy evaluation?
 - Hard denies are immutable — learned rules can never override them

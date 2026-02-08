@@ -468,26 +468,49 @@ that Gondolin doesn't. Different threat models, complementary approaches.
 
 ## Implementation Order
 
-1. `src/auth-proxy.ts` — proxy, testable in isolation
-2. Network setup — create `pi-internal` at server startup
-3. `src/sandbox.ts` — stub auth.json, rewrite models.json, `--network pi-internal`
-4. `src/sessions.ts` — register/remove sessions with proxy
+1. ✅ `src/auth-proxy.ts` — proxy with per-provider credential substitution
+2. ✅ Network setup — `pi-internal` (--internal) at server startup
+3. ✅ `src/sandbox.ts` — stub auth.json, rewrite models.json, `--network pi-internal`
+4. ✅ `src/sessions.ts` — register/remove sessions with proxy
 5. End-to-end test — container → proxy → Anthropic API
 
+## Decision: NAT networking (not --internal)
+
+After building the auth proxy with `--internal` network support, we decided
+to use **default NAT networking** instead. Rationale:
+
+**The auth proxy already solves credential isolation.** Real AI tokens never
+enter the container regardless of network mode. The `--internal` network
+was defense-in-depth against prompt injection data exfiltration — a real
+but narrow risk for a personal server running your own agents.
+
+**The cost of --internal is high.** Every external tool breaks: git, npm,
+pip, curl, fetch skill, search skill. Each needs proxy plumbing (forward
+proxy, CONNECT tunneling, credential helpers). The complexity isn't worth
+it for the threat model.
+
+**NAT + auth proxy = EC2 instance role model.** The container has internet
+(like an EC2 instance) but no long-lived credentials on disk. It gets
+temporary, scoped credentials from the auth proxy (like IMDS). This is
+practical and well-understood.
+
+**Code impact:**
+- `sandbox.ts`: remove `--network pi-internal`, revert HOST_GATEWAY to
+  `192.168.64.1`, remove `ensureNetwork()`
+- `server.ts`: remove `ensureNetwork()` call
+- Auth proxy: no changes (works on any network, binds 0.0.0.0)
+
+See `integration-design.md` for the full credential vending system for
+external services (GitHub, npm, AWS, etc.).
+
 ## Open Questions
-
-**Fetch skill.** Outbound HTTP from inside the container breaks on `--internal`
-network. The fetch skill needs to either run on the host or go through a
-separate HTTP proxy with an allowlist. Separate concern from auth.
-
-**Host port exposure.** The container can reach any host port via the gateway.
-Services like LM Studio, nginx, Hugo are exposed. Acceptable for our threat
-model but could be tightened with macOS firewall rules (pf) scoped to the
-internal subnet.
 
 **Cost tracking.** All API traffic flows through the proxy — natural hook point
 for usage logging and per-session/user cost attribution. Not v1.
 
-**Multiple real providers.** Currently only Anthropic and OpenAI-Codex in
-auth.json. The proxy routes by URL prefix (`/anthropic/...`, `/openai/...`).
-Adding a provider means adding a route entry.
+**Multiple real providers.** Currently Anthropic and OpenAI-Codex, both fully
+proxied. Anthropic uses placeholder substitution (`proxy-<sessionId>` →
+real OAuth). OpenAI-Codex uses a fake JWT with real account ID + embedded
+session ID (SDK extracts `chatgpt_account_id` from fake JWT successfully,
+proxy swaps Authorization header with real JWT). Adding a provider means
+adding a route entry to `ROUTES` in `auth-proxy.ts`.

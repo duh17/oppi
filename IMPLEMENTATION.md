@@ -1,290 +1,276 @@
 # Pi Remote — Implementation Plan
 
-## Honest Assessment of Current State
+Last updated: 2026-02-08
 
-### What exists (and works)
-- `server.ts` — HTTP + WebSocket server, manual routing, bearer auth ✅
-- `sessions.ts` — Session lifecycle, pi process spawning in RPC mode, event streaming ✅
-- `storage.ts` — JSON file storage, user management, sandbox directories ✅
-- `types.ts` — Clean type definitions ✅
-- `index.ts` — CLI entrypoint with QR invite codes ✅
+Execution plan for pi-remote. Ordered by impact: security and reliability
+first, then visible features, then the workspace migration, then skills.
 
-### What's wrong with the existing code
-1. **Readline race** (`sessions.ts:114-130`): `waitForReady()` creates a second
-   readline on `proc.stdout` that competes with the main one. First message gets
-   misrouted to `unknown/<sessionId>` key.
-2. **Sync FS everywhere** (`storage.ts`): `readFileSync`/`writeFileSync` in hot
-   paths. Fine for <5 users but will stall event loop under load.
-3. **No guarded session concept**: Pi spawns and immediately accepts prompts with
-   no proof that the permission extension loaded.
-4. **CORS `*`**: Open to any origin. Fine for native clients, risky if browser
-   exposure happens.
-
-### What the design doc asks for (DESIGN.md v2)
-- Unix socket gate (per-session)
-- Layered policy engine with bash parsing
-- Guarded session handshake + heartbeat
-- Scoped "Always Allow" learning
-- Three token types
-- Offline modes
-- Permission storm handling
-- Durable pending decisions
-- Audit logging
-
-### The problem: scope creep
-DESIGN.md v2 is a production-grade system. We're a single developer building
-a personal tool. We need to be ruthless about scope.
+Source of truth for delivery status and step scope. Architecture target
+is in `WORKSPACE-CONTAINERS.md`. Current shipped behavior is in `README.md`.
 
 ---
 
-## What Actually Matters
+## Current Baseline (Shipped)
 
-The entire value of Pi Remote is ONE flow:
+### Server (pi-remote)
+- [x] HTTP + WebSocket server with bearer auth
+- [x] Pi session lifecycle and RPC streaming
+- [x] Permission gate extension + host TCP gate server
+- [x] Layered policy engine
+- [x] Workspace CRUD + skill discovery endpoints
+- [x] Session references workspace (workspaceId, workspaceName)
+- [x] Tool event parity (toolCallId plumbing + partialResult delta handling)
+- [x] Vitest test suite (policy, gate, bootstrap, sync, trace, tool-events)
 
-```
-Pi wants to run `git push` →
-Extension intercepts it →
-Server evaluates policy →
-Policy says "ask" →
-Phone gets a card →
-User taps "Allow" →
-Extension unblocks →
-Pi runs `git push`
-```
+### iOS
+- [x] Session list + chat runtime
+- [x] Workspace picker + management screens
+- [x] Skills listing from server
+- [x] Tool event decoding with toolCallId
+- [x] Comprehensive test suite (decoding, reducer, reliability, bugbash)
 
-**Everything else is supporting infrastructure.** If this flow works end-to-end,
-we have a product. If it doesn't, nothing else matters.
-
----
-
-## v1: Permission Flow (build this first)
-
-### Scope
-- Permission gate extension (pi side)
-- Unix socket gate server (server side)
-- Simple policy engine (glob matching, hard-coded presets)
-- WebSocket permission forwarding to phone
-- Guarded session handshake
-- Test with CLI client before building iOS app
-
-### Explicitly out of scope for v1
-- ❌ Bash command AST parsing (glob match raw commands — imperfect but testable)
-- ❌ YAML policy files (presets in TypeScript, editable later)
-- ❌ "Always Allow" / learned rules (just allow/deny/ask per request)
-- ❌ Offline modes beyond strict timeout-deny
-- ❌ Durable pending decisions (in-memory Map, fine for single-process)
-- ❌ Token separation (existing bearer tokens work)
-- ❌ Audit logging (console.log for now)
-- ❌ Workspace mounting (use cwd, add later)
-- ❌ Permission storm coalescing (handle when it's a real problem)
-- ❌ iOS app (use test CLI client)
-
-### Files to create
-
-```
-pi-remote/
-├── src/
-│   ├── index.ts          # (existing) CLI entrypoint
-│   ├── server.ts         # (existing, modify) Add WS permission messages
-│   ├── sessions.ts       # (existing, modify) Fix readline race, spawn gate socket
-│   ├── storage.ts        # (existing, minor) Add policy preset field to User
-│   ├── types.ts          # (existing, extend) Add permission types
-│   ├── policy.ts         # NEW: policy engine
-│   └── gate.ts           # NEW: Unix socket gate server
-└── extensions/
-    └── permission-gate/
-        ├── index.ts      # Pi extension
-        └── package.json  # Extension manifest
-```
-
-### Implementation order
-
-#### Step 1: Fix existing bugs (30 min)
-- Fix readline race in `sessions.ts` (single readline consumer)
-- Keep everything else as-is
-
-#### Step 2: Policy engine — `src/policy.ts` (1-2 hours)
-- `PolicyEngine` class
-- `evaluate(toolCall)` → `{ action, reason, risk }`
-- Glob matching against tool name + command/path
-- Three presets: admin, standard, restricted
-- Unit testable (no I/O, no sockets)
-
-```typescript
-// Minimal v1 API
-class PolicyEngine {
-  constructor(preset: "admin" | "standard" | "restricted")
-  evaluate(tool: string, input: Record<string, unknown>): PolicyDecision
-}
-
-interface PolicyDecision {
-  action: "allow" | "ask" | "deny";
-  reason: string;
-  risk: "low" | "medium" | "high" | "critical";
-}
-```
-
-#### Step 3: Gate socket server — `src/gate.ts` (2-3 hours)
-- `GateServer` class
-- Creates Unix socket per session at `/tmp/pi-remote-gate/<sessionId>.sock`
-- Handles ndjson protocol (guard_ready, gate_check, heartbeat)
-- Uses PolicyEngine for evaluation
-- When policy says "ask" → emits event for server to forward to WebSocket
-- Manages pending decisions in-memory Map with timeout cleanup
-- Cleans up socket on session end
-
-```typescript
-class GateServer extends EventEmitter {
-  constructor(policy: PolicyEngine)
-  createSessionSocket(sessionId: string, userId: string): string // returns socket path
-  destroySessionSocket(sessionId: string): void
-  resolveDecision(requestId: string, action: "allow" | "deny"): void
-
-  // Events:
-  // "approval_needed" → { requestId, sessionId, userId, tool, input, risk, timeout }
-  // "guard_ready" → { sessionId }
-  // "guard_lost" → { sessionId }
-}
-```
-
-#### Step 4: Permission gate extension — `extensions/permission-gate/index.ts` (1-2 hours)
-- Connects to Unix socket via `net.createConnection()`
-- `before_agent_start` → sends `guard_ready`
-- `tool_call` → sends `gate_check`, blocks on response
-- Heartbeat timer (15s)
-- Handles socket errors gracefully (→ block all on disconnect)
-
-Test: run pi with extension locally, verify tool calls go through socket.
-
-#### Step 5: Wire into server (2-3 hours)
-- `sessions.ts`: On spawn, create gate socket, pass path via env, install extension
-- `server.ts`: Forward `approval_needed` events to phone's WebSocket
-- `server.ts`: Handle `permission_response` from phone WebSocket, call `gate.resolveDecision()`
-- `types.ts`: Add `permission_request` and `permission_response` to WS message types
-
-#### Step 6: Test client (1 hour)
-- Simple CLI script that connects via WebSocket
-- Prints permission requests
-- Auto-approves with keyboard input (y/n/a)
-- Verifies full flow end-to-end
-
-### Session state machine (v1, simplified)
-
-```
-STARTING → SPAWNED → GUARDED → READY ↔ BUSY → STOPPED
-              ↓         ↓                         ↑
-           (no guard_ready within 10s)            │
-              ↓         ↓                         │
-           FAILED ←── FAIL_SAFE ──────────────────┘
-```
-
-- `SPAWNED`: Pi process running, waiting for extension handshake
-- `GUARDED`: Extension confirmed loaded, accepting tool calls
-- `READY/BUSY`: Normal operation
-- `FAIL_SAFE`: Heartbeat lost, all tool calls denied until extension reconnects
-
-### How extension gets installed
-
-Server copies the extension directory into the user's sandbox on first session:
-
-```typescript
-// In sessions.ts
-const extensionDir = path.join(sandboxDir, "agent", "extensions", "permission-gate");
-await fs.cp(BUNDLED_EXTENSION_PATH, extensionDir, { recursive: true });
-```
-
-Pi discovers extensions from the agent directory. The extension reads
-`PI_REMOTE_GATE_SOCK` from env to find its socket.
+### Security
+- [x] Apple container isolation (process + filesystem)
+- [x] Permission gate blocks unguarded tool calls (fail-closed)
+- [ ] Auth proxy — secrets still copied into containers (Step 1)
 
 ---
 
-## v2: Hardening (after v1 works)
+## Implementation Steps
 
-Add after the permission flow is proven end-to-end:
+### Step 1: Auth proxy + internal network
+**TODO-5d327779** | Server | ~1 day | **Security**
 
-1. **Bash command parsing** — Tokenize into (executable, args) before matching
-2. **YAML policy files** — Per-user editable policy with `learnedRules` section
-3. **"Always Allow" with scope** — once / session / workspace / persistent
-4. **Offline modes** — `strict` / `degraded_readonly` / `grace_window`
-5. **Audit logging** — JSONL files per user per day
-6. **Session gate tokens** — Separate from user API tokens, bound to session
-7. **Async FS** — Replace sync reads/writes in hot paths
+Replace auth.json copying with a host-side auth proxy. Switch containers
+to `--internal` network (no internet). Secrets never enter the container.
 
-## v3: iOS App
+Design: `pi-remote/docs/auth-proxy-design.md`
 
-Build after server stack is solid and tested with CLI client:
+| Deliverable | File |
+|-------------|------|
+| HTTP reverse proxy (~150 LOC) | `src/auth-proxy.ts` — NEW |
+| Stub auth.json + models.json rewrite | `src/sandbox.ts` |
+| Session registration with proxy | `src/sessions.ts` |
+| Internal network setup | `src/sandbox.ts` (server startup) |
 
-1. **Onboarding** — QR scan, API token exchange
-2. **Session list** — Create/stop/resume sessions
-3. **Chat** — Text + image input, streaming response display
-4. **Permission cards** — The money feature. Rich cards with risk tiers + scope selection.
-5. **Live activity feed** — What agent is doing right now
-6. **Push notifications** — APNs for permission requests when app is backgrounded
-
-## v4: Polish
-
-1. Workspace mounting + management
-2. Permission storm coalescing
-3. Policy editor in app
-4. Voice input
-5. Durable pending decisions (for multi-device)
-6. Tamper-evident audit logs
+Known limitation: fetch skill loses internet access. Document and address separately.
 
 ---
 
-## Server Stack Decision: Keep TypeScript
+### Step 2: Sequenced updates — server side
+**TODO-fb28452c (steps 1-6)** | Server | ~1.5 days | **Reliability**
 
-**Don't rewrite.** The current TypeScript + Node.js stack is the right choice:
+Add per-session monotonic sequence numbers to durable events. Enable
+reconnect catch-up without losing tool call history.
 
-1. **Pi is TypeScript** — Extensions are TypeScript. Policy engine, protocol
-   types, gate server all share types with the extension. One language.
-2. **Node excels at this** — WebSocket server + Unix socket server + HTTP +
-   async I/O + process management. This is exactly what Node is for.
-3. **The code is clean** — server.ts, sessions.ts, storage.ts are well-structured.
-   Fix bugs, don't rewrite.
-4. **No framework needed** — We're not building a web app. Raw `http.createServer`
-   + `ws` + `net.createServer` is exactly right. Express/Fastify add nothing here.
-
-### Dependencies (v1, keep minimal)
-```
-ws           — WebSocket server (already have)
-nanoid       — ID generation (already have)
-chalk        — CLI colors (already have)
-minimatch    — Glob matching for policy rules (add)
-yaml         — YAML policy file parsing (defer to v2)
-```
-
-### Testing
-```
-vitest       — Unit tests for policy engine, gate protocol
-```
+| Deliverable | File |
+|-------------|------|
+| EventRing class (bounded buffer) | `src/sessions.ts` |
+| Durable/ephemeral broadcast split | `src/sessions.ts` |
+| `message_end` broadcast (new durable event) | `src/sessions.ts` |
+| `currentSeq` in connected message | `src/sessions.ts` |
+| `GET /sessions/:id/events?since=` | `src/server.ts` |
+| Type updates (seq, message_end) | `src/types.ts` |
+| EventRing unit tests | `tests/event-ring.test.ts` — NEW |
 
 ---
 
-## Risk Assessment
+### Step 3: File access — server API
+**TODO-362ce018** | Server | ~0.5 day | **Feature**
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| Unix socket permissions wrong | Medium | Test immediately, 0600 perms, clean up on exit |
-| Extension not loading in pi | Medium | Test in isolation first, check pi extension docs |
-| Extension blocking pi's event loop | Low | `tool_call` handler is async, fetch/socket reads are non-blocking |
-| Phone never connects to approve | High | Strict timeout + clear error to agent. v2 adds offline modes. |
-| Policy globs too permissive | Medium | Start restrictive (admin preset still asks for unknowns) |
-| Session socket leak on crash | Medium | Cleanup script + socket path includes PID for uniqueness |
+Expose workspace files over REST so the iOS app can browse agent output.
+
+| Deliverable | File |
+|-------------|------|
+| Path resolution + listing + content-type | `src/files.ts` — NEW |
+| `GET /sessions/:id/files?path=` (list) | `src/server.ts` |
+| `GET /sessions/:id/files/*path` (content) | `src/server.ts` |
 
 ---
 
-## Definition of Done (v1)
+### Step 4: File browser + previews — iOS
+**TODO-15956340, TODO-cf1dbddf, TODO-bd36f35a** | iOS | ~2.5 days | **Feature**
 
-✅ Pi spawns with permission-gate extension loaded
-✅ Extension handshakes with server (guard_ready → guard_ack)
-✅ Tool calls intercepted and evaluated against policy
-✅ Auto-allow rules pass through without delay
-✅ Hard-deny rules block immediately
-✅ "Ask" rules create pending decision, push to WebSocket
-✅ CLI test client receives permission request, can approve/deny
-✅ Approved tool call unblocks extension, pi executes tool
-✅ Denied tool call returns `{ block: true }` to pi
-✅ Timeout after 2 minutes returns deny
-✅ Extension heartbeat works, server detects lost extension
-✅ Socket cleanup on session end
+| Sub-step | What | Effort |
+|----------|------|--------|
+| 4a | FileService + FileListView + FileRowView | 1d |
+| 4b | FilePreviewView router (markdown, image, HTML, code) | 1d |
+| 4c | FileChipView in chat bubbles for write/edit tool calls | 0.5d |
+
+Can run in parallel with Step 5.
+
+---
+
+### Step 5: Sequenced updates — iOS side
+**TODO-fb28452c (steps 7-9)** | iOS | ~1.5 days | **Reliability**
+
+| Deliverable | File |
+|-------------|------|
+| Decode optional `seq`, add `messageEnd` case | `ServerMessage.swift` |
+| Track `lastSeenSeq`, catch-up on reconnect, dedup | `ServerConnection.swift` |
+| Handle `messageEnd` (finalized text without deltas) | `TimelineReducer.swift` |
+
+Can run in parallel with Step 4.
+
+---
+
+### Step 6: Docs — snapshot semantics
+**TODO-aa0f8e35** | Docs | ~2 hours
+
+Document extension/skill sync behavior in container sessions:
+- Snapshot semantics (synced at session creation, not live)
+- Why symlink dereference is required
+- Troubleshooting checklist
+
+---
+
+### Step 7: Workspace runtime core (IMPL Phase 0)
+**TODO-78eba302** | Server | ~2-3 days | **Architecture** | Medium risk
+
+Container lifecycle moves from session-scoped to workspace-scoped.
+Multiple pi processes per workspace.
+
+| Deliverable | File |
+|-------------|------|
+| ActiveWorkspace → ActiveSession[] | `src/workspace-runtime.ts` — NEW |
+| Sandbox layout: `userId/workspaceId/` | `src/sandbox.ts` |
+| Per-workspace + per-session mutexes | `src/workspace-runtime.ts` |
+| Configurable limits | `src/types.ts` |
+| Legacy sandbox migration | `src/workspace-runtime.ts` |
+| Tests | `tests/workspace-runtime.test.ts` — NEW |
+| Tests | `tests/lifecycle-locks.test.ts` — NEW |
+| Tests | `tests/session-limits.test.ts` — NEW |
+
+Acceptance: two sessions in same workspace run concurrently, share files,
+stopping one doesn't affect the other.
+
+---
+
+### Step 8: API migration (IMPL Phase 1)
+**TODO-31efdce1** | Server | ~1-2 days | **Architecture**
+
+| Deliverable | File |
+|-------------|------|
+| Workspace-scoped session APIs | `src/server.ts` |
+| Legacy route compat + deprecation warnings | `src/server.ts` |
+| Protocol version signal | `src/types.ts` |
+| Background reconciliation job | `src/workspace-runtime.ts` |
+| API contract tests | `tests/api-compat.test.ts` — NEW |
+
+---
+
+### Step 9: iOS workspace-first UX (IMPL Phase 2)
+**TODO-1fe2951f** | iOS | ~2-3 days | **UX**
+
+Promote workspaces to top-level navigation. Workspace detail shows
+session states with start/resume/stop actions.
+
+Can run in parallel with Step 10.
+
+---
+
+### Step 10: Fork workflow (IMPL Phase 3)
+**TODO-19cb0451** | Server + iOS | ~1-2 days | **Feature**
+
+| Deliverable | Side |
+|-------------|------|
+| `POST /workspaces/:wid/sessions/:sid/fork` | Server |
+| JSONL copy + new pi process | Server |
+| Fork lineage metadata | Server |
+| Long-press → Fork action | iOS |
+| Lineage display in session detail | iOS |
+
+Can run in parallel with Step 9.
+
+---
+
+### Step 11: Skill CRUD (IMPL Phase 4)
+**TODO-eabe2bf3, TODO-d6c60004, TODO-bdffb4b5** | Server | ~2 days
+
+| Sub-step | What | Effort |
+|----------|------|--------|
+| 11a | Skill storage + CRUD API | 1d |
+| 11b | Load user skills into sessions | 0.5d |
+| 11c | Skill promotion safety gate | 0.5d |
+
+---
+
+### Step 12: iOS Skills UI (IMPL Phase 4)
+**TODO-2cd10bc4, TODO-6717558a, TODO-a55a58d6** | iOS | ~3 days
+
+| Sub-step | What | Effort |
+|----------|------|--------|
+| 12a | Skills tab with list view | 1d |
+| 12b | Skill detail view with file browser | 1d |
+| 12c | Save skill from session workspace | 1d |
+
+---
+
+### Step 13: Skill creation (IMPL Phase 5)
+**TODO-f471ff40, TODO-511647e2** | Server + iOS | ~2-3 days
+
+| Sub-step | What | Effort |
+|----------|------|--------|
+| 13a | Server: skill-creation + refinement session setup | 1-2d |
+| 13b | iOS: skill creation sheet + refinement flow | 1-2d |
+
+---
+
+### Deferred
+- **TODO-fca8f6b6** — Optimistic concurrency. Wait for macOS client.
+- GitHub skill import + security scanning pipeline (Phase 4 in WORKSPACE-CONTAINERS.md)
+- Workspace templates (Phase 6 in WORKSPACE-CONTAINERS.md)
+
+---
+
+## Step Dependencies
+
+```
+Server track:
+  Step 1 (auth proxy) → Step 2 (seq server) → Step 3 (files API)
+                                                     ↓
+  Step 7 (ws runtime) → Step 8 (API migration) → Step 11 (skill CRUD)
+                                                     ↓
+                                                  Step 13a (skill sessions)
+
+iOS track:
+  Step 4 (file browser) ─────┐
+  Step 5 (seq iOS) ──────────┤
+                              ↓
+  Step 9 (workspace UX) ─────┤
+  Step 10 (fork) ────────────┤
+  Step 12 (skills UI) ───────┤
+                              ↓
+  Step 13b (skill creation)
+
+Docs:
+  Step 6 (snapshot docs) — anytime
+```
+
+Steps 4+5 (iOS) can run while Step 7 (server refactor) is underway.
+Steps 9+10 start after Step 8 ships.
+Steps 11+12 can start after Step 8. Server skill CRUD (11) and iOS skills UI (12) can overlap.
+
+---
+
+## Cross-Step Guardrails
+
+- Fail-closed permission behavior: unguarded gate blocks tool calls
+- No regressions in tool correlation (toolCallId) and output streaming
+- Backward-compatible iOS decoding for at least one server release
+- No destructive data migration without backup marker + rollback metadata
+- No hidden behavior changes without tests
+
+---
+
+## Effort Summary
+
+| Category | Steps | Effort |
+|----------|-------|--------|
+| Security | 1 | ~1d |
+| Reliability | 2, 5 | ~3d |
+| File access | 3, 4 | ~3d |
+| Docs | 6 | ~2h |
+| Workspace migration | 7, 8, 9, 10 | ~8-10d |
+| Skills | 11, 12, 13 | ~7-8d |
+| **Total** | | **~22-25d** |

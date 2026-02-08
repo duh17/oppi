@@ -65,6 +65,14 @@ npx tsx src/index.ts invite "Wife" --save wife-invite.png
 2. Scans QR code
 3. Done! She can start chatting
 
+## Documentation Map (Source of Truth)
+
+- `README.md` (this file): current setup and implemented API/runtime behavior.
+- `IMPLEMENTATION.md`: execution checklist, phase status, acceptance criteria.
+- `WORKSPACE-CONTAINERS.md`: target `workspace = container` architecture and migration plan.
+- `DESIGN.md`: high-level product design (contains some historical sections).
+- `WORKSPACES.md`: concise workspace contract summary + links.
+
 ## iOS Build + Deploy from mac-studio (SSH/local network)
 
 One-time prerequisites on mac-studio:
@@ -166,12 +174,27 @@ pi-remote status                   # Show server status
 ### REST
 
 ```
-GET  /health              # Health check (no auth)
-GET  /me                  # Current user info
-GET  /sessions            # List user's sessions
-POST /sessions            # Create new session
-GET  /sessions/:id        # Get session + messages
-DELETE /sessions/:id      # Stop and delete session
+GET    /health                     # Health check (no auth)
+GET    /me                         # Current user info
+
+# Sessions
+GET    /sessions                   # List user's sessions
+POST   /sessions                   # Create new session (optional workspaceId)
+GET    /sessions/:id               # Get session + messages
+POST   /sessions/:id/stop          # Stop session process
+GET    /sessions/:id/trace         # Parse pi JSONL trace
+DELETE /sessions/:id               # Stop + delete session metadata
+
+# Workspaces
+GET    /workspaces                 # List workspaces
+POST   /workspaces                 # Create workspace
+GET    /workspaces/:id             # Get workspace
+PUT    /workspaces/:id             # Update workspace
+DELETE /workspaces/:id             # Delete workspace
+
+# Skills
+GET    /skills                     # List available skills
+POST   /skills/rescan              # Rescan host skill directories
 ```
 
 ### WebSocket
@@ -183,17 +206,27 @@ Authorization: Bearer <token>
 # Client → Server
 { "type": "prompt", "message": "Hello" }
 { "type": "prompt", "message": "What's this?", "images": [{ "data": "...", "mimeType": "image/jpeg" }] }
+{ "type": "steer", "message": "continue" }
+{ "type": "follow_up", "message": "next" }
 { "type": "abort" }
+{ "type": "stop" }
 { "type": "get_state" }
+{ "type": "permission_response", "id": "req-1", "action": "allow" }
 
 # Server → Client
 { "type": "connected", "session": {...} }
+{ "type": "state", "session": {...} }
 { "type": "agent_start" }
 { "type": "text_delta", "delta": "Hello!" }
-{ "type": "tool_start", "tool": "bash", "args": {...} }
-{ "type": "tool_output", "output": "..." }
-{ "type": "tool_end", "tool": "bash" }
+{ "type": "thinking_delta", "delta": "..." }
+{ "type": "tool_start", "tool": "bash", "args": {...}, "toolCallId": "call_1" }
+{ "type": "tool_output", "output": "...", "toolCallId": "call_1" }
+{ "type": "tool_end", "tool": "bash", "toolCallId": "call_1" }
+{ "type": "permission_request", "id": "req-1", "sessionId": "s1", "tool": "bash", ... }
+{ "type": "permission_expired", "id": "req-1", "reason": "timeout" }
+{ "type": "permission_cancelled", "id": "req-1" }
 { "type": "agent_end" }
+{ "type": "session_ended", "reason": "completed" }
 { "type": "error", "error": "..." }
 ```
 
@@ -216,66 +249,73 @@ pios/
 ├── pi-remote/              # Server (TypeScript)
 │   ├── src/
 │   │   ├── index.ts       # CLI
-│   │   ├── server.ts      # HTTP + WebSocket
-│   │   ├── sessions.ts    # Pi process manager
+│   │   ├── server.ts      # HTTP + WebSocket + REST routes
+│   │   ├── sessions.ts    # Pi process manager + RPC translation
+│   │   ├── gate.ts        # Permission gate TCP server
+│   │   ├── policy.ts      # Layered policy engine
+│   │   ├── sandbox.ts     # Apple container orchestration
 │   │   ├── storage.ts     # Persistent state
-│   │   └── types.ts       # Type definitions
+│   │   ├── skills.ts      # Skill registry/discovery
+│   │   └── types.ts       # Shared protocol types
+│   ├── extensions/
+│   │   └── permission-gate/
 │   └── package.json
 │
-├── ios/                    # iOS App (TODO)
-│   └── PiMobile/
+├── ios/                    # iOS app (SwiftUI)
+│   ├── PiRemote/
+│   └── PiRemoteTests/
 │
-└── README.md
+├── WORKSPACE-CONTAINERS.md # Workspace=container architecture spike
+└── IMPLEMENTATION.md       # Execution checklist
 ```
 
 ## Data Storage
 
 ```
-~/.config/pi-remote/           # Server data
-├── config.json                # Server config
-├── users.json                 # User accounts
-└── sessions/
-    ├── chen/                  # Chen's session metadata
-    │   └── abc123.json
-    └── wife/                  # Wife's session metadata
-        └── def456.json
+~/.config/pi-remote/                 # Server data
+├── config.json                      # Server config
+├── users.json                       # User accounts + device tokens
+├── sessions/
+│   └── <userId>/
+│       └── <sessionId>.json         # Session metadata
+└── workspaces/
+    └── <userId>/
+        └── <workspaceId>.json       # Workspace configs
 
-~/.pi-remote-sandboxes/        # User sandboxes (isolated)
-├── <chen-id>/
-│   ├── agent/                 # Pi config (auth, models)
-│   │   ├── auth.json
-│   │   └── models.json
-│   ├── workspace/             # Working directory
-│   └── sessions/              # Pi session files
-│
-└── <wife-id>/                 # Wife's completely separate sandbox
-    ├── agent/
-    ├── workspace/
-    └── sessions/
+~/.pi-remote/sandboxes/              # Session sandboxes (current runtime)
+└── <userId>/
+    └── <sessionId>/
+        ├── agent/                   # Pi home: auth/models/extensions/skills/sessions
+        ├── workspace/               # Working directory (/work in container)
+        └── system-prompt.md         # Generated prompt with workspace context
+
+~/.pi-remote/memory/                 # Optional memory namespaces
+└── <namespace>/
 ```
 
-Each user gets their own isolated sandbox with:
-- Separate auth tokens (can use different API keys per user)
-- Separate workspace (files don't mix)
-- Separate session history
+Isolation model (current):
+- Per-user metadata separation in config store
+- Per-session sandbox directories (process + filesystem isolation)
+- Permission-gate decisions enforced per tool call
 
 ## Status
 
-### ✅ Done
+### ✅ Implemented
 
-- [x] pi-remote server
-- [x] Multi-user auth (tokens)
-- [x] Session management
-- [x] Pi sandbox integration
-- [x] REST API
-- [x] WebSocket streaming
-- [x] QR code invites
-- [x] Persistent storage
+- [x] pi-remote server + RPC bridge
+- [x] Multi-user auth + invite flow
+- [x] Session lifecycle + persistence
+- [x] Permission gate (extension + TCP gate + policy engine)
+- [x] Workspace CRUD + skill discovery APIs
+- [x] iOS app core flows (onboarding, sessions, chat, workspace management)
+- [x] Tool event correlation (`toolCallId`) end-to-end
 
-### 🚧 TODO
+### 🚧 In Progress
 
-- [ ] iOS app
-- [ ] Voice dictation
-- [ ] Session history UI
-- [ ] Push notifications
-- [ ] Launchd service installer
+- [ ] Workspace-scoped runtime (workspace owns container lifecycle)
+- [ ] Multi-session concurrency inside one workspace container
+- [ ] Fork workflow (API + UI)
+- [ ] Skill import + security scanning pipeline
+- [ ] Push notifications / background approval UX hardening
+
+See `WORKSPACE-CONTAINERS.md` and `IMPLEMENTATION.md` for current roadmap.
