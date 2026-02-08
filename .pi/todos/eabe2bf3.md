@@ -111,3 +111,9 @@ DELETE /me/skills/:name
 - `DELETE /me/skills/test` removes it
 - Attempting to save without SKILL.md → 400
 - Attempting to shadow "searxng" → 400
+
+---
+
+## Implementation Order: Step 11a
+
+First skills step. Server only, ~1 day. Builds on existing skills.ts (183 lines).

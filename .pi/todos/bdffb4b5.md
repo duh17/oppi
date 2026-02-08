@@ -33,3 +33,9 @@ Introduce approval workflow for promoted skills before they can be loaded into f
 
 ## Note
 Can be implemented as status field on skill records in v1 (no full versioning required).
+
+---
+
+## Implementation Order: Step 11c
+
+Follows 11b (load skills). Server only, ~0.5 day.

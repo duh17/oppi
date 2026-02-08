@@ -78,3 +78,9 @@ Long-press or toolbar button on any preview → iOS share sheet:
 - Tap .html file → rendered in WebView
 - Tap .py file → monospaced code view
 - Long-press → share sheet with Save/AirDrop options
+
+---
+
+## Implementation Order: Step 4b
+
+Part of iOS file browser sprint (Step 4). Follows 4a (file browser). ~1 day.

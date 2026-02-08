@@ -1,12 +1,12 @@
 {
   "id": "4ea2ef3a",
-  "title": "Persistent vs ephemeral event split — formalize event durability",
+  "title": "CLOSED: Persistent vs ephemeral event split — merged into TODO-fb28452c",
   "tags": [
     "pi-remote",
     "protocol",
     "architecture"
   ],
-  "status": "backlog",
+  "status": "done",
   "created_at": "2026-02-07T06:43:36.244Z"
 }
 
