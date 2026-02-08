@@ -196,6 +196,26 @@ private struct ToolCallRow: View {
         toolArgsStore.args(for: id)
     }
 
+    private var isReadTool: Bool {
+        tool == "Read" || tool == "read"
+    }
+
+    private var isWriteTool: Bool {
+        tool == "Write" || tool == "write"
+    }
+
+    private var isEditTool: Bool {
+        tool == "Edit" || tool == "edit"
+    }
+
+    private var toolFilePath: String? {
+        args?["path"]?.stringValue ?? args?["file_path"]?.stringValue
+    }
+
+    private var readStartLine: Int {
+        args?["offset"]?.numberValue.map { Int($0) } ?? 1
+    }
+
     var body: some View {
         // Special-case pseudo tools
         if tool == "__compaction" {
@@ -216,15 +236,9 @@ private struct ToolCallRow: View {
                 }
                 .buttonStyle(.plain)
 
-                // Expanded output
+                // Expanded output — tool-specific rendering
                 if isExpanded {
-                    let fullOutput = toolOutputStore.fullOutput(for: id)
-                    if !fullOutput.isEmpty {
-                        ToolOutputContent(
-                            output: fullOutput,
-                            isError: isError
-                        )
-                    }
+                    expandedContent
                 }
             }
             .padding(8)
@@ -244,6 +258,33 @@ private struct ToolCallRow: View {
                     UIPasteboard.general.string = "\(tool): \(argsSummary)"
                 }
             }
+        }
+    }
+
+    // MARK: - Expanded Content
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        let fullOutput = toolOutputStore.fullOutput(for: id)
+
+        if isEditTool, !isError,
+           let oldText = args?["oldText"]?.stringValue,
+           let newText = args?["newText"]?.stringValue {
+            // Edit tool: show diff
+            DiffContentView(oldText: oldText, newText: newText, filePath: toolFilePath)
+        } else if isWriteTool, !isError, let content = args?["content"]?.stringValue {
+            // Write tool: show written content
+            FileContentView(content: content, filePath: toolFilePath)
+        } else if isReadTool, !isError, !fullOutput.isEmpty {
+            // Read tool: show file content
+            FileContentView(
+                content: fullOutput,
+                filePath: toolFilePath,
+                startLine: readStartLine
+            )
+        } else if !fullOutput.isEmpty {
+            // Everything else: plain output
+            ToolOutputContent(output: fullOutput, isError: isError)
         }
     }
 
@@ -389,7 +430,7 @@ private struct ToolCallRow: View {
 
 // MARK: - Tool Output Content
 
-/// Renders tool output with inline image detection.
+/// Renders tool output with inline image detection and ANSI color support.
 private struct ToolOutputContent: View {
     let output: String
     let isError: Bool
@@ -398,11 +439,17 @@ private struct ToolOutputContent: View {
         let images = ImageExtractor.extract(from: output)
 
         VStack(alignment: .leading, spacing: 8) {
-            // Text output (truncated for display)
-            Text(output.prefix(2000))
-                .font(.caption.monospaced())
-                .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
-                .textSelection(.enabled)
+            // Text output with ANSI color parsing
+            let displayText = String(output.prefix(2000))
+            if isError {
+                Text(ANSIParser.strip(displayText))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tokyoRed)
+                    .textSelection(.enabled)
+            } else {
+                Text(ANSIParser.attributedString(from: displayText))
+                    .textSelection(.enabled)
+            }
 
             // Inline images
             ForEach(images) { image in
