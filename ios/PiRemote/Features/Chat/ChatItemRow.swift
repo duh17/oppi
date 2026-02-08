@@ -186,6 +186,14 @@ private struct ToolCallRow: View {
     @Environment(TimelineReducer.self) private var reducer
     @Environment(ToolOutputStore.self) private var toolOutputStore
     @Environment(ToolArgsStore.self) private var toolArgsStore
+    @Environment(ServerConnection.self) private var connection
+    @Environment(SessionStore.self) private var sessionStore
+
+    /// File path to open in RemoteFileView when tapped.
+    @State private var filePathToOpen: String?
+    @State private var showFileSheet = false
+    /// Whether lazy output loading is in progress (evicted tool calls).
+    @State private var isLoadingOutput = false
 
     private var isExpanded: Bool {
         reducer.expandedItemIDs.contains(id)
@@ -196,25 +204,14 @@ private struct ToolCallRow: View {
         toolArgsStore.args(for: id)
     }
 
-    private var isReadTool: Bool {
-        tool == "Read" || tool == "read"
-    }
+    private var isReadTool: Bool { ToolCallFormatting.isReadTool(tool) }
+    private var isWriteTool: Bool { ToolCallFormatting.isWriteTool(tool) }
+    private var isEditTool: Bool { ToolCallFormatting.isEditTool(tool) }
+    private var toolFilePath: String? { ToolCallFormatting.filePath(from: args) }
+    private var readStartLine: Int { ToolCallFormatting.readStartLine(from: args) }
 
-    private var isWriteTool: Bool {
-        tool == "Write" || tool == "write"
-    }
-
-    private var isEditTool: Bool {
-        tool == "Edit" || tool == "edit"
-    }
-
-    private var toolFilePath: String? {
-        args?["path"]?.stringValue ?? args?["file_path"]?.stringValue
-    }
-
-    private var readStartLine: Int {
-        args?["offset"]?.numberValue.map { Int($0) } ?? 1
-    }
+    /// Session ID for file/output API calls.
+    private var sessionId: String? { sessionStore.activeSessionId }
 
     var body: some View {
         // Special-case pseudo tools
@@ -223,26 +220,39 @@ private struct ToolCallRow: View {
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 // Header: tool-specific smart formatting
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        if isExpanded {
-                            reducer.expandedItemIDs.remove(id)
-                        } else {
-                            reducer.expandedItemIDs.insert(id)
-                        }
+                HStack(spacing: 0) {
+                    // Main header area — tap to expand/collapse
+                    Button {
+                        expandOrLazyLoad()
+                    } label: {
+                        toolHeader
                     }
-                } label: {
-                    toolHeader
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 // Expanded output — tool-specific rendering
                 if isExpanded {
-                    expandedContent
+                    if isLoadingOutput {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading output…")
+                                .font(.caption)
+                                .foregroundStyle(.tokyoComment)
+                        }
+                        .padding(8)
+                    } else {
+                        expandedContent
+                    }
                 }
             }
             .padding(8)
             .background(Color.tokyoBgHighlight.opacity(0.75))
+            .sheet(isPresented: $showFileSheet) {
+                if let sessionId, let filePathToOpen {
+                    RemoteFileView(sessionId: sessionId, path: filePathToOpen)
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -257,8 +267,60 @@ private struct ToolCallRow: View {
                 Button("Copy Command", systemImage: "terminal") {
                     UIPasteboard.general.string = "\(tool): \(argsSummary)"
                 }
+                if toolFilePath != nil, sessionId != nil {
+                    Button("Open File", systemImage: "doc.text.magnifyingglass") {
+                        openFile()
+                    }
+                }
             }
         }
+    }
+
+    // MARK: - Expand & Lazy Load
+
+    /// Expand the tool call row. If output was evicted, lazy-load it from the
+    /// server's JSONL trace before expanding.
+    private func expandOrLazyLoad() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if isExpanded {
+                reducer.expandedItemIDs.remove(id)
+                return
+            }
+            reducer.expandedItemIDs.insert(id)
+        }
+
+        // If output was evicted (store is empty but we know there was output),
+        // lazy-load from the server trace.
+        let hasOutput = toolOutputStore.fullOutput(for: id).isEmpty == false
+        let hadOutput = outputByteCount > 0
+        if !hasOutput && hadOutput && !isLoadingOutput {
+            lazyLoadOutput()
+        }
+    }
+
+    /// Fetch full tool output from the server's JSONL trace for evicted items.
+    private func lazyLoadOutput() {
+        guard let sessionId, let api = connection.apiClient else { return }
+
+        isLoadingOutput = true
+        Task { @MainActor in
+            defer { isLoadingOutput = false }
+            do {
+                let (output, _) = try await api.getToolOutput(sessionId: sessionId, toolCallId: id)
+                if !output.isEmpty {
+                    toolOutputStore.append(output, to: id)
+                }
+            } catch {
+                // Non-fatal — user just sees empty expanded output
+            }
+        }
+    }
+
+    /// Open the tool's file path in RemoteFileView.
+    private func openFile() {
+        guard let path = toolFilePath else { return }
+        filePathToOpen = path
+        showFileSheet = true
     }
 
     // MARK: - Expanded Content
@@ -336,10 +398,25 @@ private struct ToolCallRow: View {
             Text(verb)
                 .font(.caption.monospaced().bold())
                 .foregroundStyle(.tokyoCyan)
-            Text(filePath)
-                .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFgDim)
-                .lineLimit(1)
+
+            // File path — tappable to open in RemoteFileView
+            if isDone, toolFilePath != nil, sessionId != nil {
+                Button {
+                    openFile()
+                } label: {
+                    Text(filePath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoBlue)
+                        .underline(color: .tokyoBlue.opacity(0.5))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(filePath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tokyoFgDim)
+                    .lineLimit(1)
+            }
             Spacer()
             trailingInfo
         }
@@ -371,7 +448,7 @@ private struct ToolCallRow: View {
     private var trailingInfo: some View {
         HStack(spacing: 4) {
             if outputByteCount > 0 {
-                Text(formatBytes(outputByteCount))
+                Text(ToolCallFormatting.formatBytes(outputByteCount))
                     .font(.caption2)
                     .foregroundStyle(.tokyoComment)
             }
@@ -381,55 +458,14 @@ private struct ToolCallRow: View {
         }
     }
 
-    // MARK: - Arg Extraction
+    // MARK: - Arg Extraction (delegates to ToolCallFormatting)
 
     private var bashCommand: String {
-        if let cmd = args?["command"]?.stringValue {
-            return String(cmd.prefix(120))
-        }
-        // Fall back to parsing argsSummary
-        if argsSummary.hasPrefix("command: ") {
-            return String(argsSummary.dropFirst(9).prefix(120))
-        }
-        return argsSummary
+        ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
     }
 
     private var filePath: String {
-        let raw = args?["path"]?.stringValue
-            ?? args?["file_path"]?.stringValue
-            ?? parseArgValue("path")
-        guard let p = raw else { return argsSummary }
-
-        var display = p.shortenedPath
-
-        // Add line range for read
-        if tool == "Read" || tool == "read" {
-            let offset = args?["offset"]?.numberValue.map(Int.init)
-            let limit = args?["limit"]?.numberValue.map(Int.init)
-            if let offset {
-                let end = limit.map { offset + $0 - 1 }
-                display += ":\(offset)\(end.map { "-\($0)" } ?? "")"
-            }
-        }
-
-        return display
-    }
-
-    /// Parse a value from the flat argsSummary string (fallback when structured args unavailable).
-    private func parseArgValue(_ key: String) -> String? {
-        let prefix = "\(key): "
-        guard let range = argsSummary.range(of: prefix) else { return nil }
-        let after = argsSummary[range.upperBound...]
-        if let commaRange = after.range(of: ", ") {
-            return String(after[..<commaRange.lowerBound])
-        }
-        return String(after)
-    }
-
-    private func formatBytes(_ bytes: Int) -> String {
-        if bytes < 1024 { return "\(bytes)B" }
-        if bytes < 1024 * 1024 { return "\(bytes / 1024)KB" }
-        return String(format: "%.1fMB", Double(bytes) / (1024 * 1024))
+        ToolCallFormatting.displayFilePath(tool: tool, args: args, argsSummary: argsSummary)
     }
 }
 

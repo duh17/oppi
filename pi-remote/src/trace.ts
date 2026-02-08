@@ -205,6 +205,55 @@ export function parseJsonl(content: string): TraceEvent[] {
   return events;
 }
 
+// ─── Tool Output Lookup ───
+
+/**
+ * Find the full tool result for a specific toolCallId in a JSONL file.
+ *
+ * Scans the JSONL for a `toolResult` message whose `toolCallId` matches.
+ * Returns the output text and error flag, or null if not found.
+ *
+ * This is cheaper than parsing the full trace — it stops at the first match
+ * and only extracts the content we need.
+ */
+export function findToolOutput(
+  jsonlPath: string,
+  toolCallId: string,
+): { text: string; isError: boolean } | null {
+  if (!existsSync(jsonlPath)) return null;
+
+  let content: string;
+  try {
+    content = readFileSync(jsonlPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (entry.type !== "message") continue;
+
+    const msg = entry.message;
+    if (!msg || msg.role !== "toolResult") continue;
+    if (msg.toolCallId !== toolCallId) continue;
+
+    return {
+      text: extractText(msg.content),
+      isError: msg.isError === true,
+    };
+  }
+
+  return null;
+}
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {

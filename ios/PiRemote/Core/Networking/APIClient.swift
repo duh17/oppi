@@ -151,6 +151,42 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).skills
     }
 
+    // MARK: - Tool Output & Files
+
+    /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
+    ///
+    /// Used to lazy-load evicted tool output when the user expands an old tool call row.
+    func getToolOutput(sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
+        let data = try await get("/sessions/\(sessionId)/tool-output/\(toolCallId)")
+        struct Response: Decodable { let output: String; let isError: Bool }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return (response.output, response.isError)
+    }
+
+    /// Fetch a file from the session's working directory.
+    ///
+    /// Returns the raw file content as a string. Used when the user taps a file path
+    /// in a tool call row to view the current file on disk.
+    func getSessionFile(sessionId: String, path: String) async throws -> String {
+        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw APIError.server(status: 400, message: "Invalid file path")
+        }
+        let data = try await get("/sessions/\(sessionId)/files?path=\(encoded)")
+        // File content is returned as raw bytes — decode as UTF-8 text
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw APIError.server(status: 422, message: "File is not text (binary content)")
+        }
+        return text
+    }
+
+    /// Fetch raw file data from the session's working directory (for binary files like images).
+    func getSessionFileData(sessionId: String, path: String) async throws -> Data {
+        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw APIError.server(status: 400, message: "Invalid file path")
+        }
+        return try await get("/sessions/\(sessionId)/files?path=\(encoded)")
+    }
+
     // MARK: - Device Token
 
     /// Register APNs device token with the server.
@@ -229,6 +265,7 @@ struct CreateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     let skills: [String]
+    var runtime: String?
     var policyPreset: String?
     var systemPrompt: String?
     var hostMount: String?
@@ -242,6 +279,7 @@ struct UpdateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     var skills: [String]?
+    var runtime: String?
     var policyPreset: String?
     var systemPrompt: String?
     var hostMount: String?
