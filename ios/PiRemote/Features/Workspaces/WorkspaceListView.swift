@@ -79,9 +79,12 @@ private struct WorkspaceRowView: View {
             WorkspaceIcon(icon: workspace.icon, size: 24)
                 .frame(width: 36, height: 36)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.name)
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(workspace.name)
+                        .font(.headline)
+                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                }
 
                 if let description = workspace.description {
                     Text(description)

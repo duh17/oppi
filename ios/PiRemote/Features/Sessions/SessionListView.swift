@@ -138,8 +138,12 @@ struct SessionRowView: View {
                         .foregroundStyle(.tokyoComment)
                 }
 
-                // Row 2: workspace + model
-                HStack(spacing: 4) {
+                // Row 2: runtime + workspace + model
+                HStack(spacing: 6) {
+                    if session.runtime != nil {
+                        RuntimeBadge(runtime: session.runtime, compact: true)
+                    }
+
                     if let wsName = session.workspaceName {
                         Text(wsName)
                             .font(.caption.bold())
@@ -147,7 +151,7 @@ struct SessionRowView: View {
                     }
 
                     if let model = session.model {
-                        if session.workspaceName != nil {
+                        if session.workspaceName != nil || session.runtime != nil {
                             Text("·")
                                 .foregroundStyle(.tokyoComment)
                         }

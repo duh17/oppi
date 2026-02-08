@@ -9,6 +9,7 @@ struct WorkspaceCreateView: View {
     @State private var description = ""
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
+    @State private var runtime = "container"
     @State private var policyPreset = "container"
     @State private var isCreating = false
     @State private var error: String?
@@ -73,6 +74,20 @@ struct WorkspaceCreateView: View {
                     }
                 }
 
+                Section("Runtime") {
+                    Picker("Runtime", selection: $runtime) {
+                        Text("Container").tag("container")
+                        Text("Host").tag("host")
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(runtime == "container"
+                         ? "Container isolates filesystem/tools (recommended)."
+                         : "Host runs directly on Mac with full host access.")
+                        .font(.caption)
+                        .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
+                }
+
                 Section("Policy") {
                     Picker("Preset", selection: $policyPreset) {
                         Text("Container").tag("container")
@@ -123,6 +138,7 @@ struct WorkspaceCreateView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
+            runtime: runtime,
             policyPreset: policyPreset
         )
 

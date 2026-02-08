@@ -11,6 +11,7 @@ struct WorkspaceEditView: View {
     @State private var description: String = ""
     @State private var icon: String = ""
     @State private var selectedSkills: Set<String> = []
+    @State private var runtime: String = "container"
     @State private var policyPreset: String = "container"
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
@@ -56,6 +57,20 @@ struct WorkspaceEditView: View {
                 }
             }
 
+            Section("Runtime") {
+                Picker("Runtime", selection: $runtime) {
+                    Text("Container").tag("container")
+                    Text("Host").tag("host")
+                }
+                .pickerStyle(.segmented)
+
+                Text(runtime == "container"
+                     ? "Container runtime: isolated environment."
+                     : "Host runtime: direct process on macOS host.")
+                    .font(.caption)
+                    .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
+            }
+
             Section("Policy") {
                 Picker("Preset", selection: $policyPreset) {
                     Text("Container").tag("container")
@@ -64,14 +79,16 @@ struct WorkspaceEditView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section("Host Mount") {
+            Section(runtime == "container" ? "Workspace Mount" : "Host Working Directory") {
                 TextField("~/workspace/project", text: $hostMount)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
 
                 if !hostMount.isEmpty {
-                    Text("Directory on host mounted as /work in container")
+                    Text(runtime == "container"
+                         ? "Host directory mounted as /work in container"
+                         : "Host process current directory")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -150,6 +167,7 @@ struct WorkspaceEditView: View {
         description = workspace.description ?? ""
         icon = workspace.icon ?? ""
         selectedSkills = Set(workspace.skills)
+        runtime = workspace.runtime
         policyPreset = workspace.policyPreset
         hostMount = workspace.hostMount ?? ""
         systemPrompt = workspace.systemPrompt ?? ""
@@ -177,6 +195,7 @@ struct WorkspaceEditView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
+            runtime: runtime,
             policyPreset: policyPreset,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,

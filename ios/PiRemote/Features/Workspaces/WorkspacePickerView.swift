@@ -123,6 +123,8 @@ private struct WorkspaceCard: View {
                     .font(.headline)
                     .lineLimit(1)
 
+                RuntimeBadge(runtime: workspace.runtime)
+
                 if let description = workspace.description {
                     Text(description)
                         .font(.caption)
@@ -136,9 +138,27 @@ private struct WorkspaceCard: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
             .padding(.horizontal, 12)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(backgroundFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(borderColor, lineWidth: 1.5)
+                    )
+            )
         }
         .buttonStyle(.plain)
+    }
+    private var backgroundFill: Color {
+        workspace.isContainerRuntime
+            ? Color.tokyoGreen.opacity(0.12)
+            : Color.tokyoOrange.opacity(0.14)
+    }
+
+    private var borderColor: Color {
+        workspace.isContainerRuntime
+            ? Color.tokyoGreen.opacity(0.55)
+            : Color.tokyoOrange.opacity(0.65)
     }
 }
 
@@ -173,6 +193,69 @@ struct WorkspaceIcon: View {
                 .font(.system(size: size))
                 .foregroundStyle(.tokyoBlue)
         }
+    }
+}
+
+struct RuntimeBadge: View {
+    let runtime: String?
+    var compact: Bool = false
+
+    private var normalizedRuntime: String {
+        switch runtime {
+        case "container": return "container"
+        case "host": return "host"
+        default: return "unknown"
+        }
+    }
+
+    private var label: String {
+        switch normalizedRuntime {
+        case "container": return "CONTAINER"
+        case "host": return "HOST"
+        default: return "UNKNOWN"
+        }
+    }
+
+    private var icon: String {
+        switch normalizedRuntime {
+        case "container": return "shippingbox.fill"
+        case "host": return "macwindow"
+        default: return "questionmark.circle"
+        }
+    }
+
+    private var fg: Color {
+        switch normalizedRuntime {
+        case "container": return .tokyoGreen
+        case "host": return .tokyoOrange
+        default: return .tokyoComment
+        }
+    }
+
+    private var bg: Color {
+        switch normalizedRuntime {
+        case "container": return .tokyoGreen.opacity(0.18)
+        case "host": return .tokyoOrange.opacity(0.22)
+        default: return .tokyoComment.opacity(0.18)
+        }
+    }
+
+    private var border: Color {
+        switch normalizedRuntime {
+        case "container": return .tokyoGreen.opacity(0.7)
+        case "host": return .tokyoOrange.opacity(0.75)
+        default: return .tokyoComment.opacity(0.5)
+        }
+    }
+
+    var body: some View {
+        Label(label, systemImage: icon)
+            .font((compact ? Font.caption2 : Font.caption).monospaced().bold())
+            .foregroundStyle(fg)
+            .padding(.horizontal, compact ? 6 : 8)
+            .padding(.vertical, compact ? 2 : 3)
+            .background(bg, in: Capsule())
+            .overlay(Capsule().stroke(border, lineWidth: 1))
     }
 }
 
