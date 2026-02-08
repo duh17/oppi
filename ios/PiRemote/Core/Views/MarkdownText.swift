@@ -40,6 +40,9 @@ struct MarkdownText: View {
                     } else {
                         CodeBlockView(language: language, code: code)
                     }
+
+                case .table(let headers, let rows):
+                    TableBlockView(headers: headers, rows: rows)
                 }
             }
         }
@@ -176,6 +179,75 @@ private struct StreamingCodeBlockView: View {
     }
 }
 
+// MARK: - Table Block
+
+/// Compact, horizontally-scrollable markdown table.
+///
+/// Renders with a small monospaced font so tables don't dominate the
+/// chat on mobile screens. Uses a grid layout with subtle dividers.
+private struct TableBlockView: View {
+    let headers: [String]
+    let rows: [[String]]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Header row
+                HStack(spacing: 0) {
+                    ForEach(Array(headers.enumerated()), id: \.offset) { i, header in
+                        if i > 0 {
+                            Divider()
+                                .frame(height: 16)
+                                .overlay(Color.tokyoComment.opacity(0.3))
+                        }
+                        Text(header)
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(.tokyoCyan)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                }
+                .background(Color.tokyoBgHighlight)
+
+                // Separator
+                Rectangle()
+                    .fill(Color.tokyoComment.opacity(0.35))
+                    .frame(height: 1)
+
+                // Data rows
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
+                    HStack(spacing: 0) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { colIdx, cell in
+                            if colIdx > 0 {
+                                Divider()
+                                    .frame(height: 14)
+                                    .overlay(Color.tokyoComment.opacity(0.2))
+                            }
+                            Text(cell)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tokyoFg)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                        }
+                    }
+
+                    if rowIdx < rows.count - 1 {
+                        Rectangle()
+                            .fill(Color.tokyoComment.opacity(0.15))
+                            .frame(height: 1)
+                    }
+                }
+            }
+        }
+        .background(Color.tokyoBgDark)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - Code Block Parser
 
 enum ContentBlock: Equatable {
@@ -184,9 +256,11 @@ enum ContentBlock: Equatable {
     ///   unclosed (still-streaming) block. Used to decide whether to run
     ///   syntax highlighting during streaming.
     case codeBlock(language: String?, code: String, isComplete: Bool)
+    /// Markdown table — rendered compact and horizontally scrollable.
+    case table(headers: [String], rows: [[String]])
 }
 
-/// Split markdown content into alternating prose and fenced code blocks.
+/// Split markdown content into alternating prose, fenced code blocks, and tables.
 ///
 /// Tracks whether each code block is complete (closed with ```) so callers
 /// can skip expensive highlighting on the active streaming block.
@@ -196,14 +270,60 @@ func parseCodeBlocks(_ content: String) -> [ContentBlock] {
     var inCodeBlock = false
     var codeLanguage: String?
     var codeContent = ""
+    /// Accumulated table lines (header + separator + rows). Flushed when a
+    /// non-table line is encountered or at end-of-content.
+    var tableLines: [Substring] = []
+
+    /// Flush accumulated prose into a `.markdown` block.
+    func flushProse() {
+        guard !current.isEmpty else { return }
+        blocks.append(.markdown(current))
+        current = ""
+    }
+
+    /// Flush accumulated table lines into a `.table` block.
+    func flushTable() {
+        guard tableLines.count >= 2 else {
+            // Not a valid table (need header + separator at minimum).
+            // Push lines back as prose.
+            for line in tableLines {
+                if !current.isEmpty { current += "\n" }
+                current += line
+            }
+            tableLines.removeAll()
+            return
+        }
+
+        // Validate: line[1] must be the separator (|---|---|)
+        let sepLine = tableLines[1]
+        let isSeparator = sepLine.contains("-") && sepLine.split(separator: "|").allSatisfy {
+            $0.trimmingCharacters(in: .whitespaces).allSatisfy { $0 == "-" || $0 == ":" }
+        }
+        guard isSeparator else {
+            for line in tableLines {
+                if !current.isEmpty { current += "\n" }
+                current += line
+            }
+            tableLines.removeAll()
+            return
+        }
+
+        flushProse()
+
+        let headers = parseTableRow(tableLines[0])
+        var rows: [[String]] = []
+        for line in tableLines.dropFirst(2) {
+            rows.append(parseTableRow(line))
+        }
+        blocks.append(.table(headers: headers, rows: rows))
+        tableLines.removeAll()
+    }
 
     for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
         if !inCodeBlock && line.hasPrefix("```") {
-            // Start of code block
-            if !current.isEmpty {
-                blocks.append(.markdown(current))
-                current = ""
-            }
+            // Start of code block — flush any pending table first
+            flushTable()
+            flushProse()
             inCodeBlock = true
             let lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
             codeLanguage = lang.isEmpty ? nil : lang
@@ -217,7 +337,17 @@ func parseCodeBlocks(_ content: String) -> [ContentBlock] {
         } else if inCodeBlock {
             if !codeContent.isEmpty { codeContent += "\n" }
             codeContent += line
+        } else if isTableLine(line) {
+            // Accumulate table lines
+            if tableLines.isEmpty {
+                flushProse()
+            }
+            tableLines.append(line)
         } else {
+            // Non-table prose — flush any pending table
+            if !tableLines.isEmpty {
+                flushTable()
+            }
             if !current.isEmpty { current += "\n" }
             current += line
         }
@@ -225,11 +355,29 @@ func parseCodeBlocks(_ content: String) -> [ContentBlock] {
 
     // Flush remaining
     if inCodeBlock {
-        // Unclosed code block (streaming) — mark incomplete
+        flushTable()
         blocks.append(.codeBlock(language: codeLanguage, code: codeContent, isComplete: false))
-    } else if !current.isEmpty {
-        blocks.append(.markdown(current))
+    } else {
+        flushTable()
+        if !current.isEmpty {
+            blocks.append(.markdown(current))
+        }
     }
 
     return blocks
+}
+
+/// Returns `true` if the line looks like a markdown table row (`| ... | ... |`).
+private func isTableLine(_ line: Substring) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    return trimmed.hasPrefix("|") && trimmed.hasSuffix("|") && trimmed.count > 1
+}
+
+/// Parse a single table row into cell strings, trimming outer pipes and whitespace.
+private func parseTableRow(_ line: Substring) -> [String] {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    // Drop leading/trailing pipes, then split
+    let inner = trimmed.dropFirst().dropLast()
+    return inner.split(separator: "|", omittingEmptySubsequences: false)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
 }
