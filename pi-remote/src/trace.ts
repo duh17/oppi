@@ -1,12 +1,19 @@
 /**
- * Read pi's JSONL session files and convert to trace events.
+ * Read pi's JSONL session files and build session context.
  *
  * Pi saves full conversation history (including tool calls, tool results,
- * and thinking) in JSONL files inside the sandbox:
+ * thinking, compaction, and branching) in JSONL files inside the sandbox:
  *   <sandboxBaseDir>/<userId>/agent/sessions/--work--/<timestamp>_<uuid>.jsonl
  *
- * This module reads those files and produces a structured trace that iOS
- * can render as a full timeline (tool calls, output, thinking, etc).
+ * This module reads those files and produces a structured session context
+ * that iOS can render as a timeline — matching pi TUI's `buildSessionContext()`.
+ *
+ * Key behaviors matching pi TUI:
+ * - Tree walk from leaf to root via parentId chain (not linear scan)
+ * - Compaction handling: summary + kept messages + post-compaction messages
+ * - Pre-compaction messages are hidden (same as pi TUI)
+ * - All entry types handled: message, compaction, model_change,
+ *   thinking_level_change, branch_summary, custom_message
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -36,7 +43,314 @@ export interface TraceEvent {
   thinking?: string;
 }
 
-// ─── JSONL Reader ───
+// ─── Raw JSONL Entry (matches pi's session file format) ───
+
+interface SessionEntry {
+  type: string;
+  id: string;
+  parentId?: string | null;
+  timestamp?: string;
+  // message entries
+  message?: {
+    role: string;
+    content: unknown;
+    provider?: string;
+    model?: string;
+    toolCallId?: string;
+    toolName?: string;
+    isError?: boolean;
+  };
+  // compaction entries
+  summary?: string;
+  firstKeptEntryId?: string;
+  tokensBefore?: number;
+  // thinking_level_change entries
+  thinkingLevel?: string;
+  // model_change entries
+  provider?: string;
+  modelId?: string;
+  // branch_summary entries
+  // custom_message entries
+  customType?: string;
+  content?: unknown;
+  display?: boolean;
+  details?: unknown;
+  // session_info entries
+  name?: string;
+}
+
+// ─── Session Context Builder ───
+
+/**
+ * Build session context from raw JSONL entries.
+ *
+ * Mirrors pi TUI's `buildSessionContext()`:
+ * 1. Parse all entry types
+ * 2. Build id → entry index
+ * 3. Walk parentId chain from leaf to root
+ * 4. Handle compaction: summary + kept messages + post-compaction only
+ *
+ * This produces the same view the user sees in pi TUI.
+ */
+export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
+  if (entries.length === 0) return [];
+
+  // Build id → entry index
+  const byId = new Map<string, SessionEntry>();
+  for (const entry of entries) {
+    if (entry.id) {
+      byId.set(entry.id, entry);
+    }
+  }
+
+  // Find leaf (last entry with an id, excluding the session header)
+  let leaf: SessionEntry | undefined;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type !== "session" && entry.id) {
+      leaf = entry;
+      break;
+    }
+  }
+
+  if (!leaf) return [];
+
+  // Walk parentId chain from leaf to root, collecting the path
+  const path: SessionEntry[] = [];
+  let current: SessionEntry | undefined = leaf;
+  while (current) {
+    path.unshift(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+
+  // Find the LAST compaction in the path (most recent takes precedence)
+  let compaction: SessionEntry | null = null;
+  for (const entry of path) {
+    if (entry.type === "compaction") {
+      compaction = entry;
+    }
+  }
+
+  // Build the visible entries list (matching pi TUI logic)
+  let visibleEntries: SessionEntry[];
+
+  if (compaction) {
+    const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction!.id);
+
+    visibleEntries = [];
+
+    // 1. Add compaction summary as a synthetic entry (handled below)
+    // 2. Kept messages: from firstKeptEntryId to compaction
+    let foundFirstKept = false;
+    for (let i = 0; i < compactionIdx; i++) {
+      const entry = path[i];
+      if (entry.id === compaction.firstKeptEntryId) {
+        foundFirstKept = true;
+      }
+      if (foundFirstKept) {
+        visibleEntries.push(entry);
+      }
+    }
+
+    // 3. Post-compaction entries
+    for (let i = compactionIdx + 1; i < path.length; i++) {
+      visibleEntries.push(path[i]);
+    }
+  } else {
+    // No compaction — all path entries are visible
+    visibleEntries = path;
+  }
+
+  // Convert visible entries to TraceEvents
+  const events: TraceEvent[] = [];
+  let eventCounter = 0;
+
+  // Emit compaction summary first (if compacted)
+  if (compaction) {
+    const summaryText = compaction.summary || "Previous context was compacted";
+    const tokenInfo = compaction.tokensBefore
+      ? ` (${compaction.tokensBefore.toLocaleString()} tokens)`
+      : "";
+    events.push({
+      id: compaction.id,
+      type: "compaction",
+      timestamp: compaction.timestamp || new Date().toISOString(),
+      text: `Context compacted${tokenInfo}: ${summaryText}`,
+    });
+  }
+
+  for (const entry of visibleEntries) {
+    const timestamp = entry.timestamp || new Date().toISOString();
+
+    switch (entry.type) {
+      case "message":
+        emitMessageEvents(entry, timestamp, events, eventCounter);
+        eventCounter += 10; // Reserve IDs for sub-events
+        break;
+
+      case "thinking_level_change":
+        if (entry.thinkingLevel) {
+          events.push({
+            id: entry.id,
+            type: "system",
+            timestamp,
+            text: `Thinking level: ${entry.thinkingLevel}`,
+          });
+        }
+        break;
+
+      case "model_change":
+        if (entry.modelId) {
+          events.push({
+            id: entry.id,
+            type: "system",
+            timestamp,
+            text: `Model: ${entry.modelId}`,
+          });
+        }
+        break;
+
+      case "branch_summary":
+        if (entry.summary) {
+          events.push({
+            id: entry.id,
+            type: "system",
+            timestamp,
+            text: `Branch context: ${entry.summary}`,
+          });
+        }
+        break;
+
+      case "custom_message":
+        if (entry.content && entry.display !== false) {
+          const text = extractText(entry.content);
+          if (text) {
+            events.push({
+              id: entry.id,
+              type: "system",
+              timestamp,
+              text,
+            });
+          }
+        }
+        break;
+
+      // Skip non-renderable types (session, label, compaction handled above, etc.)
+      default:
+        break;
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Emit TraceEvents for a single message entry.
+ * Handles user, assistant (with text/thinking/toolCall blocks), and toolResult.
+ */
+function emitMessageEvents(
+  entry: SessionEntry,
+  timestamp: string,
+  events: TraceEvent[],
+  _counterBase: number,
+): void {
+  const msg = entry.message;
+  if (!msg) return;
+
+  const role = msg.role;
+  const content = msg.content;
+
+  if (role === "user") {
+    const text = extractText(content);
+    if (text) {
+      events.push({
+        id: entry.id,
+        type: "user",
+        timestamp,
+        text,
+      });
+    }
+  } else if (role === "assistant") {
+    if (Array.isArray(content)) {
+      let subIdx = 0;
+      for (const block of content) {
+        const b = block as Record<string, unknown>;
+        if (b.type === "text" && b.text) {
+          events.push({
+            id: `${entry.id}-text-${subIdx++}`,
+            type: "assistant",
+            timestamp,
+            text: b.text as string,
+          });
+        } else if (b.type === "thinking" && b.thinking) {
+          events.push({
+            id: `${entry.id}-think-${subIdx++}`,
+            type: "thinking",
+            timestamp,
+            thinking: b.thinking as string,
+          });
+        } else if (b.type === "toolCall") {
+          events.push({
+            id: (b.id as string) || `${entry.id}-tool-${subIdx++}`,
+            type: "toolCall",
+            timestamp,
+            tool: b.name as string,
+            args: (b.arguments as Record<string, unknown>) || tryParseJson(b.partialJson),
+          });
+        }
+      }
+    } else if (typeof content === "string" && content) {
+      events.push({
+        id: entry.id,
+        type: "assistant",
+        timestamp,
+        text: content,
+      });
+    }
+  } else if (role === "toolResult") {
+    const output = extractText(content);
+    events.push({
+      id: `result-${entry.id}`,
+      type: "toolResult",
+      timestamp,
+      toolCallId: msg.toolCallId,
+      toolName: msg.toolName,
+      output: output || "",
+      isError: msg.isError === true,
+    });
+  }
+}
+
+// ─── JSONL Parsing ───
+
+/**
+ * Parse raw JSONL content into session entries.
+ */
+function parseEntries(content: string): SessionEntry[] {
+  const entries: SessionEntry[] = [];
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as SessionEntry);
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return entries;
+}
+
+/**
+ * Parse JSONL content and build session context.
+ *
+ * This is the main entry point — equivalent to pi TUI's
+ * `loadEntriesFromFile()` + `buildSessionContext()`.
+ */
+export function parseJsonl(content: string): TraceEvent[] {
+  const entries = parseEntries(content);
+  return buildSessionContext(entries);
+}
+
+// ─── JSONL File Readers ───
 
 /**
  * Find and read the latest pi JSONL file for a session sandbox.
@@ -44,7 +358,11 @@ export interface TraceEvent {
  * Layout:
  *   <sandboxBaseDir>/<userId>/<sessionId>/agent/sessions/--work--/*.jsonl
  */
-export function readSessionTrace(sandboxBaseDir: string, userId: string, sessionId: string): TraceEvent[] | null {
+export function readSessionTrace(
+  sandboxBaseDir: string,
+  userId: string,
+  sessionId: string,
+): TraceEvent[] | null {
   const sessionsDir = join(sandboxBaseDir, userId, sessionId, "agent", "sessions", "--work--");
   return readTraceFromDir(sessionsDir);
 }
@@ -60,14 +378,14 @@ export function readSessionTraceByUuid(
   const sessionsDir = join(sandboxBaseDir, userId, "agent", "sessions", "--work--");
   if (!existsSync(sessionsDir)) return null;
 
-  const file = readdirSync(sessionsDir).find(f => f.includes(piSessionUuid));
+  const file = readdirSync(sessionsDir).find((f) => f.includes(piSessionUuid));
   if (!file) return null;
 
   return readSessionTraceFromFile(join(sessionsDir, file));
 }
 
 /**
- * Read and parse a trace from an absolute JSONL file path.
+ * Read and parse a session context from an absolute JSONL file path.
  */
 export function readSessionTraceFromFile(jsonlPath: string): TraceEvent[] | null {
   if (!existsSync(jsonlPath)) return null;
@@ -81,128 +399,56 @@ export function readSessionTraceFromFile(jsonlPath: string): TraceEvent[] | null
 }
 
 /**
- * Read and merge traces from multiple explicit JSONL file paths.
+ * Read and merge session context from multiple JSONL file paths.
+ *
+ * For multi-file sessions, we concatenate all entries (sorted by file name
+ * which is chronological) then build context once — so compaction in any
+ * file correctly hides earlier entries across files.
  */
 export function readSessionTraceFromFiles(jsonlPaths: string[]): TraceEvent[] | null {
   const uniqueSorted = Array.from(new Set(jsonlPaths)).sort();
-  const merged: TraceEvent[] = [];
+  const allEntries: SessionEntry[] = [];
 
   for (const path of uniqueSorted) {
-    const trace = readSessionTraceFromFile(path);
-    if (trace?.length) {
-      merged.push(...trace);
+    if (!existsSync(path)) continue;
+    try {
+      const content = readFileSync(path, "utf-8");
+      const entries = parseEntries(content);
+      allEntries.push(...entries);
+    } catch {
+      // Skip unreadable files
     }
   }
 
-  return merged.length > 0 ? merged : null;
+  if (allEntries.length === 0) return null;
+  const events = buildSessionContext(allEntries);
+  return events.length > 0 ? events : null;
 }
 
 function readTraceFromDir(sessionsDir: string): TraceEvent[] | null {
   if (!existsSync(sessionsDir)) return null;
 
   const files = readdirSync(sessionsDir)
-    .filter(f => f.endsWith(".jsonl"))
+    .filter((f) => f.endsWith(".jsonl"))
     .sort(); // timestamp prefix => chronological order
 
   if (files.length === 0) return null;
 
-  const merged: TraceEvent[] = [];
+  // Collect all entries across files, then build context once
+  const allEntries: SessionEntry[] = [];
   for (const file of files) {
-    const trace = readSessionTraceFromFile(join(sessionsDir, file));
-    if (trace?.length) {
-      merged.push(...trace);
-    }
-  }
-
-  return merged.length > 0 ? merged : null;
-}
-
-// ─── Parser ───
-
-export function parseJsonl(content: string): TraceEvent[] {
-  const events: TraceEvent[] = [];
-  let eventCounter = 0;
-
-  for (const line of content.split("\n")) {
-    if (!line.trim()) continue;
-
-    let entry: any;
     try {
-      entry = JSON.parse(line);
+      const content = readFileSync(join(sessionsDir, file), "utf-8");
+      const entries = parseEntries(content);
+      allEntries.push(...entries);
     } catch {
-      continue;
-    }
-
-    if (entry.type !== "message") continue;
-
-    const msg = entry.message;
-    if (!msg) continue;
-
-    const timestamp = entry.timestamp || new Date().toISOString();
-    const role = msg.role;
-    const content = msg.content;
-
-    if (role === "user") {
-      const text = extractText(content);
-      if (text) {
-        events.push({
-          id: entry.id || `trace-${eventCounter++}`,
-          type: "user",
-          timestamp,
-          text,
-        });
-      }
-    } else if (role === "assistant") {
-      // Assistant messages can contain text, thinking, and toolCall blocks
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === "text" && block.text) {
-            events.push({
-              id: `${entry.id || "msg"}-text-${eventCounter++}`,
-              type: "assistant",
-              timestamp,
-              text: block.text,
-            });
-          } else if (block.type === "thinking" && block.thinking) {
-            events.push({
-              id: `${entry.id || "msg"}-think-${eventCounter++}`,
-              type: "thinking",
-              timestamp,
-              thinking: block.thinking,
-            });
-          } else if (block.type === "toolCall") {
-            events.push({
-              id: block.id || `tool-${eventCounter++}`,
-              type: "toolCall",
-              timestamp,
-              tool: block.name,
-              args: block.arguments || tryParseJson(block.partialJson),
-            });
-          }
-        }
-      } else if (typeof content === "string" && content) {
-        events.push({
-          id: entry.id || `trace-${eventCounter++}`,
-          type: "assistant",
-          timestamp,
-          text: content,
-        });
-      }
-    } else if (role === "toolResult") {
-      const output = extractText(content);
-      events.push({
-        id: `result-${eventCounter++}`,
-        type: "toolResult",
-        timestamp,
-        toolCallId: msg.toolCallId,
-        toolName: msg.toolName,
-        output: output || "",
-        isError: msg.isError === true,
-      });
+      // Skip unreadable files
     }
   }
 
-  return events;
+  if (allEntries.length === 0) return null;
+  const events = buildSessionContext(allEntries);
+  return events.length > 0 ? events : null;
 }
 
 // ─── Tool Output Lookup ───
@@ -213,7 +459,7 @@ export function parseJsonl(content: string): TraceEvent[] {
  * Scans the JSONL for a `toolResult` message whose `toolCallId` matches.
  * Returns the output text and error flag, or null if not found.
  *
- * This is cheaper than parsing the full trace — it stops at the first match
+ * This is cheaper than parsing the full context — it stops at the first match
  * and only extracts the content we need.
  */
 export function findToolOutput(
@@ -232,9 +478,9 @@ export function findToolOutput(
   for (const line of content.split("\n")) {
     if (!line.trim()) continue;
 
-    let entry: any;
+    let entry: SessionEntry;
     try {
-      entry = JSON.parse(line);
+      entry = JSON.parse(line) as SessionEntry;
     } catch {
       continue;
     }
@@ -254,17 +500,23 @@ export function findToolOutput(
   return null;
 }
 
+// ─── Helpers ───
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .map((b: any) => {
+      .map((b: Record<string, unknown>) => {
         if ((b.type === "text" || b.type === "output_text") && b.text) {
-          return b.text;
+          return b.text as string;
         }
-        // Image content blocks → data URI so iOS ImageExtractor can render them
+        // Image/audio content blocks -> data URI so iOS extractors can render them
         if (b.type === "image" && b.data) {
-          const mime = b.mimeType || "image/png";
+          const mime = (b.mimeType as string) || "image/png";
+          return `data:${mime};base64,${b.data}`;
+        }
+        if ((b.type === "audio" || b.type === "output_audio") && b.data) {
+          const mime = (b.mimeType as string) || "audio/wav";
           return `data:${mime};base64,${b.data}`;
         }
         return null;
@@ -278,7 +530,7 @@ function extractText(content: unknown): string {
 function tryParseJson(s: unknown): Record<string, unknown> | undefined {
   if (typeof s !== "string") return undefined;
   try {
-    return JSON.parse(s);
+    return JSON.parse(s) as Record<string, unknown>;
   } catch {
     return undefined;
   }

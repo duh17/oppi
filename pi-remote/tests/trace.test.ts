@@ -293,6 +293,48 @@ describe("parseJsonl", () => {
     expect(events).toHaveLength(1);
     expect(events[0].output).toBe("File: screenshot.png\ndata:image/gif;base64,R0lGODlhAQABAIAAAP");
   });
+
+  it("extracts audio content blocks as data URIs in tool results", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "audio-result",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tc-read-audio",
+        toolName: "Read",
+        content: [
+          { type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("toolResult");
+    expect(events[0].output).toBe("data:audio/wav;base64,UklGRiQAAABXQVZF");
+  });
+
+  it("extracts mixed text and audio content blocks in tool results", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "mixed-audio-result",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: {
+        role: "toolResult",
+        toolCallId: "tc-audio-mixed",
+        toolName: "Read",
+        content: [
+          { type: "text", text: "Generated clip" },
+          { type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(1);
+    expect(events[0].output).toBe("Generated clip\ndata:audio/wav;base64,UklGRiQAAABXQVZF");
+  });
 });
 
 // ─── readSessionTrace integration ───
