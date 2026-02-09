@@ -11,14 +11,17 @@ import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
 import { createReadStream } from "node:fs";
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, resolve, extname } from "node:path";
 import { homedir } from "node:os";
+import { execFileSync, execSync } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
-import { SessionManager, type ExtensionUIResponse } from "./sessions.js";
+import { SessionManager } from "./sessions.js";
 import { PolicyEngine } from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
+import { RuleStore } from "./rules.js";
+import { AuditLog } from "./audit.js";
 import { SandboxManager } from "./sandbox.js";
 import { SkillRegistry } from "./skills.js";
 import { readSessionTrace, readSessionTraceByUuid, readSessionTraceFromFile, readSessionTraceFromFiles, findToolOutput } from "./trace.js";
@@ -38,6 +41,18 @@ import type {
   ApiError,
 } from "./types.js";
 
+// ─── Logging ───
+
+/** Compact HH:MM:SS.mmm timestamp for log lines. */
+function ts(): string {
+  const d = new Date();
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
+}
+
 // ─── Available Models ───
 
 interface ModelInfo {
@@ -47,39 +62,100 @@ interface ModelInfo {
   contextWindow: number;
 }
 
-const AVAILABLE_MODELS: ModelInfo[] = [
-  // Anthropic
-  { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", contextWindow: 200000 },
-  { id: "anthropic/claude-sonnet-4-0", name: "Claude Sonnet 4", provider: "anthropic", contextWindow: 200000 },
-  { id: "anthropic/claude-haiku-3-5", name: "Claude Haiku 3.5", provider: "anthropic", contextWindow: 200000 },
-  // OpenAI
-  { id: "openai/o3", name: "o3", provider: "openai", contextWindow: 200000 },
-  { id: "openai/o4-mini", name: "o4-mini", provider: "openai", contextWindow: 200000 },
-  { id: "openai/gpt-4.1", name: "GPT-4.1", provider: "openai", contextWindow: 1000000 },
-  // Google
-  { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", contextWindow: 1000000 },
-  { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google", contextWindow: 1000000 },
-  // LM Studio (local)
-  { id: "lmstudio/qwen3-32b", name: "Qwen3 32B", provider: "lmstudio", contextWindow: 32768 },
-  { id: "lmstudio/deepseek-r1-0528-qwen3-8b", name: "DeepSeek R1 8B", provider: "lmstudio", contextWindow: 32768 },
+const FALLBACK_MODELS: ModelInfo[] = [
+  { id: "anthropic/claude-opus-4-6", name: "claude-opus-4-6", provider: "anthropic", contextWindow: 200000 },
+  { id: "openai-codex/gpt-5.3-codex", name: "gpt-5.3-codex", provider: "openai-codex", contextWindow: 272000 },
+  { id: "lmstudio/glm-4.7-flash-mlx", name: "glm-4.7-flash-mlx", provider: "lmstudio", contextWindow: 128000 },
 ];
 
-function getContextWindow(modelId: string): number {
-  const known = AVAILABLE_MODELS.find(m => m.id === modelId)?.contextWindow;
-  if (known) {
-    return known;
+/** Parse compact token counts like 200K, 196.6K, 1M. */
+function parseCompactTokenCount(raw: string): number | null {
+  const normalized = raw.trim().toLowerCase().replace(/,/g, "");
+  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
+  if (!match) {
+    return null;
   }
 
-  // Generic model-id fallback, e.g. "...-272k" / "..._128k".
-  const match = modelId.match(/(\d{2,4})k\b/i);
-  if (match) {
-    const thousands = Number.parseInt(match[1], 10);
-    if (Number.isFinite(thousands) && thousands > 0) {
-      return thousands * 1000;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  const suffix = match[2];
+  if (suffix === "m") {
+    return Math.round(value * 1_000_000);
+  }
+  if (suffix === "k") {
+    return Math.round(value * 1_000);
+  }
+  return Math.round(value);
+}
+
+/** Parse `pi --list-models` table output into model records. */
+function parseModelTable(output: string): ModelInfo[] {
+  const models: ModelInfo[] = [];
+  const seen = new Set<string>();
+
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("provider")) {
+      continue;
+    }
+
+    const cols = trimmed.split(/\s{2,}/).map(v => v.trim()).filter(Boolean);
+    if (cols.length < 3) {
+      continue;
+    }
+
+    const provider = cols[0];
+    const modelId = cols[1];
+    const contextRaw = cols[2];
+
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(provider)) {
+      continue;
+    }
+
+    const id = `${provider}/${modelId}`;
+
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+
+    models.push({
+      id,
+      name: modelId,
+      provider,
+      contextWindow: parseCompactTokenCount(contextRaw) ?? 200000,
+    });
+  }
+
+  return models;
+}
+
+/** Resolve the pi executable path for host-side model discovery. */
+function resolvePiExecutable(): string {
+  const envPath = process.env.PI_REMOTE_PI_BIN;
+  if (envPath && existsSync(envPath)) {
+    return envPath;
+  }
+
+  try {
+    const discovered = execSync("which pi", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (discovered.length > 0) {
+      return discovered;
+    }
+  } catch {
+    // Fall through to known locations
+  }
+
+  for (const candidate of ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"]) {
+    if (existsSync(candidate)) {
+      return candidate;
     }
   }
 
-  return 200000;
+  return "pi";
 }
 
 export class Server {
@@ -94,14 +170,27 @@ export class Server {
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
 
+  private readonly piExecutable: string;
+  private modelCatalog: ModelInfo[] = [...FALLBACK_MODELS];
+  private modelCatalogUpdatedAt = 0;
+  private modelCatalogRefresh: Promise<void> | null = null;
+  private readonly modelCatalogTtlMs = 30_000;
+
   // Track WebSocket connections per user for permission/UI forwarding
   private userConnections: Map<string, Set<WebSocket>> = new Map();
 
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
+    this.piExecutable = resolvePiExecutable();
 
-    this.policy = new PolicyEngine("container"); // Per-workspace in v2
-    this.gate = new GateServer(this.policy);
+    const dataDir = storage.getDataDir();
+    this.policy = new PolicyEngine("host"); // Default: restrictive. Per-session overrides via gate.setSessionPolicy().
+
+    // v2 policy infrastructure
+    const ruleStore = new RuleStore(join(dataDir, "rules.json"));
+    const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
+
+    this.gate = new GateServer(this.policy, ruleStore, auditLog);
     this.authProxy = new AuthProxy();
     this.sandbox = new SandboxManager();
     this.skillRegistry = new SkillRegistry();
@@ -148,6 +237,9 @@ export class Server {
     // Start auth proxy (credential-injecting reverse proxy for containers)
     await this.authProxy.start();
 
+    // Prime model catalog in background so first picker open is fast.
+    void this.refreshModelCatalog(true);
+
     const config = this.storage.getConfig();
     return new Promise((resolve) => {
       this.httpServer.listen(config.port, config.host, () => {
@@ -180,22 +272,26 @@ export class Server {
       risk: pending.risk,
       reason: pending.reason,
       timeoutAt: pending.timeoutAt,
+      resolutionOptions: pending.resolutionOptions,
     };
 
     this.broadcastToUser(pending.userId, msg);
-    console.log(`[gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`);
+    console.log(`${ts()} [gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`);
   }
 
   // ─── User Connection Tracking ───
 
   private broadcastToUser(userId: string, msg: ServerMessage): void {
     const conns = this.userConnections.get(userId);
-    const hasWS = conns && conns.size > 0 &&
-      Array.from(conns).some(ws => ws.readyState === WebSocket.OPEN);
+    if (!conns || conns.size === 0) {
+      this.pushFallback(userId, msg);
+      return;
+    }
 
-    if (hasWS) {
+    const hasOpen = Array.from(conns).some(ws => ws.readyState === WebSocket.OPEN);
+    if (hasOpen) {
       const json = JSON.stringify(msg);
-      for (const ws of conns!) {
+      for (const ws of conns) {
         if (ws.readyState === WebSocket.OPEN) ws.send(json, { compress: false });
       }
     } else {
@@ -278,6 +374,68 @@ export class Server {
     }
   }
 
+  private async refreshModelCatalog(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && this.modelCatalog.length > 0 && now - this.modelCatalogUpdatedAt < this.modelCatalogTtlMs) {
+      return;
+    }
+
+    if (this.modelCatalogRefresh) {
+      await this.modelCatalogRefresh;
+      return;
+    }
+
+    this.modelCatalogRefresh = (async () => {
+      try {
+        const output = execFileSync(this.piExecutable, ["--list-models"], {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 15000,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+
+        const models = parseModelTable(output);
+        if (models.length > 0) {
+          this.modelCatalog = models;
+          this.modelCatalogUpdatedAt = Date.now();
+          return;
+        }
+
+        console.warn(`${ts()} [models] parsed 0 models from pi --list-models`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
+      }
+
+      // Prevent hammering refresh when pi list-models is unavailable.
+      if (this.modelCatalogUpdatedAt === 0) {
+        this.modelCatalogUpdatedAt = Date.now();
+      }
+    })().finally(() => {
+      this.modelCatalogRefresh = null;
+    });
+
+    await this.modelCatalogRefresh;
+  }
+
+  private getContextWindow(modelId: string): number {
+    const known = this.modelCatalog.find(m => m.id === modelId || m.id.endsWith(`/${modelId}`))?.contextWindow;
+    if (known) {
+      return known;
+    }
+
+    // Generic model-id fallback, e.g. "...-272k" / "..._128k".
+    const match = modelId.match(/(\d{2,4})k\b/i);
+    if (match) {
+      const thousands = Number.parseInt(match[1], 10);
+      if (Number.isFinite(thousands) && thousands > 0) {
+        return thousands * 1000;
+      }
+    }
+
+    return 200000;
+  }
+
   private findSessionById(sessionId: string): Session | undefined {
     for (const user of this.storage.listUsers()) {
       const sessions = this.storage.listUserSessions(user.id);
@@ -291,7 +449,7 @@ export class Server {
     let changed = false;
 
     if (!session.contextWindow || session.contextWindow <= 0) {
-      session.contextWindow = getContextWindow(session.model || "");
+      session.contextWindow = this.getContextWindow(session.model || "");
       changed = true;
     }
 
@@ -341,7 +499,7 @@ export class Server {
     const user = this.authenticate(req);
     if (!user) {
       const auth = req.headers.authorization;
-      console.log(`[auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      console.log(`${ts()} [auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -352,6 +510,12 @@ export class Server {
       if (path === "/models" && method === "GET") return this.handleListModels(res);
       if (path === "/skills" && method === "GET") return this.handleListSkills(res);
       if (path === "/skills/rescan" && method === "POST") return this.handleRescanSkills(res);
+
+      // Skill detail + file access
+      const skillFileMatch = path.match(/^\/skills\/([^/]+)\/file$/);
+      if (skillFileMatch && method === "GET") return this.handleGetSkillFile(skillFileMatch[1], url, res);
+      const skillDetailMatch = path.match(/^\/skills\/([^/]+)$/);
+      if (skillDetailMatch && method === "GET") return this.handleGetSkillDetail(skillDetailMatch[1], res);
 
       // Host discovery
       if (path === "/host/directories" && method === "GET") return this.handleListDirectories(url, res);
@@ -377,9 +541,6 @@ export class Server {
 
       const stopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
       if (stopMatch && method === "POST") return await this.handleStopSession(user, stopMatch[1], res);
-
-      const traceMatch = path.match(/^\/sessions\/([^/]+)\/trace$/);
-      if (traceMatch && method === "GET") return await this.handleGetSessionTrace(user, traceMatch[1], res);
 
       const toolOutputMatch = path.match(/^\/sessions\/([^/]+)\/tool-output\/([^/]+)$/);
       if (toolOutputMatch && method === "GET") return this.handleGetToolOutput(user, toolOutputMatch[1], toolOutputMatch[2], res);
@@ -407,8 +568,9 @@ export class Server {
     this.json(res, { user: user.id, name: user.name });
   }
 
-  private handleListModels(res: ServerResponse): void {
-    this.json(res, { models: AVAILABLE_MODELS });
+  private async handleListModels(res: ServerResponse): Promise<void> {
+    await this.refreshModelCatalog();
+    this.json(res, { models: this.modelCatalog });
   }
 
   private handleListSkills(res: ServerResponse): void {
@@ -418,6 +580,21 @@ export class Server {
   private handleRescanSkills(res: ServerResponse): void {
     this.skillRegistry.scan();
     this.json(res, { skills: this.skillRegistry.list() });
+  }
+
+  private handleGetSkillDetail(name: string, res: ServerResponse): void {
+    const detail = this.skillRegistry.getDetail(name);
+    if (!detail) { this.error(res, 404, "Skill not found"); return; }
+    this.json(res, detail as unknown as Record<string, unknown>);
+  }
+
+  private handleGetSkillFile(name: string, url: URL, res: ServerResponse): void {
+    const filePath = url.searchParams.get("path");
+    if (!filePath) { this.error(res, 400, "path parameter required"); return; }
+
+    const content = this.skillRegistry.getFileContent(name, filePath);
+    if (content === undefined) { this.error(res, 404, "File not found"); return; }
+    this.json(res, { content });
   }
 
   private handleListDirectories(url: URL, res: ServerResponse): void {
@@ -572,61 +749,6 @@ export class Server {
     this.json(res, { ok: true, session: hydratedUpdated });
   }
 
-  private async handleGetSessionTrace(user: User, sessionId: string, res: ServerResponse): Promise<void> {
-    const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
-
-    const hydratedSession = this.ensureSessionContextWindow(session);
-    const sandboxBaseDir = this.sandbox.getBaseDir();
-
-    // 1) Session sandbox trace (container + legacy layouts)
-    let trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
-
-    // 2) Host/runtime traces via persisted pi session file paths
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(hydratedSession.piSessionFiles);
-    }
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionFile) {
-      trace = readSessionTraceFromFile(hydratedSession.piSessionFile);
-    }
-
-    // 3) Legacy lookup by pi internal session UUID
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionId) {
-      trace = readSessionTraceByUuid(sandboxBaseDir, user.id, hydratedSession.piSessionId);
-    }
-
-    // 4) Active session fallback: query live get_state to discover session file
-    if (!trace || trace.length === 0) {
-      const live = await this.sessions.refreshSessionState(user.id, sessionId);
-      if (live?.sessionFile) {
-        trace = readSessionTraceFromFile(live.sessionFile);
-      }
-      if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(sandboxBaseDir, user.id, live.sessionId);
-      }
-
-      // Session metadata may have been updated by refreshSessionState
-      const refreshed = this.storage.getSession(user.id, sessionId);
-      if (refreshed) {
-        this.ensureSessionContextWindow(refreshed);
-
-        if ((!trace || trace.length === 0) && refreshed.piSessionFiles?.length) {
-          trace = readSessionTraceFromFiles(refreshed.piSessionFiles);
-        }
-        if ((!trace || trace.length === 0) && refreshed.piSessionFile) {
-          trace = readSessionTraceFromFile(refreshed.piSessionFile);
-        }
-        if ((!trace || trace.length === 0) && refreshed.piSessionId) {
-          trace = readSessionTraceByUuid(sandboxBaseDir, user.id, refreshed.piSessionId);
-        }
-      }
-    }
-
-    const latestSession = this.storage.getSession(user.id, sessionId) || hydratedSession;
-    const hydratedLatest = this.ensureSessionContextWindow(latestSession);
-    this.json(res, { session: hydratedLatest, trace: trace || [] });
-  }
-
   // ─── Tool Output by ID ───
 
   /**
@@ -695,8 +817,10 @@ export class Server {
     const workRoot = this.resolveWorkRoot(session, user.id);
     if (!workRoot) { this.error(res, 404, "No workspace root for session"); return; }
 
-    // Resolve and guard against path traversal
-    const target = join(workRoot, reqPath);
+    // Resolve path — handles both absolute paths (from host-mode reads)
+    // and relative paths (workspace-relative). resolve() returns reqPath
+    // as-is when absolute, or joins with workRoot when relative.
+    const target = resolve(workRoot, reqPath);
     let resolved: string;
     try {
       resolved = realpathSync(target);
@@ -768,8 +892,49 @@ export class Server {
     if (!session) { this.error(res, 404, "Session not found"); return; }
 
     const hydratedSession = this.ensureSessionContextWindow(session);
-    const messages = this.storage.getSessionMessages(user.id, sessionId);
-    this.json(res, { session: hydratedSession, messages });
+    const sandboxBaseDir = this.sandbox.getBaseDir();
+
+    // Resolve trace from all available sources (container layout, host JSONL paths, live query)
+    let trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
+
+    if ((!trace || trace.length === 0) && hydratedSession.piSessionFiles?.length) {
+      trace = readSessionTraceFromFiles(hydratedSession.piSessionFiles);
+    }
+    if ((!trace || trace.length === 0) && hydratedSession.piSessionFile) {
+      trace = readSessionTraceFromFile(hydratedSession.piSessionFile);
+    }
+    if ((!trace || trace.length === 0) && hydratedSession.piSessionId) {
+      trace = readSessionTraceByUuid(sandboxBaseDir, user.id, hydratedSession.piSessionId);
+    }
+
+    // Active session fallback: query live pi process to discover session file
+    if (!trace || trace.length === 0) {
+      const live = await this.sessions.refreshSessionState(user.id, sessionId);
+      if (live?.sessionFile) {
+        trace = readSessionTraceFromFile(live.sessionFile);
+      }
+      if ((!trace || trace.length === 0) && live?.sessionId) {
+        trace = readSessionTraceByUuid(sandboxBaseDir, user.id, live.sessionId);
+      }
+
+      const refreshed = this.storage.getSession(user.id, sessionId);
+      if (refreshed) {
+        this.ensureSessionContextWindow(refreshed);
+        if ((!trace || trace.length === 0) && refreshed.piSessionFiles?.length) {
+          trace = readSessionTraceFromFiles(refreshed.piSessionFiles);
+        }
+        if ((!trace || trace.length === 0) && refreshed.piSessionFile) {
+          trace = readSessionTraceFromFile(refreshed.piSessionFile);
+        }
+        if ((!trace || trace.length === 0) && refreshed.piSessionId) {
+          trace = readSessionTraceByUuid(sandboxBaseDir, user.id, refreshed.piSessionId);
+        }
+      }
+    }
+
+    const latestSession = this.storage.getSession(user.id, sessionId) || hydratedSession;
+    const hydratedLatest = this.ensureSessionContextWindow(latestSession);
+    this.json(res, { session: hydratedLatest, trace: trace || [] });
   }
 
   private async handleDeleteSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
@@ -812,7 +977,7 @@ export class Server {
     const user = this.authenticate(req);
     if (!user) {
       const auth = req.headers.authorization;
-      console.log(`[auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      console.log(`${ts()} [auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
@@ -822,7 +987,12 @@ export class Server {
     if (!match) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
 
     const session = this.storage.getSession(user.id, match[1]);
-    if (!session) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    if (!session) {
+      console.log(`${ts()} [ws] 404 session not found: ${match[1]} (user=${user.name})`);
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       this.handleWebSocket(ws, user, session);
@@ -830,27 +1000,88 @@ export class Server {
   }
 
   private async handleWebSocket(ws: WebSocket, user: User, session: Session): Promise<void> {
-    console.log(`[ws] Connected: ${user.name} → ${session.id}`);
+    console.log(`${ts()} [ws] Connected: ${user.name} → ${session.id} (status=${session.status})`);
     this.trackConnection(user.id, ws);
 
-    const send = (msg: ServerMessage) => {
+    let msgSent = 0;
+    let msgRecv = 0;
+
+    const send = (msg: ServerMessage): void => {
       if (ws.readyState === WebSocket.OPEN) {
+        msgSent++;
         ws.send(JSON.stringify(msg), { compress: false });
+      } else {
+        console.warn(`${ts()} [ws] DROP ${msg.type} → ${session.id} (readyState=${ws.readyState})`);
       }
     };
 
+    // Queue messages received before startSession completes.
+    // Without this, the iOS client sends a prompt while pi is still
+    // loading and the message is silently dropped — causing a hang.
+    let ready = false;
+    let hydratedSession: Session = session;
+    const messageQueue: ClientMessage[] = [];
+
+    ws.on("message", async (data) => {
+      try {
+        const msg = JSON.parse(data.toString()) as ClientMessage;
+        msgRecv++;
+        console.log(`${ts()} [ws] RECV ${msg.type} from ${user.name} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`);
+        if (ready) {
+          await this.handleClientMessage(user, hydratedSession, msg, send);
+        } else {
+          messageQueue.push(msg);
+          console.log(`${ts()} [ws] QUEUED ${msg.type} (pi not ready, queue=${messageQueue.length})`);
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        console.error(`${ts()} [ws] MSG ERROR ${session.id}: ${message}`);
+        send({ type: "error", error: message });
+      }
+    });
+
+    let unsubscribe: (() => void) | null = null;
+
+    ws.on("close", (code, reason) => {
+      const reasonStr = reason?.toString() || "";
+      console.log(`${ts()} [ws] Disconnected: ${user.name} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`);
+      unsubscribe?.();
+      this.untrackConnection(user.id, ws);
+    });
+
+    ws.on("error", (err) => {
+      console.error(`${ts()} [ws] Error: ${user.name} → ${session.id}:`, err);
+      unsubscribe?.();
+      this.untrackConnection(user.id, ws);
+    });
+
     try {
+      // Send session metadata immediately (from disk) so the iOS client
+      // can display the chat history while pi is starting.
+      console.log(`${ts()} [ws] SEND connected → ${session.id}`);
+      send({ type: "connected", session });
+
       // Resolve workspace for this session
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(user.id, session.workspaceId)
         : undefined;
 
+      console.log(`${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"}, runtime=${workspace?.runtime ?? "host"})...`);
+      const startTime = Date.now();
       const activeSession = await this.sessions.startSession(user.id, session.id, user.name, workspace);
-      const hydratedSession = this.ensureSessionContextWindow(activeSession);
-      send({ type: "connected", session: hydratedSession });
+      const startMs = Date.now() - startTime;
+      hydratedSession = this.ensureSessionContextWindow(activeSession);
+      console.log(`${ts()} [ws] Pi ready for ${session.id} in ${startMs}ms (status=${hydratedSession.status})`);
+
+      // Send updated session with live pi state (context tokens, etc.)
+      send({ type: "state", session: hydratedSession });
 
       // Send pending permission requests
-      for (const pending of this.gate.getPendingForUser(user.id)) {
+      const pendingPerms = this.gate.getPendingForUser(user.id);
+      if (pendingPerms.length > 0) {
+        console.log(`${ts()} [ws] Sending ${pendingPerms.length} pending permission(s) → ${session.id}`);
+      }
+      for (const pending of pendingPerms) {
         send({
           type: "permission_request",
           id: pending.id,
@@ -861,37 +1092,27 @@ export class Server {
           risk: pending.risk,
           reason: pending.reason,
           timeoutAt: pending.timeoutAt,
+          resolutionOptions: pending.resolutionOptions,
         });
       }
 
       // Subscribe to session events
-      const unsubscribe = this.sessions.subscribe(user.id, session.id, send);
+      unsubscribe = this.sessions.subscribe(user.id, session.id, send);
 
-      ws.on("message", async (data) => {
-        try {
-          const msg = JSON.parse(data.toString()) as ClientMessage;
-          await this.handleClientMessage(user, hydratedSession, msg, send);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : "Unknown error";
-          send({ type: "error", error: message });
-        }
-      });
-
-      ws.on("close", () => {
-        console.log(`[ws] Disconnected: ${user.name} → ${session.id}`);
-        unsubscribe();
-        this.untrackConnection(user.id, ws);
-      });
-
-      ws.on("error", (err) => {
-        console.error(`[ws] Error: ${user.name} → ${session.id}`, err);
-        unsubscribe();
-        this.untrackConnection(user.id, ws);
-      });
+      // Drain queued messages (sent while pi was starting)
+      ready = true;
+      if (messageQueue.length > 0) {
+        console.log(`${ts()} [ws] Draining ${messageQueue.length} queued message(s) for ${session.id}`);
+      }
+      for (const msg of messageQueue) {
+        console.log(`${ts()} [ws] DRAIN ${msg.type} → ${session.id}`);
+        await this.handleClientMessage(user, hydratedSession, msg, send);
+      }
+      messageQueue.length = 0;
 
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Setup error";
-      console.error(`[ws] Setup error:`, err);
+      console.error(`${ts()} [ws] Setup error for ${session.id}:`, err);
       send({ type: "error", error: message });
       this.untrackConnection(user.id, ws);
       ws.close();
@@ -907,12 +1128,10 @@ export class Server {
     switch (msg.type) {
       case "prompt": {
         const timestamp = Date.now();
-        this.storage.addSessionMessage(user.id, session.id, {
-          role: "user",
-          content: msg.message,
-          timestamp,
-        });
-        this.sessions.recordUserMessage(user.id, session.id, msg.message, timestamp);
+        const requestId = msg.requestId;
+        const preview = msg.message.slice(0, 80);
+        const imageCount = msg.images?.length ?? 0;
+        console.log(`${ts()} [ws] PROMPT ${session.id}: "${preview}"${imageCount > 0 ? ` (${imageCount} images)` : ""}`);
 
         // RPC image format: { type: "image", data: "base64...", mimeType: "image/png" }
         const images = msg.images?.map(img => ({
@@ -921,32 +1140,94 @@ export class Server {
           mimeType: img.mimeType,
         }));
 
-        await this.sessions.sendPrompt(user.id, session.id, msg.message, {
-          images,
-          streamingBehavior: msg.streamingBehavior,
-        });
+        try {
+          await this.sessions.sendPrompt(user.id, session.id, msg.message, {
+            images,
+            streamingBehavior: msg.streamingBehavior,
+            clientTurnId: msg.clientTurnId,
+            requestId,
+            timestamp,
+          });
+
+          if (requestId) {
+            send({ type: "rpc_result", command: "prompt", requestId, success: true });
+          }
+
+          console.log(`${ts()} [ws] PROMPT sent to pi for ${session.id}`);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (requestId) {
+            send({ type: "rpc_result", command: "prompt", requestId, success: false, error: message });
+            return;
+          }
+          throw err;
+        }
         break;
       }
 
       case "steer": {
+        const requestId = msg.requestId;
+        console.log(`${ts()} [ws] STEER ${session.id}: "${msg.message.slice(0, 80)}"`);
         const steerImages = msg.images?.map(img => ({
           type: "image" as const, data: img.data, mimeType: img.mimeType,
         }));
-        await this.sessions.sendSteer(user.id, session.id, msg.message, steerImages);
+
+        try {
+          await this.sessions.sendSteer(user.id, session.id, msg.message, {
+            images: steerImages,
+            clientTurnId: msg.clientTurnId,
+            requestId,
+          });
+          if (requestId) {
+            send({ type: "rpc_result", command: "steer", requestId, success: true });
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (requestId) {
+            send({ type: "rpc_result", command: "steer", requestId, success: false, error: message });
+            return;
+          }
+          throw err;
+        }
         break;
       }
 
       case "follow_up": {
+        const requestId = msg.requestId;
+        console.log(`${ts()} [ws] FOLLOW_UP ${session.id}: "${msg.message.slice(0, 80)}"`);
         const fuImages = msg.images?.map(img => ({
           type: "image" as const, data: img.data, mimeType: img.mimeType,
         }));
-        await this.sessions.sendFollowUp(user.id, session.id, msg.message, fuImages);
+
+        try {
+          await this.sessions.sendFollowUp(user.id, session.id, msg.message, {
+            images: fuImages,
+            clientTurnId: msg.clientTurnId,
+            requestId,
+          });
+          if (requestId) {
+            send({ type: "rpc_result", command: "follow_up", requestId, success: true });
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (requestId) {
+            send({ type: "rpc_result", command: "follow_up", requestId, success: false, error: message });
+            return;
+          }
+          throw err;
+        }
         break;
       }
 
       case "abort":
       case "stop":
+        console.log(`${ts()} [ws] STOP ${session.id}`);
         await this.sessions.sendAbort(user.id, session.id);
+        break;
+
+      case "stop_session":
+        console.log(`${ts()} [ws] STOP_SESSION ${session.id}`);
+        await this.sessions.stopSession(user.id, session.id);
         break;
 
       case "get_state": {
@@ -958,7 +1239,8 @@ export class Server {
       }
 
       case "permission_response": {
-        const resolved = this.gate.resolveDecision(msg.id, msg.action);
+        const scope = msg.scope || "once";
+        const resolved = this.gate.resolveDecision(msg.id, msg.action, scope);
         if (!resolved) {
           send({ type: "error", error: `Permission request not found: ${msg.id}` });
         }

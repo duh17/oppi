@@ -6,7 +6,7 @@
  * AGENTS.md presence) without requiring the user to type paths.
  */
 
-import { readdirSync, existsSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";

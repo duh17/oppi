@@ -491,11 +491,15 @@ export class SandboxManager {
     try {
       execSync(`container stop ${containerId}`, { timeout: 5000, stdio: "ignore" });
       return;
-    } catch {}
+    } catch {
+      // stop failed, try kill
+    }
 
     try {
       execSync(`container kill ${containerId}`, { stdio: "ignore" });
-    } catch {}
+    } catch {
+      // container already stopped
+    }
   }
 
   // ─── Convenience Getters ───

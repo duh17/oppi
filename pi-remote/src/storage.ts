@@ -277,7 +277,9 @@ export class Storage {
       try {
         const existing = JSON.parse(readFileSync(path, "utf-8"));
         messages = existing.messages || [];
-      } catch {}
+      } catch (err) {
+        console.error(`[storage] Corrupt session file ${path}, messages will be lost:`, err);
+      }
     }
 
     writeFileSync(path, JSON.stringify({ session, messages }, null, 2));
@@ -309,7 +311,9 @@ export class Storage {
         if (data.session) {
           sessions.push(data.session);
         }
-      } catch {}
+      } catch (err) {
+        console.error(`[storage] Corrupt session file ${join(userDir, file)}, skipping:`, err);
+      }
     }
 
     // Sort by last activity (most recent first)
@@ -335,7 +339,9 @@ export class Storage {
     if (existsSync(path)) {
       try {
         data = JSON.parse(readFileSync(path, "utf-8"));
-      } catch {}
+      } catch (err) {
+        console.error(`[storage] Corrupt session file ${path}, data will be reset:`, err);
+      }
     }
 
     const fullMessage: SessionMessage = {
@@ -463,7 +469,9 @@ export class Storage {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
         ws.runtime = this.inferWorkspaceRuntime(ws);
         workspaces.push(ws);
-      } catch {}
+      } catch (err) {
+        console.error(`[storage] Corrupt workspace file ${join(dir, file)}, skipping:`, err);
+      }
     }
 
     return workspaces.sort((a, b) => a.createdAt - b.createdAt);

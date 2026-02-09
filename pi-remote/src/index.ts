@@ -14,7 +14,7 @@
 import chalk from "chalk";
 import qrcode from "qrcode-terminal";
 import QRCode from "qrcode";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { hostname as osHostname, networkInterfaces } from "node:os";

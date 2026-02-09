@@ -6,8 +6,8 @@
  * by name from this pool.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
 
 // ─── Types ───
@@ -23,6 +23,15 @@ export interface SkillInfo {
   hasScripts: boolean;
   /** Host filesystem path to the skill directory. */
   path: string;
+}
+
+/** Extended skill info with SKILL.md content and file tree. */
+export interface SkillDetail {
+  skill: SkillInfo;
+  /** Raw SKILL.md content. */
+  content: string;
+  /** Relative file paths in the skill directory (excludes junk like __pycache__). */
+  files: string[];
 }
 
 /** Markers in SKILL.md that indicate host-only requirements. */
@@ -126,7 +135,103 @@ export class SkillRegistry {
     return this.list().filter(s => s.containerSafe);
   }
 
+  /** Get full skill detail: metadata + SKILL.md content + file tree. */
+  getDetail(name: string): SkillDetail | undefined {
+    const skill = this.skills.get(name);
+    if (!skill) return undefined;
+
+    const skillMdPath = join(skill.path, "SKILL.md");
+    const content = existsSync(skillMdPath) ? readFileSync(skillMdPath, "utf-8") : "";
+    const files = this.listFiles(skill.path);
+
+    return { skill, content, files };
+  }
+
+  /** Read a file from a skill's directory. Returns content or undefined if not found/outside boundary. */
+  getFileContent(name: string, relPath: string): string | undefined {
+    const skill = this.skills.get(name);
+    if (!skill) return undefined;
+
+    // Guard against path traversal
+    const target = join(skill.path, relPath);
+    let resolved: string;
+    try {
+      resolved = realpathSync(target);
+    } catch {
+      return undefined;
+    }
+
+    let realBase: string;
+    try {
+      realBase = realpathSync(skill.path);
+    } catch {
+      return undefined;
+    }
+
+    if (!resolved.startsWith(realBase + "/") && resolved !== realBase) {
+      return undefined;
+    }
+
+    try {
+      const stat = statSync(resolved);
+      if (!stat.isFile()) return undefined;
+      // 1MB safety limit
+      if (stat.size > 1024 * 1024) return undefined;
+      return readFileSync(resolved, "utf-8");
+    } catch {
+      return undefined;
+    }
+  }
+
   // ─── Internal ───
+
+  /** Directories to skip when listing skill files. */
+  private static readonly SKIP_DIRS = new Set([
+    "__pycache__", "node_modules", ".git", ".venv", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", "__pypackages__",
+  ]);
+
+  /** File extensions to skip. */
+  private static readonly SKIP_EXTS = new Set([
+    ".pyc", ".pyo", ".o", ".so", ".dylib",
+  ]);
+
+  /** Recursively list files in a skill directory (relative paths). */
+  private listFiles(baseDir: string, prefix = ""): string[] {
+    const results: string[] = [];
+    const dir = prefix ? join(baseDir, prefix) : baseDir;
+
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return results;
+    }
+
+    for (const entry of entries.sort()) {
+      const rel = prefix ? `${prefix}/${entry}` : entry;
+      const full = join(dir, entry);
+
+      try {
+        const stat = statSync(full);
+
+        if (stat.isDirectory()) {
+          if (!SkillRegistry.SKIP_DIRS.has(entry)) {
+            results.push(...this.listFiles(baseDir, rel));
+          }
+        } else if (stat.isFile()) {
+          const ext = entry.substring(entry.lastIndexOf("."));
+          if (!SkillRegistry.SKIP_EXTS.has(ext)) {
+            results.push(rel);
+          }
+        }
+      } catch {
+        // Dangling symlink etc — skip
+      }
+    }
+
+    return results;
+  }
 
   private parseSkill(name: string, dir: string, skillMdPath: string): SkillInfo | null {
     const content = readFileSync(skillMdPath, "utf-8");
