@@ -17,16 +17,175 @@
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import type { Session, SessionMessage, ServerMessage, ServerConfig, Workspace } from "./types.js";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type {
+  Session,
+  SessionMessage,
+  ServerMessage,
+  ServerConfig,
+  TurnAckStage,
+  TurnCommand,
+  Workspace,
+} from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
 import type { AuthProxy } from "./auth-proxy.js";
+import { PolicyEngine, type PathAccess } from "./policy.js";
+
+/** Compact HH:MM:SS.mmm timestamp for log lines. */
+function ts(): string {
+  const d = new Date();
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
+}
+
+/**
+ * Compute the missing assistant text tail from streamed deltas and finalized text.
+ *
+ * Pi normally streams assistant text via `message_update.text_delta`, but some
+ * turns only include text in `message_end`. This helper bridges that gap.
+ */
+export function computeAssistantTextTailDelta(
+  streamedText: string,
+  finalizedText: string,
+): string {
+  if (finalizedText.length === 0) return "";
+  if (streamedText.length === 0) return finalizedText;
+  if (finalizedText === streamedText) return "";
+
+  if (finalizedText.startsWith(streamedText)) {
+    return finalizedText.slice(streamedText.length);
+  }
+
+  // Fallback for unexpected divergence: append from common prefix forward.
+  // We cannot retract already-streamed text, but this avoids dropping content.
+  let commonPrefix = 0;
+  const max = Math.min(streamedText.length, finalizedText.length);
+  while (commonPrefix < max && streamedText[commonPrefix] === finalizedText[commonPrefix]) {
+    commonPrefix += 1;
+  }
+
+  return finalizedText.slice(commonPrefix);
+}
+
+export interface TurnDedupeRecord {
+  command: TurnCommand;
+  payloadHash: string;
+  stage: TurnAckStage;
+  acceptedAt: number;
+  updatedAt: number;
+}
+
+interface TurnDedupeEntry {
+  record: TurnDedupeRecord;
+  expiresAt: number;
+}
+
+const TURN_STAGE_ORDER: Record<TurnAckStage, number> = {
+  accepted: 1,
+  dispatched: 2,
+  started: 3,
+};
+
+export class TurnDedupeCache {
+  private entries: Map<string, TurnDedupeEntry> = new Map();
+
+  constructor(
+    private readonly capacity = 256,
+    private readonly ttlMs = 15 * 60_000,
+  ) {}
+
+  get(clientTurnId: string, now = Date.now()): TurnDedupeRecord | null {
+    this.purgeExpired(now);
+    const entry = this.entries.get(clientTurnId);
+    if (!entry) {
+      return null;
+    }
+
+    if (entry.expiresAt <= now) {
+      this.entries.delete(clientTurnId);
+      return null;
+    }
+
+    this.entries.delete(clientTurnId);
+    entry.expiresAt = now + this.ttlMs;
+    this.entries.set(clientTurnId, entry);
+    return entry.record;
+  }
+
+  set(clientTurnId: string, record: TurnDedupeRecord, now = Date.now()): void {
+    this.purgeExpired(now);
+    this.entries.delete(clientTurnId);
+    this.entries.set(clientTurnId, {
+      record,
+      expiresAt: now + this.ttlMs,
+    });
+    this.trimToCapacity();
+  }
+
+  updateStage(clientTurnId: string, stage: TurnAckStage, now = Date.now()): TurnDedupeRecord | null {
+    const entry = this.entries.get(clientTurnId);
+    if (!entry) {
+      return null;
+    }
+
+    if (entry.expiresAt <= now) {
+      this.entries.delete(clientTurnId);
+      return null;
+    }
+
+    if (TURN_STAGE_ORDER[stage] > TURN_STAGE_ORDER[entry.record.stage]) {
+      entry.record.stage = stage;
+    }
+    entry.record.updatedAt = now;
+
+    this.entries.delete(clientTurnId);
+    entry.expiresAt = now + this.ttlMs;
+    this.entries.set(clientTurnId, entry);
+    return entry.record;
+  }
+
+  size(now = Date.now()): number {
+    this.purgeExpired(now);
+    return this.entries.size;
+  }
+
+  private purgeExpired(now: number): void {
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(key);
+      }
+    }
+  }
+
+  private trimToCapacity(): void {
+    while (this.entries.size > this.capacity) {
+      const oldest = this.entries.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      this.entries.delete(oldest);
+    }
+  }
+}
+
+function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string {
+  return createHash("sha1")
+    .update(command)
+    .update(":")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
 
 // ─── Types ───
 
@@ -37,6 +196,7 @@ interface ActiveSession {
   runtime: "host" | "container";
   subscribers: Set<(msg: ServerMessage) => void>;
   /** Pending RPC response callbacks keyed by request id */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
   pendingResponses: Map<string, (data: any) => void>;
   /** Pending extension UI requests keyed by request id */
   pendingUIRequests: Map<string, ExtensionUIRequest>;
@@ -50,6 +210,15 @@ interface ActiveSession {
    * use simple append semantics for tool_output events.
    */
   partialResults: Map<string, string>;
+  /**
+   * Assistant text already streamed via text_delta for the current turn.
+   * Used to recover missing final text from message_end when pi skips deltas.
+   */
+  streamedAssistantText: string;
+  /** Per-session dedupe cache for idempotent prompt/steer/follow_up retries. */
+  turnCache: TurnDedupeCache;
+  /** Ordered turn IDs waiting for `agent_start` -> `started` ACK emission. */
+  pendingTurnStarts: string[];
 }
 
 /** Extension UI request from pi RPC (stdout) */
@@ -86,6 +255,16 @@ const FIRE_AND_FORGET_METHODS = new Set([
   "notify", "setStatus", "setWidget", "setTitle", "set_editor_text",
 ]);
 
+// ─── Extension Paths ───
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Pi-remote TCP permission gate extension (pi-remote/extensions/permission-gate/). */
+const PI_REMOTE_GATE_EXTENSION = join(__dirname, "..", "extensions", "permission-gate");
+
+/** Host memory extension (user's pi config). */
+const HOST_MEMORY_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
+
 // ─── Session Manager ───
 
 export class SessionManager extends EventEmitter {
@@ -104,10 +283,6 @@ export class SessionManager extends EventEmitter {
   private saveTimer: NodeJS.Timeout | null = null;
   private readonly saveDebounceMs = 1000;
 
-  // Stop-loop safety: if abort does not settle, force-stop the session.
-  private abortFallbackTimers: Map<string, NodeJS.Timeout> = new Map();
-  private readonly abortFallbackMs = 5000;
-
   constructor(storage: Storage, gate: GateServer, sandbox: SandboxManager, authProxy?: AuthProxy) {
     super();
     this.storage = storage;
@@ -120,15 +295,40 @@ export class SessionManager extends EventEmitter {
 
   // ─── Session Lifecycle ───
 
+  /** In-flight startSession calls — deduplicates concurrent spawns from iOS reconnect races. */
+  private starting: Map<string, Promise<Session>> = new Map();
+
   /**
    * Start a new session — spawns pi on the host or in a container.
    */
   async startSession(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
     const key = `${userId}/${sessionId}`;
 
-    if (this.active.has(key)) {
-      return this.active.get(key)!.session;
+    const existing = this.active.get(key);
+    if (existing) {
+      // Reset idle timer on reconnect — prevents session from being killed
+      // during brief WS disconnects (app backgrounding, network blips).
+      this.resetIdleTimer(key);
+      return existing.session;
     }
+
+    // Deduplicate concurrent start requests (iOS reconnect race)
+    const pending = this.starting.get(key);
+    if (pending) {
+      return pending;
+    }
+
+    const promise = this.startSessionInner(userId, sessionId, userName, workspace);
+    this.starting.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.starting.delete(key);
+    }
+  }
+
+  private async startSessionInner(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
+    const key = `${userId}/${sessionId}`;
 
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
@@ -145,8 +345,8 @@ export class SessionManager extends EventEmitter {
       );
 
       if (errors.length > 0) {
-        for (const e of errors) console.error(`[session:${sessionId}] bootstrap error: ${e}`);
-        for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+        for (const e of errors) console.error(`${ts()} [session:${sessionId}] bootstrap error: ${e}`);
+        for (const w of warnings) console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
         session.status = "error";
         session.warnings = [...errors, ...warnings];
         this.storage.saveSession(session);
@@ -157,7 +357,7 @@ export class SessionManager extends EventEmitter {
 
       if (warnings.length > 0) {
         session.warnings = warnings;
-        for (const w of warnings) console.warn(`[session:${sessionId}] bootstrap warning: ${w}`);
+        for (const w of warnings) console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
       }
     }
 
@@ -169,6 +369,9 @@ export class SessionManager extends EventEmitter {
       pendingResponses: new Map(),
       pendingUIRequests: new Map(),
       partialResults: new Map(),
+      streamedAssistantText: "",
+      turnCache: new TurnDedupeCache(),
+      pendingTurnStarts: [],
     };
 
     this.active.set(key, activeSession);
@@ -227,10 +430,56 @@ export class SessionManager extends EventEmitter {
     const key = `${session.userId}/${session.id}`;
 
     // Create gate TCP socket (extension connects via localhost)
-    const gatePort = await this.gate.createSessionSocket(session.id, session.userId);
+    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspace?.id || "");
 
-    // Build pi args
-    const piArgs = ["--mode", "rpc"];
+    // Configure per-session policy based on workspace settings.
+    // Host sessions default to the restrictive "host" preset.
+    const presetName = workspace?.policyPreset || "host";
+    const cwd = workspace?.hostMount
+      ? workspace.hostMount.replace(/^~/, homedir())
+      : homedir();
+
+    const allowedPaths: PathAccess[] = [
+      // Workspace directory — full read/write
+      { path: cwd, access: "readwrite" },
+      // Pi agent config — read-only (for recall, memory, skills)
+      { path: join(homedir(), ".pi"), access: "read" },
+    ];
+
+    // Add workspace-configured extra paths
+    if (workspace?.allowedPaths) {
+      for (const entry of workspace.allowedPaths) {
+        const resolved = entry.path.replace(/^~/, homedir());
+        allowedPaths.push({ path: resolved, access: entry.access });
+      }
+    }
+
+    const allowedExecutables = workspace?.allowedExecutables;
+    const policy = new PolicyEngine(presetName, { allowedPaths, allowedExecutables });
+    this.gate.setSessionPolicy(session.id, policy);
+    console.log(`${ts()} [session:${session.id}] policy: preset=${presetName}, paths=${allowedPaths.map(p => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`);
+
+    // Build pi args.
+    //
+    // Host-mode uses --no-extensions to suppress auto-discovery of the user's
+    // local extensions (which include a different permission-gate that doesn't
+    // know about TCP gates). We then explicitly load:
+    //   1. The pi-remote TCP permission gate extension (always)
+    //   2. The memory extension (if workspace.memoryEnabled)
+    const piArgs = ["--mode", "rpc", "--no-extensions"];
+
+    // 1. Always load the pi-remote TCP permission gate extension
+    if (existsSync(PI_REMOTE_GATE_EXTENSION)) {
+      piArgs.push("--extension", PI_REMOTE_GATE_EXTENSION);
+    } else {
+      console.warn(`${ts()} [session:${session.id}] pi-remote gate extension not found at ${PI_REMOTE_GATE_EXTENSION}`);
+    }
+
+    // 2. Optionally load memory extension
+    if (workspace?.memoryEnabled && existsSync(HOST_MEMORY_EXTENSION)) {
+      piArgs.push("--extension", HOST_MEMORY_EXTENSION);
+    }
+
     if (session.model) {
       const slash = session.model.indexOf("/");
       if (slash > 0) {
@@ -238,6 +487,20 @@ export class SessionManager extends EventEmitter {
         piArgs.push("--model", session.model.slice(slash + 1));
       } else {
         piArgs.push("--model", session.model);
+      }
+    }
+
+    // Resume existing session if JSONL file exists.
+    // This preserves conversation history across server restarts.
+    if (session.piSessionFile && existsSync(session.piSessionFile)) {
+      piArgs.push("--session", session.piSessionFile);
+      console.log(`${ts()} [session:${session.id}] resuming from ${session.piSessionFile}`);
+    } else if (session.piSessionFiles?.length) {
+      // Fall back to the most recent session file
+      const lastFile = session.piSessionFiles[session.piSessionFiles.length - 1];
+      if (existsSync(lastFile)) {
+        piArgs.push("--session", lastFile);
+        console.log(`${ts()} [session:${session.id}] resuming from ${lastFile} (fallback)`);
       }
     }
 
@@ -251,16 +514,13 @@ export class SessionManager extends EventEmitter {
       piArgs.push("--append-system-prompt", promptPath);
     }
 
-    // Working directory — workspace hostMount or home
-    const cwd = workspace?.hostMount
-      ? workspace.hostMount.replace(/^~/, homedir())
-      : homedir();
-
+    // Working directory — already resolved above for policy config
     if (!existsSync(cwd)) {
       throw new Error(`Host workspace path not found: ${cwd}`);
     }
 
-    console.log(`[session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`);
+    console.log(`${ts()} [session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`);
+    console.log(`${ts()} [session:${session.id}] pi args: ${piArgs.join(" ")}`);
 
     const proc = spawn(this.piExecutable, piArgs, {
       cwd,
@@ -287,7 +547,13 @@ export class SessionManager extends EventEmitter {
     this.authProxy?.registerSession(session.id, session.userId);
 
     // Create gate TCP socket (extension connects from container to host-gateway)
-    const gatePort = await this.gate.createSessionSocket(session.id, session.userId);
+    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspace?.id || "");
+
+    // Configure per-session policy for container (permissive — container IS the boundary)
+    const presetName = workspace?.policyPreset || "container";
+    const containerPolicy = new PolicyEngine(presetName);
+    this.gate.setSessionPolicy(session.id, containerPolicy);
+    console.log(`${ts()} [session:${session.id}] policy: preset=${presetName} (container mode)`);
 
     // Spawn pi in container
     const proc = this.sandbox.spawnPi({
@@ -307,8 +573,12 @@ export class SessionManager extends EventEmitter {
    * and wait for pi to be ready. Shared by host and container modes.
    */
   private async setupProcHandlers(key: string, session: Session, proc: ChildProcess): Promise<ChildProcess> {
+    if (!proc.stdout) {
+      throw new Error(`pi process for ${key} has no stdout — was it spawned with stdio: "pipe"?`);
+    }
+
     // Single readline consumer for stdout — handles all RPC events
-    const rl = createInterface({ input: proc.stdout! });
+    const rl = createInterface({ input: proc.stdout });
     let readyResolve: (() => void) | null = null;
     let readyReject: ((err: Error) => void) | null = null;
 
@@ -335,7 +605,9 @@ export class SessionManager extends EventEmitter {
           if (data.type) {
             settleReady();
           }
-        } catch {}
+        } catch {
+          // non-JSON line from pi, ignore
+        }
       }
       // Always route to handler (no messages lost)
       this.handleRpcLine(key, line);
@@ -343,7 +615,7 @@ export class SessionManager extends EventEmitter {
 
     // stderr → log
     proc.stderr?.on("data", (data: Buffer) => {
-      console.error(`[pi:${session.id}] ${data.toString().trim()}`);
+      console.error(`${ts()} [pi:${session.id}] ${data.toString().trim()}`);
     });
 
     // Process exit
@@ -351,7 +623,7 @@ export class SessionManager extends EventEmitter {
       if (readyReject) {
         settleReady(new Error(`pi exited before ready: ${session.id} (${code ?? "null"})`));
       }
-      console.log(`[pi:${session.id}] exited (${code})`);
+      console.log(`${ts()} [pi:${session.id}] exited (${code})`);
       this.handleSessionEnd(key, code === 0 ? "completed" : "error");
     });
 
@@ -359,7 +631,7 @@ export class SessionManager extends EventEmitter {
       if (readyReject) {
         settleReady(new Error(`pi spawn error before ready: ${session.id} (${err.message})`));
       }
-      console.error(`[pi:${session.id}] spawn error:`, err);
+      console.error(`${ts()} [pi:${session.id}] spawn error:`, err);
       this.handleSessionEnd(key, "error");
     });
 
@@ -399,24 +671,51 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi RPC JSON is untyped
     let data: any;
     try {
       data = JSON.parse(line);
     } catch {
-      console.warn(`[pi:${active.session.id}] invalid JSON: ${line.slice(0, 100)}`);
+      console.warn(`${ts()} [pi:${active.session.id}] invalid JSON: ${line.slice(0, 100)}`);
       return;
     }
 
-    // 1. RPC response — correlate to pending command
-    if (data.type === "response" && data.id) {
-      const handler = active.pendingResponses.get(data.id);
-      if (handler) {
-        active.pendingResponses.delete(data.id);
-        handler(data);
+    // 1. RPC response — correlate to pending command.
+    // Some parse/validation failures come back as `response` without an `id`.
+    // If exactly one command is pending, attribute the failure to it so callers
+    // don't hang until timeout.
+    if (data.type === "response") {
+      const command = typeof data.command === "string" ? data.command : "rpc";
+      const rawError = typeof data.error === "string" && data.error.length > 0
+        ? data.error
+        : "Unknown RPC error";
+      const errorText = this.normalizeRpcError(command, rawError);
+
+      if (typeof data.id === "string" && data.id.length > 0) {
+        const handler = active.pendingResponses.get(data.id);
+        if (handler) {
+          active.pendingResponses.delete(data.id);
+          handler({ ...data, error: errorText });
+          return;
+        }
+
+        // Orphaned response with correlation id.
+        if (!data.success) {
+          this.broadcast(key, { type: "error", error: `${command}: ${errorText}` });
+        }
+        return;
       }
-      // Still forward errors to subscribers
+
       if (!data.success) {
-        this.broadcast(key, { type: "error", error: `${data.command}: ${data.error}` });
+        if (active.pendingResponses.size === 1) {
+          const [[pendingId, handler]] = active.pendingResponses;
+          active.pendingResponses.delete(pendingId);
+          handler({ success: false, command, error: errorText });
+          return;
+        }
+
+        // Ambiguous uncorrelated response (or no pending command).
+        this.broadcast(key, { type: "error", error: `${command}: ${errorText}` });
       }
       return;
     }
@@ -428,9 +727,20 @@ export class SessionManager extends EventEmitter {
     }
 
     // 3. Agent event — translate and broadcast
+    // Log lifecycle events (not high-frequency deltas)
+    if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end"
+        || data.type === "tool_execution_start" || data.type === "tool_execution_end") {
+      const tool = data.toolName ? ` tool=${data.toolName}` : "";
+      console.log(`${ts()} [pi:${active.session.id}] EVENT ${data.type}${tool} (subs=${active.subscribers.size})`);
+    }
+
     const messages = this.translateEvent(data, active);
     for (const message of messages) {
       this.broadcast(key, message);
+    }
+
+    if (data.type === "agent_start") {
+      this.markNextTurnStarted(key, active);
     }
 
     this.updateSessionFromEvent(key, active.session, data);
@@ -440,6 +750,7 @@ export class SessionManager extends EventEmitter {
       || data.type === "agent_end"
       || data.type === "message_end"
     ) {
+      console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
       this.broadcast(key, { type: "state", session: active.session });
     }
 
@@ -467,7 +778,7 @@ export class SessionManager extends EventEmitter {
         notifyType: req.notifyType,
         statusKey: req.statusKey,
         statusText: req.statusText,
-      } as any);
+      });
       return;
     }
 
@@ -484,7 +795,7 @@ export class SessionManager extends EventEmitter {
       placeholder: req.placeholder,
       prefill: req.prefill,
       timeout: req.timeout,
-    } as any);
+    });
   }
 
   /**
@@ -506,20 +817,117 @@ export class SessionManager extends EventEmitter {
 
   // ─── RPC Commands ───
 
-  /**
-   * Keep active in-memory session metadata in sync when server.ts stores
-   * a user message directly.
-   */
-  recordUserMessage(userId: string, sessionId: string, content: string, timestamp: number): void {
-    const key = `${userId}/${sessionId}`;
-    const active = this.active.get(key);
-    if (!active) {
+  private emitTurnAck(
+    key: string,
+    payload: {
+      command: TurnCommand;
+      clientTurnId: string;
+      stage: TurnAckStage;
+      requestId?: string;
+      duplicate?: boolean;
+    },
+  ): void {
+    this.broadcast(key, {
+      type: "turn_ack",
+      command: payload.command,
+      clientTurnId: payload.clientTurnId,
+      stage: payload.stage,
+      requestId: payload.requestId,
+      duplicate: payload.duplicate,
+    });
+  }
+
+  private beginTurnIntent(
+    key: string,
+    active: ActiveSession,
+    command: TurnCommand,
+    payload: unknown,
+    clientTurnId?: string,
+    requestId?: string,
+  ): { clientTurnId?: string; duplicate: boolean } {
+    if (!clientTurnId) {
+      return { duplicate: false };
+    }
+
+    const payloadHash = computeTurnPayloadHash(command, payload);
+    const existing = active.turnCache.get(clientTurnId);
+    if (existing) {
+      if (existing.command !== command || existing.payloadHash !== payloadHash) {
+        throw new Error(`clientTurnId conflict: ${clientTurnId}`);
+      }
+
+      this.emitTurnAck(key, {
+        command,
+        clientTurnId,
+        stage: existing.stage,
+        requestId,
+        duplicate: true,
+      });
+
+      return { clientTurnId, duplicate: true };
+    }
+
+    const now = Date.now();
+    active.turnCache.set(clientTurnId, {
+      command,
+      payloadHash,
+      stage: "accepted",
+      acceptedAt: now,
+      updatedAt: now,
+    });
+
+    this.emitTurnAck(key, {
+      command,
+      clientTurnId,
+      stage: "accepted",
+      requestId,
+    });
+
+    return { clientTurnId, duplicate: false };
+  }
+
+  private markTurnDispatched(
+    key: string,
+    active: ActiveSession,
+    command: TurnCommand,
+    turn: { clientTurnId?: string; duplicate: boolean },
+    requestId?: string,
+  ): void {
+    const clientTurnId = turn.clientTurnId;
+    if (!clientTurnId || turn.duplicate) {
       return;
     }
 
-    active.session.messageCount += 1;
-    active.session.lastMessage = content.slice(0, 100);
-    active.session.lastActivity = timestamp;
+    active.turnCache.updateStage(clientTurnId, "dispatched");
+    active.pendingTurnStarts.push(clientTurnId);
+
+    this.emitTurnAck(key, {
+      command,
+      clientTurnId,
+      stage: "dispatched",
+      requestId,
+    });
+  }
+
+  private markNextTurnStarted(key: string, active: ActiveSession): void {
+    while (active.pendingTurnStarts.length > 0) {
+      const clientTurnId = active.pendingTurnStarts.shift();
+      if (!clientTurnId) {
+        break;
+      }
+
+      const record = active.turnCache.updateStage(clientTurnId, "started");
+      if (!record) {
+        continue;
+      }
+
+      this.emitTurnAck(key, {
+        command: record.command,
+        clientTurnId,
+        stage: "started",
+      });
+      break;
+    }
   }
 
   /**
@@ -536,11 +944,37 @@ export class SessionManager extends EventEmitter {
     opts?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       streamingBehavior?: "steer" | "followUp";
+      clientTurnId?: string;
+      requestId?: string;
+      timestamp?: number;
     },
   ): Promise<void> {
     const key = `${userId}/${sessionId}`;
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    const turn = this.beginTurnIntent(
+      key,
+      active,
+      "prompt",
+      {
+        message,
+        images: opts?.images ?? [],
+        streamingBehavior: opts?.streamingBehavior,
+      },
+      opts?.clientTurnId,
+      opts?.requestId,
+    );
+
+    if (turn.duplicate) {
+      return;
+    }
+
+    this.appendMessage(active.session, {
+      role: "user",
+      content: message,
+      timestamp: opts?.timestamp ?? Date.now(),
+    });
 
     const cmd: Record<string, unknown> = {
       type: "prompt",
@@ -565,7 +999,9 @@ export class SessionManager extends EventEmitter {
       this.scheduleGuardCheck(key, sessionId);
     }
 
+    console.log(`${ts()} [rpc] prompt → pi (session=${sessionId}, status=${active.session.status}, guard=${active.guardCheckScheduled ? "scheduled" : "no"})`);
     this.sendRpcCommand(key, cmd);
+    this.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
   }
 
   /**
@@ -575,11 +1011,36 @@ export class SessionManager extends EventEmitter {
     userId: string,
     sessionId: string,
     message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    opts?: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      clientTurnId?: string;
+      requestId?: string;
+    },
   ): Promise<void> {
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    const turn = this.beginTurnIntent(
+      key,
+      active,
+      "steer",
+      {
+        message,
+        images: opts?.images ?? [],
+      },
+      opts?.clientTurnId,
+      opts?.requestId,
+    );
+
+    if (turn.duplicate) {
+      return;
+    }
+
     const cmd: Record<string, unknown> = { type: "steer", message };
-    if (images?.length) cmd.images = images;
-    this.sendRpcCommand(`${userId}/${sessionId}`, cmd);
+    if (opts?.images?.length) cmd.images = opts.images;
+    this.sendRpcCommand(key, cmd);
+    this.markTurnDispatched(key, active, "steer", turn, opts?.requestId);
   }
 
   /**
@@ -589,11 +1050,36 @@ export class SessionManager extends EventEmitter {
     userId: string,
     sessionId: string,
     message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    opts?: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      clientTurnId?: string;
+      requestId?: string;
+    },
   ): Promise<void> {
+    const key = `${userId}/${sessionId}`;
+    const active = this.active.get(key);
+    if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    const turn = this.beginTurnIntent(
+      key,
+      active,
+      "follow_up",
+      {
+        message,
+        images: opts?.images ?? [],
+      },
+      opts?.clientTurnId,
+      opts?.requestId,
+    );
+
+    if (turn.duplicate) {
+      return;
+    }
+
     const cmd: Record<string, unknown> = { type: "follow_up", message };
-    if (images?.length) cmd.images = images;
-    this.sendRpcCommand(`${userId}/${sessionId}`, cmd);
+    if (opts?.images?.length) cmd.images = opts.images;
+    this.sendRpcCommand(key, cmd);
+    this.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
   }
 
   /**
@@ -645,6 +1131,7 @@ export class SessionManager extends EventEmitter {
    * Apply fields we care about from pi `get_state` response payload.
    * Returns true if the session object changed.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi state shape is untyped
   private applyPiStateSnapshot(session: Session, state: any): boolean {
     if (!state || typeof state !== "object") {
       return false;
@@ -683,6 +1170,11 @@ export class SessionManager extends EventEmitter {
     const modelId = state.model?.id;
     if (typeof modelId === "string" && modelId.length > 0 && session.model !== modelId) {
       session.model = modelId;
+      changed = true;
+    }
+
+    if (typeof state.thinkingLevel === "string" && state.thinkingLevel !== session.thinkingLevel) {
+      session.thinkingLevel = state.thinkingLevel;
       changed = true;
     }
 
@@ -748,6 +1240,14 @@ export class SessionManager extends EventEmitter {
         }
       }
 
+      // Track thinking level changes so the session object stays in sync
+      if (cmdType === "cycle_thinking_level" || cmdType === "set_thinking_level") {
+        const level = data?.level;
+        if (typeof level === "string") {
+          active.session.thinkingLevel = level;
+        }
+      }
+
       this.broadcast(key, {
         type: "rpc_result",
         command: cmdType,
@@ -756,20 +1256,44 @@ export class SessionManager extends EventEmitter {
         data,
       });
     } catch (err) {
+      const rawError = err instanceof Error ? err.message : String(err);
       this.broadcast(key, {
         type: "rpc_result",
         command: cmdType,
         requestId,
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: this.normalizeRpcError(cmdType, rawError),
       });
     }
   }
 
   /**
+   * Normalize noisy/low-level RPC errors into user-facing text.
+   */
+  private normalizeRpcError(command: string, error: string): string {
+    const trimmed = error.trim();
+    const parsePrefix = "Failed to parse command:";
+
+    let normalized = trimmed;
+    if (trimmed.startsWith(parsePrefix)) {
+      const remainder = trimmed.slice(parsePrefix.length).trim();
+      if (remainder.length > 0) {
+        normalized = remainder;
+      }
+    }
+
+    if (command === "compact" && /already compacted/i.test(normalized)) {
+      return "Already compacted";
+    }
+
+    return normalized;
+  }
+
+  /**
    * Abort the current agent operation.
    *
-   * If abort does not settle promptly, force-stop the session to break loops.
+   * Abort the current turn. Does NOT stop the session — the pi process
+   * stays alive and ready for the next prompt.
    */
   async sendAbort(userId: string, sessionId: string): Promise<void> {
     const key = `${userId}/${sessionId}`;
@@ -779,42 +1303,6 @@ export class SessionManager extends EventEmitter {
     }
 
     this.sendRpcCommand(key, { type: "abort" });
-
-    if (active.session.status === "busy") {
-      this.scheduleAbortFallback(key, userId, sessionId);
-    }
-  }
-
-  private scheduleAbortFallback(key: string, userId: string, sessionId: string): void {
-    this.clearAbortFallback(key);
-
-    const timer = setTimeout(() => {
-      this.abortFallbackTimers.delete(key);
-
-      const active = this.active.get(key);
-      if (!active || active.session.status !== "busy") {
-        return;
-      }
-
-      console.warn(`[session] abort timeout, force-stopping ${key}`);
-      this.broadcast(key, {
-        type: "error",
-        error: "Stop request timed out. Session was force-stopped.",
-      });
-      void this.stopSession(userId, sessionId);
-    }, this.abortFallbackMs);
-
-    this.abortFallbackTimers.set(key, timer);
-  }
-
-  private clearAbortFallback(key: string): void {
-    const timer = this.abortFallbackTimers.get(key);
-    if (!timer) {
-      return;
-    }
-
-    clearTimeout(timer);
-    this.abortFallbackTimers.delete(key);
   }
 
   // ─── Guard Health Check ───
@@ -841,8 +1329,11 @@ export class SessionManager extends EventEmitter {
       if (!active.session.warnings) active.session.warnings = [];
       if (!active.session.warnings.includes(warning)) {
         active.session.warnings.push(warning);
-        console.warn(`[session:${sessionId}] ${warning}`);
+        console.warn(`${ts()} [session:${sessionId}] ${warning}`);
+        // Surface as both state update (session.warnings) and error event
+        // so the iOS chat timeline shows the problem immediately.
         this.broadcast(key, { type: "state", session: active.session });
+        this.broadcast(key, { type: "error", error: warning });
         this.persistSessionNow(key, active.session);
       }
     }, this.guardCheckDelayMs);
@@ -869,6 +1360,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Send RPC command and await the response.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
   sendRpcCommandAsync(key: string, command: Record<string, unknown>, timeoutMs = 10_000): Promise<any> {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
@@ -907,23 +1399,45 @@ export class SessionManager extends EventEmitter {
    * with replace semantics (accumulated output so far). We compute deltas
    * here so the client can use simple append semantics.
    *
-   * Image handling: pi's Read tool returns image files as content blocks with
-   * type "image" (base64 + mimeType). We encode these as data URIs in the
-   * tool_output text so the iOS ImageExtractor can detect and render them.
+   * Media handling: pi's Read tool can return image/audio files as content
+   * blocks (base64 + mimeType). We encode these as data URIs in tool_output
+   * text so iOS extractors can detect and render playable media.
    */
+  /**
+   * Extract image/audio content blocks as data URI tool_output messages.
+   * Pi sends media as { type: "image"|"audio", data: "base64...", mimeType: "..." }.
+   * We encode as data URIs so iOS extractors can detect and render them.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi content blocks are untyped
+  private extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
+    const out: ServerMessage[] = [];
+    for (const block of contents) {
+      if ((block.type === "image" || block.type === "audio") && block.data) {
+        const defaultMime = block.type === "image" ? "image/png" : "audio/wav";
+        const dataUri = `data:${block.mimeType || defaultMime};base64,${block.data}`;
+        out.push({ type: "tool_output", output: dataUri, toolCallId });
+      }
+    }
+    return out;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   private translateEvent(event: any, active: ActiveSession): ServerMessage[] {
     const session = active.session;
 
     switch (event.type) {
       case "agent_start":
+        active.streamedAssistantText = "";
         return [{ type: "agent_start" }];
 
       case "agent_end":
+        active.streamedAssistantText = "";
         return [{ type: "agent_end" }];
 
       case "message_update": {
         const evt = event.assistantMessageEvent;
-        if (evt?.type === "text_delta") {
+        if (evt?.type === "text_delta" && typeof evt.delta === "string") {
+          active.streamedAssistantText += evt.delta;
           return [{ type: "text_delta", delta: evt.delta }];
         }
         if (evt?.type === "thinking_delta") {
@@ -962,26 +1476,31 @@ export class SessionManager extends EventEmitter {
             if (delta) {
               messages.push({ type: "tool_output", output: delta, toolCallId });
             }
-          } else if (block.type === "image" && block.data) {
-            // Encode image as data URI so iOS ImageExtractor can detect it.
-            // Pi sends: { type: "image", data: "base64...", mimeType: "image/png" }
-            const mime = block.mimeType || "image/png";
-            const dataUri = `data:${mime};base64,${block.data}`;
-            messages.push({ type: "tool_output", output: dataUri, toolCallId });
           }
         }
 
+        messages.push(...this.extractMediaOutputs(contents, toolCallId));
         return messages;
       }
 
       case "tool_execution_end": {
         const toolCallId: string | undefined = event.toolCallId;
         active.partialResults.delete(toolCallId ?? "");
-        return [{
+
+        // Extract media from final result — some tools (like read for images)
+        // don't stream partialResults and only include content in the final result.
+        const resultContents = event.result?.content;
+        const messages: ServerMessage[] = Array.isArray(resultContents)
+          ? this.extractMediaOutputs(resultContents, toolCallId)
+          : [];
+
+        messages.push({
           type: "tool_end",
           tool: event.toolName,
           toolCallId,
-        }];
+        });
+
+        return messages;
       }
 
       case "auto_compaction_start":
@@ -1014,7 +1533,7 @@ export class SessionManager extends EventEmitter {
         }];
 
       case "extension_error":
-        console.error(`[pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`);
+        console.error(`${ts()} [pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`);
         return [];
 
       case "response":
@@ -1024,6 +1543,35 @@ export class SessionManager extends EventEmitter {
         }
         return [];
 
+      // Pi can deliver final assistant text/thinking only in message_end.
+      // Recover any missing text tail and emit thinking blocks for iOS.
+      case "message_end": {
+        const message = event.message;
+        if (message?.role !== "assistant") {
+          active.streamedAssistantText = "";
+          return [];
+        }
+
+        const out: ServerMessage[] = [];
+        const finalizedText = this.extractAssistantText(message);
+        const tailDelta = computeAssistantTextTailDelta(active.streamedAssistantText, finalizedText);
+        if (tailDelta.length > 0) {
+          out.push({ type: "text_delta", delta: tailDelta });
+        }
+
+        const content = message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.length > 0) {
+              out.push({ type: "thinking_delta", delta: block.thinking });
+            }
+          }
+        }
+
+        active.streamedAssistantText = "";
+        return out;
+      }
+
       default:
         return [];
     }
@@ -1032,6 +1580,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Update session state from pi events.
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   private updateSessionFromEvent(key: string, session: Session, event: any): void {
     let shouldFlushNow = false;
 
@@ -1042,7 +1591,6 @@ export class SessionManager extends EventEmitter {
 
       case "agent_end":
         session.status = "ready";
-        this.clearAbortFallback(key);
         shouldFlushNow = true;
         break;
 
@@ -1114,6 +1662,7 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
   private extractAssistantText(message: any): string {
     const content = message?.content;
 
@@ -1136,6 +1685,7 @@ export class SessionManager extends EventEmitter {
     return textParts.join("");
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
   private extractUsage(message: any): {
     input: number;
     output: number;
@@ -1203,7 +1753,7 @@ export class SessionManager extends EventEmitter {
     this.authProxy?.removeSession(active.session.id);
 
     // Reject pending RPC responses
-    for (const [id, handler] of active.pendingResponses) {
+    for (const [_id, handler] of active.pendingResponses) {
       handler({ success: false, error: "Session ended" });
     }
     active.pendingResponses.clear();
@@ -1220,7 +1770,6 @@ export class SessionManager extends EventEmitter {
 
     this.broadcast(key, { type: "session_ended", reason });
     this.clearIdleTimer(key);
-    this.clearAbortFallback(key);
     this.active.delete(key);
   }
 
@@ -1251,12 +1800,12 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return;
 
-    this.clearAbortFallback(key);
-
     // Graceful: abort current operation
     try {
       active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
-    } catch {}
+    } catch {
+      // process stdin already closed
+    }
 
     // Wait briefly then stop
     await new Promise(r => setTimeout(r, 1000));
@@ -1304,7 +1853,7 @@ export class SessionManager extends EventEmitter {
   private resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
     const timer = setTimeout(() => {
-      console.log(`[session] idle timeout: ${key}`);
+      console.log(`${ts()} [session] idle timeout: ${key}`);
       const [userId, sessionId] = key.split("/");
       this.stopSession(userId, sessionId);
     }, this.config.sessionTimeout);

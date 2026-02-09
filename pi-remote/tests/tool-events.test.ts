@@ -157,13 +157,17 @@ function translateContentBlocks(
       const mime = block.mimeType || "image/png";
       const dataUri = `data:${mime};base64,${block.data}`;
       messages.push({ type: "tool_output", output: dataUri, toolCallId } as any);
+    } else if (block.type === "audio" && block.data) {
+      const mime = block.mimeType || "audio/wav";
+      const dataUri = `data:${mime};base64,${block.data}`;
+      messages.push({ type: "tool_output", output: dataUri, toolCallId } as any);
     }
   }
 
   return messages;
 }
 
-describe("image content block handling", () => {
+describe("media content block handling", () => {
   it("encodes image block as data URI in tool_output", () => {
     const partialResults = new Map<string, string>();
     const messages = translateContentBlocks(
@@ -177,7 +181,20 @@ describe("image content block handling", () => {
     expect((messages[0] as any).toolCallId).toBe("tc-img");
   });
 
-  it("defaults mimeType to image/png when not provided", () => {
+  it("encodes audio block as data URI in tool_output", () => {
+    const partialResults = new Map<string, string>();
+    const messages = translateContentBlocks(
+      [{ type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" }],
+      partialResults,
+      "tc-audio",
+    );
+
+    expect(messages).toHaveLength(1);
+    expect((messages[0] as any).output).toBe("data:audio/wav;base64,UklGRiQAAABXQVZF");
+    expect((messages[0] as any).toolCallId).toBe("tc-audio");
+  });
+
+  it("defaults mimeType to image/png when image mime is omitted", () => {
     const partialResults = new Map<string, string>();
     const messages = translateContentBlocks(
       [{ type: "image", data: "R0lGODlh" }],
@@ -189,26 +206,40 @@ describe("image content block handling", () => {
     expect((messages[0] as any).output).toContain("data:image/png;base64,");
   });
 
-  it("handles mixed text and image content blocks", () => {
+  it("defaults mimeType to audio/wav when audio mime is omitted", () => {
+    const partialResults = new Map<string, string>();
+    const messages = translateContentBlocks(
+      [{ type: "audio", data: "UklGRiQAAABXQVZF" }],
+      partialResults,
+      "tc-audio",
+    );
+
+    expect(messages).toHaveLength(1);
+    expect((messages[0] as any).output).toContain("data:audio/wav;base64,");
+  });
+
+  it("handles mixed text, image, and audio content blocks", () => {
     const partialResults = new Map<string, string>();
     const messages = translateContentBlocks(
       [
-        { type: "text", text: "Reading image file..." },
+        { type: "text", text: "Reading media file..." },
         { type: "image", data: "iVBORw0KGgo=", mimeType: "image/jpeg" },
+        { type: "audio", data: "UklGRiQAAABXQVZF", mimeType: "audio/wav" },
       ],
       partialResults,
       "tc-mixed",
     );
 
-    expect(messages).toHaveLength(2);
-    expect((messages[0] as any).output).toBe("Reading image file...");
+    expect(messages).toHaveLength(3);
+    expect((messages[0] as any).output).toBe("Reading media file...");
     expect((messages[1] as any).output).toBe("data:image/jpeg;base64,iVBORw0KGgo=");
+    expect((messages[2] as any).output).toBe("data:audio/wav;base64,UklGRiQAAABXQVZF");
   });
 
-  it("skips blocks with no data", () => {
+  it("skips media blocks with no data", () => {
     const partialResults = new Map<string, string>();
     const messages = translateContentBlocks(
-      [{ type: "image" }],  // no data field
+      [{ type: "audio" }],  // no data field
       partialResults,
       "tc-empty",
     );

@@ -32,7 +32,9 @@ export interface Workspace {
   skills: string[];          // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string;      // "container" | "restricted"
+  policyPreset: string;      // "host" | "container" | "restricted"
+  allowedPaths?: { path: string; access: "read" | "readwrite" }[];  // Extra dirs beyond workspace
+  allowedExecutables?: string[];  // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
 
   // Context
   systemPrompt?: string;     // Additional instructions appended to base prompt
@@ -78,6 +80,9 @@ export interface Session {
   // Health
   warnings?: string[];       // bootstrap/runtime warnings surfaced to iOS
 
+  // Agent config state (synced from pi get_state)
+  thinkingLevel?: string;    // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+
   // Runtime metadata (used for trace recovery/replay)
   runtime?: "host" | "container";
   piSessionFile?: string;    // latest absolute JSONL path reported by pi get_state
@@ -119,6 +124,11 @@ export interface CreateSessionRequest {
   name?: string;
   model?: string;
   workspaceId?: string;
+}
+
+export interface AllowedPathEntry {
+  path: string;
+  access: "read" | "readwrite";
 }
 
 export interface CreateWorkspaceRequest {
@@ -169,6 +179,9 @@ export interface ImageAttachment {
   mimeType: string;  // image/jpeg, image/png, etc.
 }
 
+export type TurnCommand = "prompt" | "steer" | "follow_up";
+export type TurnAckStage = "accepted" | "dispatched" | "started";
+
 /**
  * Client → Server messages.
  *
@@ -177,11 +190,19 @@ export interface ImageAttachment {
  */
 export type ClientMessage =
   // ── Prompting ──
-  | { type: "prompt"; message: string; images?: ImageAttachment[]; streamingBehavior?: "steer" | "followUp"; requestId?: string }
-  | { type: "steer"; message: string; images?: ImageAttachment[]; requestId?: string }
-  | { type: "follow_up"; message: string; images?: ImageAttachment[]; requestId?: string }
+  | {
+      type: "prompt";
+      message: string;
+      images?: ImageAttachment[];
+      streamingBehavior?: "steer" | "followUp";
+      requestId?: string;
+      clientTurnId?: string;
+    }
+  | { type: "steer"; message: string; images?: ImageAttachment[]; requestId?: string; clientTurnId?: string }
+  | { type: "follow_up"; message: string; images?: ImageAttachment[]; requestId?: string; clientTurnId?: string }
   | { type: "abort"; requestId?: string }
-  | { type: "stop"; requestId?: string }  // Alias for mobile UX
+  | { type: "stop"; requestId?: string }  // Abort current turn (alias for mobile UX)
+  | { type: "stop_session"; requestId?: string }  // Kill session process entirely
   // ── State ──
   | { type: "get_state"; requestId?: string }
   | { type: "get_messages"; requestId?: string }
@@ -213,7 +234,7 @@ export type ClientMessage =
   // ── Commands ──
   | { type: "get_commands"; requestId?: string }
   // ── Permission gate ──
-  | { type: "permission_response"; id: string; action: "allow" | "deny"; requestId?: string }
+  | { type: "permission_response"; id: string; action: "allow" | "deny"; scope?: "once" | "session" | "workspace" | "global"; requestId?: string }
   // ── Extension UI dialog responses ──
   | { type: "extension_ui_response"; id: string; value?: string; confirmed?: boolean; cancelled?: boolean; requestId?: string };
 
@@ -294,6 +315,15 @@ export type ServerMessage =
   | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string }
   | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
   | { type: "tool_end"; tool: string; toolCallId?: string }
+  // ── Turn delivery acknowledgements (idempotent send contract) ──
+  | {
+      type: "turn_ack";
+      command: TurnCommand;
+      clientTurnId: string;
+      stage: TurnAckStage;
+      requestId?: string;
+      duplicate?: boolean;
+    }
   // ── RPC responses (keyed by requestId for correlation) ──
   | { type: "rpc_result"; command: string; requestId?: string; success: boolean; data?: unknown; error?: string }
   // ── Compaction ──
@@ -310,9 +340,15 @@ export type ServerMessage =
       tool: string;
       input: Record<string, unknown>;
       displaySummary: string;
-      risk: string;
+      risk: "low" | "medium" | "high" | "critical";
       reason: string;
       timeoutAt: number;
+      resolutionOptions?: {
+        allowSession: boolean;
+        allowAlways: boolean;
+        alwaysDescription?: string;
+        denyAlways: boolean;
+      };
     }
   | { type: "permission_expired"; id: string; reason: string }
   | { type: "permission_cancelled"; id: string }
