@@ -154,7 +154,6 @@ struct MarkdownText: View {
         if content.count > Self.plainTextFallbackThreshold {
             Text(content)
                 .foregroundStyle(.tokyoFg)
-                .textSelection(.enabled)
         } else if let segments = cachedSegments {
             FlatMarkdownView(segments: segments)
         } else if let cached = synchronousCacheLookup() {
@@ -220,7 +219,6 @@ struct MarkdownText: View {
                 case .markdown(let text):
                     Text(text)
                         .foregroundStyle(.tokyoFg)
-                        .textSelection(.enabled)
 
                 case .codeBlock(let language, let code, let isComplete):
                     if !isComplete {
@@ -264,7 +262,6 @@ private struct FlatMarkdownView: View {
                 switch segment {
                 case .text(let attributed):
                     Text(attributed)
-                        .textSelection(.enabled)
                 case .codeBlock(let language, let code):
                     CodeBlockView(language: language, code: code)
                 case .table(let headers, let rows):
@@ -536,12 +533,10 @@ struct CodeBlockView: View {
             if let highlighted {
                 Text(highlighted)
                     .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
             } else {
                 Text(code)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tokyoFg)
-                    .textSelection(.enabled)
             }
         }
         .fullScreenCover(isPresented: $showFullScreen) {

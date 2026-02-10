@@ -27,7 +27,7 @@ struct PermissionOverlay: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.snappy(duration: 0.3), value: pending.count)
+            .animation(.snappy(duration: 0.3), value: pending.isEmpty)
             .sheet(isPresented: $showSheet) {
                 PermissionSheet(
                     requests: pending,

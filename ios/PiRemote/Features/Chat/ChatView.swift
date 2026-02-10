@@ -602,6 +602,7 @@ private struct ChatTimelineView: View {
     @Environment(TimelineReducer.self) private var reducer
 
     @State private var renderWindow = Self.initialRenderWindow
+    @State private var fileToOpen: FileToOpen?
 
     private var visibleItems: ArraySlice<ChatItem> {
         reducer.items.suffix(renderWindow)
@@ -632,7 +633,9 @@ private struct ChatTimelineView: View {
                         ChatItemRow(
                             item: item,
                             isStreaming: item.id == reducer.streamingAssistantID,
-                            onFork: onFork
+                            sessionId: sessionId,
+                            onFork: onFork,
+                            onOpenFile: { fileToOpen = $0 }
                         )
                     }
 
@@ -694,6 +697,9 @@ private struct ChatTimelineView: View {
                 }
                 scrollController.scrollTargetID = itemId
             }
+        }
+        .sheet(item: $fileToOpen) { file in
+            RemoteFileView(sessionId: file.sessionId, path: file.path)
         }
     }
 }

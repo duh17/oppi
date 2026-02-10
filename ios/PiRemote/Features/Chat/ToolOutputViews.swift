@@ -106,15 +106,12 @@ private struct ToolOutputMedia: View {
                     Text(displayText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoRed)
-                        .textSelection(.enabled)
                 } else if let ansiAttributed {
                     Text(ansiAttributed)
-                        .textSelection(.enabled)
                 } else {
                     Text(displayText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoFg)
-                        .textSelection(.enabled)
                 }
             }
 

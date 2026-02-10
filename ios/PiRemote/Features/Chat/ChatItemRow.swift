@@ -14,7 +14,9 @@ struct FileToOpen: Identifiable {
 struct ChatItemRow: View {
     let item: ChatItem
     var isStreaming: Bool = false
+    var sessionId: String?
     var onFork: ((String) -> Void)?
+    var onOpenFile: ((FileToOpen) -> Void)?
 
     /// Server-backed user/assistant messages can be forked.
     private var isForkable: Bool {
@@ -49,7 +51,9 @@ struct ChatItemRow: View {
             ToolCallRow(
                 id: id, tool: tool, argsSummary: args,
                 outputPreview: preview, outputByteCount: bytes,
-                isError: isError, isDone: isDone
+                isError: isError, isDone: isDone,
+                sessionId: sessionId,
+                onOpenFile: onOpenFile
             )
 
         case .permission(let request):
@@ -100,7 +104,6 @@ private struct UserMessageBubble: View {
                     Text(text)
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.tokyoFg)
-                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if !images.isEmpty {
@@ -299,6 +302,10 @@ private struct AudioClipRow: View {
 // MARK: - Streaming Cursor
 
 /// Pulsing block cursor indicating the assistant is still generating.
+///
+/// Uses explicit `withAnimation` in `onAppear` instead of an `.animation`
+/// modifier. The modifier form adds a trait key that `ForEachState.forEachItem`
+/// must walk for ALL items in the LazyVStack, not just visible ones.
 private struct StreamingCursor: View {
     @State private var isVisible = true
 
@@ -307,8 +314,11 @@ private struct StreamingCursor: View {
             .fill(Color.tokyoPurple)
             .frame(width: 8, height: 14)
             .opacity(isVisible ? 0.8 : 0.2)
-            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isVisible)
-            .onAppear { isVisible = false }
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    isVisible = false
+                }
+            }
     }
 }
 
@@ -369,7 +379,6 @@ private struct ThinkingRow: View {
                     Text(displayText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoComment)
-                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 300)
@@ -396,22 +405,21 @@ private struct ToolCallRow: View {
     let outputByteCount: Int
     let isError: Bool
     let isDone: Bool
+    var sessionId: String?
+    var onOpenFile: ((FileToOpen) -> Void)?
 
     @Environment(TimelineReducer.self) private var reducer
     @Environment(ToolOutputStore.self) private var toolOutputStore
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(ServerConnection.self) private var connection
-    @Environment(SessionStore.self) private var sessionStore
     @Environment(\.theme) private var theme
 
-    @State private var fileToOpen: FileToOpen?
     @State private var isLoadingOutput = false
 
     private var isExpanded: Bool { reducer.expandedItemIDs.contains(id) }
     private var args: [String: JSONValue]? { toolArgsStore.args(for: id) }
     private var toolFilePath: String? { ToolCallFormatting.filePath(from: args) }
     private var readStartLine: Int { ToolCallFormatting.readStartLine(from: args) }
-    private var sessionId: String? { sessionStore.activeSessionId }
     private var normalizedTool: String { ToolCallFormatting.normalized(tool) }
     private var bashRawCommand: String? {
         args?["command"]?.stringValue ?? ToolCallFormatting.parseArgValue("command", from: argsSummary)
@@ -484,9 +492,6 @@ private struct ToolCallRow: View {
             }
             .padding(8)
             .background(stateBackground)
-            .sheet(item: $fileToOpen) { file in
-                RemoteFileView(sessionId: file.sessionId, path: file.path)
-            }
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -539,7 +544,7 @@ private struct ToolCallRow: View {
 
     private func openFile() {
         guard let path = toolFilePath, let sid = sessionId else { return }
-        fileToOpen = FileToOpen(sessionId: sid, path: path)
+        onOpenFile?(FileToOpen(sessionId: sid, path: path))
     }
 
     // MARK: - Tool Header
@@ -753,7 +758,6 @@ private struct ToolCallRow: View {
                 Text(cmd)
                     .font(.caption.monospaced())
                     .foregroundStyle(theme.text.primary)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(8)
