@@ -131,6 +131,42 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
   });
 
+  it("asks for chained git push in host mode", async () => {
+    gate = createGate("host");
+    const activeGate = gate;
+    let approvalCount = 0;
+    let lastReason = "";
+
+    activeGate.on("approval_needed", (pending: { id: string; reason: string }) => {
+      approvalCount += 1;
+      lastReason = pending.reason;
+      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 20);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    await new Promise(r => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+    expect(ack.status).toBe("ok");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "cd /Users/chenda/workspace/pios && git push origin main" },
+      toolCallId: "tc_3b",
+    });
+
+    expect(result.action).toBe("allow");
+    expect(approvalCount).toBe(1);
+    expect(lastReason).toBe("Git push");
+  });
+
   it("responds to heartbeat", async () => {
     await setupGuardedSession();
 
