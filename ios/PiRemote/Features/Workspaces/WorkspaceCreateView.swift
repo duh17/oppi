@@ -90,8 +90,9 @@ struct WorkspaceCreateView: View {
 
                 Section("Policy") {
                     Picker("Preset", selection: $policyPreset) {
-                        Text("Container").tag("container")
-                        Text("Restricted").tag("restricted")
+                        ForEach(policyOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
                     }
                     .pickerStyle(.segmented)
                 }
@@ -118,7 +119,23 @@ struct WorkspaceCreateView: View {
                 }
             }
             .task { await loadSkills() }
+            .onChange(of: runtime) { _, newRuntime in
+                normalizePolicyPreset(for: newRuntime)
+            }
         }
+    }
+
+    private var policyOptions: [(label: String, value: String)] {
+        if runtime == "host" {
+            return [("Host", "host"), ("Restricted", "restricted")]
+        }
+        return [("Container", "container"), ("Restricted", "restricted")]
+    }
+
+    private func normalizePolicyPreset(for runtime: String) {
+        let allowed = Set(policyOptions.map(\.value))
+        guard !allowed.contains(policyPreset) else { return }
+        policyPreset = runtime == "host" ? "host" : "container"
     }
 
     private func loadSkills() async {

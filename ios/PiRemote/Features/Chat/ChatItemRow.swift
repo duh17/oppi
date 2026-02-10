@@ -174,6 +174,11 @@ private struct AssistantMessageBubble: View {
     var isStreaming: Bool = false
     var onFork: (() -> Void)?
 
+    /// Debounced cursor visibility — prevents the cursor from flashing
+    /// during rapid text→tool→text sequences where isStreaming toggles
+    /// on/off within milliseconds.
+    @State private var showCursor = false
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Text("π")
@@ -185,9 +190,20 @@ private struct AssistantMessageBubble: View {
                     .foregroundStyle(.tokyoFg)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if isStreaming {
+                if showCursor {
                     StreamingCursor()
                 }
+            }
+        }
+        .task(id: isStreaming) {
+            if isStreaming {
+                // Wait 150ms before showing cursor — if isStreaming toggles
+                // off before this fires (rapid tool call), the task is
+                // cancelled and the cursor never appears. Prevents flashing.
+                try? await Task.sleep(for: .milliseconds(150))
+                showCursor = true
+            } else {
+                showCursor = false
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,6 +413,7 @@ private struct ToolCallRow: View {
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(\.theme) private var theme
 
     @State private var fileToOpen: FileToOpen?
     @State private var isLoadingOutput = false
@@ -407,6 +424,18 @@ private struct ToolCallRow: View {
     private var readStartLine: Int { ToolCallFormatting.readStartLine(from: args) }
     private var sessionId: String? { sessionStore.activeSessionId }
     private var normalizedTool: String { ToolCallFormatting.normalized(tool) }
+    private var bashRawCommand: String? {
+        args?["command"]?.stringValue ?? ToolCallFormatting.parseArgValue("command", from: argsSummary)
+    }
+    private var shouldShowExpandedBashCommand: Bool {
+        guard normalizedTool == "bash", let bashRawCommand else {
+            return false
+        }
+        return bashRawCommand.count > 120
+    }
+    private var shouldHideBashPreviewInHeader: Bool {
+        isExpanded && shouldShowExpandedBashCommand
+    }
 
     /// Background + border colors based on tool execution state.
     private var stateBackground: Color {
@@ -521,8 +550,18 @@ private struct ToolCallRow: View {
         switch normalizedTool {
         case "bash":
             Text("$").font(.caption.monospaced().bold()).foregroundStyle(.tokyoGreen)
-            Text(bashCommand).font(.caption.monospaced()).foregroundStyle(.tokyoFg)
-                .lineLimit(3).multilineTextAlignment(.leading)
+            if shouldHideBashPreviewInHeader {
+                Text("full command below")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(theme.text.tertiary)
+                    .lineLimit(1)
+            } else {
+                Text(bashCommand)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tokyoFg)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
 
         case "read", "write", "edit":
             let (icon, verb) = fileToolInfo
@@ -674,15 +713,25 @@ private struct ToolCallRow: View {
     /// Full bash command shown when tool call is expanded.
     @ViewBuilder
     private var expandedBashCommand: some View {
-        if normalizedTool == "bash", let cmd = args?["command"]?.stringValue, cmd.count > 120 {
-            Text(cmd)
-                .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFg)
-                .textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.tokyoBgDark.opacity(0.6))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        if shouldShowExpandedBashCommand, let cmd = bashRawCommand {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Command", systemImage: "terminal")
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .foregroundStyle(theme.accent.blue)
+
+                Text(cmd)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(theme.text.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(8)
+            .background(theme.bg.highlight.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(theme.accent.blue.opacity(0.35), lineWidth: 1)
+            )
         }
     }
 

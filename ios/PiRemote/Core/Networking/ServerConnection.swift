@@ -163,28 +163,55 @@ final class ServerConnection {
     ///
     /// Uses request/response correlation (`requestId`) plus `clientTurnId`
     /// idempotency so reconnect retries do not duplicate work.
-    func sendPrompt(_ text: String, images: [ImageAttachment]? = nil) async throws {
+    func sendPrompt(
+        _ text: String,
+        images: [ImageAttachment]? = nil,
+        onAckStage: ((TurnAckStage) -> Void)? = nil
+    ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "prompt") {
+        try await sendTurnWithAck(
+            requestId: requestId,
+            clientTurnId: clientTurnId,
+            command: "prompt",
+            onAckStage: onAckStage
+        ) {
             .prompt(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
         }
     }
 
     /// Send a steering message to a busy session and await acceptance.
-    func sendSteer(_ text: String, images: [ImageAttachment]? = nil) async throws {
+    func sendSteer(
+        _ text: String,
+        images: [ImageAttachment]? = nil,
+        onAckStage: ((TurnAckStage) -> Void)? = nil
+    ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "steer") {
+        try await sendTurnWithAck(
+            requestId: requestId,
+            clientTurnId: clientTurnId,
+            command: "steer",
+            onAckStage: onAckStage
+        ) {
             .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
         }
     }
 
     /// Queue a follow-up message and await acceptance.
-    func sendFollowUp(_ text: String, images: [ImageAttachment]? = nil) async throws {
+    func sendFollowUp(
+        _ text: String,
+        images: [ImageAttachment]? = nil,
+        onAckStage: ((TurnAckStage) -> Void)? = nil
+    ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "follow_up") {
+        try await sendTurnWithAck(
+            requestId: requestId,
+            clientTurnId: clientTurnId,
+            command: "follow_up",
+            onAckStage: onAckStage
+        ) {
             .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
         }
     }
@@ -253,17 +280,20 @@ final class ServerConnection {
         requestId: String,
         clientTurnId: String,
         command: String,
+        onAckStage: ((TurnAckStage) -> Void)? = nil,
         message: () -> ClientMessage
     ) async throws {
         if _sendMessageForTesting == nil, wsClient == nil {
             throw WebSocketError.notConnected
         }
 
-        let pending = PendingTurnSend(command: command, requestId: requestId, clientTurnId: clientTurnId)
+        let pending = PendingTurnSend(
+            command: command,
+            requestId: requestId,
+            clientTurnId: clientTurnId,
+            onAckStage: onAckStage
+        )
         registerPendingTurnSend(pending)
-        defer {
-            unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
-        }
 
         var lastError: Error?
 
@@ -281,21 +311,26 @@ final class ServerConnection {
                     continue
                 }
                 pending.waiter.resolve(.failure(error))
+                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 throw error
             }
 
             do {
                 try await waitForSendAck(waiter: pending.waiter, command: command)
+
+                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 return
             } catch {
                 lastError = error
                 if attempt < Self.turnSendMaxAttempts, Self.isReconnectableSendError(error) {
                     continue
                 }
+                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 throw error
             }
         }
 
+        unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
         throw lastError ?? SendAckError.timeout(command: command)
     }
 
@@ -328,18 +363,6 @@ final class ServerConnection {
         }
     }
 
-    private func registerPendingTurnSend(_ pending: PendingTurnSend) {
-        pendingTurnSendsByRequestId[pending.requestId] = pending
-        pendingTurnRequestIdByClientTurnId[pending.clientTurnId] = pending.requestId
-    }
-
-    private func unregisterPendingTurnSend(requestId: String, clientTurnId: String) {
-        pendingTurnSendsByRequestId.removeValue(forKey: requestId)
-        if pendingTurnRequestIdByClientTurnId[clientTurnId] == requestId {
-            pendingTurnRequestIdByClientTurnId.removeValue(forKey: clientTurnId)
-        }
-    }
-
     private func resolveTurnAck(
         command: String,
         clientTurnId: String,
@@ -355,6 +378,7 @@ final class ServerConnection {
         }
 
         pending.latestStage = stage
+        pending.notifyStage(stage)
 
         if stage.rank >= Self.turnSendRequiredStage.rank {
             pending.waiter.resolve(.success(()))
@@ -376,6 +400,8 @@ final class ServerConnection {
         if success {
             // Backward compatibility for servers that only emit rpc_result.
             if pending.latestStage == nil {
+                pending.latestStage = .dispatched
+                pending.notifyStage(.dispatched)
                 pending.waiter.resolve(.success(()))
             }
         } else {
@@ -383,36 +409,6 @@ final class ServerConnection {
         }
 
         return true
-    }
-
-    private func failPendingSendAcks(error: Error) {
-        let pending = Array(pendingTurnSendsByRequestId.values)
-        pendingTurnSendsByRequestId.removeAll()
-        pendingTurnRequestIdByClientTurnId.removeAll()
-
-        for send in pending {
-            send.waiter.resolve(.failure(error))
-        }
-    }
-
-    private static func isReconnectableSendError(_ error: Error) -> Bool {
-        if let wsError = error as? WebSocketError {
-            switch wsError {
-            case .notConnected, .sendTimeout:
-                return true
-            }
-        }
-
-        if let ackError = error as? SendAckError {
-            switch ackError {
-            case .timeout:
-                return true
-            case .rejected:
-                return false
-            }
-        }
-
-        return false
     }
 
     // ── Model ──
@@ -638,6 +634,10 @@ final class ServerConnection {
             return
         }
 
+        if handleStopLifecycleMessage(message, sessionId: sessionId) {
+            return
+        }
+
         switch message {
         // Direct state updates (not timeline events)
         case .connected(let session):
@@ -657,8 +657,8 @@ final class ServerConnection {
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId)
 
-        case .unknown:
-            break  // Already logged in WebSocketClient
+        case .unknown, .stopRequested, .stopConfirmed, .stopFailed:
+            break  // Already logged in WebSocketClient / handled earlier
 
         // Permission events → store + overlay (NOT inline timeline)
         case .permissionRequest(let perm):
@@ -696,6 +696,11 @@ final class ServerConnection {
             coalescer.receive(.agentEnd(sessionId: sessionId))
             stopSilenceWatchdog()
 
+        case .messageEnd(let role, let content):
+            if role == "assistant" {
+                coalescer.receive(.messageEnd(sessionId: sessionId, content: content))
+            }
+
         case .textDelta(let delta):
             lastEventTime = .now
             coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
@@ -718,15 +723,18 @@ final class ServerConnection {
 
         case .sessionEnded(let reason):
             stopSilenceWatchdog()
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                current.status = .stopped
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
         case .error(let msg, _, let fatal):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
-            if fatal {
-                // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
-                // The server closed the WS after this; retrying would just loop.
-                fatalSetupError = true
-            }
+            // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
+            // The server closed the WS after this; retrying would just loop.
+            fatalSetupError = fatalSetupError || fatal
 
         // Compaction events → pipeline
         case .compactionStart(let reason):
@@ -754,21 +762,48 @@ final class ServerConnection {
             )
         }
     }
-
     private func handleConnected(_ session: Session) {
         sessionStore.upsert(session)
         syncThinkingLevel(from: session)
         scheduleSlashCommandsRefresh(for: session, force: true)
     }
-
     private func handleState(_ session: Session) {
         let previousWorkspaceId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
         sessionStore.upsert(session)
         syncThinkingLevel(from: session)
-
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
         }
+    }
+    private func handleStopLifecycleMessage(_ message: ServerMessage, sessionId: String) -> Bool {
+        switch message {
+        case .stopRequested(_, let reason):
+            updateStopStatus(sessionId, status: .stopping)
+            reducer.appendSystemEvent(reason ?? "Stopping…")
+            return true
+        case .stopConfirmed(_, let reason):
+            updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
+            reducer.appendSystemEvent(reason ?? "Stop confirmed")
+            return true
+        case .stopFailed(_, let reason):
+            updateStopStatus(sessionId, status: .busy, onlyFrom: .stopping)
+            reducer.process(.error(sessionId: sessionId, message: "Stop failed: \(reason)"))
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func updateStopStatus(
+        _ sessionId: String,
+        status: SessionStatus,
+        onlyFrom: SessionStatus? = nil
+    ) {
+        guard var current = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
+        if let onlyFrom, current.status != onlyFrom { return }
+        current.status = status
+        current.lastActivity = Date()
+        sessionStore.upsert(current)
     }
 
     private func handleRPCResult(
@@ -890,71 +925,46 @@ final class ServerConnection {
     }
 }
 
-// MARK: - Turn Send Tracking
-
-@MainActor
-private final class PendingTurnSend {
-    let command: String
-    let requestId: String
-    let clientTurnId: String
-
-    var latestStage: TurnAckStage?
-    var waiter = SendAckWaiter()
-
-    init(command: String, requestId: String, clientTurnId: String) {
-        self.command = command
-        self.requestId = requestId
-        self.clientTurnId = clientTurnId
+private extension ServerConnection {
+    func registerPendingTurnSend(_ pending: PendingTurnSend) {
+        pendingTurnSendsByRequestId[pending.requestId] = pending
+        pendingTurnRequestIdByClientTurnId[pending.clientTurnId] = pending.requestId
     }
 
-    func resetWaiter() {
-        waiter = SendAckWaiter()
+    func unregisterPendingTurnSend(requestId: String, clientTurnId: String) {
+        pendingTurnSendsByRequestId.removeValue(forKey: requestId)
+        if pendingTurnRequestIdByClientTurnId[clientTurnId] == requestId {
+            pendingTurnRequestIdByClientTurnId.removeValue(forKey: clientTurnId)
+        }
     }
-}
 
-// MARK: - Send Ack Waiter
+    func failPendingSendAcks(error: Error) {
+        let pending = Array(pendingTurnSendsByRequestId.values)
+        pendingTurnSendsByRequestId.removeAll()
+        pendingTurnRequestIdByClientTurnId.removeAll()
 
-@MainActor
-private final class SendAckWaiter {
-    private var continuation: CheckedContinuation<Void, Error>?
-    private var pendingResult: Result<Void, Error>?
+        for send in pending {
+            send.waiter.resolve(.failure(error))
+        }
+    }
 
-    func wait() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            if let pendingResult {
-                continuation.resume(with: pendingResult)
-            } else {
-                self.continuation = continuation
+    static func isReconnectableSendError(_ error: Error) -> Bool {
+        if let wsError = error as? WebSocketError {
+            switch wsError {
+            case .notConnected, .sendTimeout:
+                return true
             }
         }
-    }
 
-    func resolve(_ result: Result<Void, Error>) {
-        if let continuation {
-            self.continuation = nil
-            continuation.resume(with: result)
-            return
-        }
-
-        pendingResult = result
-    }
-}
-
-// MARK: - Send Ack Errors
-
-enum SendAckError: LocalizedError {
-    case timeout(command: String)
-    case rejected(command: String, reason: String?)
-
-    var errorDescription: String? {
-        switch self {
-        case .timeout(let command):
-            return "\(command) acknowledgement timed out"
-        case .rejected(let command, let reason):
-            if let reason, !reason.isEmpty {
-                return "\(command) rejected: \(reason)"
+        if let ackError = error as? SendAckError {
+            switch ackError {
+            case .timeout:
+                return true
+            case .rejected:
+                return false
             }
-            return "\(command) rejected"
         }
+
+        return false
     }
 }

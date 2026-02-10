@@ -77,10 +77,11 @@ struct ToolCallFormattingTests {
     }
 
     @Test func bashCommandTruncatesLong() {
-        let long = String(repeating: "a", count: 200)
+        let long = String(repeating: "a", count: 260)
         let args: [String: JSONValue] = ["command": .string(long)]
         let result = ToolCallFormatting.bashCommand(args: args, argsSummary: "")
-        #expect(result.count == 120)
+        #expect(result.count == 200)
+        #expect(result == String(long.prefix(200)))
     }
 
     @Test func bashCommandFallbackToSummary() {

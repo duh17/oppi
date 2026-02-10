@@ -84,6 +84,60 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func routeStopRequestedMarksStopping() {
+        let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .busy))
+
+        conn.handleServerMessage(
+            .stopRequested(source: .user, reason: "Stopping current turn"),
+            sessionId: "s1"
+        )
+        conn.flushAndSuspend()
+
+        #expect(conn.sessionStore.sessions.first?.status == .stopping)
+
+        let system = conn.reducer.items.filter {
+            if case .systemEvent = $0 { return true }
+            return false
+        }
+        #expect(system.count == 1)
+    }
+
+    @MainActor
+    @Test func routeStopFailedRestoresBusyAndEmitsError() {
+        let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .stopping))
+
+        conn.handleServerMessage(
+            .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms"),
+            sessionId: "s1"
+        )
+        conn.flushAndSuspend()
+
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
+
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.count == 1)
+    }
+
+    @MainActor
+    @Test func routeStopConfirmedRestoresReady() {
+        let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .stopping))
+
+        conn.handleServerMessage(
+            .stopConfirmed(source: .user, reason: nil),
+            sessionId: "s1"
+        )
+        conn.flushAndSuspend()
+
+        #expect(conn.sessionStore.sessions.first?.status == .ready)
+    }
+
+    @MainActor
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
         let conn = makeConnection()
         #expect(conn.thinkingLevel == .medium)
@@ -282,9 +336,12 @@ struct ServerConnectionTests {
     @MainActor
     @Test func routeSessionEnded() {
         let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .busy))
 
         conn.handleServerMessage(.sessionEnded(reason: "stopped"), sessionId: "s1")
         conn.flushAndSuspend()
+
+        #expect(conn.sessionStore.sessions.first?.status == .stopped)
 
         let system = conn.reducer.items.filter {
             if case .systemEvent = $0 { return true }
@@ -468,6 +525,64 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func sendAckStageCallbackReceivesProgressStages() async throws {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        let stageRecorder = AckStageRecorder()
+
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractAckRequest(from: message),
+                  let clientTurnId = sent.clientTurnId,
+                  let requestId = sent.requestId else {
+                Issue.record("Expected turn command with requestId/clientTurnId")
+                return
+            }
+
+            conn.handleServerMessage(
+                .turnAck(
+                    command: sent.command,
+                    clientTurnId: clientTurnId,
+                    stage: .accepted,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+
+            conn.handleServerMessage(
+                .turnAck(
+                    command: sent.command,
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+
+            conn.handleServerMessage(
+                .turnAck(
+                    command: sent.command,
+                    clientTurnId: clientTurnId,
+                    stage: .started,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+        }
+
+        try await conn.sendPrompt("hello", onAckStage: { stage in
+            Task { await stageRecorder.record(stage) }
+        })
+
+        #expect(await waitForCondition(timeoutMs: 500) {
+            await stageRecorder.snapshot() == [.accepted, .dispatched, .started]
+        })
+    }
+
+    @MainActor
     @Test func sendRetryReusesClientTurnId() async throws {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("s1")
@@ -511,6 +626,103 @@ struct ServerConnectionTests {
         #expect(seenTurnIds[0] == seenTurnIds[1])
         #expect(seenRequestIds.count == 2)
         #expect(seenRequestIds[0] == seenRequestIds[1])
+    }
+
+    @MainActor
+    @Test func sendPromptChurnAlwaysResolvesWithoutSilentDrop() async {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendAckTimeoutForTesting = .milliseconds(160)
+
+        var requestOrder: [String: Int] = [:]
+        var attemptsByRequest: [String: Int] = [:]
+        var turnIdsByRequest: [String: Set<String>] = [:]
+        var nextOrder = 0
+
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractAckRequest(from: message),
+                  let requestId = sent.requestId,
+                  let clientTurnId = sent.clientTurnId else {
+                Issue.record("Expected prompt/steer/follow_up with ids")
+                return
+            }
+
+            if requestOrder[requestId] == nil {
+                nextOrder += 1
+                requestOrder[requestId] = nextOrder
+            }
+
+            attemptsByRequest[requestId, default: 0] += 1
+            turnIdsByRequest[requestId, default: Set<String>()].insert(clientTurnId)
+
+            let order = requestOrder[requestId] ?? 0
+            let attempt = attemptsByRequest[requestId] ?? 0
+
+            // Forced churn pattern:
+            // - even-numbered logical sends always fail (both attempts)
+            // - odd-numbered logical sends fail first, then succeed on retry
+            if order.isMultiple(of: 2) {
+                throw WebSocketError.notConnected
+            }
+
+            if attempt == 1 {
+                throw WebSocketError.notConnected
+            }
+
+            conn.handleServerMessage(
+                .turnAck(
+                    command: sent.command,
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+        }
+
+        var delivered = 0
+        var failed = 0
+
+        for i in 0..<12 {
+            do {
+                try await conn.sendPrompt("msg-\(i)")
+                delivered += 1
+            } catch let error as WebSocketError {
+                switch error {
+                case .notConnected:
+                    failed += 1
+                default:
+                    Issue.record("Unexpected WebSocket error: \(error)")
+                }
+            } catch let error as SendAckError {
+                switch error {
+                case .timeout:
+                    failed += 1
+                case .rejected:
+                    Issue.record("Unexpected rejection during churn test: \(error)")
+                }
+            } catch {
+                Issue.record("Unexpected churn send failure: \(error)")
+            }
+        }
+
+        #expect(delivered + failed == 12)
+        #expect(delivered == 6)
+        #expect(failed == 6)
+        #expect(requestOrder.count == 12)
+        #expect(attemptsByRequest.values.allSatisfy { $0 == 2 })
+        #expect(turnIdsByRequest.values.allSatisfy { $0.count == 1 })
+
+        // Recovery check: after repeated churn/failures, a new send still resolves.
+        do {
+            try await conn.sendPrompt("recovery")
+            delivered += 1
+        } catch {
+            Issue.record("Expected recovery prompt to succeed, got \(error)")
+        }
+
+        #expect(delivered == 7)
     }
 
     @MainActor
@@ -673,6 +885,18 @@ private actor GetCommandsCounter {
 
     func count() -> Int {
         value
+    }
+}
+
+private actor AckStageRecorder {
+    private var stages: [TurnAckStage] = []
+
+    func record(_ stage: TurnAckStage) {
+        stages.append(stage)
+    }
+
+    func snapshot() -> [TurnAckStage] {
+        stages
     }
 }
 

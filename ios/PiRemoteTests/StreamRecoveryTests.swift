@@ -241,7 +241,7 @@ struct StreamRecoveryTests {
         reducer.processBatch(turn1)
 
         // Verify in-progress state
-        #expect(reducer.streamingAssistantID == nil) // finalized by toolStart
+        #expect(reducer.streamingAssistantID != nil) // preserved through toolStart during active turn
         let toolsBefore = reducer.items.filter {
             if case .toolCall(_, _, _, _, _, _, let isDone) = $0 { return !isDone }
             return false

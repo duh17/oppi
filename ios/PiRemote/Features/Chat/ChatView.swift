@@ -1,5 +1,6 @@
 import os.log
 import SwiftUI
+import UIKit
 
 private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "ChatView")
 
@@ -24,6 +25,10 @@ struct ChatView: View {
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var copiedSessionID = false
+#if DEBUG
+    @State private var showSessionActions = false
+    @State private var uploadingClientLogs = false
+#endif
 
     init(sessionId: String) {
         self.sessionId = sessionId
@@ -35,7 +40,11 @@ struct ChatView: View {
     }
 
     private var isBusy: Bool {
-        session?.status == .busy
+        session?.status == .busy || session?.status == .stopping
+    }
+
+    private var isStopping: Bool {
+        actionHandler.isStopping || session?.status == .stopping
     }
 
     private var isStopped: Bool {
@@ -79,19 +88,31 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button(action: copySessionID) {
-                    HStack(spacing: 6) {
-                        Text(sessionId)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.tokyoFg)
-                            .lineLimit(1)
-                        Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
-                            .font(.caption2)
-                            .foregroundStyle(copiedSessionID ? .tokyoGreen : .tokyoComment)
+#if DEBUG
+                Button {
+                    showSessionActions = true
+                } label: {
+                    sessionTitleLabel
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Session actions")
+                .confirmationDialog("Session Actions", isPresented: $showSessionActions) {
+                    Button("Copy Session ID") {
+                        copySessionID()
                     }
+                    Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs") {
+                        uploadClientLogs()
+                    }
+                    .disabled(uploadingClientLogs)
+                    Button("Cancel", role: .cancel) {}
+                }
+#else
+                Button(action: copySessionID) {
+                    sessionTitleLabel
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Copy session ID")
+#endif
             }
 
             ToolbarItem(placement: .topBarTrailing) {
@@ -138,7 +159,7 @@ struct ChatView: View {
             }
         }
         .onChange(of: session?.status) { _, newStatus in
-            if newStatus != .busy {
+            if newStatus != .stopping {
                 actionHandler.resetStopState()
                 sessionManager.cancelReconciliation()
             }
@@ -169,7 +190,8 @@ struct ChatView: View {
                 pendingImages: $pendingImages,
                 isBusy: isBusy,
                 isSending: actionHandler.isSending,
-                isStopping: actionHandler.isStopping,
+                sendProgressText: actionHandler.sendProgressText,
+                isStopping: isStopping,
                 showForceStop: actionHandler.showForceStop,
                 isForceStopInFlight: actionHandler.isForceStopInFlight,
                 slashCommands: connection.slashCommands,
@@ -191,6 +213,18 @@ struct ChatView: View {
                 onExpand: { showComposer = true },
                 appliesOuterPadding: true
             )
+        }
+    }
+
+    private var sessionTitleLabel: some View {
+        HStack(spacing: 6) {
+            Text(sessionId)
+                .font(.caption.monospaced())
+                .foregroundStyle(.tokyoFg)
+                .lineLimit(1)
+            Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
+                .font(.caption2)
+                .foregroundStyle(copiedSessionID ? .tokyoGreen : .tokyoComment)
         }
     }
 
@@ -317,6 +351,51 @@ struct ChatView: View {
             copiedSessionID = false
         }
     }
+
+#if DEBUG
+    private func uploadClientLogs() {
+        guard !uploadingClientLogs else { return }
+        guard let api = connection.apiClient else {
+            reducer.process(.error(sessionId: sessionId, message: "No API client available"))
+            return
+        }
+
+        uploadingClientLogs = true
+        ClientLog.info("ChatView", "Manual client log upload requested", metadata: [
+            "sessionId": sessionId,
+        ])
+
+        Task { @MainActor in
+            defer { uploadingClientLogs = false }
+
+            let entries = await ClientLogBuffer.shared.snapshot(limit: 500)
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+            let request = ClientLogUploadRequest(
+                generatedAt: Int64((Date().timeIntervalSince1970 * 1_000).rounded()),
+                trigger: "manual-toolbar",
+                appVersion: version,
+                buildNumber: build,
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                deviceModel: UIDevice.current.model,
+                entries: entries
+            )
+
+            do {
+                try await api.uploadClientLogs(sessionId: sessionId, request: request)
+                reducer.appendSystemEvent("Uploaded \(entries.count) client log entries")
+                ClientLog.info("ChatView", "Client log upload succeeded", metadata: [
+                    "sessionId": sessionId,
+                    "entries": String(entries.count),
+                ])
+            } catch {
+                let message = "Client log upload failed: \(error.localizedDescription)"
+                reducer.process(.error(sessionId: sessionId, message: message))
+                ClientLog.error("ChatView", message, metadata: ["sessionId": sessionId])
+            }
+        }
+    }
+#endif
 
     // MARK: - Sheets & Alerts
 
@@ -548,7 +627,10 @@ private struct ChatTimelineView: View {
                 MainThreadBreadcrumb.resetRowCount()
                 perfLog.error("PERF renderVersion=\(newVersion, privacy: .public) items=\(reducer.items.count, privacy: .public) rowsSinceLastRV=\(rowsRendered, privacy: .public)")
                 scrollController._diagnosticItemCount = reducer.items.count
-                scrollController.handleRenderVersionChange(proxy: proxy)
+                scrollController.handleRenderVersionChange(
+                    proxy: proxy,
+                    streamingID: reducer.streamingAssistantID
+                )
             }
             .onChange(of: sessionManager.needsInitialScroll) { _, needs in
                 guard needs else { return }

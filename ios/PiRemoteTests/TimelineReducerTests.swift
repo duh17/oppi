@@ -1211,6 +1211,37 @@ struct TimelineReducerTests {
         #expect(text == "Fourth")
     }
 
+    @MainActor
+    @Test func messageEndFinalizesAssistantText() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Partial"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Final answer"))
+
+        #expect(reducer.items.count == 1)
+        guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
+            Issue.record("Expected assistant message")
+            return
+        }
+        #expect(text == "Final answer")
+    }
+
+    @MainActor
+    @Test func messageEndWithoutDeltaCreatesAssistantMessage() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Recovered final text"))
+
+        #expect(reducer.items.count == 1)
+        guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
+            Issue.record("Expected assistant message")
+            return
+        }
+        #expect(text == "Recovered final text")
+    }
+
     // MARK: - Helpers
 
     private func makeBaseTrace() -> [TraceEvent] {

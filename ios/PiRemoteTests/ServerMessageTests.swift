@@ -19,6 +19,18 @@ struct ServerMessageTests {
         #expect(session.status == .ready)
     }
 
+    @Test func decodesConnectedWithCurrentSeq() throws {
+        let json = """
+        {"type":"connected","currentSeq":42,"session":{"id":"abc","userId":"u1","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .connected(let session) = msg else {
+            Issue.record("Expected .connected")
+            return
+        }
+        #expect(session.id == "abc")
+    }
+
     @Test func decodesState() throws {
         let json = """
         {"type":"state","session":{"id":"abc","userId":"u1","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}
@@ -45,6 +57,39 @@ struct ServerMessageTests {
         #expect(reason == "stopped")
     }
 
+    @Test func decodesStopRequested() throws {
+        let json = #"{"type":"stop_requested","source":"user","reason":"Stopping current turn"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .stopRequested(let source, let reason) = msg else {
+            Issue.record("Expected .stopRequested")
+            return
+        }
+        #expect(source == .user)
+        #expect(reason == "Stopping current turn")
+    }
+
+    @Test func decodesStopConfirmed() throws {
+        let json = #"{"type":"stop_confirmed","source":"timeout"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .stopConfirmed(let source, let reason) = msg else {
+            Issue.record("Expected .stopConfirmed")
+            return
+        }
+        #expect(source == .timeout)
+        #expect(reason == nil)
+    }
+
+    @Test func decodesStopFailed() throws {
+        let json = #"{"type":"stop_failed","source":"server","reason":"timed out"}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .stopFailed(let source, let reason) = msg else {
+            Issue.record("Expected .stopFailed")
+            return
+        }
+        #expect(source == .server)
+        #expect(reason == "timed out")
+    }
+
     // MARK: - Agent streaming
 
     @Test func decodesAgentStart() throws {
@@ -55,6 +100,16 @@ struct ServerMessageTests {
     @Test func decodesAgentEnd() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"agent_end"}"#)
         #expect(msg == .agentEnd)
+    }
+
+    @Test func decodesMessageEnd() throws {
+        let msg = try ServerMessage.decode(from: #"{"type":"message_end","role":"assistant","content":"Done"}"#)
+        guard case .messageEnd(let role, let content) = msg else {
+            Issue.record("Expected .messageEnd")
+            return
+        }
+        #expect(role == "assistant")
+        #expect(content == "Done")
     }
 
     @Test func decodesTextDelta() throws {

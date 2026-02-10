@@ -358,6 +358,223 @@ struct ChatSessionManagerTests {
     }
 
     @MainActor
+    @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
+        let sessionId = "catch-stop-ok-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 2),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        var catchUpCalls = 0
+        manager._loadCatchUpForTesting = { _, _ in
+            catchUpCalls += 1
+            return APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 1, message: .stopRequested(source: .user, reason: "Stopping current turn")),
+                    .init(seq: 2, message: .stopConfirmed(source: .user, reason: nil)),
+                ],
+                currentSeq: 2,
+                session: makeSession(id: sessionId, status: .ready),
+                catchUpComplete: true
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeSession(id: sessionId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .ready)))
+
+        #expect(await waitForCondition(timeoutMs: 500) {
+            await MainActor.run {
+                sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .ready
+            }
+        })
+
+        #expect(catchUpCalls == 1)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 2)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
+    @Test func reconnectCatchUpStopFailedLeavesNoStuckStoppingState() async {
+        let sessionId = "catch-stop-fail-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 2),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        var catchUpCalls = 0
+        manager._loadCatchUpForTesting = { _, _ in
+            catchUpCalls += 1
+            return APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 1, message: .stopRequested(source: .user, reason: "Stopping current turn")),
+                    .init(seq: 2, message: .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms")),
+                ],
+                currentSeq: 2,
+                session: makeSession(id: sessionId, status: .busy),
+                catchUpComplete: true
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeSession(id: sessionId, status: .stopping))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy)))
+
+        #expect(await waitForCondition(timeoutMs: 500) {
+            await MainActor.run {
+                sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy
+            }
+        })
+
+        #expect(!sessionStore.sessions.contains(where: { $0.id == sessionId && $0.status == .stopping }))
+        #expect(catchUpCalls == 1)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 2)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
+    @Test func reconnectCatchUpRingMissForcesFullHistoryReload() async {
+        let sessionId = "catch-gap-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        let tracker = HistoryReloadTracker()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { cachedEventCount, cachedLastEventId in
+            _ = await tracker.recordCall(
+                cachedEventCount: cachedEventCount,
+                cachedLastEventId: cachedLastEventId
+            )
+            return (eventCount: 3, lastEventId: "evt-3")
+        }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 5),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        manager._loadCatchUpForTesting = { _, _ in
+            APIClient.SessionEventsResponse(
+                events: [],
+                currentSeq: 5,
+                session: makeSession(id: sessionId, status: .busy),
+                catchUpComplete: false
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        #expect(await tracker.waitForCalls(1))
+
+        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy)))
+
+        #expect(await tracker.waitForCalls(2))
+        let snapshot = await tracker.snapshot()
+        #expect(snapshot.calls.count >= 2)
+        #expect(snapshot.calls[1].cachedEventCount == nil)
+        #expect(snapshot.calls[1].cachedLastEventId == nil)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 5)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
+    @Test func duplicateSeqEventsAreDroppedAfterReconnect() async {
+        let sessionId = "seq-dedupe-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: nil),
+            .init(seq: 5, currentSeq: nil),
+            .init(seq: 5, currentSeq: nil),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .ready)))
+        streams.yield(index: 0, message: .state(session: makeSession(id: sessionId, status: .busy)))
+
+        #expect(await waitForCondition(timeoutMs: 500) {
+            await MainActor.run {
+                connection.sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy
+            }
+        })
+
+        streams.yield(index: 0, message: .state(session: makeSession(id: sessionId, status: .ready)))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(connection.sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 5)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
     @Test func cleanupIsSafe() {
         let manager = ChatSessionManager(sessionId: "s1")
         manager.cleanup()

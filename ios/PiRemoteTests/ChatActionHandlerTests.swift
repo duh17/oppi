@@ -15,6 +15,8 @@ struct ChatActionHandlerTests {
         #expect(!handler.showForceStop)
         #expect(!handler.isForceStopInFlight)
         #expect(!handler.isSending)
+        #expect(handler.sendAckStage == nil)
+        #expect(handler.sendProgressText == nil)
     }
 
     @MainActor
@@ -29,6 +31,8 @@ struct ChatActionHandlerTests {
         #expect(!handler.showForceStop)
         #expect(!handler.isForceStopInFlight)
         #expect(!handler.isSending)
+        #expect(handler.sendAckStage == nil)
+        #expect(handler.sendProgressText == nil)
     }
 
     @MainActor
@@ -174,6 +178,117 @@ struct ChatActionHandlerTests {
             return false
         }.count
         #expect(userCount == 1)
+    }
+
+    @MainActor
+    @Test func sendPromptTracksAckStageProgress() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+        handler._sendStageDisplayDurationForTesting = .milliseconds(40)
+
+        connection._sendMessageForTesting = { message in
+            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
+                  let requestId,
+                  let clientTurnId else {
+                return
+            }
+
+            try await Task.sleep(for: .milliseconds(20))
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "prompt",
+                    clientTurnId: clientTurnId,
+                    stage: .accepted,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+
+            try await Task.sleep(for: .milliseconds(40))
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "prompt",
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+
+            try await Task.sleep(for: .milliseconds(40))
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "prompt",
+                    clientTurnId: clientTurnId,
+                    stage: .started,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+        }
+
+        _ = handler.sendPrompt(
+            text: "stage me",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .accepted }
+        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .dispatched }
+        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .started }
+        #expect(handler.sendProgressText == "Started…")
+
+        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == nil }
+        #expect(handler.sendProgressText == nil)
+    }
+
+    @MainActor
+    @Test func sendPromptFailureClearsAckStage() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+
+        connection._sendMessageForTesting = { message in
+            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
+                  let requestId,
+                  let clientTurnId else {
+                return
+            }
+
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "prompt",
+                    clientTurnId: clientTurnId,
+                    stage: .accepted,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+            throw WebSocketError.notConnected
+        }
+
+        _ = handler.sendPrompt(
+            text: "fail me",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        await waitForCondition(timeoutMs: 600) { !handler.isSending }
+        #expect(handler.sendAckStage == nil)
+        #expect(handler.sendProgressText == nil)
     }
 
     @MainActor

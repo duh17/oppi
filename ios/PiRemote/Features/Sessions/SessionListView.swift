@@ -246,9 +246,9 @@ struct SessionRow: View {
             Circle()
                 .fill(session.status.nativeColor)
                 .frame(width: 10, height: 10)
-                .opacity(session.status == .busy ? 0.8 : 1)
+                .opacity(session.status == .busy || session.status == .stopping ? 0.8 : 1)
                 .animation(
-                    session.status == .busy
+                    session.status == .busy || session.status == .stopping
                         ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
                         : .default,
                     value: session.status
@@ -361,6 +361,7 @@ extension SessionStatus {
         case .starting: return .blue
         case .ready: return .green
         case .busy: return .yellow
+        case .stopping: return .orange
         case .stopped: return .secondary
         case .error: return .red
         }

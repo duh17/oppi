@@ -24,6 +24,7 @@ struct ChatInputBar: View {
     @Binding var pendingImages: [PendingImage]
     let isBusy: Bool
     let isSending: Bool
+    let sendProgressText: String?
     let isStopping: Bool
     let showForceStop: Bool
     let isForceStopInFlight: Bool
@@ -118,6 +119,25 @@ struct ChatInputBar: View {
                         .padding(.horizontal, 12)
                         .padding(.top, pendingImages.isEmpty ? 10 : 6)
                         .padding(.bottom, 6)
+                }
+
+                if let sendProgressText {
+                    HStack(spacing: 6) {
+                        if isSending {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .font(.caption2)
+                        }
+                        Text(sendProgressText)
+                            .font(.caption.monospaced())
+                    }
+                    .foregroundStyle(.tokyoComment)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, pendingImages.isEmpty ? 10 : 6)
+                    .padding(.bottom, 2)
                 }
 
                 // Input row

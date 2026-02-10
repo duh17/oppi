@@ -27,11 +27,17 @@ final class WebSocketClient {
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
     private var connectionID: UInt64 = 0
 
+    struct InboundMeta: Sendable, Equatable {
+        let seq: Int?
+        let currentSeq: Int?
+    }
+
     private var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
+    private var inboundMetaQueue: [InboundMeta] = []
 
     private let credentials: ServerCredentials
     private let urlSession: URLSession
@@ -108,20 +114,40 @@ final class WebSocketClient {
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
             logger.error("WS send: status=\(String(describing: self.status)), waiting for connection...")
+            ClientLog.warning(
+                "WebSocket",
+                "Send waiting for connection",
+                metadata: ["status": String(describing: status)]
+            )
             let waited = try await waitForConnection()
             if !waited {
                 logger.error("WS send: wait failed, throwing notConnected")
+                ClientLog.error("WebSocket", "Send failed waiting for connection")
                 throw WebSocketError.notConnected
             }
             logger.error("WS send: wait succeeded, now connected")
+            ClientLog.info("WebSocket", "Send wait succeeded")
         }
 
         guard let ws = webSocket, status == .connected else {
             logger.error("WS send: guard failed — ws=\(self.webSocket != nil) status=\(String(describing: self.status))")
+            ClientLog.error(
+                "WebSocket",
+                "Send guard failed",
+                metadata: [
+                    "hasSocket": String(self.webSocket != nil),
+                    "status": String(describing: self.status),
+                ]
+            )
             throw WebSocketError.notConnected
         }
         let data = try message.jsonString()
         logger.error("WS send: \(message.typeLabel) (\(data.count) bytes)")
+        ClientLog.info(
+            "WebSocket",
+            "WS send",
+            metadata: ["type": message.typeLabel, "bytes": String(data.count)]
+        )
         let sendTimeout = self.sendTimeout
 
         do {
@@ -132,6 +158,11 @@ final class WebSocketClient {
         } catch {
             if let wsError = error as? WebSocketError, case .sendTimeout = wsError {
                 logger.error("WS send timed out for \(message.typeLabel, privacy: .public) — forcing reconnect")
+                ClientLog.error(
+                    "WebSocket",
+                    "WS send timed out",
+                    metadata: ["type": message.typeLabel]
+                )
                 if self.webSocket === ws {
                     ws.cancel(with: .goingAway, reason: nil)
                     self.webSocket = nil
@@ -146,6 +177,7 @@ final class WebSocketClient {
         }
 
         logger.error("WS send: \(message.typeLabel) complete")
+        ClientLog.info("WebSocket", "WS send complete", metadata: ["type": message.typeLabel])
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
@@ -164,6 +196,11 @@ final class WebSocketClient {
 
             let timeoutWorkItem = DispatchWorkItem {
                 logger.error("WS send hard timeout fired (\(timeoutMs)ms)")
+                ClientLog.error(
+                    "WebSocket",
+                    "WS send hard timeout fired",
+                    metadata: ["timeoutMs": String(timeoutMs)]
+                )
                 resolver.resolve(.failure(WebSocketError.sendTimeout))
             }
             resolver.setTimeoutWorkItem(timeoutWorkItem)
@@ -176,9 +213,15 @@ final class WebSocketClient {
             ws.send(.string(payload)) { error in
                 if let error {
                     logger.error("WS send callback error: \(String(describing: error), privacy: .public)")
+                    ClientLog.error(
+                        "WebSocket",
+                        "WS send callback error",
+                        metadata: ["error": String(describing: error)]
+                    )
                     resolver.resolve(.failure(error))
                 } else {
                     logger.error("WS send callback success")
+                    ClientLog.info("WebSocket", "WS send callback success")
                     resolver.resolve(.success(()))
                 }
             }
@@ -216,6 +259,7 @@ final class WebSocketClient {
 
         continuation?.finish()
         continuation = nil
+        inboundMetaQueue.removeAll(keepingCapacity: false)
 
         connectedSessionId = nil
         connectedWorkspaceId = nil
@@ -267,7 +311,17 @@ final class WebSocketClient {
                         // Log decode error but DON'T break — keep the stream alive.
                         // MUST be .error — .warning/.info are NOT persisted in device log archives.
                         logger.error("PIPE: DECODE FAILED: \(error.localizedDescription, privacy: .public) — raw: \(text.prefix(300), privacy: .public)")
+                        ClientLog.error(
+                            "WebSocket",
+                            "PIPE decode failed",
+                            metadata: ["error": error.localizedDescription]
+                        )
                         continue
+                    }
+
+                    let inboundMeta = Self.extractInboundMeta(from: text)
+                    await MainActor.run {
+                        self?.inboundMetaQueue.append(inboundMeta)
                     }
 
                     // First successful message = connected
@@ -280,20 +334,29 @@ final class WebSocketClient {
                     }
 
                     if case .unknown(let type) = serverMessage {
-                        logger.debug("Skipping unknown server message: \(type)")
-                        continue
+                        logger.debug("Received unknown server message: \(type)")
                     }
 
                     continuation.yield(serverMessage)
                 } catch {
                     if Task.isCancelled { break }
                     logger.error("WebSocket receive error: \(error)")
+                    ClientLog.error(
+                        "WebSocket",
+                        "WebSocket receive error",
+                        metadata: ["error": String(describing: error)]
+                    )
                     break
                 }
             }
 
             // Connection lost — attempt reconnect
             logger.error("Receive loop exited — cancelled=\(Task.isCancelled)")
+            ClientLog.warning(
+                "WebSocket",
+                "Receive loop exited",
+                metadata: ["cancelled": String(Task.isCancelled)]
+            )
             await MainActor.run {
                 guard let self, self.connectedSessionId != nil else { return }
                 self.attemptReconnect()
@@ -323,6 +386,11 @@ final class WebSocketClient {
                     // Single failures can be transient (brief network blip).
                     if consecutiveFailures >= 2 {
                         logger.error("Ping watchdog: \(consecutiveFailures) consecutive failures — triggering reconnect")
+                        ClientLog.error(
+                            "WebSocket",
+                            "Ping watchdog reconnect",
+                            metadata: ["failures": String(consecutiveFailures)]
+                        )
                         await MainActor.run { [weak self] in
                             self?.receiveTask?.cancel()
                             self?.receiveTask = nil
@@ -347,6 +415,7 @@ final class WebSocketClient {
 
         guard attempt < maxReconnectAttempts else {
             logger.error("Max reconnect attempts reached")
+            ClientLog.error("WebSocket", "Max reconnect attempts reached", metadata: ["sessionId": sessionId])
             disconnect()
             return
         }
@@ -375,6 +444,11 @@ final class WebSocketClient {
         }
     }
 
+    func consumeInboundMeta() -> InboundMeta? {
+        guard !inboundMetaQueue.isEmpty else { return nil }
+        return inboundMetaQueue.removeFirst()
+    }
+
     /// Exponential backoff with jitter: 2^(attempt-1) seconds, capped at 30s, ±25% jitter.
     /// Jitter prevents thundering herd when server restarts with multiple clients.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
@@ -389,6 +463,17 @@ final class WebSocketClient {
         let wholeMs = Double(components.seconds) * 1_000
         let fractionalMs = Double(components.attoseconds) / 1_000_000_000_000_000
         return max(1, Int((wholeMs + fractionalMs).rounded(.up)))
+    }
+
+    private static func extractInboundMeta(from text: String) -> InboundMeta {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return InboundMeta(seq: nil, currentSeq: nil)
+        }
+
+        let seq = (object["seq"] as? NSNumber)?.intValue
+        let currentSeq = (object["currentSeq"] as? NSNumber)?.intValue
+        return InboundMeta(seq: seq, currentSeq: currentSeq)
     }
 
     /// Test seam for deterministic send/reconnect behavior tests.

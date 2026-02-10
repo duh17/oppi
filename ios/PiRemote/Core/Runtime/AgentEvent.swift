@@ -10,6 +10,7 @@ enum AgentEvent: Sendable {
 
     case textDelta(sessionId: String, delta: String)
     case thinkingDelta(sessionId: String, delta: String)
+    case messageEnd(sessionId: String, content: String)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
     case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue])
@@ -38,6 +39,7 @@ enum AgentEvent: Sendable {
         case .agentEnd: "agentEnd"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
+        case .messageEnd: "messageEnd"
         case .toolStart: "toolStart"
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"

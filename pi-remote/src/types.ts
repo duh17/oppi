@@ -60,7 +60,7 @@ export interface Session {
   workspaceId?: string; // which workspace spawned this session
   workspaceName?: string; // denormalized for display
   name?: string;
-  status: "starting" | "ready" | "busy" | "stopped" | "error";
+  status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";
   createdAt: number;
   lastActivity: number;
   model?: string;
@@ -175,6 +175,24 @@ export interface ListSessionsResponse {
 export interface SessionDetailResponse {
   session: Session;
   messages: SessionMessage[];
+}
+
+export interface ClientLogUploadEntry {
+  timestamp: number;
+  level: "debug" | "info" | "warning" | "error";
+  category: string;
+  message: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ClientLogUploadRequest {
+  generatedAt: number;
+  trigger?: string;
+  appVersion?: string;
+  buildNumber?: string;
+  osVersion?: string;
+  deviceModel?: string;
+  entries: ClientLogUploadEntry[];
 }
 
 // ─── WebSocket Messages ───
@@ -333,15 +351,19 @@ export interface PiCommand {
 }
 
 // Server → Client
-export type ServerMessage =
+export type ServerMessage = (
   // ── Connection ──
-  | { type: "connected"; session: Session }
+  | { type: "connected"; session: Session; currentSeq?: number }
   | { type: "state"; session: Session }
   | { type: "session_ended"; reason: string }
+  | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
+  | { type: "stop_confirmed"; source: "user" | "timeout" | "server"; reason?: string }
+  | { type: "stop_failed"; source: "user" | "timeout" | "server"; reason: string }
   | { type: "error"; error: string; code?: string; fatal?: boolean }
   // ── Agent lifecycle ──
   | { type: "agent_start" }
   | { type: "agent_end" }
+  | { type: "message_end"; role: "user" | "assistant"; content: string }
   // ── Streaming ──
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
@@ -425,7 +447,8 @@ export type ServerMessage =
       notifyType?: string;
       statusKey?: string;
       statusText?: string;
-    };
+    }
+) & { seq?: number };
 
 // ─── Push ───
 

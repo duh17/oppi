@@ -16,10 +16,32 @@ final class ChatActionHandler {
     private(set) var showForceStop = false
     private(set) var isForceStopInFlight = false
     private(set) var isSending = false
+    private(set) var sendAckStage: TurnAckStage?
+    private var sendStageClearTask: Task<Void, Never>?
     private var forceStopTask: Task<Void, Never>?
+
+    private static let sendStageDisplayDuration: Duration = .seconds(1.2)
+
+    /// Test seam: shorten send-stage display retention.
+    var _sendStageDisplayDurationForTesting: Duration?
 
     /// Test seam: override async task launch to simulate scheduling races.
     var _launchTaskForTesting: (((@escaping @MainActor () async -> Void)) -> Void)?
+
+    var sendProgressText: String? {
+        if let sendAckStage {
+            switch sendAckStage {
+            case .accepted:
+                return "Accepted…"
+            case .dispatched:
+                return "Dispatched…"
+            case .started:
+                return "Started…"
+            }
+        }
+
+        return isSending ? "Sending…" : nil
+    }
 
     // MARK: - Prompt / Steer
 
@@ -54,12 +76,23 @@ final class ChatActionHandler {
             text=\"\(sendPreview, privacy: .public)\"
             """
         )
+        ClientLog.error(
+            "Action",
+            "SEND tap",
+            metadata: [
+                "isBusy": String(isBusy),
+                "wsStatus": wsStatus,
+                "wsSession": wsSessionId,
+                "targetSession": sessionId,
+                "text": sendPreview,
+            ]
+        )
 
         if isBusy {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
 
             launchTask { @MainActor in
-                self.isSending = true
+                self.beginSendTracking()
                 defer { self.isSending = false }
                 onDispatchStarted?()
 
@@ -70,13 +103,28 @@ final class ChatActionHandler {
 
                 let sendStatus = String(describing: connection.wsClient?.status)
                 log.error("SEND steer Task started, wsStatus=\(sendStatus, privacy: .public)")
+                ClientLog.error(
+                    "Action",
+                    "SEND steer Task started",
+                    metadata: ["wsStatus": sendStatus, "sessionId": sessionId]
+                )
 
                 do {
                     let steerImages = attachments.isEmpty ? nil : attachments
-                    try await connection.sendSteer(trimmed, images: steerImages)
+                    try await connection.sendSteer(trimmed, images: steerImages, onAckStage: { stage in
+                        self.updateSendAckStage(stage)
+                    })
+                    self.scheduleSendStageClear()
                     log.error("SEND steer OK")
+                    ClientLog.info("Action", "SEND steer OK", metadata: ["sessionId": sessionId])
                 } catch {
+                    self.clearSendStageNow()
                     log.error("SEND steer FAILED: \(error.localizedDescription, privacy: .public)")
+                    ClientLog.error(
+                        "Action",
+                        "SEND steer FAILED",
+                        metadata: ["sessionId": sessionId, "error": error.localizedDescription]
+                    )
                     if Self.isReconnectableSendError(error) {
                         onNeedsReconnect?()
                     }
@@ -88,7 +136,7 @@ final class ChatActionHandler {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
             launchTask { @MainActor in
-                self.isSending = true
+                self.beginSendTracking()
                 defer { self.isSending = false }
 
                 let messageId = reducer.appendUserMessage(trimmed, images: attachments)
@@ -101,16 +149,36 @@ final class ChatActionHandler {
                     }
                 }
                 log.error("SEND prompt appended msgId=\(messageId, privacy: .public)")
+                ClientLog.info(
+                    "Action",
+                    "SEND prompt appended",
+                    metadata: ["sessionId": sessionId, "messageId": messageId]
+                )
 
                 let sendStatus = String(describing: connection.wsClient?.status)
                 log.error("SEND prompt Task started, wsStatus=\(sendStatus, privacy: .public)")
+                ClientLog.error(
+                    "Action",
+                    "SEND prompt Task started",
+                    metadata: ["wsStatus": sendStatus, "sessionId": sessionId]
+                )
 
                 do {
                     let promptImages = attachments.isEmpty ? nil : attachments
-                    try await connection.sendPrompt(trimmed, images: promptImages)
+                    try await connection.sendPrompt(trimmed, images: promptImages, onAckStage: { stage in
+                        self.updateSendAckStage(stage)
+                    })
+                    self.scheduleSendStageClear()
                     log.error("SEND prompt OK")
+                    ClientLog.info("Action", "SEND prompt OK", metadata: ["sessionId": sessionId])
                 } catch {
+                    self.clearSendStageNow()
                     log.error("SEND prompt FAILED: \(error.localizedDescription, privacy: .public)")
+                    ClientLog.error(
+                        "Action",
+                        "SEND prompt FAILED",
+                        metadata: ["sessionId": sessionId, "error": error.localizedDescription]
+                    )
                     if Self.isReconnectableSendError(error) {
                         onNeedsReconnect?()
                     }
@@ -171,7 +239,8 @@ final class ChatActionHandler {
             forceStopTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled else { return }
-                if sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy {
+                if let status = sessionStore.sessions.first(where: { $0.id == sessionId })?.status,
+                   status == .busy || status == .stopping {
                     showForceStop = true
                 }
             }
@@ -217,6 +286,7 @@ final class ChatActionHandler {
         isForceStopInFlight = false
         forceStopTask?.cancel()
         forceStopTask = nil
+        clearSendStageNow()
     }
 
     // MARK: - Model / Thinking / Context
@@ -327,6 +397,37 @@ final class ChatActionHandler {
 
     // MARK: - Helpers
 
+    private func beginSendTracking() {
+        sendStageClearTask?.cancel()
+        sendStageClearTask = nil
+        sendAckStage = nil
+        isSending = true
+    }
+
+    private func updateSendAckStage(_ stage: TurnAckStage) {
+        sendAckStage = stage
+        if stage == .started {
+            scheduleSendStageClear()
+        }
+    }
+
+    private func scheduleSendStageClear() {
+        sendStageClearTask?.cancel()
+        let delay = _sendStageDisplayDurationForTesting ?? Self.sendStageDisplayDuration
+        sendStageClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.sendAckStage = nil
+            self?.sendStageClearTask = nil
+        }
+    }
+
+    private func clearSendStageNow() {
+        sendStageClearTask?.cancel()
+        sendStageClearTask = nil
+        sendAckStage = nil
+    }
+
     private func launchTask(_ operation: @escaping @MainActor () async -> Void) {
         if let launchHook = _launchTaskForTesting {
             launchHook(operation)
@@ -363,6 +464,7 @@ final class ChatActionHandler {
     func cleanup() {
         forceStopTask?.cancel()
         forceStopTask = nil
+        clearSendStageNow()
         isSending = false
     }
 }

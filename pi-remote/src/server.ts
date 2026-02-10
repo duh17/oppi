@@ -9,8 +9,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
-import { createReadStream } from "node:fs";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, extname } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, execSync } from "node:child_process";
@@ -45,6 +44,7 @@ import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
   RegisterDeviceTokenRequest,
+  ClientLogUploadRequest,
   ApiError,
 } from "./types.js";
 
@@ -230,6 +230,7 @@ export class Server {
     this.sandbox.setAuthProxy(this.authProxy);
     this.push = createPushClient(apnsConfig);
     this.sessions = new SessionManager(storage, this.gate, this.sandbox, this.authProxy);
+    this.sessions.contextWindowResolver = (modelId: string) => this.getContextWindow(modelId);
 
     this.httpServer = createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -641,6 +642,13 @@ export class Server {
         return await this.handleStopSession(user, wsSessionStopMatch[2], res);
       }
 
+      const wsSessionClientLogsMatch = path.match(
+        /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/client-logs$/,
+      );
+      if (wsSessionClientLogsMatch && method === "POST") {
+        return await this.handleUploadClientLogs(user, wsSessionClientLogsMatch[2], req, res);
+      }
+
       const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
       if (wsSessionResumeMatch && method === "POST") {
         return await this.handleResumeWorkspaceSession(
@@ -666,6 +674,11 @@ export class Server {
       const wsSessionFilesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/);
       if (wsSessionFilesMatch && method === "GET") {
         return this.handleGetSessionFile(user, wsSessionFilesMatch[2], url, res);
+      }
+
+      const wsSessionEventsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/);
+      if (wsSessionEventsMatch && method === "GET") {
+        return this.handleGetSessionEvents(user, wsSessionEventsMatch[2], url, res);
       }
 
       const wsSessionMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/);
@@ -698,6 +711,16 @@ export class Server {
       const filesMatch = path.match(/^\/sessions\/([^/]+)\/files$/);
       if (filesMatch && method === "GET") {
         return this.handleGetSessionFile(user, filesMatch[1], url, res);
+      }
+
+      const eventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
+      if (eventsMatch && method === "GET") {
+        return this.handleGetSessionEvents(user, eventsMatch[1], url, res);
+      }
+
+      const clientLogsMatch = path.match(/^\/sessions\/([^/]+)\/client-logs$/);
+      if (clientLogsMatch && method === "POST") {
+        return await this.handleUploadClientLogs(user, clientLogsMatch[1], req, res);
       }
 
       const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
@@ -1014,6 +1037,112 @@ export class Server {
       console.log(`[push] Device token removed for ${user.name}`);
     }
     this.json(res, { ok: true });
+  }
+
+  private async handleUploadClientLogs(
+    user: User,
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    const body = await this.parseBody<ClientLogUploadRequest>(req);
+    const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+    if (rawEntries.length === 0) {
+      this.error(res, 400, "entries array required");
+      return;
+    }
+
+    const receivedAt = Date.now();
+    const maxEntries = 1_000;
+    const maxMessageChars = 4_000;
+    const maxMetadataValueChars = 512;
+
+    const entries = rawEntries
+      .slice(-maxEntries)
+      .map((entry) => {
+        const metadata: Record<string, string> = {};
+        if (entry.metadata) {
+          for (const [key, value] of Object.entries(entry.metadata)) {
+            if (typeof value !== "string") continue;
+            metadata[key.slice(0, 64)] = value.slice(0, maxMetadataValueChars);
+          }
+        }
+
+        const level =
+          entry.level === "debug" ||
+          entry.level === "info" ||
+          entry.level === "warning" ||
+          entry.level === "error"
+            ? entry.level
+            : "info";
+
+        return {
+          timestamp:
+            typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp)
+              ? Math.trunc(entry.timestamp)
+              : receivedAt,
+          level,
+          category:
+            typeof entry.category === "string" && entry.category.trim().length > 0
+              ? entry.category.trim().slice(0, 64)
+              : "unknown",
+          message:
+            typeof entry.message === "string"
+              ? entry.message.slice(0, maxMessageChars)
+              : "",
+          metadata,
+        };
+      })
+      .filter((entry) => entry.message.length > 0);
+
+    if (entries.length === 0) {
+      this.error(res, 400, "No valid log entries");
+      return;
+    }
+
+    const logsDir = join(this.storage.getDataDir(), "client-logs", user.id);
+    if (!existsSync(logsDir)) {
+      mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+    }
+
+    const logPath = join(logsDir, `${sessionId}.jsonl`);
+    const envelope = {
+      receivedAt,
+      generatedAt:
+        typeof body.generatedAt === "number" && Number.isFinite(body.generatedAt)
+          ? Math.trunc(body.generatedAt)
+          : receivedAt,
+      trigger:
+        typeof body.trigger === "string" && body.trigger.trim().length > 0
+          ? body.trigger.trim().slice(0, 64)
+          : "manual",
+      appVersion: typeof body.appVersion === "string" ? body.appVersion.slice(0, 64) : undefined,
+      buildNumber:
+        typeof body.buildNumber === "string" ? body.buildNumber.slice(0, 64) : undefined,
+      osVersion: typeof body.osVersion === "string" ? body.osVersion.slice(0, 128) : undefined,
+      deviceModel:
+        typeof body.deviceModel === "string" ? body.deviceModel.slice(0, 64) : undefined,
+      userId: user.id,
+      sessionId,
+      workspaceId: session.workspaceId,
+      entries,
+    };
+
+    appendFileSync(logPath, `${JSON.stringify(envelope)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    console.log(
+      `${ts()} [diagnostics] client logs uploaded: user=${user.name} session=${sessionId} entries=${entries.length}`,
+    );
+    this.json(res, { ok: true, accepted: entries.length });
   }
 
   private handleListSessions(user: User, res: ServerResponse): void {
@@ -1366,6 +1495,39 @@ export class Server {
     return homedir();
   }
 
+  private handleGetSessionEvents(
+    user: User,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    const sinceParam = url.searchParams.get("since");
+    const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
+    if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
+      this.error(res, 400, "since must be a non-negative integer");
+      return;
+    }
+
+    const catchUp = this.sessions.getCatchUp(user.id, sessionId, sinceSeq);
+    if (!catchUp) {
+      this.error(res, 404, "Session not active");
+      return;
+    }
+
+    this.json(res, {
+      events: catchUp.events,
+      currentSeq: catchUp.currentSeq,
+      session: this.ensureSessionContextWindow(catchUp.session),
+      catchUpComplete: catchUp.catchUpComplete,
+    });
+  }
+
   private async handleGetSession(
     user: User,
     sessionId: string,
@@ -1596,7 +1758,11 @@ export class Server {
       // Send session metadata immediately (from disk) so the iOS client
       // can display the chat history while pi is starting.
       console.log(`${ts()} [ws] SEND connected → ${session.id}`);
-      send({ type: "connected", session });
+      send({
+        type: "connected",
+        session,
+        currentSeq: this.sessions.getCurrentSeq(user.id, session.id),
+      });
 
       // Resolve workspace for this session
       const workspace = session.workspaceId
@@ -1801,15 +1967,50 @@ export class Server {
       }
 
       case "abort":
-      case "stop":
+      case "stop": {
+        const requestId = msg.requestId;
+        const command = msg.type;
         console.log(`${ts()} [ws] STOP ${session.id}`);
-        await this.sessions.sendAbort(user.id, session.id);
+        try {
+          await this.sessions.sendAbort(user.id, session.id);
+          if (requestId) {
+            send({ type: "rpc_result", command, requestId, success: true });
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (requestId) {
+            send({ type: "rpc_result", command, requestId, success: false, error: message });
+            break;
+          }
+          throw err;
+        }
         break;
+      }
 
-      case "stop_session":
+      case "stop_session": {
+        const requestId = msg.requestId;
         console.log(`${ts()} [ws] STOP_SESSION ${session.id}`);
-        await this.sessions.stopSession(user.id, session.id);
+        try {
+          await this.sessions.stopSession(user.id, session.id);
+          if (requestId) {
+            send({ type: "rpc_result", command: "stop_session", requestId, success: true });
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (requestId) {
+            send({
+              type: "rpc_result",
+              command: "stop_session",
+              requestId,
+              success: false,
+              error: message,
+            });
+            break;
+          }
+          throw err;
+        }
         break;
+      }
 
       case "get_state": {
         const active = this.sessions.getActiveSession(user.id, session.id);

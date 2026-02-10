@@ -38,19 +38,30 @@ final class ChatScrollController {
 
     /// Called when `renderVersion` changes. Schedules a throttled scroll
     /// if the user is near the bottom.
-    func handleRenderVersionChange(proxy: ScrollViewProxy) {
+    ///
+    /// When `streamingID` is provided, scrolls to the streaming assistant
+    /// message instead of the bottom sentinel. This prevents the cursor
+    /// from bouncing as the sentinel position shifts with content growth.
+    func handleRenderVersionChange(proxy: ScrollViewProxy, streamingID: String? = nil) {
         guard anchor.isNearBottom else { return }
         guard scrollTask == nil else { return }
 
+        // During active streaming, scroll to the message itself so the
+        // cursor stays pinned in the viewport. Fall back to the sentinel
+        // for non-streaming updates (tool rows, working indicator, etc.).
+        let targetID = streamingID ?? "bottom-sentinel"
+
         scrollTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(100))
+            // 50ms throttle (was 100ms) — tighter tracking reduces the
+            // visible bounce between content growth and scroll catch-up.
+            try? await Task.sleep(for: .milliseconds(50))
             scrollTask = nil
             guard !Task.isCancelled else { return }
             guard anchor.isNearBottom else { return }
 
             MainThreadBreadcrumb.set("scrollTo-bottom")
             withTransaction(Transaction(animation: nil)) {
-                proxy.scrollTo("bottom-sentinel", anchor: .bottom)
+                proxy.scrollTo(targetID, anchor: .bottom)
             }
             MainThreadBreadcrumb.set("idle")
         }

@@ -110,6 +110,7 @@ struct SessionCodableTests {
             ("starting", .starting),
             ("ready", .ready),
             ("busy", .busy),
+            ("stopping", .stopping),
             ("stopped", .stopped),
             ("error", .error),
         ]

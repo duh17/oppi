@@ -253,7 +253,7 @@ struct TraceRenderingTests {
     @MainActor
     @Test func largeToolOutputTruncated() {
         let reducer = TimelineReducer()
-        let largeOutput = String(repeating: "x", count: 600_000)
+        let largeOutput = String(repeating: "x", count: ToolOutputStore.perItemCap + 1_024)
         let events = [
             traceEvent(id: "tc1", type: .toolCall, tool: "read",
                        args: ["path": .string("/tmp/big.txt")]),

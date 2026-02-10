@@ -147,7 +147,7 @@ struct SessionStatusColorTests {
 
     @Test func allStatusesHaveColors() {
         // Verify all cases produce a color without crashing
-        let statuses: [SessionStatus] = [.starting, .ready, .busy, .stopped, .error]
+        let statuses: [SessionStatus] = [.starting, .ready, .busy, .stopping, .stopped, .error]
         for status in statuses {
             let color = status.color
             // Just verify it's a valid Color (not crashing is the test)
@@ -157,6 +157,7 @@ struct SessionStatusColorTests {
 
     @Test func distinctStatusColors() {
         #expect(SessionStatus.ready.color != SessionStatus.error.color)
+        #expect(SessionStatus.busy.color != SessionStatus.stopping.color)
         #expect(SessionStatus.busy.color != SessionStatus.stopped.color)
         #expect(SessionStatus.starting.color != SessionStatus.ready.color)
     }

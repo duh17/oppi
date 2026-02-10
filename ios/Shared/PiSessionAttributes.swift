@@ -15,7 +15,7 @@ struct PiSessionAttributes: ActivityAttributes {
 
     /// Dynamic state — updated as the session progresses.
     struct ContentState: Codable, Hashable {
-        var status: String          // "busy", "ready", "stopped", "error"
+        var status: String          // "busy", "stopping", "ready", "stopped", "error"
         var activeTool: String?     // Current tool being executed (nil when idle)
         var pendingPermissions: Int // Count of pending permission requests
         var lastEvent: String?      // Human-readable last action ("Editing auth.ts")

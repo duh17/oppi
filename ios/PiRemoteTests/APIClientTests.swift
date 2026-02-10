@@ -159,6 +159,40 @@ struct APIClientTests {
         #expect(trace[0].type == .user)
     }
 
+    @Test func getSessionEventsDecodesSequencedCatchUp() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path.hasSuffix("/sessions/s1/events") == true)
+            #expect(request.url?.query == "since=5")
+            return self.mockResponse(json: """
+            {
+              "events": [
+                {"type":"agent_start","seq":6},
+                {"type":"message_end","role":"assistant","content":"Recovered","seq":7},
+                {"type":"agent_end","seq":8}
+              ],
+              "currentSeq": 8,
+              "session": {"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+              "catchUpComplete": true
+            }
+            """)
+        }
+
+        let response = try await client.getSessionEvents(id: "s1", since: 5)
+        #expect(response.currentSeq == 8)
+        #expect(response.catchUpComplete)
+        #expect(response.events.count == 3)
+        #expect(response.events.map(\.seq) == [6, 7, 8])
+
+        guard case .messageEnd(_, let content) = response.events[1].message else {
+            Issue.record("Expected message_end in second event")
+            return
+        }
+        #expect(content == "Recovered")
+    }
+
     @Test func stopSession() async throws {
         let client = makeClient()
         defer { cleanup() }

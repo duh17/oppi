@@ -5,6 +5,7 @@ enum SessionStatus: String, Codable, Sendable {
     case starting
     case ready
     case busy
+    case stopping
     case stopped
     case error
 }

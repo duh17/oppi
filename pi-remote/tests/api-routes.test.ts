@@ -20,6 +20,7 @@ const ROUTES = {
   wsSessionResume:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
   wsSessionFiles:      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
+  wsSessionEvents:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
 
@@ -28,6 +29,7 @@ const ROUTES = {
   legacyStop:          /^\/sessions\/([^/]+)\/stop$/,
   legacyToolOutput:    /^\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
   legacyFiles:         /^\/sessions\/([^/]+)\/files$/,
+  legacyEvents:        /^\/sessions\/([^/]+)\/events$/,
   legacyDetail:        /^\/sessions\/([^/]+)$/,
   legacyStream:        /^\/sessions\/([^/]+)\/stream$/,
 };
@@ -74,6 +76,13 @@ describe("Workspace-scoped API routes (v2)", () => {
     expect(m![2]).toBe("s1");
   });
 
+  it("matches GET /workspaces/:wid/sessions/:sid/events", () => {
+    const m = "/workspaces/ws-1/sessions/s1/events".match(ROUTES.wsSessionEvents);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+    expect(m![2]).toBe("s1");
+  });
+
   it("matches GET /workspaces/:wid/sessions/:sid", () => {
     const m = "/workspaces/ws-1/sessions/s1".match(ROUTES.wsSessionDetail);
     expect(m).toBeTruthy();
@@ -113,6 +122,12 @@ describe("Legacy session routes (v1 compat)", () => {
     expect(m![1]).toBe("s1");
   });
 
+  it("matches GET /sessions/:id/events", () => {
+    const m = "/sessions/s1/events".match(ROUTES.legacyEvents);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("s1");
+  });
+
   it("matches GET/DELETE /sessions/:id", () => {
     const m = "/sessions/s1".match(ROUTES.legacyDetail);
     expect(m).toBeTruthy();
@@ -144,5 +159,9 @@ describe("Route priority: v2 workspace routes take precedence", () => {
 
   it("workspace session stream does NOT match legacy stream", () => {
     expect("/workspaces/ws-1/sessions/s1/stream".match(ROUTES.legacyStream)).toBeFalsy();
+  });
+
+  it("workspace session events does NOT match legacy events", () => {
+    expect("/workspaces/ws-1/sessions/s1/events".match(ROUTES.legacyEvents)).toBeFalsy();
   });
 });

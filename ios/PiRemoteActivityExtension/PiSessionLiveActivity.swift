@@ -170,6 +170,7 @@ private struct StatusBadge: View {
     private var statusLabel: String {
         switch status {
         case "busy": return "Working"
+        case "stopping": return "Stopping"
         case "ready": return "Ready"
         case "stopped": return "Done"
         case "error": return "Error"
@@ -193,6 +194,7 @@ private struct StatusDot: View {
 private func statusColor(_ status: String) -> Color {
     switch status {
     case "busy": return .yellow
+    case "stopping": return .orange
     case "ready": return .green
     case "stopped": return .gray
     case "error": return .red

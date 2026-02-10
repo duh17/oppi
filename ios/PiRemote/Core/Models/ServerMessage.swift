@@ -9,10 +9,14 @@ enum ServerMessage: Sendable, Equatable {
     case connected(session: Session)
     case state(session: Session)
     case sessionEnded(reason: String)
+    case stopRequested(source: StopLifecycleSource, reason: String?)
+    case stopConfirmed(source: StopLifecycleSource, reason: String?)
+    case stopFailed(source: StopLifecycleSource, reason: String)
 
     // Agent streaming
     case agentStart
     case agentEnd
+    case messageEnd(role: String, content: String)
     case textDelta(delta: String)
     case thinkingDelta(delta: String)
 
@@ -79,6 +83,12 @@ enum TurnAckStage: String, Codable, Sendable {
     }
 }
 
+enum StopLifecycleSource: String, Codable, Sendable {
+    case user
+    case timeout
+    case server
+}
+
 // MARK: - Manual Decodable
 
 extension ServerMessage: Decodable {
@@ -86,10 +96,10 @@ extension ServerMessage: Decodable {
         case type
         // connected / state
         case session
-        // session_ended
-        case reason
-        // text_delta / thinking_delta
-        case delta
+        // session_ended / stop lifecycle
+        case reason, source
+        // message_end / text_delta / thinking_delta
+        case role, content, delta
         // tool_start / tool_end
         case tool, args, toolCallId
         // tool_output
@@ -129,11 +139,31 @@ extension ServerMessage: Decodable {
             let reason = try c.decode(String.self, forKey: .reason)
             self = .sessionEnded(reason: reason)
 
+        case "stop_requested":
+            let source = try c.decode(StopLifecycleSource.self, forKey: .source)
+            let reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            self = .stopRequested(source: source, reason: reason)
+
+        case "stop_confirmed":
+            let source = try c.decode(StopLifecycleSource.self, forKey: .source)
+            let reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            self = .stopConfirmed(source: source, reason: reason)
+
+        case "stop_failed":
+            let source = try c.decode(StopLifecycleSource.self, forKey: .source)
+            let reason = try c.decode(String.self, forKey: .reason)
+            self = .stopFailed(source: source, reason: reason)
+
         case "agent_start":
             self = .agentStart
 
         case "agent_end":
             self = .agentEnd
+
+        case "message_end":
+            let role = try c.decode(String.self, forKey: .role)
+            let content = try c.decode(String.self, forKey: .content)
+            self = .messageEnd(role: role, content: content)
 
         case "text_delta":
             let delta = try c.decode(String.self, forKey: .delta)
@@ -270,8 +300,12 @@ extension ServerMessage {
         case .connected: "connected"
         case .state: "state"
         case .sessionEnded: "sessionEnded"
+        case .stopRequested: "stopRequested"
+        case .stopConfirmed: "stopConfirmed"
+        case .stopFailed: "stopFailed"
         case .agentStart: "agentStart"
         case .agentEnd: "agentEnd"
+        case .messageEnd: "messageEnd"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
         case .toolStart: "toolStart"

@@ -38,9 +38,21 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// True once overflowed thinking has been spilled to `toolOutputStore`.
     private var thinkingStoredInOutputStore = false
 
-    /// The item ID currently being streamed (non-nil while deltas arrive).
-    /// Used by views to enable streaming-optimized rendering (e.g., plain text).
-    var streamingAssistantID: String? { currentAssistantID }
+    /// True between agentStart and agentEnd — used to keep the last assistant
+    /// message in streaming render mode during tool calls (avoiding expensive
+    /// streamingBody → finalizedBody transitions that cause layout cascades).
+    private var turnInProgress = false
+    /// The last assistant item ID created during this turn, preserved across
+    /// `finalizeAssistantMessage()` so the view stays in streaming mode.
+    private var lastAssistantIDThisTurn: String?
+
+    /// The item ID currently being rendered in streaming mode.
+    /// Non-nil while deltas arrive AND during tool-call gaps within a turn.
+    /// This prevents MarkdownText from switching to finalizedBody (cache miss
+    /// → placeholder → async parse → height change → LazyVStack cascade).
+    var streamingAssistantID: String? {
+        currentAssistantID ?? (turnInProgress ? lastAssistantIDThisTurn : nil)
+    }
 
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
@@ -534,8 +546,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             finalizeThinking()
             closeAllOrphanedTools()
             clearTurnBuffers()
+            turnInProgress = true
 
         case .agentEnd:
+            // End the turn BEFORE finalizing so streamingAssistantID goes nil
+            // and MarkdownText transitions to finalizedBody for caching.
+            turnInProgress = false
+            lastAssistantIDThisTurn = nil
             finalizeAssistantMessage()
             finalizeThinking()
             closeAllOrphanedTools()
@@ -548,6 +565,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if appendThinkingDelta(delta) {
                 upsertThinking()
             }
+
+        case .messageEnd(_, let content):
+            if !content.isEmpty {
+                assistantBuffer = content
+                upsertAssistantMessage()
+            }
+            finalizeAssistantMessage()
 
         case .toolStart(_, let toolEventId, let tool, let args):
             // Split assistant text around tool boundaries so chronology in the
@@ -590,6 +614,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             break
 
         case .sessionEnded(_, let reason):
+            // Session termination is terminal for the current turn.
+            // Clear streaming mode before finalizing buffered content.
+            turnInProgress = false
+            lastAssistantIDThisTurn = nil
             finalizeAssistantMessage()
             finalizeThinking()
             closeAllOrphanedTools()
@@ -712,6 +740,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentAssistantID = nil
         currentAssistantTimestamp = nil
         currentThinkingID = nil
+        turnInProgress = false
+        lastAssistantIDThisTurn = nil
     }
 
     private func upsertAssistantMessage() {
@@ -720,6 +750,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             currentAssistantID = id
             currentAssistantTimestamp = Date()
         }
+        lastAssistantIDThisTurn = id
 
         let item = ChatItem.assistantMessage(
             id: id,

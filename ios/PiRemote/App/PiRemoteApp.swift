@@ -12,6 +12,10 @@ struct PiRemoteApp: App {
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
+#if DEBUG
+    @State private var autoClientLogUploadInFlight = false
+    @State private var lastAutoClientLogUploadMs: Int64 = 0
+#endif
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -35,6 +39,7 @@ struct PiRemoteApp: App {
                     handleMemoryWarning()
                 }
                 .task {
+                    configureWatchdogHooks()
                     mainThreadLagWatchdog.start()
                     await setupNotifications()
                     await reconnectOnLaunch()
@@ -73,6 +78,92 @@ struct PiRemoteApp: App {
             "MEM warning: cacheEntries=\(cacheEntries, privacy: .public) cacheBytes=\(cacheBytes, privacy: .public) toolOutputBytes=\(toolOutputBytes, privacy: .public) collapsedExpandedItems=\(collapsedExpandedItems, privacy: .public)"
         )
     }
+
+    private func configureWatchdogHooks() {
+#if DEBUG
+        mainThreadLagWatchdog.onStall = { context in
+            Task { @MainActor in
+                await self.handleWatchdogStall(context)
+            }
+        }
+#endif
+    }
+
+#if DEBUG
+    @MainActor
+    private func handleWatchdogStall(_ context: MainThreadStallContext) async {
+        guard scenePhase == .active else { return }
+        guard !navigation.showOnboarding else { return }
+        guard !autoClientLogUploadInFlight else { return }
+
+        let nowMs = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+        let cooldownMs: Int64 = 90_000
+        guard nowMs - lastAutoClientLogUploadMs >= cooldownMs else { return }
+
+        guard let sessionId = connection.sessionStore.activeSessionId else { return }
+        guard let api = connection.apiClient else { return }
+
+        autoClientLogUploadInFlight = true
+        lastAutoClientLogUploadMs = nowMs
+
+        ClientLog.error(
+            "Diagnostics",
+            "Auto-upload triggered by main-thread stall",
+            metadata: [
+                "sessionId": sessionId,
+                "thresholdMs": String(context.thresholdMs),
+                "footprintMB": context.footprintMB.map(String.init) ?? "n/a",
+                "crumb": context.crumb,
+                "rows": String(context.rows),
+            ]
+        )
+
+        let entries = await ClientLogBuffer.shared.snapshot(limit: 500)
+        guard !entries.isEmpty else {
+            autoClientLogUploadInFlight = false
+            return
+        }
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+
+        let request = ClientLogUploadRequest(
+            generatedAt: nowMs,
+            trigger: "stall-watchdog-auto",
+            appVersion: version,
+            buildNumber: build,
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            deviceModel: UIDevice.current.model,
+            entries: entries
+        )
+
+        do {
+            try await api.uploadClientLogs(sessionId: sessionId, request: request)
+            ClientLog.info(
+                "Diagnostics",
+                "Auto-upload succeeded",
+                metadata: [
+                    "sessionId": sessionId,
+                    "entries": String(entries.count),
+                ]
+            )
+            if connection.sessionStore.activeSessionId == sessionId {
+                connection.reducer.appendSystemEvent("Auto-uploaded \(entries.count) client log entries after stall")
+            }
+        } catch {
+            ClientLog.error(
+                "Diagnostics",
+                "Auto-upload failed",
+                metadata: [
+                    "sessionId": sessionId,
+                    "error": error.localizedDescription,
+                ]
+            )
+        }
+
+        autoClientLogUploadInFlight = false
+    }
+#endif
 
     private func setupNotifications() async {
         let notificationService = PermissionNotificationService.shared
@@ -193,7 +284,15 @@ enum MainThreadBreadcrumb {
     }
 }
 
+private struct MainThreadStallContext: Sendable {
+    let thresholdMs: Int
+    let footprintMB: Int?
+    let crumb: String
+    let rows: Int
+}
+
 private final class MainThreadLagWatchdog {
+    var onStall: ((MainThreadStallContext) -> Void)?
     private let queue = DispatchQueue(label: "dev.chenda.PiRemote.main-thread-watchdog", qos: .utility)
     private var timer: DispatchSourceTimer?
 
@@ -243,13 +342,44 @@ private final class MainThreadLagWatchdog {
 
             let crumb = MainThreadBreadcrumb.current
             let rows = MainThreadBreadcrumb.rowCount
-            if let footprintMB = Self.currentFootprintMB() {
+            let footprintMB = Self.currentFootprintMB()
+
+            if let footprintMB {
                 appLog.error(
                     "PERF main-thread stall: >\(thresholdMs, privacy: .public)ms footprint=\(footprintMB, privacy: .public)MB crumb=\(crumb, privacy: .public) rows=\(rows, privacy: .public)"
                 )
+                ClientLog.error(
+                    "App",
+                    "PERF main-thread stall",
+                    metadata: [
+                        "thresholdMs": String(thresholdMs),
+                        "footprintMB": String(footprintMB),
+                        "crumb": crumb,
+                        "rows": String(rows),
+                    ]
+                )
             } else {
                 appLog.error("PERF main-thread stall: >\(thresholdMs, privacy: .public)ms footprint=n/a crumb=\(crumb, privacy: .public) rows=\(rows, privacy: .public)")
+                ClientLog.error(
+                    "App",
+                    "PERF main-thread stall",
+                    metadata: [
+                        "thresholdMs": String(thresholdMs),
+                        "footprintMB": "n/a",
+                        "crumb": crumb,
+                        "rows": String(rows),
+                    ]
+                )
             }
+
+            onStall?(
+                MainThreadStallContext(
+                    thresholdMs: thresholdMs,
+                    footprintMB: footprintMB,
+                    crumb: crumb,
+                    rows: rows
+                )
+            )
             return
         }
 
@@ -262,8 +392,26 @@ private final class MainThreadLagWatchdog {
             appLog.error(
                 "PERF main-thread lag: \(lagMs, privacy: .public)ms footprint=\(footprintMB, privacy: .public)MB crumb=\(crumb, privacy: .public)"
             )
+            ClientLog.error(
+                "App",
+                "PERF main-thread lag",
+                metadata: [
+                    "lagMs": String(lagMs),
+                    "footprintMB": String(footprintMB),
+                    "crumb": crumb,
+                ]
+            )
         } else {
             appLog.error("PERF main-thread lag: \(lagMs, privacy: .public)ms footprint=n/a crumb=\(crumb, privacy: .public)")
+            ClientLog.error(
+                "App",
+                "PERF main-thread lag",
+                metadata: [
+                    "lagMs": String(lagMs),
+                    "footprintMB": "n/a",
+                    "crumb": crumb,
+                ]
+            )
         }
     }
 

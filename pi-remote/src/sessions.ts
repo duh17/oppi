@@ -185,6 +185,50 @@ export class TurnDedupeCache {
   }
 }
 
+export interface SequencedEvent {
+  seq: number;
+  event: ServerMessage;
+  timestamp: number;
+}
+
+export class EventRing {
+  private events: SequencedEvent[] = [];
+
+  constructor(private readonly capacity = 500) {}
+
+  push(event: SequencedEvent): void {
+    this.events.push(event);
+    if (this.events.length > this.capacity) {
+      this.events.shift();
+    }
+  }
+
+  since(sinceSeq: number): SequencedEvent[] {
+    const idx = this.events.findIndex((entry) => entry.seq > sinceSeq);
+    return idx === -1 ? [] : this.events.slice(idx);
+  }
+
+  get currentSeq(): number {
+    const last = this.events[this.events.length - 1];
+    return last?.seq ?? 0;
+  }
+
+  get oldestSeq(): number {
+    return this.events[0]?.seq ?? 0;
+  }
+
+  canServe(sinceSeq: number): boolean {
+    return this.events.length === 0 || sinceSeq >= this.oldestSeq - 1;
+  }
+}
+
+export interface SessionCatchUpResponse {
+  events: ServerMessage[];
+  currentSeq: number;
+  session: Session;
+  catchUpComplete: boolean;
+}
+
 function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string {
   return createHash("sha1")
     .update(command)
@@ -226,6 +270,22 @@ interface ActiveSession {
   turnCache: TurnDedupeCache;
   /** Ordered turn IDs waiting for `agent_start` -> `started` ACK emission. */
   pendingTurnStarts: string[];
+  /** In-flight stop lifecycle contract (graceful abort or session terminate). */
+  pendingStop?: PendingStop;
+  /** Monotonic durable-event sequence for reconnect catch-up. */
+  seq: number;
+  /** Ring buffer of recent durable events. */
+  eventRing: EventRing;
+}
+
+type StopRequestSource = "user" | "timeout" | "server";
+
+interface PendingStop {
+  mode: "abort" | "terminate";
+  source: StopRequestSource;
+  requestedAt: number;
+  previousStatus: Session["status"];
+  timeoutHandle?: NodeJS.Timeout;
 }
 
 /** Extension UI request from pi RPC (stdout) */
@@ -290,6 +350,9 @@ export class SessionManager extends EventEmitter {
   private workspaceIdleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
   private readonly piExecutable: string;
+
+  /** Injected by the server to resolve context window for a model ID. */
+  contextWindowResolver: ((modelId: string) => number) | null = null;
 
   // Persist active session metadata in batches to avoid sync I/O on every event.
   private dirtySessions: Set<string> = new Set();
@@ -439,6 +502,8 @@ export class SessionManager extends EventEmitter {
             streamedAssistantText: "",
             turnCache: new TurnDedupeCache(),
             pendingTurnStarts: [],
+            seq: 0,
+            eventRing: new EventRing(),
           };
 
           this.active.set(key, activeSession);
@@ -885,6 +950,21 @@ export class SessionManager extends EventEmitter {
 
     this.updateSessionFromEvent(key, active.session, data);
 
+    if (data.type === "agent_end") {
+      this.finishPendingAbortWithSuccess(key, active);
+    }
+
+    if (data.type === "message_end") {
+      const role = data.message?.role;
+      if (role === "assistant" || role === "user") {
+        this.broadcast(key, {
+          type: "message_end",
+          role,
+          content: this.extractAssistantText(data.message),
+        });
+      }
+    }
+
     if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end") {
       console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
       this.broadcast(key, { type: "state", session: active.session });
@@ -1319,9 +1399,17 @@ export class SessionManager extends EventEmitter {
       }
     }
 
-    const modelId = state.model?.id;
-    if (typeof modelId === "string" && modelId.length > 0 && session.model !== modelId) {
-      session.model = modelId;
+    const rawModelId = state.model?.id;
+    const rawProvider = state.model?.provider;
+    const fullModelId =
+      typeof rawProvider === "string" && typeof rawModelId === "string" && !rawModelId.includes("/")
+        ? `${rawProvider}/${rawModelId}`
+        : rawModelId;
+    if (typeof fullModelId === "string" && fullModelId.length > 0 && session.model !== fullModelId) {
+      session.model = fullModelId;
+      if (this.contextWindowResolver) {
+        session.contextWindow = this.contextWindowResolver(fullModelId);
+      }
       changed = true;
     }
 
@@ -1425,6 +1513,9 @@ export class SessionManager extends EventEmitter {
           const fullId = `${provider}/${modelId}`;
           if (active.session.model !== fullId) {
             active.session.model = fullId;
+            if (this.contextWindowResolver) {
+              active.session.contextWindow = this.contextWindowResolver(fullId);
+            }
             this.persistSessionNow(key, active.session);
           }
         }
@@ -1494,18 +1585,32 @@ export class SessionManager extends EventEmitter {
    */
   async sendAbort(userId: string, sessionId: string): Promise<void> {
     const key = `${userId}/${sessionId}`;
-    const active = this.active.get(key);
-    if (!active) {
-      return;
-    }
 
-    this.sendRpcCommand(key, { type: "abort" });
+    await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+      const active = this.active.get(key);
+      if (!active) {
+        return;
+      }
+
+      if (!this.beginPendingStop(key, active, "abort", "user")) {
+        return;
+      }
+
+      this.sendRpcCommand(key, { type: "abort" });
+      this.scheduleAbortStopTimeout(key, active);
+    });
   }
 
   // ─── Guard Health Check ───
 
   /** Guard check delay — extension should connect within seconds of first prompt. */
   private readonly guardCheckDelayMs = 10_000;
+
+  /** Graceful abort budget before escalation to force termination. */
+  private readonly stopAbortTimeoutMs = 8_000;
+
+  /** Grace period between abort and SIGTERM in force-stop flow. */
+  private readonly stopSessionGraceMs = 1_000;
 
   /**
    * After the first prompt, check that the permission gate extension
@@ -1801,14 +1906,17 @@ export class SessionManager extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   private updateSessionFromEvent(key: string, session: Session, event: any): void {
     let shouldFlushNow = false;
+    const pendingStopMode = this.active.get(key)?.pendingStop?.mode;
 
     switch (event.type) {
       case "agent_start":
-        session.status = "busy";
+        if (session.status !== "stopping") {
+          session.status = "busy";
+        }
         break;
 
       case "agent_end":
-        session.status = "ready";
+        session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
         shouldFlushNow = true;
         break;
 
@@ -1958,6 +2066,20 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return;
 
+    const pendingStop = this.clearPendingStop(active);
+    if (pendingStop?.mode === "terminate") {
+      this.broadcast(key, { type: "stop_confirmed", source: pendingStop.source, reason: "Session terminated" });
+    } else if (pendingStop?.mode === "abort") {
+      this.broadcast(
+        key,
+        {
+          type: "stop_failed",
+          source: "server",
+          reason: `Session ended before stop completed (${reason})`,
+        },
+      );
+    }
+
     active.session.status = "stopped";
     this.persistSessionNow(key, active.session);
 
@@ -2013,9 +2135,52 @@ export class SessionManager extends EventEmitter {
     return () => {};
   }
 
-  private broadcast(key: string, message: ServerMessage): void {
+  private static readonly DURABLE_MESSAGE_TYPES = new Set<ServerMessage["type"]>([
+    "agent_start",
+    "agent_end",
+    "message_end",
+    "tool_start",
+    "tool_end",
+    "permission_request",
+    "permission_expired",
+    "permission_cancelled",
+    "stop_requested",
+    "stop_confirmed",
+    "stop_failed",
+    "session_ended",
+    "error",
+  ]);
+
+  private isDurableMessage(message: ServerMessage): boolean {
+    return SessionManager.DURABLE_MESSAGE_TYPES.has(message.type);
+  }
+
+  private broadcastDurable(key: string, message: ServerMessage): void {
     const active = this.active.get(key);
     if (!active) return;
+
+    active.seq += 1;
+    const sequenced: ServerMessage = { ...message, seq: active.seq };
+
+    active.eventRing.push({
+      seq: active.seq,
+      event: sequenced,
+      timestamp: Date.now(),
+    });
+
+    for (const cb of active.subscribers) {
+      try {
+        cb(sequenced);
+      } catch (err) {
+        console.error("Subscriber error:", err);
+      }
+    }
+  }
+
+  private broadcastEphemeral(key: string, message: ServerMessage): void {
+    const active = this.active.get(key);
+    if (!active) return;
+
     for (const cb of active.subscribers) {
       try {
         cb(message);
@@ -2025,7 +2190,180 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  private broadcast(key: string, message: ServerMessage): void {
+    if (this.isDurableMessage(message)) {
+      this.broadcastDurable(key, message);
+      return;
+    }
+
+    this.broadcastEphemeral(key, message);
+  }
+
   // ─── Stop ───
+
+  private clearPendingStop(active: ActiveSession): PendingStop | null {
+    const pending = active.pendingStop;
+    if (!pending) {
+      return null;
+    }
+
+    if (pending.timeoutHandle) {
+      clearTimeout(pending.timeoutHandle);
+      pending.timeoutHandle = undefined;
+    }
+
+    active.pendingStop = undefined;
+    return pending;
+  }
+
+  private beginPendingStop(
+    key: string,
+    active: ActiveSession,
+    mode: PendingStop["mode"],
+    source: StopRequestSource,
+    reason?: string,
+  ): boolean {
+    if (active.pendingStop) {
+      return false;
+    }
+
+    active.pendingStop = {
+      mode,
+      source,
+      requestedAt: Date.now(),
+      previousStatus: active.session.status,
+    };
+
+    active.session.status = "stopping";
+    active.session.lastActivity = Date.now();
+    this.persistSessionNow(key, active.session);
+
+    this.broadcast(key, { type: "stop_requested", source, reason });
+    this.broadcast(key, { type: "state", session: active.session });
+    return true;
+  }
+
+  private promotePendingStop(
+    key: string,
+    active: ActiveSession,
+    mode: PendingStop["mode"],
+    source: StopRequestSource,
+    reason?: string,
+    emitLifecycleEvent = false,
+  ): void {
+    if (!active.pendingStop) {
+      this.beginPendingStop(key, active, mode, source, reason);
+      return;
+    }
+
+    const pending = active.pendingStop;
+
+    if (pending.timeoutHandle) {
+      clearTimeout(pending.timeoutHandle);
+      pending.timeoutHandle = undefined;
+    }
+
+    pending.mode = mode;
+    pending.source = source;
+
+    if (active.session.status !== "stopping") {
+      active.session.status = "stopping";
+      active.session.lastActivity = Date.now();
+      this.persistSessionNow(key, active.session);
+    }
+
+    if (emitLifecycleEvent) {
+      this.broadcast(key, { type: "stop_requested", source, reason });
+      this.broadcast(key, { type: "state", session: active.session });
+    }
+  }
+
+  private finishPendingStopWithFailure(
+    key: string,
+    active: ActiveSession,
+    source: StopRequestSource,
+    reason: string,
+  ): void {
+    const pending = this.clearPendingStop(active);
+    if (!pending) {
+      return;
+    }
+
+    if (active.session.status === "stopping") {
+      const fallbackStatus =
+        pending.previousStatus === "stopping" ? "busy" : pending.previousStatus;
+      active.session.status = fallbackStatus;
+      active.session.lastActivity = Date.now();
+      this.persistSessionNow(key, active.session);
+      this.broadcast(key, { type: "state", session: active.session });
+    }
+
+    this.broadcast(key, { type: "stop_failed", source, reason });
+  }
+
+  private finishPendingAbortWithSuccess(key: string, active: ActiveSession): void {
+    const pending = this.clearPendingStop(active);
+    if (!pending || pending.mode !== "abort") {
+      return;
+    }
+
+    this.broadcast(key, { type: "stop_confirmed", source: pending.source });
+  }
+
+  private forceTerminateSessionProcess(
+    key: string,
+    active: ActiveSession,
+    source: StopRequestSource,
+    reason?: string,
+  ): void {
+    try {
+      if (!active.process.killed) {
+        active.process.kill("SIGTERM");
+      }
+
+      const pending = this.clearPendingStop(active);
+      this.broadcast(key, {
+        type: "stop_confirmed",
+        source: pending?.source ?? source,
+        reason,
+      });
+      this.handleSessionEnd(key, "stopped");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.finishPendingStopWithFailure(key, active, "server", `Force stop failed: ${message}`);
+    }
+  }
+
+  private scheduleAbortStopTimeout(key: string, active: ActiveSession): void {
+    const pending = active.pendingStop;
+    if (!pending || pending.mode !== "abort") {
+      return;
+    }
+
+    pending.timeoutHandle = setTimeout(() => {
+      const current = this.active.get(key);
+      if (!current || current.pendingStop?.mode !== "abort") {
+        return;
+      }
+
+      const timeoutReason =
+        `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; force terminating session`;
+      this.promotePendingStop(
+        key,
+        current,
+        "terminate",
+        "timeout",
+        timeoutReason,
+        true,
+      );
+      this.forceTerminateSessionProcess(
+        key,
+        current,
+        "timeout",
+        `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; session terminated`,
+      );
+    }, this.stopAbortTimeoutMs);
+  }
 
   async stopSession(userId: string, sessionId: string): Promise<void> {
     const key = `${userId}/${sessionId}`;
@@ -2035,6 +2373,10 @@ export class SessionManager extends EventEmitter {
       if (!active) return;
 
       await this.runtimeManager.withWorkspaceLock(userId, active.workspaceId, async () => {
+        if (!this.beginPendingStop(key, active, "terminate", "user")) {
+          this.promotePendingStop(key, active, "terminate", "user");
+        }
+
         // Graceful: abort current operation
         try {
           active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
@@ -2043,16 +2385,12 @@ export class SessionManager extends EventEmitter {
         }
 
         // Wait briefly then stop
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, this.stopSessionGraceMs));
 
         // Host mode and container mode both stop the session process directly.
         // In container runtime this is the `container exec` child process;
         // workspace container lifecycle is managed separately.
-        if (!active.process.killed) {
-          active.process.kill("SIGTERM");
-        }
-
-        this.handleSessionEnd(key, "stopped");
+        this.forceTerminateSessionProcess(key, active, "user");
       });
     });
   }
@@ -2082,6 +2420,30 @@ export class SessionManager extends EventEmitter {
 
   getActiveSession(userId: string, sessionId: string): Session | undefined {
     return this.active.get(`${userId}/${sessionId}`)?.session;
+  }
+
+  getCurrentSeq(userId: string, sessionId: string): number {
+    const active = this.active.get(`${userId}/${sessionId}`);
+    return active?.seq ?? 0;
+  }
+
+  getCatchUp(userId: string, sessionId: string, sinceSeq: number): SessionCatchUpResponse | null {
+    const active = this.active.get(`${userId}/${sessionId}`);
+    if (!active) {
+      return null;
+    }
+
+    const canServe = active.eventRing.canServe(sinceSeq);
+    const events = canServe
+      ? active.eventRing.since(sinceSeq).map((entry) => entry.event)
+      : [];
+
+    return {
+      events,
+      currentSeq: active.seq,
+      session: active.session,
+      catchUpComplete: canServe,
+    };
   }
 
   hasPendingUIRequest(userId: string, sessionId: string, requestId: string): boolean {

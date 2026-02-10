@@ -1,6 +1,6 @@
 # Pi Remote — Implementation Plan
 
-Last updated: 2026-02-08
+Last updated: 2026-02-10
 
 Execution plan for pi-remote. Ordered by impact: security and reliability
 first, then visible features, then the workspace migration, then skills.
@@ -32,7 +32,29 @@ is in `WORKSPACE-CONTAINERS.md`. Current shipped behavior is in `README.md`.
 ### Security
 - [x] Apple container isolation (process + filesystem)
 - [x] Permission gate blocks unguarded tool calls (fail-closed)
-- [ ] Auth proxy — secrets still copied into containers (Step 1)
+- [x] Auth proxy — container auth now uses stub credentials + host proxy injection (Step 1 complete; internal-network variant was superseded by NAT mode decision)
+
+---
+
+## Reality Check (2026-02-10)
+
+### Completed since initial plan
+- ✅ Step 1 (`TODO-5d327779`) — auth proxy landed in server/sandbox/session lifecycle.
+- ✅ Step 6 (`TODO-aa0f8e35`) — snapshot semantics docs covered.
+- ✅ Step 7 (`TODO-78eba302`) — workspace-scoped runtime core complete.
+- ✅ Step 8 (`TODO-31efdce1`) — workspace-scoped API migration complete.
+- ✅ Step 9 (`TODO-1fe2951f`) — iOS workspace-first UX shipped.
+- ✅ Step 11a (`TODO-eabe2bf3`) — server-side user skill CRUD shipped.
+
+### In progress / partially delivered
+- 🟡 Step 2/5 (`TODO-fb28452c`) — turn-idempotency and staged ACK reliability work shipped, sequence replay work still open.
+- 🟡 Step 3 (`TODO-362ce018`) — file content endpoint shipped; directory listing API remains.
+- 🟡 Step 4c (`TODO-bd36f35a`) — tappable file access in chat shipped via ToolCall rows (different UX than planned chips).
+
+### Still pending
+- ⏳ Step 10 (`TODO-19cb0451`) — fork workflow.
+- ⏳ Step 11b/11c (`TODO-d6c60004`, `TODO-bdffb4b5`) — load user skills into sessions + safety gate.
+- ⏳ Step 12/13 (`TODO-2cd10bc4`, `TODO-6717558a`, `TODO-a55a58d6`, `TODO-f471ff40`, `TODO-511647e2`) — full skills UI + creation workflow.
 
 ---
 
@@ -41,8 +63,9 @@ is in `WORKSPACE-CONTAINERS.md`. Current shipped behavior is in `README.md`.
 ### Step 1: Auth proxy + internal network
 **TODO-5d327779** | Server | ~1 day | **Security**
 
-Replace auth.json copying with a host-side auth proxy. Switch containers
-to `--internal` network (no internet). Secrets never enter the container.
+Replace auth.json copying with a host-side auth proxy so secrets never enter
+container auth files. (Original `--internal` network requirement was superseded
+by NAT networking after implementation tradeoff review.)
 
 Design: `pi-remote/docs/auth-proxy-design.md`
 
@@ -51,9 +74,9 @@ Design: `pi-remote/docs/auth-proxy-design.md`
 | HTTP reverse proxy (~150 LOC) | `src/auth-proxy.ts` — NEW |
 | Stub auth.json + models.json rewrite | `src/sandbox.ts` |
 | Session registration with proxy | `src/sessions.ts` |
-| Internal network setup | `src/sandbox.ts` (server startup) |
+| Container network policy wiring | `src/sandbox.ts` (server startup) |
 
-Known limitation: fetch skill loses internet access. Document and address separately.
+Current behavior: containers run on a NAT network for internet access; credential isolation is enforced by auth proxy credential substitution.
 
 ---
 
@@ -91,11 +114,11 @@ Expose workspace files over REST so the iOS app can browse agent output.
 ### Step 4: File browser + previews — iOS
 **TODO-15956340, TODO-cf1dbddf, TODO-bd36f35a** | iOS | ~2.5 days | **Feature**
 
-| Sub-step | What | Effort |
-|----------|------|--------|
-| 4a | FileService + FileListView + FileRowView | 1d |
-| 4b | FilePreviewView router (markdown, image, HTML, code) | 1d |
-| 4c | FileChipView in chat bubbles for write/edit tool calls | 0.5d |
+| Sub-step | What | Effort | Status |
+|----------|------|--------|--------|
+| 4a | FileService + FileListView + FileRowView | 1d | ⏳ Pending |
+| 4b | FilePreviewView router (markdown, image, HTML, code) | 1d | ⏳ Pending |
+| 4c | FileChipView in chat bubbles for write/edit tool calls | 0.5d | 🟡 Partial (implemented as tappable tool-row file paths) |
 
 Can run in parallel with Step 5.
 
@@ -187,11 +210,11 @@ Can run in parallel with Step 9.
 ### Step 11: Skill CRUD (IMPL Phase 4)
 **TODO-eabe2bf3, TODO-d6c60004, TODO-bdffb4b5** | Server | ~2 days
 
-| Sub-step | What | Effort |
-|----------|------|--------|
-| 11a | Skill storage + CRUD API | 1d |
-| 11b | Load user skills into sessions | 0.5d |
-| 11c | Skill promotion safety gate | 0.5d |
+| Sub-step | What | Effort | Status |
+|----------|------|--------|--------|
+| 11a | Skill storage + CRUD API | 1d | ✅ Done |
+| 11b | Load user skills into sessions | 0.5d | ⏳ Pending |
+| 11c | Skill promotion safety gate | 0.5d | ⏳ Pending |
 
 ---
 

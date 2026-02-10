@@ -38,6 +38,7 @@ final class DeltaCoalescer {
              .toolEnd,
              .agentStart,
              .agentEnd,
+             .messageEnd,
              .sessionEnded,
              .error,
              .compactionStart,

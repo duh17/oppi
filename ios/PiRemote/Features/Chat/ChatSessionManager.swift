@@ -34,6 +34,7 @@ final class ChatSessionManager {
 
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
+    private var lastSeenSeq: Int
 
     /// Test seam: inject a scripted stream to exercise lifecycle races
     /// without opening a real WebSocket.
@@ -43,8 +44,15 @@ final class ChatSessionManager {
     /// without performing REST requests.
     var _loadHistoryForTesting: ((_ cachedEventCount: Int?, _ cachedLastEventId: String?) async -> (eventCount: Int, lastEventId: String?)?)?
 
+    /// Test seam: override event catch-up loading (`/sessions/:id/events?since=`).
+    var _loadCatchUpForTesting: ((_ since: Int, _ currentSeq: Int) async -> APIClient.SessionEventsResponse?)?
+
+    /// Test seam: inject inbound sequence metadata per streamed message.
+    var _consumeInboundMetaForTesting: (() -> WebSocketClient.InboundMeta?)?
+
     init(sessionId: String) {
         self.sessionId = sessionId
+        self.lastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
     }
 
     private static func reconnectDelay(for attempt: Int) -> (duration: Duration, delayMs: Int) {
@@ -54,6 +62,24 @@ final class ChatSessionManager {
         case 3: (.seconds(2), 2_000)
         default: (.seconds(4), 4_000)
         }
+    }
+
+    private static func seqDefaultsKey(sessionId: String) -> String {
+        "chat.lastSeenSeq.\(sessionId)"
+    }
+
+    private static func loadLastSeenSeq(sessionId: String) -> Int {
+        UserDefaults.standard.integer(forKey: seqDefaultsKey(sessionId: sessionId))
+    }
+
+    private func persistLastSeenSeq() {
+        UserDefaults.standard.set(lastSeenSeq, forKey: Self.seqDefaultsKey(sessionId: sessionId))
+    }
+
+    private func updateLastSeenSeq(_ seq: Int) {
+        guard seq > lastSeenSeq else { return }
+        lastSeenSeq = seq
+        persistLastSeenSeq()
     }
 
     // MARK: - Lifecycle
@@ -116,7 +142,14 @@ final class ChatSessionManager {
         // Open WS stream first — server sends `connected` immediately.
         // Use workspace-scoped v2 path when the session has a workspaceId.
         let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
-        let stream = _streamSessionForTesting?(sessionId) ?? connection.streamSession(sessionId, workspaceId: workspaceId)
+        let stream: AsyncStream<ServerMessage>?
+        if let streamForTesting = _streamSessionForTesting?(sessionId) {
+            connection._setActiveSessionIdForTesting(sessionId)
+            stream = streamForTesting
+        } else {
+            stream = connection.streamSession(sessionId, workspaceId: workspaceId)
+        }
+
         guard let stream else {
             reducer.process(.error(sessionId: sessionId, message: "WebSocket unavailable"))
             return
@@ -142,22 +175,37 @@ final class ChatSessionManager {
         let sid = sessionId
         connection.onSilenceReconnect = { [weak self] in
             log.error("Silence watchdog triggered reconnect for \(sid)")
+            ClientLog.error("ChatSession", "Silence watchdog triggered reconnect", metadata: ["sessionId": sid])
             self?.reconnect()
         }
 
         var hasReceivedConnected = false
         log.error("PIPE: for-await loop starting for \(self.sessionId, privacy: .public)")
+        ClientLog.info("ChatSession", "PIPE loop starting", metadata: ["sessionId": sessionId])
         for await message in stream {
             if Task.isCancelled {
                 log.error("PIPE: task cancelled, breaking for-await loop")
+                ClientLog.warning("ChatSession", "PIPE loop cancelled", metadata: ["sessionId": sessionId])
                 break
             }
+
+            let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta()
 
             // Detect reconnection: a second `.connected` message means the WS
             // dropped and recovered. Reload history to catch events lost during
             // the gap. Without this, agent responses sent while disconnected
             // never appear in the UI.
             if case .connected = message {
+                if let currentSeq = inboundMeta?.currentSeq {
+                    await performCatchUpIfNeeded(
+                        currentSeq: currentSeq,
+                        generation: generation,
+                        connection: connection,
+                        reducer: reducer,
+                        sessionStore: sessionStore
+                    )
+                }
+
                 // Request freshest server session state only once the stream is connected.
                 // This avoids speculative pre-connect sends that can stall/fail during startup.
                 scheduleStateSync(generation: generation, connection: connection)
@@ -176,11 +224,23 @@ final class ChatSessionManager {
                 unexpectedStreamExitCount = 0
             }
 
+            if let seq = inboundMeta?.seq {
+                if seq <= lastSeenSeq {
+                    continue
+                }
+                updateLastSeenSeq(seq)
+            }
+
             connection.handleServerMessage(message, sessionId: sessionId)
         }
 
         let wasCancelled = Task.isCancelled
         log.error("PIPE: stream loop EXITED for \(self.sessionId, privacy: .public) — cancelled=\(wasCancelled, privacy: .public)")
+        ClientLog.error(
+            "ChatSession",
+            "PIPE stream loop exited",
+            metadata: ["sessionId": sessionId, "cancelled": String(wasCancelled)]
+        )
 
         let shouldAutoReconnect = !wasCancelled
             && hasReceivedConnected
@@ -194,6 +254,15 @@ final class ChatSessionManager {
             let reconnectPolicy = Self.reconnectDelay(for: unexpectedStreamExitCount)
             log.error(
                 "PIPE: unexpected stream exit for \(self.sessionId, privacy: .public) (attempt \(self.unexpectedStreamExitCount, privacy: .public)) — reconnect in \(reconnectPolicy.delayMs, privacy: .public)ms"
+            )
+            ClientLog.error(
+                "ChatSession",
+                "Unexpected stream exit; scheduling reconnect",
+                metadata: [
+                    "sessionId": sessionId,
+                    "attempt": String(unexpectedStreamExitCount),
+                    "delayMs": String(reconnectPolicy.delayMs),
+                ]
             )
             reducer.appendSystemEvent("Connection dropped — reconnecting…")
             scheduleAutoReconnect(after: reconnectPolicy.duration, generation: generation)
@@ -237,6 +306,81 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelHistoryReload()
         cancelStateSync()
+    }
+
+    private func performCatchUpIfNeeded(
+        currentSeq: Int,
+        generation: Int,
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionStore: SessionStore
+    ) async {
+        guard generation == connectionGeneration else { return }
+
+        if currentSeq < lastSeenSeq {
+            log.warning("Connected currentSeq \(currentSeq) behind lastSeenSeq \(self.lastSeenSeq) — forcing full history reload")
+            lastSeenSeq = currentSeq
+            persistLastSeenSeq()
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            return
+        }
+
+        guard currentSeq > lastSeenSeq else { return }
+
+        let since = lastSeenSeq
+        let response: APIClient.SessionEventsResponse?
+        if let catchUpHook = _loadCatchUpForTesting {
+            response = await catchUpHook(since, currentSeq)
+        } else if let api = connection.apiClient {
+            response = try? await api.getSessionEvents(id: sessionId, since: since)
+        } else {
+            response = nil
+        }
+
+        guard generation == connectionGeneration else { return }
+        guard let response else {
+            log.warning("Catch-up fetch failed for \(self.sessionId) since seq \(since)")
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            return
+        }
+
+        sessionStore.upsert(response.session)
+
+        if !response.catchUpComplete {
+            log.warning("Catch-up ring miss for \(self.sessionId) since seq \(since) — forcing full history reload")
+            lastSeenSeq = response.currentSeq
+            persistLastSeenSeq()
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            return
+        }
+
+        for event in response.events {
+            guard event.seq > lastSeenSeq else { continue }
+            connection.handleServerMessage(event.message, sessionId: sessionId)
+            updateLastSeenSeq(event.seq)
+        }
+
+        if response.currentSeq > lastSeenSeq {
+            updateLastSeenSeq(response.currentSeq)
+        }
     }
 
     // MARK: - History Loading

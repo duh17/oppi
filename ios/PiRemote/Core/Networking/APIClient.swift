@@ -60,6 +60,73 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
+    struct SequencedServerEvent: Sendable, Equatable {
+        let seq: Int
+        let message: ServerMessage
+    }
+
+    struct SessionEventsResponse: Sendable, Equatable {
+        let events: [SequencedServerEvent]
+        let currentSeq: Int
+        let session: Session
+        let catchUpComplete: Bool
+    }
+
+    /// Fetch sequenced durable session events after `since` for reconnect catch-up.
+    func getSessionEvents(id: String, since: Int) async throws -> SessionEventsResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("/sessions/\(id)/events"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "since", value: String(since))]
+
+        guard let url = components?.url else {
+            throw APIError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        logger.debug("GET /sessions/\(id)/events")
+
+        let (data, response) = try await session.data(for: request)
+        try checkStatus(response, data: data)
+
+        let root = try JSONDecoder().decode(JSONValue.self, from: data)
+
+        guard case .object(let object) = root,
+              let currentSeq = object["currentSeq"]?.numberValue.map(Int.init),
+              let catchUpComplete = object["catchUpComplete"]?.boolValue,
+              let sessionValue = object["session"],
+              let eventValues = object["events"]?.arrayValue else {
+            throw APIError.invalidResponse
+        }
+
+        let sessionData = try JSONEncoder().encode(sessionValue)
+        let session = try JSONDecoder().decode(Session.self, from: sessionData)
+
+        var events: [SequencedServerEvent] = []
+        events.reserveCapacity(eventValues.count)
+
+        for value in eventValues {
+            guard let seq = value.objectValue?["seq"]?.numberValue.map(Int.init) else {
+                continue
+            }
+
+            let eventData = try JSONEncoder().encode(value)
+            guard let eventText = String(data: eventData, encoding: .utf8) else {
+                continue
+            }
+
+            let message = try ServerMessage.decode(from: eventText)
+            events.append(SequencedServerEvent(seq: seq, message: message))
+        }
+
+        return SessionEventsResponse(
+            events: events,
+            currentSeq: currentSeq,
+            session: session,
+            catchUpComplete: catchUpComplete
+        )
+    }
+
     /// Get a session with its resolved context (compaction-aware, same view as pi TUI).
     func getSession(id: String) async throws -> (session: Session, trace: [TraceEvent]) {
         let data = try await get("/sessions/\(id)")
@@ -253,6 +320,13 @@ actor APIClient {
         struct Body: Encodable { let deviceToken: String }
         let (data, response) = try await request("DELETE", path: "/me/device-token", body: Body(deviceToken: token))
         try checkStatus(response, data: data)
+    }
+
+    // MARK: - Diagnostics
+
+    /// Upload in-app client logs for a specific session (dev/debug triage).
+    func uploadClientLogs(sessionId: String, request body: ClientLogUploadRequest) async throws {
+        _ = try await post("/sessions/\(sessionId)/client-logs", body: body)
     }
 
     // MARK: - Private
