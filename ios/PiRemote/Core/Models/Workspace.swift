@@ -19,7 +19,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var skills: [String]        // ["searxng", "fetch", "ast-grep"]
 
     // Permissions
-    var policyPreset: String    // "container" | "restricted"
+    var policyPreset: String    // "host" | "container"
 
     // Context
     var systemPrompt: String?

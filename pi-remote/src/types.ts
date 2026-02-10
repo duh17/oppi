@@ -32,7 +32,7 @@ export interface Workspace {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string; // "host" | "container" | "restricted"
+  policyPreset: string; // "host" | "container"
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
   allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
 
@@ -211,7 +211,21 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
  * All messages may include an optional `requestId` for response correlation.
  * Commands forwarded to pi RPC return an `rpc_result` with the same requestId.
  */
-export type ClientMessage =
+export type ClientMessage = (
+  // ── Stream subscriptions (multiplexed user stream) ──
+  | {
+      type: "subscribe";
+      sessionId: string;
+      level?: "full" | "notifications";
+      /** Optional per-session durable sequence cursor for catch-up replay. */
+      sinceSeq?: number;
+      requestId?: string;
+    }
+  | {
+      type: "unsubscribe";
+      sessionId: string;
+      requestId?: string;
+    }
   // ── Prompting ──
   | {
       type: "prompt";
@@ -288,7 +302,14 @@ export type ClientMessage =
       confirmed?: boolean;
       cancelled?: boolean;
       requestId?: string;
-    };
+    }
+) & {
+  /**
+   * Optional target session for multiplexed user streams.
+   * Legacy per-session streams ignore this field.
+   */
+  sessionId?: string;
+};
 
 // ─── RPC Response Payloads ───
 
@@ -354,6 +375,7 @@ export interface PiCommand {
 export type ServerMessage = (
   // ── Connection ──
   | { type: "connected"; session: Session; currentSeq?: number }
+  | { type: "stream_connected"; userId: string; userName: string }
   | { type: "state"; session: Session }
   | { type: "session_ended"; reason: string }
   | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
@@ -448,7 +470,18 @@ export type ServerMessage = (
       statusKey?: string;
       statusText?: string;
     }
-) & { seq?: number };
+) & {
+  seq?: number;
+  /**
+   * Session scope for multiplexed user streams.
+   * Per-session streams may omit this field.
+   */
+  sessionId?: string;
+  /**
+   * User-wide multiplexed stream sequence cursor.
+   */
+  streamSeq?: number;
+};
 
 // ─── Push ───
 

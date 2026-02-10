@@ -235,27 +235,6 @@ describe("PolicyEngine (container) — destructive ops → ask", () => {
   });
 });
 
-// ─── Restricted preset ───
-
-describe("PolicyEngine (restricted)", () => {
-  const restricted = new PolicyEngine("restricted");
-
-  it("allows read", () => {
-    const d = restricted.evaluate({ tool: "read", input: { path: "file.txt" }, toolCallId: "40" });
-    expect(d.action).toBe("allow");
-  });
-
-  it("denies bash", () => {
-    const d = restricted.evaluate({ tool: "bash", input: { command: "ls" }, toolCallId: "41" });
-    expect(d.action).toBe("deny");
-  });
-
-  it("denies write", () => {
-    const d = restricted.evaluate({ tool: "write", input: { path: "file.txt" }, toolCallId: "42" });
-    expect(d.action).toBe("deny");
-  });
-});
-
 // ─── Display Summary ───
 
 describe("formatDisplaySummary", () => {

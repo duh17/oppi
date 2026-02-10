@@ -787,26 +787,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
 };
 
 /**
- * Restricted preset — read-only, no execution.
- * For untrusted users or demo mode.
- */
-export const PRESET_RESTRICTED: PolicyPreset = {
-  name: "restricted",
-  hardDeny: [
-    { tool: "bash", action: "deny", label: "No bash", risk: "critical" },
-    { tool: "write", action: "deny", label: "No writes", risk: "high" },
-    { tool: "edit", action: "deny", label: "No edits", risk: "high" },
-  ],
-  rules: [
-    { tool: "read", action: "allow", risk: "low" },
-    { tool: "grep", action: "allow", risk: "low" },
-    { tool: "find", action: "allow", risk: "low" },
-    { tool: "ls", action: "allow", risk: "low" },
-  ],
-  defaultAction: "deny",
-};
-
-/**
  * Host preset — for pi running directly on the Mac with no container.
  *
  * Philosophy: behave like the pi CLI. Pi runs tools freely; the gate
@@ -919,7 +899,6 @@ export const PRESET_HOST: PolicyPreset = {
 export const PRESETS: Record<string, PolicyPreset> = {
   container: PRESET_CONTAINER,
   host: PRESET_HOST,
-  restricted: PRESET_RESTRICTED,
 };
 
 // ─── Per-Session Config ───

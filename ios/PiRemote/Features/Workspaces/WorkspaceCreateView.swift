@@ -127,9 +127,9 @@ struct WorkspaceCreateView: View {
 
     private var policyOptions: [(label: String, value: String)] {
         if runtime == "host" {
-            return [("Host", "host"), ("Restricted", "restricted")]
+            return [("Host", "host"), ("Container", "container")]
         }
-        return [("Container", "container"), ("Restricted", "restricted")]
+        return [("Container", "container"), ("Host", "host")]
     }
 
     private func normalizePolicyPreset(for runtime: String) {

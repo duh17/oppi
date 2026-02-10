@@ -75,7 +75,7 @@ struct WorkspaceEditView: View {
             Section("Policy") {
                 Picker("Preset", selection: $policyPreset) {
                     Text("Container").tag("container")
-                    Text("Restricted").tag("restricted")
+                    Text("Host").tag("host")
                 }
                 .pickerStyle(.segmented)
             }
