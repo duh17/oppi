@@ -114,14 +114,9 @@ final class WebSocketClient {
     ///
     /// Once connected, enforces a bounded send timeout to prevent hangs.
     func send(_ message: ClientMessage) async throws {
-        // NOTE: All logger calls in send() use .error level intentionally.
-        // os.log .info/.warning are NOT persisted in device log archives,
-        // so .error is the minimum level that survives for post-hoc debugging.
-
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
-            logger.error("WS send: status=\(String(describing: self.status)), waiting for connection...")
-            wsLogWarning(
+            wsLogInfo(
                 "Send waiting for connection",
                 metadata: ["status": String(describing: status)]
             )
@@ -131,7 +126,6 @@ final class WebSocketClient {
                 wsLogError("Send failed waiting for connection")
                 throw WebSocketError.notConnected
             }
-            logger.error("WS send: wait succeeded, now connected")
             wsLogInfo("Send wait succeeded")
         }
 
@@ -147,7 +141,6 @@ final class WebSocketClient {
             throw WebSocketError.notConnected
         }
         let data = try message.jsonString()
-        logger.error("WS send: \(message.typeLabel) (\(data.count) bytes)")
         wsLogInfo(
             "WS send",
             metadata: ["type": message.typeLabel, "bytes": String(data.count)]
@@ -179,7 +172,6 @@ final class WebSocketClient {
             throw error
         }
 
-        logger.error("WS send: \(message.typeLabel) complete")
         wsLogInfo("WS send complete", metadata: ["type": message.typeLabel])
     }
 
@@ -195,14 +187,6 @@ final class WebSocketClient {
         let timeoutMs = Self.durationMilliseconds(timeout)
         let baseMetadata = wsLogMetadata()
 
-        func mergedMetadata(_ extra: [String: String]) -> [String: String] {
-            var metadata = baseMetadata
-            for (key, value) in extra {
-                metadata[key] = value
-            }
-            return metadata
-        }
-
         try await withCheckedThrowingContinuation { continuation in
             let resolver = SendResolver(continuation: continuation)
 
@@ -211,7 +195,7 @@ final class WebSocketClient {
                 ClientLog.error(
                     "WebSocket",
                     "WS send hard timeout fired",
-                    metadata: mergedMetadata(["timeoutMs": String(timeoutMs)])
+                    metadata: Self.mergeMetadata(baseMetadata, extra: ["timeoutMs": String(timeoutMs)])
                 )
                 resolver.resolve(.failure(WebSocketError.sendTimeout))
             }
@@ -228,16 +212,10 @@ final class WebSocketClient {
                     ClientLog.error(
                         "WebSocket",
                         "WS send callback error",
-                        metadata: mergedMetadata(["error": String(describing: error)])
+                        metadata: Self.mergeMetadata(baseMetadata, extra: ["error": String(describing: error)])
                     )
                     resolver.resolve(.failure(error))
                 } else {
-                    logger.error("WS send callback success")
-                    ClientLog.info(
-                        "WebSocket",
-                        "WS send callback success",
-                        metadata: mergedMetadata([:])
-                    )
                     resolver.resolve(.success(()))
                 }
             }
@@ -303,6 +281,17 @@ final class WebSocketClient {
             metadata["workspaceId"] = connectedWorkspaceId
         }
         return metadata
+    }
+
+    nonisolated private static func mergeMetadata(
+        _ base: [String: String],
+        extra: [String: String]
+    ) -> [String: String] {
+        var merged = base
+        for (key, value) in extra {
+            merged[key] = value
+        }
+        return merged
     }
 
     private func wsLogInfo(_ message: String, metadata: [String: String] = [:]) {
@@ -408,7 +397,7 @@ final class WebSocketClient {
 
             // Connection lost — attempt reconnect
             logger.error("Receive loop exited — cancelled=\(Task.isCancelled)")
-            self?.wsLogWarning(
+            self?.wsLogInfo(
                 "Receive loop exited",
                 metadata: ["cancelled": String(Task.isCancelled)]
             )
@@ -437,7 +426,7 @@ final class WebSocketClient {
 
                 if failed {
                     consecutiveFailures += 1
-                    self?.wsLogWarning(
+                    self?.wsLogInfo(
                         "Ping failed",
                         metadata: ["failures": String(consecutiveFailures)]
                     )
@@ -482,7 +471,7 @@ final class WebSocketClient {
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
         logger.info("Reconnecting in \(delay)s (attempt \(nextAttempt))")
-        wsLogWarning(
+        wsLogInfo(
             "Reconnect scheduled",
             metadata: [
                 "attempt": String(nextAttempt),
