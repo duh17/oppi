@@ -88,11 +88,13 @@ export class AuditLog {
    * Returns entries in reverse chronological order (most recent first).
    * Supports filtering by sessionId and cursor-based pagination.
    */
-  query(opts: {
-    limit?: number;
-    before?: number;
-    sessionId?: string;
-  } = {}): AuditEntry[] {
+  query(
+    opts: {
+      limit?: number;
+      before?: number;
+      sessionId?: string;
+    } = {},
+  ): AuditEntry[] {
     const limit = Math.min(opts.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
 
     if (!existsSync(this.path)) return [];
@@ -102,10 +104,13 @@ export class AuditLog {
       const content = readFileSync(this.path, "utf-8");
       entries = content
         .split("\n")
-        .filter(line => line.trim())
-        .map(line => {
-          try { return JSON.parse(line) as AuditEntry; }
-          catch { return null; }
+        .filter((line) => line.trim())
+        .map((line) => {
+          try {
+            return JSON.parse(line) as AuditEntry;
+          } catch {
+            return null;
+          }
         })
         .filter((e): e is AuditEntry => e !== null);
     } catch {
@@ -114,11 +119,11 @@ export class AuditLog {
 
     // Filter
     if (opts.sessionId) {
-      entries = entries.filter(e => e.sessionId === opts.sessionId);
+      entries = entries.filter((e) => e.sessionId === opts.sessionId);
     }
     if (opts.before) {
       const before = opts.before;
-      entries = entries.filter(e => e.timestamp < before);
+      entries = entries.filter((e) => e.timestamp < before);
     }
 
     // Reverse chronological, limited

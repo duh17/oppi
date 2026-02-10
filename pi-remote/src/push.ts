@@ -111,7 +111,10 @@ export class APNsClient {
    * Send a session event push (ended, error).
    * Not time-sensitive.
    */
-  async sendSessionEventPush(deviceToken: string, payload: SessionEventPushPayload): Promise<boolean> {
+  async sendSessionEventPush(
+    deviceToken: string,
+    payload: SessionEventPushPayload,
+  ): Promise<boolean> {
     const title = payload.event === "ended" ? "Session Ended" : "Session Error";
     const category = payload.event === "ended" ? "SESSION_DONE" : "SESSION_ERROR";
 
@@ -247,7 +250,9 @@ export class APNsClient {
             const parsed = JSON.parse(responseBody);
             reason = parsed.reason || responseBody;
           } catch {}
-          console.error(`[apns] Push failed (${responseStatus}): ${reason} [token: ${deviceToken.slice(0, 8)}...]`);
+          console.error(
+            `[apns] Push failed (${responseStatus}): ${reason} [token: ${deviceToken.slice(0, 8)}...]`,
+          );
 
           // Handle specific APNs errors
           if (responseStatus === 410 || reason === "Unregistered") {
@@ -305,22 +310,19 @@ export class APNsClient {
     }
 
     const iat = Math.floor(now / 1000);
-    const header = Buffer.from(
-      JSON.stringify({ alg: "ES256", kid: this.config.keyId }),
-    ).toString("base64url");
+    const header = Buffer.from(JSON.stringify({ alg: "ES256", kid: this.config.keyId })).toString(
+      "base64url",
+    );
 
-    const claims = Buffer.from(
-      JSON.stringify({ iss: this.config.teamId, iat }),
-    ).toString("base64url");
+    const claims = Buffer.from(JSON.stringify({ iss: this.config.teamId, iat })).toString(
+      "base64url",
+    );
 
     const signingInput = `${header}.${claims}`;
 
     const signer = createSign("SHA256");
     signer.update(signingInput);
-    const signature = signer.sign(
-      { key: this.privateKey, dsaEncoding: "ieee-p1363" },
-      "base64url",
-    );
+    const signature = signer.sign({ key: this.privateKey, dsaEncoding: "ieee-p1363" }, "base64url");
 
     this.jwt = `${signingInput}.${signature}`;
     this.jwtExpiresAt = now + JWT_REFRESH_MS;
@@ -336,10 +338,18 @@ export class APNsClient {
  * All sends are silent no-ops.
  */
 export class NoopAPNsClient {
-  async sendPermissionPush(): Promise<boolean> { return false; }
-  async sendSessionEventPush(): Promise<boolean> { return false; }
-  async sendLiveActivityUpdate(): Promise<boolean> { return false; }
-  async endLiveActivity(): Promise<boolean> { return false; }
+  async sendPermissionPush(): Promise<boolean> {
+    return false;
+  }
+  async sendSessionEventPush(): Promise<boolean> {
+    return false;
+  }
+  async sendLiveActivityUpdate(): Promise<boolean> {
+    return false;
+  }
+  async endLiveActivity(): Promise<boolean> {
+    return false;
+  }
   shutdown(): void {}
 }
 
@@ -355,7 +365,9 @@ export function createPushClient(config?: APNsConfig): PushClient {
 
   try {
     const client = new APNsClient(config);
-    console.log(`📱 APNs configured (${config.environment || "sandbox"}) — push notifications enabled`);
+    console.log(
+      `📱 APNs configured (${config.environment || "sandbox"}) — push notifications enabled`,
+    );
     return client;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -382,10 +394,15 @@ function riskToInterruptionLevel(risk: string): string {
 
 function riskToRelevanceScore(risk: string): number {
   switch (risk) {
-    case "critical": return 1.0;
-    case "high": return 0.9;
-    case "medium": return 0.7;
-    case "low": return 0.4;
-    default: return 0.5;
+    case "critical":
+      return 1.0;
+    case "high":
+      return 0.9;
+    case "medium":
+      return 0.7;
+    case "low":
+      return 0.4;
+    default:
+      return 0.5;
   }
 }

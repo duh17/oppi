@@ -62,10 +62,15 @@ function getGitRemote(dir: string): string | undefined {
       cwd: dir,
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
-    }).toString().trim();
+    })
+      .toString()
+      .trim();
     // Normalize: git@github.com:user/repo.git → github.com/user/repo
     if (raw.startsWith("git@")) {
-      return raw.replace(/^git@/, "").replace(":", "/").replace(/\.git$/, "");
+      return raw
+        .replace(/^git@/, "")
+        .replace(":", "/")
+        .replace(/\.git$/, "");
     }
     try {
       const url = new URL(raw);
@@ -92,9 +97,18 @@ export function scanDirectories(root: string): HostDirectory[] {
   if (!existsSync(resolved)) return [];
 
   const SKIP = new Set([
-    "node_modules", ".Trash", "Library", "Applications",
-    ".cache", ".config", ".local", ".npm", ".cargo",
-    ".rustup", ".pyenv", ".nvm",
+    "node_modules",
+    ".Trash",
+    "Library",
+    "Applications",
+    ".cache",
+    ".config",
+    ".local",
+    ".npm",
+    ".cargo",
+    ".rustup",
+    ".pyenv",
+    ".nvm",
   ]);
 
   const results: HostDirectory[] = [];
@@ -155,9 +169,7 @@ export function scanDirectories(root: string): HostDirectory[] {
  * Default roots: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer
  */
 export function discoverProjects(roots?: string[]): HostDirectory[] {
-  const defaultRoots = [
-    "~/workspace", "~/projects", "~/src", "~/code", "~/Developer",
-  ];
+  const defaultRoots = ["~/workspace", "~/projects", "~/src", "~/code", "~/Developer"];
   const scanRoots = roots ?? defaultRoots;
   const seen = new Set<string>();
   const results: HostDirectory[] = [];

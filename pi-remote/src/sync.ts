@@ -7,8 +7,13 @@
  */
 
 import {
-  existsSync, readFileSync, writeFileSync, rmSync,
-  chmodSync, statSync, realpathSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  chmodSync,
+  statSync,
+  realpathSync,
 } from "node:fs";
 
 /**

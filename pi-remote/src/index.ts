@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * pi-remote CLI
- * 
+ *
  * Commands:
  *   serve           Start the server
  *   setup           Initial setup
@@ -32,7 +32,9 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   try {
     const raw = JSON.parse(readFileSync(apnsConfigPath, "utf-8"));
     if (!raw.keyPath || !raw.keyId || !raw.teamId || !raw.bundleId) {
-      console.log(chalk.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"));
+      console.log(
+        chalk.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"),
+      );
       return undefined;
     }
     return raw as APNsConfig;
@@ -46,14 +48,21 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
 function printHeader(): void {
   console.log("");
   console.log(chalk.bold.magenta("  ╭─────────────────────────────────────╮"));
-  console.log(chalk.bold.magenta("  │") + chalk.bold("          π  pi-remote               ") + chalk.bold.magenta("│"));
+  console.log(
+    chalk.bold.magenta("  │") +
+      chalk.bold("          π  pi-remote               ") +
+      chalk.bold.magenta("│"),
+  );
   console.log(chalk.bold.magenta("  ╰─────────────────────────────────────╯"));
   console.log("");
 }
 
 function getTailscaleHostname(): string | null {
   try {
-    const result = execSync("tailscale status --json", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    const result = execSync("tailscale status --json", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     const status = JSON.parse(result);
     if (status.Self?.DNSName) {
       return status.Self.DNSName.replace(/\.$/, "");
@@ -64,7 +73,9 @@ function getTailscaleHostname(): string | null {
 
 function getTailscaleIp(): string | null {
   try {
-    return execSync("tailscale ip -4", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim().split("\n")[0];
+    return execSync("tailscale ip -4", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] })
+      .trim()
+      .split("\n")[0];
   } catch {}
   return null;
 }
@@ -198,7 +209,7 @@ async function cmdServe(storage: Storage): Promise<void> {
     console.log(chalk.yellow("  No users configured."));
     console.log(chalk.dim("  Run 'pi-remote invite <name>' to create an invite."));
   } else {
-    console.log(`  Users: ${users.map(u => u.name).join(", ")}`);
+    console.log(`  Users: ${users.map((u) => u.name).join(", ")}`);
   }
 
   console.log("");
@@ -207,7 +218,12 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log("");
 }
 
-async function cmdInvite(storage: Storage, name: string, saveFile?: string, hostOverride?: string): Promise<void> {
+async function cmdInvite(
+  storage: Storage,
+  name: string,
+  saveFile?: string,
+  hostOverride?: string,
+): Promise<void> {
   printHeader();
 
   if (!name) {
@@ -234,7 +250,7 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string, host
   }
 
   // Reuse existing user or create new one
-  const existing = storage.listUsers().find(u => u.name.toLowerCase() === name.toLowerCase());
+  const existing = storage.listUsers().find((u) => u.name.toLowerCase() === name.toLowerCase());
   const user = existing ?? storage.createUser(name);
   if (existing) {
     console.log(chalk.dim(`  (showing QR for existing user "${name}")`));
@@ -265,7 +281,12 @@ async function cmdInvite(storage: Storage, name: string, saveFile?: string, host
 
   qrcode.generate(inviteJson, { small: true }, (qr) => {
     // Indent QR code
-    console.log(qr.split("\n").map(line => "     " + line).join("\n"));
+    console.log(
+      qr
+        .split("\n")
+        .map((line) => "     " + line)
+        .join("\n"),
+    );
   });
 
   console.log("");
@@ -295,7 +316,9 @@ function cmdUsers(storage: Storage, action?: string, target?: string): void {
   const users = storage.listUsers();
 
   if (action === "remove" && target) {
-    const user = users.find(u => u.name.toLowerCase() === target.toLowerCase() || u.id === target);
+    const user = users.find(
+      (u) => u.name.toLowerCase() === target.toLowerCase() || u.id === target,
+    );
     if (!user) {
       console.log(chalk.red(`  User not found: ${target}`));
       process.exit(1);
@@ -308,7 +331,9 @@ function cmdUsers(storage: Storage, action?: string, target?: string): void {
   }
 
   if (action === "regenerate" && target) {
-    const user = users.find(u => u.name.toLowerCase() === target.toLowerCase() || u.id === target);
+    const user = users.find(
+      (u) => u.name.toLowerCase() === target.toLowerCase() || u.id === target,
+    );
     if (!user) {
       console.log(chalk.red(`  User not found: ${target}`));
       process.exit(1);
@@ -336,9 +361,7 @@ function cmdUsers(storage: Storage, action?: string, target?: string): void {
   console.log("");
 
   for (const user of users) {
-    const lastSeen = user.lastSeen 
-      ? new Date(user.lastSeen).toLocaleString()
-      : "never";
+    const lastSeen = user.lastSeen ? new Date(user.lastSeen).toLocaleString() : "never";
     const sessions = storage.listUserSessions(user.id);
     console.log(`  ${chalk.cyan("•")} ${chalk.bold(user.name)}`);
     console.log(`    ID:       ${chalk.dim(user.id)}`);
@@ -434,7 +457,7 @@ async function main(): Promise<void> {
   // Parse flags
   const flags: Record<string, string> = {};
   const positional: string[] = [];
-  
+
   for (let i = 1; i < args.length; i++) {
     if (args[i].startsWith("--")) {
       const key = args[i].slice(2);

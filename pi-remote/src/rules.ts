@@ -17,10 +17,10 @@ import type { RiskLevel } from "./policy.js";
 // ─── Types ───
 
 export interface RuleMatch {
-  executable?: string;       // "git", "npm", "python3"
-  domain?: string;           // "github.com" (browser nav)
-  pathPattern?: string;      // "/workspace/**" (file ops)
-  commandPattern?: string;   // "git push *" (glob against full command)
+  executable?: string; // "git", "npm", "python3"
+  domain?: string; // "github.com" (browser nav)
+  pathPattern?: string; // "/workspace/**" (file ops)
+  commandPattern?: string; // "git push *" (glob against full command)
 }
 
 export interface LearnedRule {
@@ -28,29 +28,29 @@ export interface LearnedRule {
   effect: "allow" | "deny";
 
   // What to match (all non-null fields must match)
-  tool?: string;              // "bash", "write", "edit", "*"
+  tool?: string; // "bash", "write", "edit", "*"
   match?: RuleMatch;
 
   // Scope
   scope: "session" | "workspace" | "global";
-  workspaceId?: string;       // Required for workspace scope
-  sessionId?: string;         // Required for session scope
+  workspaceId?: string; // Required for workspace scope
+  sessionId?: string; // Required for session scope
 
   // Metadata
   source: "learned" | "manual";
   description: string;
   risk: RiskLevel;
   createdAt: number;
-  createdBy?: string;         // userId who created/approved
-  expiresAt?: number;         // Optional TTL (ms since epoch)
+  createdBy?: string; // userId who created/approved
+  expiresAt?: number; // Optional TTL (ms since epoch)
 }
 
 // ─── RuleStore ───
 
 export class RuleStore {
   private path: string;
-  private persisted: LearnedRule[] = [];     // global + workspace (on disk)
-  private sessionRules: LearnedRule[] = [];  // session-scoped (in-memory only)
+  private persisted: LearnedRule[] = []; // global + workspace (on disk)
+  private sessionRules: LearnedRule[] = []; // session-scoped (in-memory only)
 
   constructor(path: string) {
     this.path = path;
@@ -78,14 +78,14 @@ export class RuleStore {
 
   remove(id: string): boolean {
     // Try session rules first
-    const sessionIdx = this.sessionRules.findIndex(r => r.id === id);
+    const sessionIdx = this.sessionRules.findIndex((r) => r.id === id);
     if (sessionIdx >= 0) {
       this.sessionRules.splice(sessionIdx, 1);
       return true;
     }
 
     // Then persisted
-    const idx = this.persisted.findIndex(r => r.id === id);
+    const idx = this.persisted.findIndex((r) => r.id === id);
     if (idx >= 0) {
       this.persisted.splice(idx, 1);
       this.save();
@@ -104,19 +104,19 @@ export class RuleStore {
 
   /** Global rules only. */
   getGlobal(): LearnedRule[] {
-    return this.persisted.filter(r => r.scope === "global");
+    return this.persisted.filter((r) => r.scope === "global");
   }
 
   /** Rules for a specific workspace (includes global rules). */
   getForWorkspace(workspaceId: string): LearnedRule[] {
     return this.persisted.filter(
-      r => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId)
+      (r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId),
     );
   }
 
   /** Rules for a specific session (session-scoped only). */
   getForSession(sessionId: string): LearnedRule[] {
-    return this.sessionRules.filter(r => r.sessionId === sessionId);
+    return this.sessionRules.filter((r) => r.sessionId === sessionId);
   }
 
   /**
@@ -136,12 +136,9 @@ export class RuleStore {
     parsed?: { executable?: string; domain?: string; path?: string },
   ): LearnedRule[] {
     const now = Date.now();
-    const candidates = [
-      ...this.getForSession(sessionId),
-      ...this.getForWorkspace(workspaceId),
-    ];
+    const candidates = [...this.getForSession(sessionId), ...this.getForWorkspace(workspaceId)];
 
-    return candidates.filter(rule => {
+    return candidates.filter((rule) => {
       // Skip expired
       if (rule.expiresAt && rule.expiresAt < now) return false;
 
@@ -169,9 +166,7 @@ export class RuleStore {
         if (rule.match.commandPattern) {
           const command = (input as { command?: string }).command || "";
           // Simple glob matching: "git *" matches "git push origin main"
-          const re = new RegExp(
-            "^" + rule.match.commandPattern.replace(/\*/g, ".*") + "$"
-          );
+          const re = new RegExp("^" + rule.match.commandPattern.replace(/\*/g, ".*") + "$");
           if (!re.test(command)) return false;
         }
       }
@@ -184,7 +179,7 @@ export class RuleStore {
 
   /** Remove all session-scoped rules for a session. */
   clearSessionRules(sessionId: string): void {
-    this.sessionRules = this.sessionRules.filter(r => r.sessionId !== sessionId);
+    this.sessionRules = this.sessionRules.filter((r) => r.sessionId !== sessionId);
   }
 
   // ── Persistence ──

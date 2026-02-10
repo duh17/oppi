@@ -21,10 +21,7 @@ import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
-import type {
-  PolicyEngine,
-  RiskLevel,
-} from "./policy.js";
+import type { PolicyEngine, RiskLevel } from "./policy.js";
 import {
   addDomainToAllowlist,
   removeDomainFromAllowlist,
@@ -133,7 +130,11 @@ export class GateServer extends EventEmitter {
    * Create a TCP socket for a session. Returns a promise that resolves to the port number.
    * The extension inside the container connects to host-gateway (192.168.64.1) on this port.
    */
-  async createSessionSocket(sessionId: string, userId: string, workspaceId: string = ""): Promise<number> {
+  async createSessionSocket(
+    sessionId: string,
+    userId: string,
+    workspaceId: string = "",
+  ): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((client) => {
         this.handleConnection(sessionId, client);
@@ -222,7 +223,11 @@ export class GateServer extends EventEmitter {
     if (!pending) return false;
 
     const policy = this.getPolicy(pending.sessionId);
-    const req: GateRequest = { tool: pending.tool, input: pending.input, toolCallId: pending.toolCallId };
+    const req: GateRequest = {
+      tool: pending.tool,
+      input: pending.input,
+      toolCallId: pending.toolCallId,
+    };
     let learnedRuleId: string | undefined;
 
     // Create learned rule if scope != "once"
@@ -231,12 +236,13 @@ export class GateServer extends EventEmitter {
         sessionId: pending.sessionId,
         workspaceId: pending.workspaceId,
         userId: pending.userId,
-        risk: (pending.risk) || "medium",
+        risk: pending.risk || "medium",
       };
 
-      const suggest = action === "allow"
-        ? policy.suggestRule(req, scope, context)
-        : policy.suggestDenyRule(req, scope, context);
+      const suggest =
+        action === "allow"
+          ? policy.suggestRule(req, scope, context)
+          : policy.suggestDenyRule(req, scope, context);
 
       if (suggest) {
         const rule = this.ruleStore.add(suggest);
@@ -264,7 +270,7 @@ export class GateServer extends EventEmitter {
       userId: pending.userId,
       tool: pending.tool,
       displaySummary: pending.displaySummary,
-      risk: (pending.risk) || "medium",
+      risk: pending.risk || "medium",
       decision: action,
       resolvedBy: "user",
       layer: "user_response",
@@ -296,7 +302,7 @@ export class GateServer extends EventEmitter {
    * Get pending decisions for a specific user.
    */
   getPendingForUser(userId: string): PendingDecision[] {
-    return Array.from(this.pending.values()).filter(d => d.userId === userId);
+    return Array.from(this.pending.values()).filter((d) => d.userId === userId);
   }
 
   /**
@@ -371,7 +377,10 @@ export class GateServer extends EventEmitter {
         break;
 
       default:
-        console.warn(`[gate] Unknown message type from ${sessionId}:`, (msg as unknown as Record<string, unknown>).type);
+        console.warn(
+          `[gate] Unknown message type from ${sessionId}:`,
+          (msg as unknown as Record<string, unknown>).type,
+        );
     }
   }
 
@@ -396,7 +405,11 @@ export class GateServer extends EventEmitter {
     this.emit("guard_ready", { sessionId: guard.sessionId });
   }
 
-  private async handleGateCheck(guard: SessionGuard, msg: GateCheckMsg, client: Socket): Promise<void> {
+  private async handleGateCheck(
+    guard: SessionGuard,
+    msg: GateCheckMsg,
+    client: Socket,
+  ): Promise<void> {
     // Fail-safe: if not guarded, deny everything
     if (guard.state !== "guarded") {
       this.send(client, {
@@ -422,10 +435,17 @@ export class GateServer extends EventEmitter {
     if (decision.action === "allow") {
       this.send(client, { type: "gate_result", action: "allow" });
       this.auditLog.record({
-        sessionId: guard.sessionId, workspaceId: guard.workspaceId, userId: guard.userId,
-        tool: msg.tool, displaySummary, risk: decision.risk,
-        decision: "allow", resolvedBy: "policy", layer: decision.layer,
-        ruleId: decision.ruleId, ruleSummary: decision.ruleLabel,
+        sessionId: guard.sessionId,
+        workspaceId: guard.workspaceId,
+        userId: guard.userId,
+        tool: msg.tool,
+        displaySummary,
+        risk: decision.risk,
+        decision: "allow",
+        resolvedBy: "policy",
+        layer: decision.layer,
+        ruleId: decision.ruleId,
+        ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_allowed", { sessionId: guard.sessionId, ...req, decision });
       return;
@@ -434,10 +454,17 @@ export class GateServer extends EventEmitter {
     if (decision.action === "deny") {
       this.send(client, { type: "gate_result", action: "deny", reason: decision.reason });
       this.auditLog.record({
-        sessionId: guard.sessionId, workspaceId: guard.workspaceId, userId: guard.userId,
-        tool: msg.tool, displaySummary, risk: decision.risk,
-        decision: "deny", resolvedBy: "policy", layer: decision.layer,
-        ruleId: decision.ruleId, ruleSummary: decision.ruleLabel,
+        sessionId: guard.sessionId,
+        workspaceId: guard.workspaceId,
+        userId: guard.userId,
+        tool: msg.tool,
+        displaySummary,
+        risk: decision.risk,
+        decision: "deny",
+        resolvedBy: "policy",
+        layer: decision.layer,
+        ruleId: decision.ruleId,
+        ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_denied", { sessionId: guard.sessionId, ...req, decision });
       return;
@@ -471,9 +498,15 @@ export class GateServer extends EventEmitter {
       const timeout = setTimeout(() => {
         if (this.pending.has(requestId)) {
           this.auditLog.record({
-            sessionId: guard.sessionId, workspaceId: guard.workspaceId, userId: guard.userId,
-            tool: msg.tool, displaySummary, risk: decision.risk,
-            decision: "deny", resolvedBy: "timeout", layer: "timeout",
+            sessionId: guard.sessionId,
+            workspaceId: guard.workspaceId,
+            userId: guard.userId,
+            tool: msg.tool,
+            displaySummary,
+            risk: decision.risk,
+            decision: "deny",
+            resolvedBy: "timeout",
+            layer: "timeout",
           });
           resolve({ action: "deny", reason: "Approval timeout (2 min)" });
           this.cleanupPending(requestId);
@@ -507,9 +540,15 @@ export class GateServer extends EventEmitter {
     for (const [id, pd] of this.pending) {
       if (pd.sessionId === sessionId) {
         this.auditLog.record({
-          sessionId: pd.sessionId, workspaceId: pd.workspaceId, userId: pd.userId,
-          tool: pd.tool, displaySummary: pd.displaySummary, risk: (pd.risk) || "medium",
-          decision: "deny", resolvedBy: "extension_lost", layer: "extension_lost",
+          sessionId: pd.sessionId,
+          workspaceId: pd.workspaceId,
+          userId: pd.userId,
+          tool: pd.tool,
+          displaySummary: pd.displaySummary,
+          risk: pd.risk || "medium",
+          decision: "deny",
+          resolvedBy: "extension_lost",
+          layer: "extension_lost",
         });
         pd.resolve({ action: "deny", reason: "Extension connection lost" });
         this.cleanupPending(id);
