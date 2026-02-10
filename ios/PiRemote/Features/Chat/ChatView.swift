@@ -349,8 +349,9 @@ struct ChatView: View {
     }
 
     private func saveScrollState() {
-        connection.scrollAnchorItemId = scrollController.currentTopVisibleItemId
-        connection.scrollWasNearBottom = scrollController.isCurrentlyNearBottom
+        let nearBottom = scrollController.isCurrentlyNearBottom
+        connection.scrollWasNearBottom = nearBottom
+        connection.scrollAnchorItemId = nearBottom ? nil : scrollController.currentTopVisibleItemId
     }
 
     private func copySessionID() {
@@ -588,6 +589,9 @@ private struct SessionEndedFooter: View {
 private struct ChatTimelineView: View {
     private static let initialRenderWindow = 80
     private static let renderWindowStep = 60
+    /// Guardrail for exact scroll restoration. Expanding the window to thousands
+    /// of rows in one pass can stall LazyVStack placement on older devices.
+    private static let maxRestorationWindow = 180
 
     let sessionId: String
     let isBusy: Bool
@@ -647,7 +651,6 @@ private struct ChatTimelineView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 8)
             }
-            .scrollPosition(id: scrollController.scrollPositionBinding, anchor: .top)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 PermissionOverlay(sessionId: sessionId)
@@ -681,9 +684,13 @@ private struct ChatTimelineView: View {
             .onChange(of: sessionManager.restorationScrollItemId) { _, itemId in
                 guard let itemId else { return }
                 sessionManager.restorationScrollItemId = nil
-                // Expand render window so the target item is in the view hierarchy.
+
+                guard let targetIndex = reducer.items.firstIndex(where: { $0.id == itemId }) else { return }
+                let requiredWindow = reducer.items.count - targetIndex
+                guard requiredWindow <= Self.maxRestorationWindow else { return }
+
                 if !visibleItems.contains(where: { $0.id == itemId }) {
-                    renderWindow = reducer.items.count
+                    renderWindow = max(renderWindow, requiredWindow)
                 }
                 scrollController.scrollTargetID = itemId
             }

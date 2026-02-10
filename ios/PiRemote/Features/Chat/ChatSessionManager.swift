@@ -141,16 +141,19 @@ final class ChatSessionManager {
             reducer.loadSession(cached.events)
 
             // Check for scroll position restoration (one-shot from RestorationState).
-            // If the user was scrolled up when the app backgrounded, restore that
-            // position instead of jumping to bottom.
-            if let anchor = connection.scrollAnchorItemId,
-               !connection.scrollWasNearBottom,
+            // If the user was scrolled up when the app backgrounded, attempt to restore
+            // an anchor; otherwise start at the bottom.
+            let savedAnchor = connection.scrollAnchorItemId
+            let wasNearBottom = connection.scrollWasNearBottom
+            connection.scrollAnchorItemId = nil
+
+            if let savedAnchor,
+               !wasNearBottom,
                connection.sessionStore.activeSessionId == sessionId {
-                restorationScrollItemId = anchor
-                connection.scrollAnchorItemId = nil  // Consume once
-                log.info("Restoring scroll to \(anchor) for \(self.sessionId)")
+                restorationScrollItemId = savedAnchor
+                log.info("Restoring scroll to \(savedAnchor) for \(self.sessionId)")
             } else {
-                needsInitialScroll = true
+                needsInitialScroll = wasNearBottom
             }
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
         }
