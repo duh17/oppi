@@ -353,6 +353,60 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(code, language: .unknown)
         #expect(String(result.characters) == code)
     }
+
+    @Test func shellHighlightingUsesShellHeuristics() {
+        let line = "xcodebuild -scheme PiRemoteUIReliability 2>&1 | grep -E '(passed|skipped)'"
+        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+
+        #expect(String(result.characters) == line)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "-scheme", in: result) == .tokyoYellow)
+        #expect(foregroundColor(of: "PiRemoteUIReliability", in: result) == .tokyoFg)
+        #expect(foregroundColor(of: "2>&1", in: result) == .tokyoPurple)
+        #expect(foregroundColor(of: "grep", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "-E", in: result) == .tokyoYellow)
+        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == .tokyoGreen)
+    }
+
+    @Test func shellCommentDetectionRespectsTokenBoundaries() {
+        let line = "echo foo#bar # trailing comment"
+        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+
+        #expect(String(result.characters) == line)
+        #expect(foregroundColor(of: "foo#bar", in: result) == .tokyoFg)
+        #expect(foregroundColor(of: "# trailing comment", in: result) == .tokyoComment)
+    }
+
+    @Test func shellAssignmentsKeepCommandPosition() {
+        let line = "FOO=bar xcodebuild --scheme $SCHEME"
+        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+
+        #expect(String(result.characters) == line)
+        #expect(foregroundColor(of: "FOO=bar", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "--scheme", in: result) == .tokyoYellow)
+        #expect(foregroundColor(of: "$SCHEME", in: result) == .tokyoCyan)
+    }
+
+    private func foregroundColor(of substring: String, in attributed: AttributedString) -> Color? {
+        let text = String(attributed.characters)
+        guard let offset = characterOffset(of: substring, in: text) else { return nil }
+        return foregroundColor(at: offset, in: attributed)
+    }
+
+    private func foregroundColor(at offset: Int, in attributed: AttributedString) -> Color? {
+        guard offset >= 0, offset < attributed.characters.count else { return nil }
+        let index = attributed.characters.index(attributed.characters.startIndex, offsetBy: offset)
+        for run in attributed.runs where run.range.contains(index) {
+            return run.foregroundColor
+        }
+        return nil
+    }
+
+    private func characterOffset(of substring: String, in text: String) -> Int? {
+        guard let range = text.range(of: substring) else { return nil }
+        return text.distance(from: text.startIndex, to: range.lowerBound)
+    }
 }
 
 // MARK: - FileType

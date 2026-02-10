@@ -514,14 +514,35 @@ private struct ToolCallRow: View {
 
     // MARK: - Expand & Lazy Load
 
-    private func expandOrLazyLoad() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            if isExpanded {
+    private func setExpanded(_ expanded: Bool, animated: Bool) {
+        let mutation = {
+            if expanded {
+                reducer.expandedItemIDs.insert(id)
+            } else {
                 reducer.expandedItemIDs.remove(id)
-                return
             }
-            reducer.expandedItemIDs.insert(id)
         }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.16)) {
+                mutation()
+            }
+        } else {
+            withTransaction(Transaction(animation: nil)) {
+                mutation()
+            }
+        }
+    }
+
+    private func expandOrLazyLoad() {
+        if isExpanded {
+            // Collapsing large tool output can trigger a visible bounce if the
+            // height change is animated through UIKit-hosted layout.
+            setExpanded(false, animated: false)
+            return
+        }
+
+        setExpanded(true, animated: true)
 
         let hasOutput = !toolOutputStore.fullOutput(for: id).isEmpty
         if !hasOutput && outputByteCount > 0 && !isLoadingOutput {
