@@ -344,50 +344,11 @@ private struct UIHangHarnessView: View {
 
 // MARK: - Main Thread Breadcrumb
 
-/// Thread-safe breadcrumb for the main thread watchdog.
-/// Set from the main thread at entry/exit points of critical code paths.
-/// Read from the watchdog background thread to identify where the main
-/// thread is stuck during a stall.
+/// Lightweight breadcrumb placeholders kept for stall reports.
+/// Hot-path writers were intentionally removed to reduce instrumentation overhead.
 enum MainThreadBreadcrumb {
-#if DEBUG
-    // Atomic string stored in a lock-free box.
-    // Written on main thread, read on watchdog thread.
-    private static let _value = OSAllocatedUnfairLock(initialState: "idle")
-
-    /// Layout-cycle counter. Incremented on @MainActor in ChatItemRow.body
-    /// to detect LazyVStack over-rendering. Reset on renderVersion change.
-    /// Written on main thread, read on watchdog thread.
-    private static let _rowCount = OSAllocatedUnfairLock(initialState: 0)
-
-    static var current: String {
-        _value.withLock { $0 }
-    }
-
-    static func set(_ crumb: String) {
-        _value.withLock { $0 = crumb }
-    }
-
-    static func incrementRowCount() -> Int {
-        _rowCount.withLock { val in
-            val += 1
-            return val
-        }
-    }
-
-    static func resetRowCount() {
-        _rowCount.withLock { $0 = 0 }
-    }
-
-    static var rowCount: Int {
-        _rowCount.withLock { $0 }
-    }
-#else
     static var current: String { "n/a" }
-    static func set(_ crumb: String) { _ = crumb }
-    static func incrementRowCount() -> Int { 0 }
-    static func resetRowCount() {}
     static var rowCount: Int { 0 }
-#endif
 }
 
 #if DEBUG

@@ -15,6 +15,9 @@ LOGS_DIR=""
 UNLOCK_KEYCHAIN=0
 KEYCHAIN_PASSWORD_ENV="PI_KEYCHAIN_PASSWORD"
 KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
+SENTRY_DSN_FILE="${PIOS_SENTRY_DSN_FILE:-$HOME/.config/pios/sentry-dsn}"
+RESOLVED_SENTRY_DSN=""
+XCODEBUILD_EXTRA_ARGS=()
 
 DEVICE_JSON=""
 BUILD_LOG=""
@@ -42,12 +45,18 @@ Options:
       --keychain-password-env <name>
                                 Env var containing keychain password (default: PI_KEYCHAIN_PASSWORD)
       --keychain-path <path>    Keychain path (default: ~/Library/Keychains/login.keychain-db)
+      --sentry-dsn-file <path>  Local DSN file (default: ~/.config/pios/sentry-dsn)
   -h, --help                    Show this help
+
+Sentry DSN precedence:
+  1) SENTRY_DSN env var
+  2) --sentry-dsn-file / PIOS_SENTRY_DSN_FILE / ~/.config/pios/sentry-dsn
 
 Examples:
   ios/scripts/build-install.sh --device DEVICE_UDID --launch
   ios/scripts/build-install.sh --logs-dir ~/Library/Logs/PiRemote --launch
   PI_KEYCHAIN_PASSWORD='***' ios/scripts/build-install.sh --unlock-keychain --launch
+  SENTRY_DSN='https://...@o0.ingest.sentry.io/0' ios/scripts/build-install.sh --launch
 EOF
 }
 
@@ -145,6 +154,10 @@ while [[ $# -gt 0 ]]; do
       KEYCHAIN_PATH="${2:-}"
       shift 2
       ;;
+    --sentry-dsn-file)
+      SENTRY_DSN_FILE="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -159,6 +172,16 @@ done
 
 if [[ $DEBUG -eq 1 ]]; then
   set -x
+fi
+
+if [[ -n "${SENTRY_DSN:-}" ]]; then
+  RESOLVED_SENTRY_DSN="$SENTRY_DSN"
+elif [[ -f "$SENTRY_DSN_FILE" ]]; then
+  RESOLVED_SENTRY_DSN="$(awk 'NR==1 { gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$SENTRY_DSN_FILE")"
+fi
+
+if [[ -n "$RESOLVED_SENTRY_DSN" ]]; then
+  XCODEBUILD_EXTRA_ARGS+=("SENTRY_DSN=$RESOLVED_SENTRY_DSN")
 fi
 
 require_cmd xcodebuild
@@ -242,6 +265,15 @@ DEVICE_NAME="$(jq -r --arg udid "$DEVICE_UDID" '
 
 echo "==> Device: ${DEVICE_NAME:-unknown} ($DEVICE_UDID)"
 echo "==> Configuration: $CONFIGURATION"
+if [[ -n "$RESOLVED_SENTRY_DSN" ]]; then
+  if [[ -n "${SENTRY_DSN:-}" ]]; then
+    echo "==> Sentry DSN: enabled (env)"
+  else
+    echo "==> Sentry DSN: enabled ($SENTRY_DSN_FILE)"
+  fi
+else
+  echo "==> Sentry DSN: disabled"
+fi
 
 BUILD_SETTINGS="$(
   (
@@ -250,6 +282,7 @@ BUILD_SETTINGS="$(
       -scheme "$SCHEME" \
       -configuration "$CONFIGURATION" \
       -destination "id=$DEVICE_UDID" \
+      "${XCODEBUILD_EXTRA_ARGS[@]}" \
       -showBuildSettings
   ) 2>/dev/null
 )"
@@ -265,7 +298,16 @@ fi
 
 BUILD_LOG="$(new_log_file build)"
 echo "==> Build log: $BUILD_LOG"
-if ! run_and_tee "$BUILD_LOG" bash -lc "cd $(printf '%q' "$IOS_DIR") && xcodebuild -project PiRemote.xcodeproj -scheme $SCHEME -configuration $CONFIGURATION -destination id=$DEVICE_UDID build"; then
+if ! (
+  cd "$IOS_DIR"
+  run_and_tee "$BUILD_LOG" \
+    xcodebuild -project PiRemote.xcodeproj \
+      -scheme "$SCHEME" \
+      -configuration "$CONFIGURATION" \
+      -destination "id=$DEVICE_UDID" \
+      "${XCODEBUILD_EXTRA_ARGS[@]}" \
+      build
+); then
   KEEP_TEMP_LOGS=1
 
   if grep -q "errSecInternalComponent" "$BUILD_LOG"; then

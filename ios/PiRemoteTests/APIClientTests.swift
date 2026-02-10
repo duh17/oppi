@@ -342,6 +342,52 @@ struct APIClientTests {
         #expect(skills.isEmpty)
     }
 
+    // MARK: - Files + Query Paths
+
+    @Test func getSkillFileUsesQueryString() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
+
+            #expect(request.url?.path == "/skills/fetch/file")
+            #expect(pathQuery == "nested dir/SKILL.md")
+            #expect(request.url?.absoluteString.contains("%3Fpath=") == false)
+            return self.mockResponse(json: "{\"content\":\"ok\"}")
+        }
+
+        let content = try await client.getSkillFile(name: "fetch", path: "nested dir/SKILL.md")
+        #expect(content == "ok")
+    }
+
+    @Test func getSessionFileUsesQueryString() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
+
+            #expect(request.url?.path == "/sessions/s1/files")
+            #expect(pathQuery == "/tmp/main.swift")
+            #expect(request.url?.absoluteString.contains("%3Fpath=") == false)
+
+            let body = "print(\"hello\")".data(using: .utf8)!
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/plain"]
+            )!
+            return (body, response)
+        }
+
+        let content = try await client.getSessionFile(sessionId: "s1", path: "/tmp/main.swift")
+        #expect(content == "print(\"hello\")")
+    }
+
     // MARK: - Device Token
 
     @Test func registerDeviceToken() async throws {

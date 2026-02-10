@@ -81,6 +81,13 @@ final class WebSocketClient {
         connectedSessionId = sessionId
         connectedWorkspaceId = workspaceId
         status = .connecting
+        wsLogInfo(
+            "Connect requested",
+            metadata: [
+                "sessionId": sessionId,
+                "workspaceId": workspaceId ?? "none",
+            ]
+        )
 
         return AsyncStream { [weak self] continuation in
             self?.continuation = continuation
@@ -114,25 +121,23 @@ final class WebSocketClient {
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
             logger.error("WS send: status=\(String(describing: self.status)), waiting for connection...")
-            ClientLog.warning(
-                "WebSocket",
+            wsLogWarning(
                 "Send waiting for connection",
                 metadata: ["status": String(describing: status)]
             )
             let waited = try await waitForConnection()
             if !waited {
                 logger.error("WS send: wait failed, throwing notConnected")
-                ClientLog.error("WebSocket", "Send failed waiting for connection")
+                wsLogError("Send failed waiting for connection")
                 throw WebSocketError.notConnected
             }
             logger.error("WS send: wait succeeded, now connected")
-            ClientLog.info("WebSocket", "Send wait succeeded")
+            wsLogInfo("Send wait succeeded")
         }
 
         guard let ws = webSocket, status == .connected else {
             logger.error("WS send: guard failed — ws=\(self.webSocket != nil) status=\(String(describing: self.status))")
-            ClientLog.error(
-                "WebSocket",
+            wsLogError(
                 "Send guard failed",
                 metadata: [
                     "hasSocket": String(self.webSocket != nil),
@@ -143,8 +148,7 @@ final class WebSocketClient {
         }
         let data = try message.jsonString()
         logger.error("WS send: \(message.typeLabel) (\(data.count) bytes)")
-        ClientLog.info(
-            "WebSocket",
+        wsLogInfo(
             "WS send",
             metadata: ["type": message.typeLabel, "bytes": String(data.count)]
         )
@@ -158,8 +162,7 @@ final class WebSocketClient {
         } catch {
             if let wsError = error as? WebSocketError, case .sendTimeout = wsError {
                 logger.error("WS send timed out for \(message.typeLabel, privacy: .public) — forcing reconnect")
-                ClientLog.error(
-                    "WebSocket",
+                wsLogError(
                     "WS send timed out",
                     metadata: ["type": message.typeLabel]
                 )
@@ -177,7 +180,7 @@ final class WebSocketClient {
         }
 
         logger.error("WS send: \(message.typeLabel) complete")
-        ClientLog.info("WebSocket", "WS send complete", metadata: ["type": message.typeLabel])
+        wsLogInfo("WS send complete", metadata: ["type": message.typeLabel])
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
@@ -190,6 +193,15 @@ final class WebSocketClient {
         timeout: Duration
     ) async throws {
         let timeoutMs = Self.durationMilliseconds(timeout)
+        let baseMetadata = wsLogMetadata()
+
+        func mergedMetadata(_ extra: [String: String]) -> [String: String] {
+            var metadata = baseMetadata
+            for (key, value) in extra {
+                metadata[key] = value
+            }
+            return metadata
+        }
 
         try await withCheckedThrowingContinuation { continuation in
             let resolver = SendResolver(continuation: continuation)
@@ -199,7 +211,7 @@ final class WebSocketClient {
                 ClientLog.error(
                     "WebSocket",
                     "WS send hard timeout fired",
-                    metadata: ["timeoutMs": String(timeoutMs)]
+                    metadata: mergedMetadata(["timeoutMs": String(timeoutMs)])
                 )
                 resolver.resolve(.failure(WebSocketError.sendTimeout))
             }
@@ -216,12 +228,16 @@ final class WebSocketClient {
                     ClientLog.error(
                         "WebSocket",
                         "WS send callback error",
-                        metadata: ["error": String(describing: error)]
+                        metadata: mergedMetadata(["error": String(describing: error)])
                     )
                     resolver.resolve(.failure(error))
                 } else {
                     logger.error("WS send callback success")
-                    ClientLog.info("WebSocket", "WS send callback success")
+                    ClientLog.info(
+                        "WebSocket",
+                        "WS send callback success",
+                        metadata: mergedMetadata([:])
+                    )
                     resolver.resolve(.success(()))
                 }
             }
@@ -247,6 +263,16 @@ final class WebSocketClient {
 
     /// Disconnect and clean up.
     func disconnect() {
+        wsLogInfo(
+            "Disconnect",
+            metadata: [
+                "hasSocket": String(webSocket != nil),
+                "hasReceiveTask": String(receiveTask != nil),
+                "hasPingTask": String(pingTask != nil),
+                "hasReconnectTask": String(reconnectTask != nil),
+            ]
+        )
+
         reconnectTask?.cancel()
         reconnectTask = nil
         receiveTask?.cancel()
@@ -268,6 +294,29 @@ final class WebSocketClient {
 
     // MARK: - Private
 
+    private func wsLogMetadata(extra: [String: String] = [:]) -> [String: String] {
+        var metadata = extra
+        metadata["sessionId"] = connectedSessionId ?? metadata["sessionId"] ?? "unknown"
+        metadata["status"] = String(describing: status)
+        metadata["connectionID"] = String(connectionID)
+        if let connectedWorkspaceId {
+            metadata["workspaceId"] = connectedWorkspaceId
+        }
+        return metadata
+    }
+
+    private func wsLogInfo(_ message: String, metadata: [String: String] = [:]) {
+        ClientLog.info("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
+    }
+
+    private func wsLogWarning(_ message: String, metadata: [String: String] = [:]) {
+        ClientLog.warning("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
+    }
+
+    private func wsLogError(_ message: String, metadata: [String: String] = [:]) {
+        ClientLog.error("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
+    }
+
     private func openWebSocket(sessionId: String, workspaceId: String? = nil, continuation: AsyncStream<ServerMessage>.Continuation) {
         guard let url = credentials.webSocketURL(sessionId: sessionId, workspaceId: workspaceId) else {
             logger.error("Invalid WebSocket URL for session \(sessionId) — disconnecting")
@@ -282,6 +331,13 @@ final class WebSocketClient {
         ws.resume()
 
         logger.info("Connecting to \(url.absoluteString)")
+        wsLogInfo(
+            "Opening socket",
+            metadata: [
+                "urlPath": url.path,
+                "workspaceId": workspaceId ?? "none",
+            ]
+        )
 
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
@@ -289,11 +345,10 @@ final class WebSocketClient {
 
     private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<ServerMessage>.Continuation) {
         receiveTask = Task { [weak self] in
+            self?.wsLogInfo("Receive loop started")
             while !Task.isCancelled {
                 do {
-                    MainThreadBreadcrumb.set("ws-receive-await")
                     let wsMessage = try await ws.receive()
-                    MainThreadBreadcrumb.set("ws-decode")
                     let text: String
                     switch wsMessage {
                     case .string(let s):
@@ -311,10 +366,12 @@ final class WebSocketClient {
                         // Log decode error but DON'T break — keep the stream alive.
                         // MUST be .error — .warning/.info are NOT persisted in device log archives.
                         logger.error("PIPE: DECODE FAILED: \(error.localizedDescription, privacy: .public) — raw: \(text.prefix(300), privacy: .public)")
-                        ClientLog.error(
-                            "WebSocket",
+                        self?.wsLogError(
                             "PIPE decode failed",
-                            metadata: ["error": error.localizedDescription]
+                            metadata: [
+                                "error": error.localizedDescription,
+                                "rawPrefix": String(text.prefix(120)),
+                            ]
                         )
                         continue
                     }
@@ -341,8 +398,7 @@ final class WebSocketClient {
                 } catch {
                     if Task.isCancelled { break }
                     logger.error("WebSocket receive error: \(error)")
-                    ClientLog.error(
-                        "WebSocket",
+                    self?.wsLogError(
                         "WebSocket receive error",
                         metadata: ["error": String(describing: error)]
                     )
@@ -352,8 +408,7 @@ final class WebSocketClient {
 
             // Connection lost — attempt reconnect
             logger.error("Receive loop exited — cancelled=\(Task.isCancelled)")
-            ClientLog.warning(
-                "WebSocket",
+            self?.wsLogWarning(
                 "Receive loop exited",
                 metadata: ["cancelled": String(Task.isCancelled)]
             )
@@ -382,12 +437,15 @@ final class WebSocketClient {
 
                 if failed {
                     consecutiveFailures += 1
+                    self?.wsLogWarning(
+                        "Ping failed",
+                        metadata: ["failures": String(consecutiveFailures)]
+                    )
                     // Two consecutive failures → treat as dead connection.
                     // Single failures can be transient (brief network blip).
                     if consecutiveFailures >= 2 {
                         logger.error("Ping watchdog: \(consecutiveFailures) consecutive failures — triggering reconnect")
-                        ClientLog.error(
-                            "WebSocket",
+                        self?.wsLogError(
                             "Ping watchdog reconnect",
                             metadata: ["failures": String(consecutiveFailures)]
                         )
@@ -415,7 +473,7 @@ final class WebSocketClient {
 
         guard attempt < maxReconnectAttempts else {
             logger.error("Max reconnect attempts reached")
-            ClientLog.error("WebSocket", "Max reconnect attempts reached", metadata: ["sessionId": sessionId])
+            wsLogError("Max reconnect attempts reached", metadata: ["sessionId": sessionId])
             disconnect()
             return
         }
@@ -424,6 +482,13 @@ final class WebSocketClient {
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
         logger.info("Reconnecting in \(delay)s (attempt \(nextAttempt))")
+        wsLogWarning(
+            "Reconnect scheduled",
+            metadata: [
+                "attempt": String(nextAttempt),
+                "delayMs": String(Int((delay * 1_000).rounded())),
+            ]
+        )
 
         // Cancel old tasks
         receiveTask?.cancel()
@@ -439,6 +504,10 @@ final class WebSocketClient {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, let cont = self.continuation else { return }
+                self.wsLogInfo(
+                    "Reconnect opening socket",
+                    metadata: ["attempt": String(nextAttempt)]
+                )
                 self.openWebSocket(sessionId: sessionId, workspaceId: self.connectedWorkspaceId, continuation: cont)
             }
         }

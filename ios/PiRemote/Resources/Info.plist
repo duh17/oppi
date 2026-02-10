@@ -43,6 +43,8 @@
 	<string>Pi Remote accesses your photo library to attach images to agent conversations.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>SentryDSN</key>
+	<string>$(SENTRY_DSN)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

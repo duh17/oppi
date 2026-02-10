@@ -350,7 +350,7 @@ actor APIClient {
     }
 
     private func request(_ method: String, path: String) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        var req = URLRequest(url: try makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         logger.debug("\(method) \(path)")
@@ -358,13 +358,43 @@ actor APIClient {
     }
 
     private func request<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        var req = URLRequest(url: try makeURL(path: path))
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path)")
         return try await session.data(for: req)
+    }
+
+    /// Build a request URL from an API path that may include a query string.
+    ///
+    /// `URL.appendingPathComponent` encodes `?` as a literal path character,
+    /// which breaks routes like `/sessions/:id/files?path=...` and yields 404.
+    private func makeURL(path: String) throws -> URL {
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let rawPath = parts.first.map(String.init) ?? ""
+        let rawQuery = parts.count > 1 ? String(parts[1]) : nil
+
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
+
+        let normalizedBasePath: String = {
+            if components.path.isEmpty || components.path == "/" { return "" }
+            if components.path.hasSuffix("/") { return String(components.path.dropLast()) }
+            return components.path
+        }()
+
+        let normalizedRequestPath = rawPath.hasPrefix("/") ? rawPath : "/\(rawPath)"
+        components.path = normalizedBasePath + normalizedRequestPath
+        components.percentEncodedQuery = rawQuery
+
+        guard let url = components.url else {
+            throw APIError.invalidResponse
+        }
+
+        return url
     }
 
     private func checkStatus(_ response: URLResponse, data: Data) throws {

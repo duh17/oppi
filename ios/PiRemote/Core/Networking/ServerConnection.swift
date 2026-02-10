@@ -127,6 +127,9 @@ final class ServerConnection {
         activeSessionId = sessionId
         toolMapper.reset()
         thinkingLevel = .medium  // Reset to default; overwritten by session.thinkingLevel on connect
+        Task {
+            await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
+        }
         return wsClient.connect(sessionId: sessionId, workspaceId: workspaceId)
     }
 
@@ -136,6 +139,9 @@ final class ServerConnection {
         failPendingSendAcks(error: WebSocketError.notConnected)
         wsClient?.disconnect()
         activeSessionId = nil
+        Task {
+            await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
+        }
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
         extensionTimeoutTask?.cancel()
@@ -626,9 +632,6 @@ final class ServerConnection {
     /// Route a ServerMessage to the appropriate store or pipeline.
     /// Ignores messages for non-active sessions (stale stream race).
     func handleServerMessage(_ message: ServerMessage, sessionId: String) {
-        MainThreadBreadcrumb.set("handleMsg:\(message.typeLabel)")
-        defer { MainThreadBreadcrumb.set("idle") }
-
         guard sessionId == activeSessionId else {
             logger.error("PIPE: DROPPING \(message.typeLabel, privacy: .public) — stale session \(sessionId, privacy: .public) (active: \(self.activeSessionId ?? "none", privacy: .public))")
             return

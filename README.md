@@ -134,6 +134,31 @@ Capture a focused per-session bundle (minimal noise, app logs only):
 ./scripts/capture-session.sh --session <session-id> --include-perf --include-debug
 ```
 
+### UI hang regression harness (XCUITest + watchdog diagnostics)
+
+Run the dedicated reliability suite (simulator, CI-friendly):
+
+```bash
+./ios/scripts/test-ui-reliability.sh
+```
+
+Fast local rerun (skip XcodeGen when project files are unchanged):
+
+```bash
+./ios/scripts/test-ui-reliability.sh --skip-generate
+```
+
+Manual real-device gate (connected iPhone):
+
+```bash
+./ios/scripts/test-ui-reliability.sh --device <iphone-udid>
+```
+
+This suite launches a debug-only fixture mode (`--ui-hang-harness`) with a heavy chat timeline + synthetic stream churn and asserts accessibility diagnostics:
+- `diag.heartbeat` (main-thread watchdog heartbeat)
+- `diag.stallCount` (watchdog stall counter)
+- `diag.itemCount` (rendered timeline row count)
+
 If `pi-remote invite` should use LAN instead of Tailscale:
 
 ```bash
