@@ -94,6 +94,40 @@ struct ToolCallFormattingTests {
         #expect(result == "some arg")
     }
 
+    // MARK: - Todo Summary
+
+    @Test func todoSummaryGetWithID() {
+        let args: [String: JSONValue] = [
+            "action": .string("get"),
+            "id": .string("TODO-218e1364"),
+        ]
+        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
+        #expect(result == "get TODO-218e1364")
+    }
+
+    @Test func todoSummaryCreateWithTitle() {
+        let args: [String: JSONValue] = [
+            "action": .string("create"),
+            "title": .string("iOS syntax highlighting follow-up"),
+        ]
+        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
+        #expect(result == "create iOS syntax highlighting follow-up")
+    }
+
+    @Test func todoSummaryListWithStatus() {
+        let args: [String: JSONValue] = [
+            "action": .string("list"),
+            "status": .string("open"),
+        ]
+        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
+        #expect(result == "list status=open")
+    }
+
+    @Test func todoSummaryFallbackToArgsSummary() {
+        let result = ToolCallFormatting.todoSummary(args: nil, argsSummary: "action: list-all")
+        #expect(result == "list-all")
+    }
+
     // MARK: - Display File Path
 
     @Test func displayFilePathShortens() {

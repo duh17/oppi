@@ -424,14 +424,13 @@ private struct ToolCallRow: View {
     private var bashRawCommand: String? {
         args?["command"]?.stringValue ?? ToolCallFormatting.parseArgValue("command", from: argsSummary)
     }
-    private var shouldShowExpandedBashCommand: Bool {
-        guard normalizedTool == "bash", let bashRawCommand else {
-            return false
+    private var expandedBashCommandText: String? {
+        guard normalizedTool == "bash" else { return nil }
+        if let bashRawCommand, !bashRawCommand.isEmpty {
+            return bashRawCommand
         }
-        return bashRawCommand.count > 120
-    }
-    private var shouldHideBashPreviewInHeader: Bool {
-        isExpanded && shouldShowExpandedBashCommand
+        let fallback = bashCommand
+        return fallback.isEmpty ? nil : fallback
     }
     private var commandClipboardText: String {
         if normalizedTool == "bash", let bashRawCommand {
@@ -567,8 +566,8 @@ private struct ToolCallRow: View {
         switch normalizedTool {
         case "bash":
             Text("$").font(.caption.monospaced().bold()).foregroundStyle(.tokyoGreen)
-            if shouldHideBashPreviewInHeader {
-                Text("full command below")
+            if isExpanded {
+                Text("bash")
                     .font(.caption2.monospaced())
                     .foregroundStyle(theme.text.tertiary)
                     .lineLimit(1)
@@ -611,6 +610,20 @@ private struct ToolCallRow: View {
             Text("ls").font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
             Text((args?["path"]?.stringValue ?? ".").shortenedPath)
                 .font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+
+        case "todo":
+            Image(systemName: "checklist")
+                .font(.caption)
+                .foregroundStyle(.tokyoPurple)
+            Text("todo")
+                .font(.caption.monospaced().bold())
+                .foregroundStyle(.tokyoPurple)
+            if !todoSummary.isEmpty {
+                Text(todoSummary)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tokyoFgDim)
+                    .lineLimit(1)
+            }
 
         default:
             Text(tool).font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
@@ -688,6 +701,10 @@ private struct ToolCallRow: View {
         ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
     }
 
+    private var todoSummary: String {
+        ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
+    }
+
     // MARK: - Collapsed Preview
 
     @ViewBuilder
@@ -749,31 +766,9 @@ private struct ToolCallRow: View {
     /// Full bash command shown when tool call is expanded.
     @ViewBuilder
     private var expandedBashCommand: some View {
-        if shouldShowExpandedBashCommand, let cmd = bashRawCommand {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Command", systemImage: "terminal")
-                    .font(.caption2.monospaced().weight(.semibold))
-                    .foregroundStyle(theme.accent.blue)
-
-                Text(cmd)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(theme.text.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(8)
-            .background(theme.bg.highlight.opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(theme.accent.blue.opacity(0.35), lineWidth: 1)
-            )
-            .onTapGesture(count: 2) {
+        if let cmd = expandedBashCommandText {
+            BashCommandBlockView(command: cmd) {
                 copyCommandToClipboard()
-            }
-            .contextMenu {
-                Button("Copy Command", systemImage: "terminal") {
-                    copyCommandToClipboard()
-                }
             }
         }
     }
@@ -795,11 +790,70 @@ private struct ToolCallRow: View {
                 .onTapGesture(count: 2) {
                     copyOutputToClipboard(fullOutput)
                 }
+        } else if ToolCallFormatting.isTodoTool(tool), !isError, !fullOutput.isEmpty {
+            TodoToolOutputView(output: fullOutput)
+                .onTapGesture(count: 2) {
+                    copyOutputToClipboard(fullOutput)
+                }
         } else if !fullOutput.isEmpty {
             AsyncToolOutput(output: fullOutput, isError: isError)
                 .onTapGesture(count: 2) {
                     copyOutputToClipboard(fullOutput)
                 }
+        }
+    }
+}
+
+private struct BashCommandBlockView: View {
+    let command: String
+    let onCopy: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var highlighted: AttributedString?
+
+    private var renderCommand: String {
+        String(command.prefix(6_000))
+    }
+
+    private var highlightKey: String {
+        let prefix = String(renderCommand.prefix(64))
+        let suffix = String(renderCommand.suffix(64))
+        return "\(renderCommand.utf8.count):\(prefix):\(suffix)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let highlighted {
+                Text(highlighted)
+                    .font(.caption.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(renderCommand)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(theme.text.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(8)
+        .background(theme.bg.highlight.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(theme.accent.blue.opacity(0.35), lineWidth: 1)
+        )
+        .task(id: highlightKey) {
+            let source = renderCommand
+            highlighted = await Task.detached(priority: .userInitiated) {
+                SyntaxHighlighter.highlight(source, language: .shell)
+            }.value
+        }
+        .onTapGesture(count: 2) {
+            onCopy()
+        }
+        .contextMenu {
+            Button("Copy Command", systemImage: "terminal") {
+                onCopy()
+            }
         }
     }
 }

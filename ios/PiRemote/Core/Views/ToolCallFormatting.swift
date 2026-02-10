@@ -45,6 +45,54 @@ enum ToolCallFormatting {
         return argsSummary
     }
 
+    /// Format todo command summary for header display.
+    ///
+    /// Examples:
+    /// - `list-all`
+    /// - `get id-1234abcd`
+    /// - `create Add syntax highlighting`
+    static func todoSummary(args: [String: JSONValue]?, argsSummary: String) -> String {
+        let action = args?["action"]?.stringValue
+            ?? parseArgValue("action", from: argsSummary)
+            ?? ""
+
+        if action.isEmpty {
+            return argsSummary
+        }
+
+        let id = args?["id"]?.stringValue
+            ?? parseArgValue("id", from: argsSummary)
+        let title = args?["title"]?.stringValue
+            ?? parseArgValue("title", from: argsSummary)
+        let status = args?["status"]?.stringValue
+            ?? parseArgValue("status", from: argsSummary)
+
+        switch action {
+        case "get", "delete", "claim", "release":
+            if let id, !id.isEmpty { return "\(action) \(id)" }
+            return action
+
+        case "append", "update":
+            if let id, !id.isEmpty { return "\(action) \(id)" }
+            return action
+
+        case "create":
+            if let title, !title.isEmpty {
+                return "create \(String(title.prefix(80)))"
+            }
+            return action
+
+        case "list", "list-all":
+            if let status, !status.isEmpty, action == "list" {
+                return "list status=\(status)"
+            }
+            return action
+
+        default:
+            return String("\(action) \(id ?? title ?? "")".trimmingCharacters(in: .whitespaces).prefix(120))
+        }
+    }
+
     /// Format file path for header display with optional line range.
     static func displayFilePath(
         tool: String,
@@ -102,6 +150,7 @@ enum ToolCallFormatting {
     static func isGrepTool(_ name: String) -> Bool { normalized(name) == "grep" }
     static func isFindTool(_ name: String) -> Bool { normalized(name) == "find" }
     static func isLsTool(_ name: String) -> Bool { normalized(name) == "ls" }
+    static func isTodoTool(_ name: String) -> Bool { normalized(name) == "todo" }
 
     // MARK: - Edit Diff Stats
 
