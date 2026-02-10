@@ -1,6 +1,6 @@
 /**
  * Persistent storage for pi-remote
- * 
+ *
  * Data directory structure:
  * ~/.config/pi-remote/
  * ├── config.json       # Server config
@@ -14,7 +14,15 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { nanoid } from "nanoid";
-import type { User, Session, SessionMessage, ServerConfig, Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest } from "./types.js";
+import type {
+  User,
+  Session,
+  SessionMessage,
+  ServerConfig,
+  Workspace,
+  CreateWorkspaceRequest,
+  UpdateWorkspaceRequest,
+} from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
 
@@ -24,7 +32,7 @@ export class Storage {
   private usersPath: string;
   private sessionsDir: string;
   private workspacesDir: string;
-  
+
   private config: ServerConfig;
   private users: Map<string, User> = new Map();
   private tokenToUser: Map<string, User> = new Map();
@@ -35,7 +43,7 @@ export class Storage {
     this.usersPath = join(this.dataDir, "users.json");
     this.sessionsDir = join(this.dataDir, "sessions");
     this.workspacesDir = join(this.dataDir, "workspaces");
-    
+
     this.ensureDirectories();
     this.config = this.loadConfig();
     this.loadUsers();
@@ -57,18 +65,48 @@ export class Storage {
       host: "0.0.0.0",
       dataDir: this.dataDir,
       defaultModel: "anthropic/claude-sonnet-4-0",
-      sessionTimeout: 60 * 60 * 1000, // 1 hour
+      sessionTimeout: 10 * 60 * 1000,
+      sessionIdleTimeoutMs: 10 * 60 * 1000,
+      workspaceIdleTimeoutMs: 30 * 60 * 1000,
+      maxSessionsPerWorkspace: 3,
+      maxSessionsGlobal: 5,
     };
 
     if (existsSync(this.configPath)) {
       try {
-        const loaded = JSON.parse(readFileSync(this.configPath, "utf-8"));
-        // Merge with defaults to handle new fields
-        const config = { ...defaults, ...loaded };
-        // Save if we added new fields
-        if (Object.keys(loaded).length !== Object.keys(config).length) {
+        const loaded = JSON.parse(readFileSync(this.configPath, "utf-8")) as Partial<ServerConfig>;
+
+        // Backward-compat migration:
+        // - Legacy configs used `sessionTimeout`
+        // - Runtime now uses `sessionIdleTimeoutMs` but we keep both in sync
+        const sessionIdleTimeoutMs =
+          typeof loaded.sessionIdleTimeoutMs === "number"
+            ? loaded.sessionIdleTimeoutMs
+            : typeof loaded.sessionTimeout === "number"
+              ? loaded.sessionTimeout
+              : defaults.sessionIdleTimeoutMs;
+
+        const config: ServerConfig = {
+          ...defaults,
+          ...loaded,
+          sessionIdleTimeoutMs,
+          sessionTimeout:
+            typeof loaded.sessionTimeout === "number"
+              ? loaded.sessionTimeout
+              : sessionIdleTimeoutMs,
+        };
+
+        const needsRewrite =
+          loaded.sessionTimeout !== config.sessionTimeout ||
+          loaded.sessionIdleTimeoutMs !== config.sessionIdleTimeoutMs ||
+          loaded.workspaceIdleTimeoutMs !== config.workspaceIdleTimeoutMs ||
+          loaded.maxSessionsPerWorkspace !== config.maxSessionsPerWorkspace ||
+          loaded.maxSessionsGlobal !== config.maxSessionsGlobal;
+
+        if (needsRewrite) {
           this.saveConfig(config);
         }
+
         return config;
       } catch {
         // Fall through to defaults
@@ -89,6 +127,14 @@ export class Storage {
 
   updateConfig(updates: Partial<ServerConfig>): void {
     this.config = { ...this.config, ...updates };
+
+    // Keep legacy + new idle timeout fields aligned.
+    if (updates.sessionIdleTimeoutMs !== undefined && updates.sessionTimeout === undefined) {
+      this.config.sessionTimeout = updates.sessionIdleTimeoutMs;
+    } else if (updates.sessionTimeout !== undefined && updates.sessionIdleTimeoutMs === undefined) {
+      this.config.sessionIdleTimeoutMs = updates.sessionTimeout;
+    }
+
     this.saveConfig(this.config);
   }
 
@@ -119,7 +165,7 @@ export class Storage {
   createUser(name: string): User {
     const id = nanoid(8);
     const token = `sk_${nanoid(24)}`;
-    
+
     const user: User = {
       id,
       name,
@@ -207,7 +253,7 @@ export class Storage {
     const user = this.users.get(userId);
     if (!user?.deviceTokens) return;
 
-    user.deviceTokens = user.deviceTokens.filter(t => t !== token);
+    user.deviceTokens = user.deviceTokens.filter((t) => t !== token);
     this.saveUsers();
   }
 
@@ -215,7 +261,7 @@ export class Storage {
   removeDeviceTokenGlobal(token: string): void {
     for (const user of this.users.values()) {
       if (user.deviceTokens?.includes(token)) {
-        user.deviceTokens = user.deviceTokens.filter(t => t !== token);
+        user.deviceTokens = user.deviceTokens.filter((t) => t !== token);
       }
     }
     this.saveUsers();
@@ -245,7 +291,7 @@ export class Storage {
 
   createSession(userId: string, name?: string, model?: string): Session {
     const id = nanoid(8);
-    
+
     const session: Session = {
       id,
       userId,
@@ -266,7 +312,7 @@ export class Storage {
   saveSession(session: Session): void {
     const path = this.getSessionPath(session.userId, session.id);
     const dir = join(this.sessionsDir, session.userId);
-    
+
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -302,10 +348,10 @@ export class Storage {
     if (!existsSync(userDir)) return [];
 
     const sessions: Session[] = [];
-    
+
     for (const file of readdirSync(userDir)) {
       if (!file.endsWith(".json")) continue;
-      
+
       try {
         const data = JSON.parse(readFileSync(join(userDir, file), "utf-8"));
         if (data.session) {
@@ -332,9 +378,13 @@ export class Storage {
     }
   }
 
-  addSessionMessage(userId: string, sessionId: string, message: Omit<SessionMessage, "id" | "sessionId">): SessionMessage {
+  addSessionMessage(
+    userId: string,
+    sessionId: string,
+    message: Omit<SessionMessage, "id" | "sessionId">,
+  ): SessionMessage {
     const path = this.getSessionPath(userId, sessionId);
-    
+
     let data = { session: null as Session | null, messages: [] as SessionMessage[] };
     if (existsSync(path)) {
       try {
@@ -351,13 +401,13 @@ export class Storage {
     };
 
     data.messages.push(fullMessage);
-    
+
     // Update session stats
     if (data.session) {
       data.session.messageCount = data.messages.length;
       data.session.lastActivity = Date.now();
       data.session.lastMessage = message.content.slice(0, 100);
-      
+
       if (message.tokens) {
         data.session.tokens.input += message.tokens.input;
         data.session.tokens.output += message.tokens.output;
@@ -374,7 +424,7 @@ export class Storage {
   deleteSession(userId: string, sessionId: string): boolean {
     const path = this.getSessionPath(userId, sessionId);
     if (!existsSync(path)) return false;
-    
+
     rmSync(path);
     return true;
   }
@@ -390,8 +440,8 @@ export class Storage {
     const now = Date.now();
 
     const policyPreset = req.policyPreset || "container";
-    const runtime = req.runtime
-      || ((!req.hostMount && policyPreset === "container") ? "container" : "host");
+    const runtime =
+      req.runtime || (!req.hostMount && policyPreset === "container" ? "container" : "host");
 
     const workspace: Workspace = {
       id,
@@ -405,7 +455,7 @@ export class Storage {
       systemPrompt: req.systemPrompt,
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
-      memoryNamespace: req.memoryEnabled ? (req.memoryNamespace || `ws-${id}`) : req.memoryNamespace,
+      memoryNamespace: req.memoryEnabled ? req.memoryNamespace || `ws-${id}` : req.memoryNamespace,
       defaultModel: req.defaultModel,
       createdAt: now,
       updatedAt: now,
@@ -477,7 +527,11 @@ export class Storage {
     return workspaces.sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  updateWorkspace(userId: string, workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
+  updateWorkspace(
+    userId: string,
+    workspaceId: string,
+    updates: UpdateWorkspaceRequest,
+  ): Workspace | undefined {
     const workspace = this.getWorkspace(userId, workspaceId);
     if (!workspace) return undefined;
 
@@ -491,7 +545,10 @@ export class Storage {
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
     if (updates.memoryNamespace !== undefined) workspace.memoryNamespace = updates.memoryNamespace;
-    if (workspace.memoryEnabled && (!workspace.memoryNamespace || workspace.memoryNamespace.trim().length === 0)) {
+    if (
+      workspace.memoryEnabled &&
+      (!workspace.memoryNamespace || workspace.memoryNamespace.trim().length === 0)
+    ) {
       workspace.memoryNamespace = `ws-${workspace.id}`;
     }
     if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;

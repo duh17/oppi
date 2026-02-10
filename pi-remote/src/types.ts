@@ -21,31 +21,31 @@ export interface User {
 export interface Workspace {
   id: string;
   userId: string;
-  name: string;              // "coding", "research"
-  description?: string;      // shown in workspace picker
-  icon?: string;             // SF Symbol name or emoji
+  name: string; // "coding", "research"
+  description?: string; // shown in workspace picker
+  icon?: string; // SF Symbol name or emoji
 
   // Runtime — where pi runs
-  runtime: "host" | "container";  // "host" = directly on Mac, "container" = Apple container
+  runtime: "host" | "container"; // "host" = directly on Mac, "container" = Apple container
 
   // Skills — which skills to sync into the session
-  skills: string[];          // ["searxng", "fetch", "ast-grep"]
+  skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string;      // "host" | "container" | "restricted"
-  allowedPaths?: { path: string; access: "read" | "readwrite" }[];  // Extra dirs beyond workspace
-  allowedExecutables?: string[];  // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
+  policyPreset: string; // "host" | "container" | "restricted"
+  allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
+  allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
 
   // Context
-  systemPrompt?: string;     // Additional instructions appended to base prompt
-  hostMount?: string;        // Host directory to mount as /work (e.g. "~/workspace/pios")
+  systemPrompt?: string; // Additional instructions appended to base prompt
+  hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/pios")
 
   // Memory
-  memoryEnabled?: boolean;   // Enable remember/recall memory extension
-  memoryNamespace?: string;  // Same namespace => shared memory across workspaces
+  memoryEnabled?: boolean; // Enable remember/recall memory extension
+  memoryNamespace?: string; // Same namespace => shared memory across workspaces
 
   // Defaults
-  defaultModel?: string;     // Override server default for this workspace
+  defaultModel?: string; // Override server default for this workspace
 
   // Metadata
   createdAt: number;
@@ -57,8 +57,8 @@ export interface Workspace {
 export interface Session {
   id: string;
   userId: string;
-  workspaceId?: string;      // which workspace spawned this session
-  workspaceName?: string;    // denormalized for display
+  workspaceId?: string; // which workspace spawned this session
+  workspaceName?: string; // denormalized for display
   name?: string;
   status: "starting" | "ready" | "busy" | "stopped" | "error";
   createdAt: number;
@@ -71,23 +71,23 @@ export interface Session {
   cost: number;
 
   // Context usage (pi TUI-style)
-  contextTokens?: number;   // input+output+cacheRead+cacheWrite from last message
-  contextWindow?: number;   // model's total context window
+  contextTokens?: number; // input+output+cacheRead+cacheWrite from last message
+  contextWindow?: number; // model's total context window
 
   // Preview
   lastMessage?: string;
 
   // Health
-  warnings?: string[];       // bootstrap/runtime warnings surfaced to iOS
+  warnings?: string[]; // bootstrap/runtime warnings surfaced to iOS
 
   // Agent config state (synced from pi get_state)
-  thinkingLevel?: string;    // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+  thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
   // Runtime metadata (used for trace recovery/replay)
   runtime?: "host" | "container";
-  piSessionFile?: string;    // latest absolute JSONL path reported by pi get_state
+  piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
-  piSessionId?: string;      // pi internal session UUID reported by get_state
+  piSessionId?: string; // pi internal session UUID reported by get_state
 }
 
 export interface SessionMessage {
@@ -110,7 +110,12 @@ export interface ServerConfig {
   host: string;
   dataDir: string;
   defaultModel: string;
-  sessionTimeout: number; // Auto-stop after idle (ms)
+  /** @deprecated Use sessionIdleTimeoutMs. Kept for config compatibility. */
+  sessionTimeout: number;
+  sessionIdleTimeoutMs: number;
+  workspaceIdleTimeoutMs: number;
+  maxSessionsPerWorkspace: number;
+  maxSessionsGlobal: number;
 }
 
 // ─── API Types ───
@@ -175,8 +180,8 @@ export interface SessionDetailResponse {
 // ─── WebSocket Messages ───
 
 export interface ImageAttachment {
-  data: string;      // base64
-  mimeType: string;  // image/jpeg, image/png, etc.
+  data: string; // base64
+  mimeType: string; // image/jpeg, image/png, etc.
 }
 
 export type TurnCommand = "prompt" | "steer" | "follow_up";
@@ -198,11 +203,23 @@ export type ClientMessage =
       requestId?: string;
       clientTurnId?: string;
     }
-  | { type: "steer"; message: string; images?: ImageAttachment[]; requestId?: string; clientTurnId?: string }
-  | { type: "follow_up"; message: string; images?: ImageAttachment[]; requestId?: string; clientTurnId?: string }
+  | {
+      type: "steer";
+      message: string;
+      images?: ImageAttachment[];
+      requestId?: string;
+      clientTurnId?: string;
+    }
+  | {
+      type: "follow_up";
+      message: string;
+      images?: ImageAttachment[];
+      requestId?: string;
+      clientTurnId?: string;
+    }
   | { type: "abort"; requestId?: string }
-  | { type: "stop"; requestId?: string }  // Abort current turn (alias for mobile UX)
-  | { type: "stop_session"; requestId?: string }  // Kill session process entirely
+  | { type: "stop"; requestId?: string } // Abort current turn (alias for mobile UX)
+  | { type: "stop_session"; requestId?: string } // Kill session process entirely
   // ── State ──
   | { type: "get_state"; requestId?: string }
   | { type: "get_messages"; requestId?: string }
@@ -212,7 +229,11 @@ export type ClientMessage =
   | { type: "cycle_model"; requestId?: string }
   | { type: "get_available_models"; requestId?: string }
   // ── Thinking ──
-  | { type: "set_thinking_level"; level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"; requestId?: string }
+  | {
+      type: "set_thinking_level";
+      level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      requestId?: string;
+    }
   | { type: "cycle_thinking_level"; requestId?: string }
   // ── Session ──
   | { type: "new_session"; requestId?: string }
@@ -234,9 +255,22 @@ export type ClientMessage =
   // ── Commands ──
   | { type: "get_commands"; requestId?: string }
   // ── Permission gate ──
-  | { type: "permission_response"; id: string; action: "allow" | "deny"; scope?: "once" | "session" | "workspace" | "global"; requestId?: string }
+  | {
+      type: "permission_response";
+      id: string;
+      action: "allow" | "deny";
+      scope?: "once" | "session" | "workspace" | "global";
+      requestId?: string;
+    }
   // ── Extension UI dialog responses ──
-  | { type: "extension_ui_response"; id: string; value?: string; confirmed?: boolean; cancelled?: boolean; requestId?: string };
+  | {
+      type: "extension_ui_response";
+      id: string;
+      value?: string;
+      confirmed?: boolean;
+      cancelled?: boolean;
+      requestId?: string;
+    };
 
 // ─── RPC Response Payloads ───
 
@@ -304,7 +338,7 @@ export type ServerMessage =
   | { type: "connected"; session: Session }
   | { type: "state"; session: Session }
   | { type: "session_ended"; reason: string }
-  | { type: "error"; error: string }
+  | { type: "error"; error: string; code?: string; fatal?: boolean }
   // ── Agent lifecycle ──
   | { type: "agent_start" }
   | { type: "agent_end" }
@@ -325,12 +359,31 @@ export type ServerMessage =
       duplicate?: boolean;
     }
   // ── RPC responses (keyed by requestId for correlation) ──
-  | { type: "rpc_result"; command: string; requestId?: string; success: boolean; data?: unknown; error?: string }
+  | {
+      type: "rpc_result";
+      command: string;
+      requestId?: string;
+      success: boolean;
+      data?: unknown;
+      error?: string;
+    }
   // ── Compaction ──
   | { type: "compaction_start"; reason: string }
-  | { type: "compaction_end"; aborted: boolean; willRetry: boolean; summary?: string; tokensBefore?: number }
+  | {
+      type: "compaction_end";
+      aborted: boolean;
+      willRetry: boolean;
+      summary?: string;
+      tokensBefore?: number;
+    }
   // ── Retry ──
-  | { type: "retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
+  | {
+      type: "retry_start";
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+    }
   | { type: "retry_end"; success: boolean; attempt: number; finalError?: string }
   // ── Permission gate ──
   | {

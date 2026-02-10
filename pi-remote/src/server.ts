@@ -23,8 +23,15 @@ import { GateServer, type PendingDecision } from "./gate.js";
 import { RuleStore } from "./rules.js";
 import { AuditLog } from "./audit.js";
 import { SandboxManager } from "./sandbox.js";
-import { SkillRegistry } from "./skills.js";
-import { readSessionTrace, readSessionTraceByUuid, readSessionTraceFromFile, readSessionTraceFromFiles, findToolOutput } from "./trace.js";
+import { WorkspaceRuntimeError } from "./workspace-runtime.js";
+import { SkillRegistry, UserSkillStore, SkillValidationError } from "./skills.js";
+import {
+  readSessionTrace,
+  readSessionTraceByUuid,
+  readSessionTraceFromFile,
+  readSessionTraceFromFiles,
+  findToolOutput,
+} from "./trace.js";
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import { AuthProxy } from "./auth-proxy.js";
 import { discoverProjects, scanDirectories } from "./host.js";
@@ -63,9 +70,24 @@ interface ModelInfo {
 }
 
 const FALLBACK_MODELS: ModelInfo[] = [
-  { id: "anthropic/claude-opus-4-6", name: "claude-opus-4-6", provider: "anthropic", contextWindow: 200000 },
-  { id: "openai-codex/gpt-5.3-codex", name: "gpt-5.3-codex", provider: "openai-codex", contextWindow: 272000 },
-  { id: "lmstudio/glm-4.7-flash-mlx", name: "glm-4.7-flash-mlx", provider: "lmstudio", contextWindow: 128000 },
+  {
+    id: "anthropic/claude-opus-4-6",
+    name: "claude-opus-4-6",
+    provider: "anthropic",
+    contextWindow: 200000,
+  },
+  {
+    id: "openai-codex/gpt-5.3-codex",
+    name: "gpt-5.3-codex",
+    provider: "openai-codex",
+    contextWindow: 272000,
+  },
+  {
+    id: "lmstudio/glm-4.7-flash-mlx",
+    name: "glm-4.7-flash-mlx",
+    provider: "lmstudio",
+    contextWindow: 128000,
+  },
 ];
 
 /** Parse compact token counts like 200K, 196.6K, 1M. */
@@ -102,7 +124,10 @@ function parseModelTable(output: string): ModelInfo[] {
       continue;
     }
 
-    const cols = trimmed.split(/\s{2,}/).map(v => v.trim()).filter(Boolean);
+    const cols = trimmed
+      .split(/\s{2,}/)
+      .map((v) => v.trim())
+      .filter(Boolean);
     if (cols.length < 3) {
       continue;
     }
@@ -141,7 +166,10 @@ function resolvePiExecutable(): string {
   }
 
   try {
-    const discovered = execSync("which pi", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const discovered = execSync("which pi", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     if (discovered.length > 0) {
       return discovered;
     }
@@ -165,6 +193,7 @@ export class Server {
   private gate: GateServer;
   private sandbox: SandboxManager;
   private skillRegistry: SkillRegistry;
+  private userSkillStore: UserSkillStore;
   private authProxy: AuthProxy;
   private push: PushClient;
   private httpServer: ReturnType<typeof createServer>;
@@ -194,6 +223,8 @@ export class Server {
     this.authProxy = new AuthProxy();
     this.sandbox = new SandboxManager();
     this.skillRegistry = new SkillRegistry();
+    this.userSkillStore = new UserSkillStore();
+    this.userSkillStore.init();
     this.skillRegistry.scan();
     this.sandbox.setSkillRegistry(this.skillRegistry);
     this.sandbox.setAuthProxy(this.authProxy);
@@ -212,16 +243,19 @@ export class Server {
       this.forwardPermissionRequest(pending);
     });
 
-    this.gate.on("approval_timeout", ({ requestId, sessionId }: { requestId: string; sessionId: string }) => {
-      const session = this.findSessionById(sessionId);
-      if (session) {
-        this.broadcastToUser(session.userId, {
-          type: "permission_expired",
-          id: requestId,
-          reason: "Approval timeout",
-        });
-      }
-    });
+    this.gate.on(
+      "approval_timeout",
+      ({ requestId, sessionId }: { requestId: string; sessionId: string }) => {
+        const session = this.findSessionById(sessionId);
+        if (session) {
+          this.broadcastToUser(session.userId, {
+            type: "permission_expired",
+            id: requestId,
+            reason: "Approval timeout",
+          });
+        }
+      },
+    );
   }
 
   // ─── Start / Stop ───
@@ -229,6 +263,19 @@ export class Server {
   async start(): Promise<void> {
     // Best-effort cleanup from previous crashes before accepting connections.
     await this.sandbox.cleanupOrphanedContainers();
+
+    // Migrate legacy session-scoped sandboxes to workspace layout.
+    const migration = this.sandbox.migrateAllLegacySandboxes();
+    if (migration.migrated > 0) {
+      console.log(
+        `[startup] Migrated ${migration.migrated} legacy sandbox(es) to workspace layout`,
+      );
+    }
+    if (migration.errors.length > 0) {
+      for (const err of migration.errors) {
+        console.warn(`[startup] Migration warning: ${err}`);
+      }
+    }
 
     // Ensure container image and internal network exist
     await this.sandbox.ensureImage();
@@ -276,7 +323,9 @@ export class Server {
     };
 
     this.broadcastToUser(pending.userId, msg);
-    console.log(`${ts()} [gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`);
+    console.log(
+      `${ts()} [gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`,
+    );
   }
 
   // ─── User Connection Tracking ───
@@ -288,7 +337,7 @@ export class Server {
       return;
     }
 
-    const hasOpen = Array.from(conns).some(ws => ws.readyState === WebSocket.OPEN);
+    const hasOpen = Array.from(conns).some((ws) => ws.readyState === WebSocket.OPEN);
     if (hasOpen) {
       const json = JSON.stringify(msg);
       for (const ws of conns) {
@@ -311,20 +360,22 @@ export class Server {
     if (msg.type === "permission_request") {
       const session = this.findSessionById(msg.sessionId);
       for (const token of tokens) {
-        this.push.sendPermissionPush(token, {
-          permissionId: msg.id,
-          sessionId: msg.sessionId,
-          sessionName: session?.name,
-          tool: msg.tool,
-          displaySummary: msg.displaySummary,
-          risk: msg.risk,
-          reason: msg.reason,
-          timeoutAt: msg.timeoutAt,
-        }).then(ok => {
-          if (!ok) {
-            // Token might be expired — don't remove yet, APNs 410 handler does that
-          }
-        });
+        this.push
+          .sendPermissionPush(token, {
+            permissionId: msg.id,
+            sessionId: msg.sessionId,
+            sessionName: session?.name,
+            tool: msg.tool,
+            displaySummary: msg.displaySummary,
+            risk: msg.risk,
+            reason: msg.reason,
+            timeoutAt: msg.timeoutAt,
+          })
+          .then((ok) => {
+            if (!ok) {
+              // Token might be expired — don't remove yet, APNs 410 handler does that
+            }
+          });
       }
     } else if (msg.type === "session_ended") {
       const session = this.findSessionByReason(userId, msg);
@@ -357,12 +408,15 @@ export class Server {
   private findSessionByReason(userId: string, _msg: ServerMessage): Session | undefined {
     const sessions = this.storage.listUserSessions(userId);
     // Return the most recently active session (best effort)
-    return sessions.find(s => s.status === "stopped") || sessions[0];
+    return sessions.find((s) => s.status === "stopped") || sessions[0];
   }
 
   private trackConnection(userId: string, ws: WebSocket): void {
     let conns = this.userConnections.get(userId);
-    if (!conns) { conns = new Set(); this.userConnections.set(userId, conns); }
+    if (!conns) {
+      conns = new Set();
+      this.userConnections.set(userId, conns);
+    }
     conns.add(ws);
   }
 
@@ -376,7 +430,11 @@ export class Server {
 
   private async refreshModelCatalog(force = false): Promise<void> {
     const now = Date.now();
-    if (!force && this.modelCatalog.length > 0 && now - this.modelCatalogUpdatedAt < this.modelCatalogTtlMs) {
+    if (
+      !force &&
+      this.modelCatalog.length > 0 &&
+      now - this.modelCatalogUpdatedAt < this.modelCatalogTtlMs
+    ) {
       return;
     }
 
@@ -419,7 +477,9 @@ export class Server {
   }
 
   private getContextWindow(modelId: string): number {
-    const known = this.modelCatalog.find(m => m.id === modelId || m.id.endsWith(`/${modelId}`))?.contextWindow;
+    const known = this.modelCatalog.find(
+      (m) => m.id === modelId || m.id.endsWith(`/${modelId}`),
+    )?.contextWindow;
     if (known) {
       return known;
     }
@@ -439,7 +499,7 @@ export class Server {
   private findSessionById(sessionId: string): Session | undefined {
     for (const user of this.storage.listUsers()) {
       const sessions = this.storage.listUserSessions(user.id);
-      const match = sessions.find(s => s.id === sessionId);
+      const match = sessions.find((s) => s.id === sessionId);
       if (match) return this.ensureSessionContextWindow(match);
     }
     return undefined;
@@ -492,14 +552,24 @@ export class Server {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    res.setHeader("X-PiRemote-Protocol", "2");
 
-    if (method === "OPTIONS") { res.writeHead(204); res.end(); return; }
-    if (path === "/health") { this.json(res, { ok: true }); return; }
+    if (method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (path === "/health") {
+      this.json(res, { ok: true, protocol: 2 });
+      return;
+    }
 
     const user = this.authenticate(req);
     if (!user) {
       const auth = req.headers.authorization;
-      console.log(`${ts()} [auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      console.log(
+        `${ts()} [auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`,
+      );
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -513,16 +583,20 @@ export class Server {
 
       // Skill detail + file access
       const skillFileMatch = path.match(/^\/skills\/([^/]+)\/file$/);
-      if (skillFileMatch && method === "GET") return this.handleGetSkillFile(skillFileMatch[1], url, res);
+      if (skillFileMatch && method === "GET")
+        return this.handleGetSkillFile(skillFileMatch[1], url, res);
       const skillDetailMatch = path.match(/^\/skills\/([^/]+)$/);
-      if (skillDetailMatch && method === "GET") return this.handleGetSkillDetail(skillDetailMatch[1], res);
+      if (skillDetailMatch && method === "GET")
+        return this.handleGetSkillDetail(skillDetailMatch[1], res);
 
       // Host discovery
-      if (path === "/host/directories" && method === "GET") return this.handleListDirectories(url, res);
+      if (path === "/host/directories" && method === "GET")
+        return this.handleListDirectories(url, res);
 
       // Workspaces
       if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(user, res);
-      if (path === "/workspaces" && method === "POST") return await this.handleCreateWorkspace(user, req, res);
+      if (path === "/workspaces" && method === "POST")
+        return await this.handleCreateWorkspace(user, req, res);
 
       const wsMatch = path.match(/^\/workspaces\/([^/]+)$/);
       if (wsMatch) {
@@ -532,21 +606,99 @@ export class Server {
       }
 
       // Device tokens
-      if (path === "/me/device-token" && method === "POST") return await this.handleRegisterDeviceToken(user, req, res);
-      if (path === "/me/device-token" && method === "DELETE") return await this.handleDeleteDeviceToken(user, req, res);
+      if (path === "/me/device-token" && method === "POST")
+        return await this.handleRegisterDeviceToken(user, req, res);
+      if (path === "/me/device-token" && method === "DELETE")
+        return await this.handleDeleteDeviceToken(user, req, res);
 
-      // Sessions
+      // User skills CRUD
+      if (path === "/me/skills" && method === "GET") return this.handleListUserSkills(user, res);
+      if (path === "/me/skills" && method === "POST")
+        return await this.handleSaveUserSkill(user, req, res);
+
+      const userSkillFileMatch = path.match(/^\/me\/skills\/([^/]+)\/files$/);
+      if (userSkillFileMatch && method === "GET")
+        return this.handleGetUserSkillFile(user, userSkillFileMatch[1], url, res);
+
+      const userSkillMatch = path.match(/^\/me\/skills\/([^/]+)$/);
+      if (userSkillMatch) {
+        if (method === "GET") return this.handleGetUserSkill(user, userSkillMatch[1], res);
+        if (method === "DELETE") return this.handleDeleteUserSkill(user, userSkillMatch[1], res);
+      }
+
+      // ── Workspace-scoped session routes (v2 API) ──
+
+      const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
+      if (wsSessionsMatch) {
+        if (method === "GET")
+          return this.handleListWorkspaceSessions(user, wsSessionsMatch[1], res);
+        if (method === "POST")
+          return await this.handleCreateWorkspaceSession(user, wsSessionsMatch[1], req, res);
+      }
+
+      const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
+      if (wsSessionStopMatch && method === "POST") {
+        return await this.handleStopSession(user, wsSessionStopMatch[2], res);
+      }
+
+      const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
+      if (wsSessionResumeMatch && method === "POST") {
+        return await this.handleResumeWorkspaceSession(
+          user,
+          wsSessionResumeMatch[1],
+          wsSessionResumeMatch[2],
+          res,
+        );
+      }
+
+      const wsSessionToolOutputMatch = path.match(
+        /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
+      );
+      if (wsSessionToolOutputMatch && method === "GET") {
+        return this.handleGetToolOutput(
+          user,
+          wsSessionToolOutputMatch[2],
+          wsSessionToolOutputMatch[3],
+          res,
+        );
+      }
+
+      const wsSessionFilesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/);
+      if (wsSessionFilesMatch && method === "GET") {
+        return this.handleGetSessionFile(user, wsSessionFilesMatch[2], url, res);
+      }
+
+      const wsSessionMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/);
+      if (wsSessionMatch) {
+        if (method === "GET") return await this.handleGetSession(user, wsSessionMatch[2], res);
+        if (method === "DELETE")
+          return await this.handleDeleteSession(user, wsSessionMatch[2], res);
+      }
+
+      // WebSocket stream via workspace path
+      // (handled in handleUpgrade, matched below for 404 clarity)
+
+      // ── Global session routes (permanent — workspace-agnostic) ──
+      // These serve cross-workspace views (session list, tool output, file access).
+      // No deprecation — they complement the workspace-scoped routes.
+
       if (path === "/sessions" && method === "GET") return this.handleListSessions(user, res);
-      if (path === "/sessions" && method === "POST") return await this.handleCreateSession(user, req, res);
+      if (path === "/sessions" && method === "POST")
+        return await this.handleCreateSession(user, req, res);
 
       const stopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
-      if (stopMatch && method === "POST") return await this.handleStopSession(user, stopMatch[1], res);
+      if (stopMatch && method === "POST")
+        return await this.handleStopSession(user, stopMatch[1], res);
 
       const toolOutputMatch = path.match(/^\/sessions\/([^/]+)\/tool-output\/([^/]+)$/);
-      if (toolOutputMatch && method === "GET") return this.handleGetToolOutput(user, toolOutputMatch[1], toolOutputMatch[2], res);
+      if (toolOutputMatch && method === "GET") {
+        return this.handleGetToolOutput(user, toolOutputMatch[1], toolOutputMatch[2], res);
+      }
 
       const filesMatch = path.match(/^\/sessions\/([^/]+)\/files$/);
-      if (filesMatch && method === "GET") return this.handleGetSessionFile(user, filesMatch[1], url, res);
+      if (filesMatch && method === "GET") {
+        return this.handleGetSessionFile(user, filesMatch[1], url, res);
+      }
 
       const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
       if (sessionMatch) {
@@ -584,16 +736,160 @@ export class Server {
 
   private handleGetSkillDetail(name: string, res: ServerResponse): void {
     const detail = this.skillRegistry.getDetail(name);
-    if (!detail) { this.error(res, 404, "Skill not found"); return; }
+    if (!detail) {
+      this.error(res, 404, "Skill not found");
+      return;
+    }
     this.json(res, detail as unknown as Record<string, unknown>);
   }
 
   private handleGetSkillFile(name: string, url: URL, res: ServerResponse): void {
     const filePath = url.searchParams.get("path");
-    if (!filePath) { this.error(res, 400, "path parameter required"); return; }
+    if (!filePath) {
+      this.error(res, 400, "path parameter required");
+      return;
+    }
 
     const content = this.skillRegistry.getFileContent(name, filePath);
-    if (content === undefined) { this.error(res, 404, "File not found"); return; }
+    if (content === undefined) {
+      this.error(res, 404, "File not found");
+      return;
+    }
+    this.json(res, { content });
+  }
+
+  // ─── User Skills CRUD ───
+
+  private handleListUserSkills(user: User, res: ServerResponse): void {
+    const builtIn = this.skillRegistry.list().map((s) => ({
+      ...s,
+      builtIn: true as const,
+    }));
+    const userSkills = this.userSkillStore.listSkills(user.id);
+    this.json(res, { skills: [...builtIn, ...userSkills] });
+  }
+
+  private handleGetUserSkill(user: User, name: string, res: ServerResponse): void {
+    // Check user skills first, then built-in
+    const userSkill = this.userSkillStore.getSkill(user.id, name);
+    if (userSkill) {
+      const files = this.userSkillStore.listFiles(user.id, name);
+      this.json(res, { skill: userSkill, files });
+      return;
+    }
+
+    const builtIn = this.skillRegistry.getDetail(name);
+    if (builtIn) {
+      this.json(res, {
+        skill: { ...builtIn.skill, builtIn: true },
+        files: builtIn.files,
+        content: builtIn.content,
+      });
+      return;
+    }
+
+    this.error(res, 404, "Skill not found");
+  }
+
+  private async handleSaveUserSkill(
+    user: User,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await this.parseBody<{ name: string; sessionId: string; path?: string }>(req);
+
+    if (!body.name) {
+      this.error(res, 400, "name required");
+      return;
+    }
+    if (!body.sessionId) {
+      this.error(res, 400, "sessionId required");
+      return;
+    }
+
+    // Verify session ownership
+    const session = this.storage.getSession(user.id, body.sessionId);
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    // Resolve source directory in session workspace
+    const workRoot = this.resolveWorkRoot(session, user.id);
+    if (!workRoot) {
+      this.error(res, 404, "No workspace root for session");
+      return;
+    }
+
+    // Source is either explicit path or /work/<name>/
+    const relPath = body.path ?? body.name;
+    const sourceDir = resolve(workRoot, relPath);
+
+    // Path safety — must be within workspace
+    let resolvedSource: string;
+    try {
+      resolvedSource = realpathSync(sourceDir);
+    } catch {
+      this.error(res, 404, "Source directory not found");
+      return;
+    }
+
+    const realWorkRoot = realpathSync(workRoot);
+    if (!resolvedSource.startsWith(realWorkRoot + "/") && resolvedSource !== realWorkRoot) {
+      this.error(res, 403, "Path outside workspace");
+      return;
+    }
+
+    try {
+      const skill = this.userSkillStore.saveSkill(user.id, body.name, resolvedSource);
+
+      // Re-register in the skill registry so workspace configs can reference it
+      this.skillRegistry.registerUserSkills([skill]);
+
+      this.json(res, { skill }, 201);
+    } catch (err) {
+      if (err instanceof SkillValidationError) {
+        this.error(res, 400, err.message);
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private handleDeleteUserSkill(user: User, name: string, res: ServerResponse): void {
+    // Don't allow deleting built-in skills
+    const builtIn = this.skillRegistry.get(name);
+    const userSkill = this.userSkillStore.getSkill(user.id, name);
+
+    if (!userSkill) {
+      if (builtIn) {
+        this.error(res, 403, "Cannot delete built-in skill");
+        return;
+      }
+      this.error(res, 404, "Skill not found");
+      return;
+    }
+
+    this.userSkillStore.deleteSkill(user.id, name);
+    res.writeHead(204).end();
+  }
+
+  private handleGetUserSkillFile(user: User, name: string, url: URL, res: ServerResponse): void {
+    const filePath = url.searchParams.get("path");
+    if (!filePath) {
+      this.error(res, 400, "path parameter required");
+      return;
+    }
+
+    // Try user skill first, then built-in
+    const content =
+      this.userSkillStore.readFile(user.id, name, filePath) ??
+      this.skillRegistry.getFileContent(name, filePath);
+
+    if (content === undefined) {
+      this.error(res, 404, "File not found");
+      return;
+    }
     this.json(res, { content });
   }
 
@@ -609,12 +905,22 @@ export class Server {
     this.json(res, { workspaces });
   }
 
-  private async handleCreateWorkspace(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleCreateWorkspace(
+    user: User,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const body = await this.parseBody<CreateWorkspaceRequest>(req);
-    if (!body.name) { this.error(res, 400, "name required"); return; }
-    if (!body.skills || !Array.isArray(body.skills)) { this.error(res, 400, "skills array required"); return; }
+    if (!body.name) {
+      this.error(res, 400, "name required");
+      return;
+    }
+    if (!body.skills || !Array.isArray(body.skills)) {
+      this.error(res, 400, "skills array required");
+      return;
+    }
 
-    const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+    const unknown = body.skills.filter((s) => !this.skillRegistry.get(s));
     if (unknown.length > 0) {
       this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
       return;
@@ -631,18 +937,29 @@ export class Server {
 
   private handleGetWorkspace(user: User, wsId: string, res: ServerResponse): void {
     const workspace = this.storage.getWorkspace(user.id, wsId);
-    if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
     this.json(res, { workspace });
   }
 
-  private async handleUpdateWorkspace(user: User, wsId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleUpdateWorkspace(
+    user: User,
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const workspace = this.storage.getWorkspace(user.id, wsId);
-    if (!workspace) { this.error(res, 404, "Workspace not found"); return; }
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
 
     const body = await this.parseBody<UpdateWorkspaceRequest>(req);
 
     if (body.skills) {
-      const unknown = body.skills.filter(s => !this.skillRegistry.get(s));
+      const unknown = body.skills.filter((s) => !this.skillRegistry.get(s));
       if (unknown.length > 0) {
         this.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
         return;
@@ -663,7 +980,11 @@ export class Server {
     this.json(res, { ok: true });
   }
 
-  private async handleRegisterDeviceToken(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleRegisterDeviceToken(
+    user: User,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const body = await this.parseBody<RegisterDeviceTokenRequest>(req);
     if (!body.deviceToken) {
       this.error(res, 400, "deviceToken required");
@@ -682,7 +1003,11 @@ export class Server {
     this.json(res, { ok: true });
   }
 
-  private async handleDeleteDeviceToken(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleDeleteDeviceToken(
+    user: User,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const body = await this.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
       this.storage.removeDeviceToken(user.id, body.deviceToken);
@@ -694,11 +1019,15 @@ export class Server {
   private handleListSessions(user: User, res: ServerResponse): void {
     const sessions = this.storage
       .listUserSessions(user.id)
-      .map(session => this.ensureSessionContextWindow(session));
+      .map((session) => this.ensureSessionContextWindow(session));
     this.json(res, { sessions });
   }
 
-  private async handleCreateSession(user: User, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleCreateSession(
+    user: User,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const body = await this.parseBody<CreateSessionRequest>(req);
 
     this.storage.ensureDefaultWorkspaces(user.id);
@@ -728,9 +1057,98 @@ export class Server {
     this.json(res, { session: hydrated }, 201);
   }
 
-  private async handleStopSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+  // ─── Workspace-scoped session handlers (v2 API) ───
+
+  private handleListWorkspaceSessions(user: User, workspaceId: string, res: ServerResponse): void {
+    const workspace = this.storage.getWorkspace(user.id, workspaceId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const sessions = this.storage
+      .listUserSessions(user.id)
+      .filter((s) => s.workspaceId === workspaceId)
+      .map((s) => this.ensureSessionContextWindow(s));
+
+    this.json(res, { sessions, workspace });
+  }
+
+  private async handleCreateWorkspaceSession(
+    user: User,
+    workspaceId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = this.storage.getWorkspace(user.id, workspaceId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await this.parseBody<{ name?: string; model?: string }>(req);
+    const model = body.model || workspace.defaultModel;
+    const session = this.storage.createSession(user.id, body.name, model);
+
+    session.workspaceId = workspace.id;
+    session.workspaceName = workspace.name;
+    session.runtime = workspace.runtime;
+    this.storage.saveSession(session);
+
+    const hydrated = this.ensureSessionContextWindow(session);
+    this.json(res, { session: hydrated }, 201);
+  }
+
+  private async handleResumeWorkspaceSession(
+    user: User,
+    workspaceId: string,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = this.storage.getWorkspace(user.id, workspaceId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
     const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (session.workspaceId !== workspaceId) {
+      this.error(res, 400, "Session does not belong to this workspace");
+      return;
+    }
+
+    if (this.sessions.isActive(user.id, sessionId)) {
+      const active = this.sessions.getActiveSession(user.id, sessionId);
+      const hydrated = active ? this.ensureSessionContextWindow(active) : session;
+      this.json(res, { session: hydrated });
+      return;
+    }
+
+    try {
+      const started = await this.sessions.startSession(user.id, sessionId, user.name, workspace);
+      const hydrated = this.ensureSessionContextWindow(started);
+      this.json(res, { session: hydrated });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Resume failed";
+      this.error(res, 500, message);
+    }
+  }
+
+  private async handleStopSession(
+    user: User,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = this.storage.getSession(user.id, sessionId);
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
 
     const hydratedSession = this.ensureSessionContextWindow(session);
 
@@ -758,19 +1176,49 @@ export class Server {
    * Used by the iOS client to lazy-load evicted tool output when the user
    * expands an old tool call row.
    */
-  private handleGetToolOutput(user: User, sessionId: string, toolCallId: string, res: ServerResponse): void {
+  private handleGetToolOutput(
+    user: User,
+    sessionId: string,
+    toolCallId: string,
+    res: ServerResponse,
+  ): void {
     const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
 
     // Gather all candidate JSONL paths (same logic as trace endpoint)
     const jsonlPaths: string[] = [];
     const sandboxBaseDir = this.sandbox.getBaseDir();
 
-    // Container layout
-    const containerDir = join(sandboxBaseDir, user.id, sessionId, "agent", "sessions", "--work--");
-    if (existsSync(containerDir)) {
-      for (const f of readdirSync(containerDir).filter(f => f.endsWith(".jsonl")).sort()) {
-        jsonlPaths.push(join(containerDir, f));
+    // Container layout (workspace-scoped + legacy fallback)
+    const containerDirs: string[] = [];
+    if (session.workspaceId) {
+      containerDirs.push(
+        join(
+          sandboxBaseDir,
+          user.id,
+          session.workspaceId,
+          "sessions",
+          sessionId,
+          "agent",
+          "sessions",
+          "--work--",
+        ),
+      );
+    }
+    containerDirs.push(join(sandboxBaseDir, user.id, sessionId, "agent", "sessions", "--work--"));
+
+    for (const containerDir of containerDirs) {
+      if (!existsSync(containerDir)) continue;
+      for (const f of readdirSync(containerDir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .sort()) {
+        const p = join(containerDir, f);
+        if (!jsonlPaths.includes(p)) {
+          jsonlPaths.push(p);
+        }
       }
     }
 
@@ -780,7 +1228,11 @@ export class Server {
         if (existsSync(p) && !jsonlPaths.includes(p)) jsonlPaths.push(p);
       }
     }
-    if (session.piSessionFile && existsSync(session.piSessionFile) && !jsonlPaths.includes(session.piSessionFile)) {
+    if (
+      session.piSessionFile &&
+      existsSync(session.piSessionFile) &&
+      !jsonlPaths.includes(session.piSessionFile)
+    ) {
       jsonlPaths.push(session.piSessionFile);
     }
 
@@ -809,13 +1261,22 @@ export class Server {
    */
   private handleGetSessionFile(user: User, sessionId: string, url: URL, res: ServerResponse): void {
     const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
 
     const reqPath = url.searchParams.get("path");
-    if (!reqPath) { this.error(res, 400, "path parameter required"); return; }
+    if (!reqPath) {
+      this.error(res, 400, "path parameter required");
+      return;
+    }
 
     const workRoot = this.resolveWorkRoot(session, user.id);
-    if (!workRoot) { this.error(res, 404, "No workspace root for session"); return; }
+    if (!workRoot) {
+      this.error(res, 404, "No workspace root for session");
+      return;
+    }
 
     // Resolve path — handles both absolute paths (from host-mode reads)
     // and relative paths (workspace-relative). resolve() returns reqPath
@@ -825,28 +1286,33 @@ export class Server {
     try {
       resolved = realpathSync(target);
     } catch {
-      this.error(res, 404, "File not found"); return;
+      this.error(res, 404, "File not found");
+      return;
     }
 
     const realWorkRoot = realpathSync(workRoot);
     if (!resolved.startsWith(realWorkRoot + "/") && resolved !== realWorkRoot) {
-      this.error(res, 403, "Path outside workspace"); return;
+      this.error(res, 403, "Path outside workspace");
+      return;
     }
 
     let stat: ReturnType<typeof statSync>;
     try {
       stat = statSync(resolved);
     } catch {
-      this.error(res, 404, "File not found"); return;
+      this.error(res, 404, "File not found");
+      return;
     }
 
     if (!stat.isFile()) {
-      this.error(res, 400, "Not a file"); return;
+      this.error(res, 400, "Not a file");
+      return;
     }
 
     // Size guard — refuse files > 10MB
     if (stat.size > 10 * 1024 * 1024) {
-      this.error(res, 413, "File too large (max 10MB)"); return;
+      this.error(res, 413, "File too large (max 10MB)");
+      return;
     }
 
     const mime = guessMime(resolved);
@@ -875,6 +1341,19 @@ export class Server {
         const resolved = workspace.hostMount.replace(/^~/, homedir());
         return existsSync(resolved) ? resolved : null;
       }
+      if (session.workspaceId) {
+        const workspaceSandbox = join(
+          this.sandbox.getBaseDir(),
+          userId,
+          session.workspaceId,
+          "workspace",
+        );
+        if (existsSync(workspaceSandbox)) {
+          return workspaceSandbox;
+        }
+      }
+
+      // Legacy session-scoped fallback
       const sandboxWork = join(this.sandbox.getBaseDir(), userId, session.id, "workspace");
       return existsSync(sandboxWork) ? sandboxWork : null;
     }
@@ -887,15 +1366,22 @@ export class Server {
     return homedir();
   }
 
-  private async handleGetSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+  private async handleGetSession(
+    user: User,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
 
     const hydratedSession = this.ensureSessionContextWindow(session);
     const sandboxBaseDir = this.sandbox.getBaseDir();
 
     // Resolve trace from all available sources (container layout, host JSONL paths, live query)
-    let trace = readSessionTrace(sandboxBaseDir, user.id, sessionId);
+    let trace = readSessionTrace(sandboxBaseDir, user.id, sessionId, hydratedSession.workspaceId);
 
     if ((!trace || trace.length === 0) && hydratedSession.piSessionFiles?.length) {
       trace = readSessionTraceFromFiles(hydratedSession.piSessionFiles);
@@ -904,7 +1390,12 @@ export class Server {
       trace = readSessionTraceFromFile(hydratedSession.piSessionFile);
     }
     if ((!trace || trace.length === 0) && hydratedSession.piSessionId) {
-      trace = readSessionTraceByUuid(sandboxBaseDir, user.id, hydratedSession.piSessionId);
+      trace = readSessionTraceByUuid(
+        sandboxBaseDir,
+        user.id,
+        hydratedSession.piSessionId,
+        hydratedSession.workspaceId,
+      );
     }
 
     // Active session fallback: query live pi process to discover session file
@@ -914,7 +1405,12 @@ export class Server {
         trace = readSessionTraceFromFile(live.sessionFile);
       }
       if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(sandboxBaseDir, user.id, live.sessionId);
+        trace = readSessionTraceByUuid(
+          sandboxBaseDir,
+          user.id,
+          live.sessionId,
+          hydratedSession.workspaceId,
+        );
       }
 
       const refreshed = this.storage.getSession(user.id, sessionId);
@@ -927,7 +1423,12 @@ export class Server {
           trace = readSessionTraceFromFile(refreshed.piSessionFile);
         }
         if ((!trace || trace.length === 0) && refreshed.piSessionId) {
-          trace = readSessionTraceByUuid(sandboxBaseDir, user.id, refreshed.piSessionId);
+          trace = readSessionTraceByUuid(
+            sandboxBaseDir,
+            user.id,
+            refreshed.piSessionId,
+            refreshed.workspaceId,
+          );
         }
       }
     }
@@ -937,9 +1438,16 @@ export class Server {
     this.json(res, { session: hydratedLatest, trace: trace || [] });
   }
 
-  private async handleDeleteSession(user: User, sessionId: string, res: ServerResponse): Promise<void> {
+  private async handleDeleteSession(
+    user: User,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
     const session = this.storage.getSession(user.id, sessionId);
-    if (!session) { this.error(res, 404, "Session not found"); return; }
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
 
     await this.sessions.stopSession(user.id, sessionId);
     this.storage.deleteSession(user.id, sessionId);
@@ -949,10 +1457,13 @@ export class Server {
   private async parseBody<T>(req: IncomingMessage): Promise<T> {
     return new Promise((resolve, reject) => {
       let body = "";
-      req.on("data", (chunk: Buffer) => body += chunk);
+      req.on("data", (chunk: Buffer) => (body += chunk));
       req.on("end", () => {
-        try { resolve(body ? JSON.parse(body) : {}); }
-        catch { reject(new Error("Invalid JSON")); }
+        try {
+          resolve(body ? JSON.parse(body) : {});
+        } catch {
+          reject(new Error("Invalid JSON"));
+        }
       });
       req.on("error", reject);
     });
@@ -968,6 +1479,13 @@ export class Server {
     res.end(JSON.stringify({ error: message } as ApiError));
   }
 
+  private deprecationHeader(res: ServerResponse, legacy: string, replacement: string): void {
+    res.setHeader("Deprecation", "true");
+    res.setHeader("Sunset", "2026-06-01");
+    res.setHeader("Link", `<${replacement}>; rel="successor-version"`);
+    console.log(`${ts()} [deprecation] ${legacy} → use ${replacement}`);
+  }
+
   // ─── WebSocket ───
 
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -977,18 +1495,31 @@ export class Server {
     const user = this.authenticate(req);
     if (!user) {
       const auth = req.headers.authorization;
-      console.log(`${ts()} [auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`);
+      console.log(
+        `${ts()} [auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`,
+      );
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
     }
 
-    const match = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
-    if (!match) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    // Match workspace-scoped WS path first, then legacy path.
+    const wsMatch = url.pathname.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/);
+    const legacyMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
 
-    const session = this.storage.getSession(user.id, match[1]);
+    const sessionId = wsMatch ? wsMatch[2] : legacyMatch?.[1];
+    if (!sessionId) {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Both WS paths are supported — workspace-scoped is preferred for
+    // new clients, but the global path remains valid permanently.
+
+    const session = this.storage.getSession(user.id, sessionId);
     if (!session) {
-      console.log(`${ts()} [ws] 404 session not found: ${match[1]} (user=${user.name})`);
+      console.log(`${ts()} [ws] 404 session not found: ${sessionId} (user=${user.name})`);
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -1026,12 +1557,16 @@ export class Server {
       try {
         const msg = JSON.parse(data.toString()) as ClientMessage;
         msgRecv++;
-        console.log(`${ts()} [ws] RECV ${msg.type} from ${user.name} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`);
+        console.log(
+          `${ts()} [ws] RECV ${msg.type} from ${user.name} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`,
+        );
         if (ready) {
           await this.handleClientMessage(user, hydratedSession, msg, send);
         } else {
           messageQueue.push(msg);
-          console.log(`${ts()} [ws] QUEUED ${msg.type} (pi not ready, queue=${messageQueue.length})`);
+          console.log(
+            `${ts()} [ws] QUEUED ${msg.type} (pi not ready, queue=${messageQueue.length})`,
+          );
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -1044,7 +1579,9 @@ export class Server {
 
     ws.on("close", (code, reason) => {
       const reasonStr = reason?.toString() || "";
-      console.log(`${ts()} [ws] Disconnected: ${user.name} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`);
+      console.log(
+        `${ts()} [ws] Disconnected: ${user.name} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
+      );
       unsubscribe?.();
       this.untrackConnection(user.id, ws);
     });
@@ -1066,12 +1603,21 @@ export class Server {
         ? this.storage.getWorkspace(user.id, session.workspaceId)
         : undefined;
 
-      console.log(`${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"}, runtime=${workspace?.runtime ?? "host"})...`);
+      console.log(
+        `${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"}, runtime=${workspace?.runtime ?? "host"})...`,
+      );
       const startTime = Date.now();
-      const activeSession = await this.sessions.startSession(user.id, session.id, user.name, workspace);
+      const activeSession = await this.sessions.startSession(
+        user.id,
+        session.id,
+        user.name,
+        workspace,
+      );
       const startMs = Date.now() - startTime;
       hydratedSession = this.ensureSessionContextWindow(activeSession);
-      console.log(`${ts()} [ws] Pi ready for ${session.id} in ${startMs}ms (status=${hydratedSession.status})`);
+      console.log(
+        `${ts()} [ws] Pi ready for ${session.id} in ${startMs}ms (status=${hydratedSession.status})`,
+      );
 
       // Send updated session with live pi state (context tokens, etc.)
       send({ type: "state", session: hydratedSession });
@@ -1079,7 +1625,9 @@ export class Server {
       // Send pending permission requests
       const pendingPerms = this.gate.getPendingForUser(user.id);
       if (pendingPerms.length > 0) {
-        console.log(`${ts()} [ws] Sending ${pendingPerms.length} pending permission(s) → ${session.id}`);
+        console.log(
+          `${ts()} [ws] Sending ${pendingPerms.length} pending permission(s) → ${session.id}`,
+        );
       }
       for (const pending of pendingPerms) {
         send({
@@ -1102,18 +1650,27 @@ export class Server {
       // Drain queued messages (sent while pi was starting)
       ready = true;
       if (messageQueue.length > 0) {
-        console.log(`${ts()} [ws] Draining ${messageQueue.length} queued message(s) for ${session.id}`);
+        console.log(
+          `${ts()} [ws] Draining ${messageQueue.length} queued message(s) for ${session.id}`,
+        );
       }
       for (const msg of messageQueue) {
         console.log(`${ts()} [ws] DRAIN ${msg.type} → ${session.id}`);
         await this.handleClientMessage(user, hydratedSession, msg, send);
       }
       messageQueue.length = 0;
-
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Setup error";
       console.error(`${ts()} [ws] Setup error for ${session.id}:`, err);
-      send({ type: "error", error: message });
+
+      // WorkspaceRuntimeError is fatal — client should NOT auto-reconnect.
+      const isRuntimeError = err instanceof WorkspaceRuntimeError;
+      send({
+        type: "error",
+        error: message,
+        code: isRuntimeError ? (err as WorkspaceRuntimeError).code : undefined,
+        fatal: isRuntimeError ? true : undefined,
+      });
       this.untrackConnection(user.id, ws);
       ws.close();
     }
@@ -1131,10 +1688,12 @@ export class Server {
         const requestId = msg.requestId;
         const preview = msg.message.slice(0, 80);
         const imageCount = msg.images?.length ?? 0;
-        console.log(`${ts()} [ws] PROMPT ${session.id}: "${preview}"${imageCount > 0 ? ` (${imageCount} images)` : ""}`);
+        console.log(
+          `${ts()} [ws] PROMPT ${session.id}: "${preview}"${imageCount > 0 ? ` (${imageCount} images)` : ""}`,
+        );
 
         // RPC image format: { type: "image", data: "base64...", mimeType: "image/png" }
-        const images = msg.images?.map(img => ({
+        const images = msg.images?.map((img) => ({
           type: "image" as const,
           data: img.data,
           mimeType: img.mimeType,
@@ -1157,7 +1716,13 @@ export class Server {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
-            send({ type: "rpc_result", command: "prompt", requestId, success: false, error: message });
+            send({
+              type: "rpc_result",
+              command: "prompt",
+              requestId,
+              success: false,
+              error: message,
+            });
             return;
           }
           throw err;
@@ -1168,8 +1733,10 @@ export class Server {
       case "steer": {
         const requestId = msg.requestId;
         console.log(`${ts()} [ws] STEER ${session.id}: "${msg.message.slice(0, 80)}"`);
-        const steerImages = msg.images?.map(img => ({
-          type: "image" as const, data: img.data, mimeType: img.mimeType,
+        const steerImages = msg.images?.map((img) => ({
+          type: "image" as const,
+          data: img.data,
+          mimeType: img.mimeType,
         }));
 
         try {
@@ -1184,7 +1751,13 @@ export class Server {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
-            send({ type: "rpc_result", command: "steer", requestId, success: false, error: message });
+            send({
+              type: "rpc_result",
+              command: "steer",
+              requestId,
+              success: false,
+              error: message,
+            });
             return;
           }
           throw err;
@@ -1195,8 +1768,10 @@ export class Server {
       case "follow_up": {
         const requestId = msg.requestId;
         console.log(`${ts()} [ws] FOLLOW_UP ${session.id}: "${msg.message.slice(0, 80)}"`);
-        const fuImages = msg.images?.map(img => ({
-          type: "image" as const, data: img.data, mimeType: img.mimeType,
+        const fuImages = msg.images?.map((img) => ({
+          type: "image" as const,
+          data: img.data,
+          mimeType: img.mimeType,
         }));
 
         try {
@@ -1211,7 +1786,13 @@ export class Server {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
-            send({ type: "rpc_result", command: "follow_up", requestId, success: false, error: message });
+            send({
+              type: "rpc_result",
+              command: "follow_up",
+              requestId,
+              success: false,
+              error: message,
+            });
             return;
           }
           throw err;

@@ -168,6 +168,7 @@ describe("parseJsonl", () => {
       JSON.stringify({
         type: "message",
         id: "2",
+        parentId: "1",
         timestamp: "2026-01-01T00:00:01Z",
         message: { role: "assistant", content: [{ type: "text", text: "second" }] },
       }),
@@ -379,6 +380,7 @@ describe("readSessionTrace", () => {
     writeFileSync(join(dir, "2026-01-02_bbb.jsonl"), JSON.stringify({
       type: "message",
       id: "new",
+      parentId: "old",
       timestamp: "2026-01-02T00:00:00Z",
       message: { role: "user", content: "new message" },
     }));
@@ -404,6 +406,7 @@ describe("readSessionTrace", () => {
       JSON.stringify({
         type: "message",
         id: "2",
+        parentId: "1",
         timestamp: "2026-01-01T00:00:01Z",
         message: {
           role: "assistant",
@@ -413,6 +416,7 @@ describe("readSessionTrace", () => {
       JSON.stringify({
         type: "message",
         id: "3",
+        parentId: "2",
         timestamp: "2026-01-01T00:00:02Z",
         message: {
           role: "toolResult",

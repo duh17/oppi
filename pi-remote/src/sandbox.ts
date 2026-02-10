@@ -9,99 +9,79 @@
  *   /home/pi/.pi       ← pi agent state (bind mount from sandbox dir)
  *   /uv-cache          ← shared uv cache (bind mount)
  *
- * Host layout per user (mounted as /home/pi/.pi/):
- *   <sandboxBaseDir>/<userId>/
- *   ├── agent/              # Pi config (auth, models, extensions)
- *   │   ├── auth.json
- *   │   ├── models.json
- *   │   └── extensions/
- *   │       └── permission-gate/
- *   └── workspace/          # User's working directory
+ * Host layout per workspace:
+ *   <sandboxBaseDir>/<userId>/<workspaceId>/
+ *   ├── workspace/          # Shared working directory
+ *   ├── skills/             # Shared skills (workspace-level)
+ *   └── sessions/<sessionId>/
+ *       ├── agent/          # auth.json, models.json, extensions/
+ *       │   └── skills → ../../../skills  (symlink)
+ *       ├── bin/            # Shim binaries on $PATH
+ *       └── system-prompt.md
+ *
+ * Extracted modules:
+ *   sandbox-skills.ts  — skill sync, shims, fetch allowlist, session profile
+ *   sandbox-prompt.ts  — system prompt generation
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import {
-  existsSync, mkdirSync, cpSync, readFileSync, writeFileSync,
-  rmSync, symlinkSync,
+  existsSync,
+  mkdirSync,
+  cpSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  readdirSync,
+  statSync,
 } from "node:fs";
-import { join, dirname, relative } from "node:path";
-import {
-  syncFile, syncOptionalFile, copyFileDereferenced,
-  isNewer, resolvePath as realpath,
-} from "./sync.js";
+import { join, dirname } from "node:path";
+import { syncFile, syncOptionalFile, resolvePath as realpath } from "./sync.js";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Workspace } from "./types.js";
 import type { SkillRegistry } from "./skills.js";
 import type { AuthProxy } from "./auth-proxy.js";
 
+// Extracted modules
+import {
+  syncSkills,
+  linkSessionSkills,
+  createSkillShims,
+  writeSessionProfile,
+  writeFetchAllowlist,
+} from "./sandbox-skills.js";
+import { generateSystemPrompt } from "./sandbox-prompt.js";
+
 // ─── Constants ───
 
 const IMAGE_NAME = "pi-remote:local";
-const SESSION_CONTAINER_PREFIX = "pi-remote-";
-const CONTAINER_PI_HOME = "/home/pi/.pi";
+const LEGACY_SESSION_CONTAINER_PREFIX = "pi-remote-";
+const WORKSPACE_CONTAINER_PREFIX = "pi-remote-ws-";
 const CONTAINER_WORK = "/work";
 const CONTAINER_UV_CACHE = "/uv-cache";
+const CONTAINER_WORKSPACE_ROOT = "/pi-remote-workspace";
 const CONTAINER_MEMORY_DIR = "/home/pi/.config/dotfiles/shared/memory";
 
-// Internal network — no internet, only host-gateway access.
-// Prevents token exfiltration even if an agent reads credentials from disk.
-const INTERNAL_NETWORK_NAME = "pi-internal";
-const INTERNAL_NETWORK_SUBNET = "10.200.0.0/24";
-const HOST_GATEWAY = "10.200.0.1"; // Internal network gateway → host
+// Container network — NAT mode with internet access.
+// Containers need outbound internet for:
+//   - pip/npm/cargo installs (agent tool use)
+//   - Web fetches (search, scraping tasks)
+//   - API calls routed through auth proxy (credentials stay on host)
+// Security: containers only get stub tokens (sk-ant-oat01-proxy-*, fake JWTs).
+// Real credentials are injected by the auth proxy on the host side.
+const CONTAINER_NETWORK_NAME = "pi-remote";
+const CONTAINER_NETWORK_SUBNET = "10.201.0.0/24";
+const HOST_GATEWAY = "10.201.0.1"; // NAT network gateway → host
 
 // Paths relative to this file
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOX_DIR = join(__dirname, "..", "sandbox");
 const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
 const MEMORY_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
-const BUNDLED_SKILLS_DIR = join(__dirname, "..", "skills");
-
-// ─── Built-in Skills ───
 
 /** Fallback skills when no workspace is configured. */
-const DEFAULT_SKILLS = ["searxng", "fetch", "web-browser"];
-
-/**
- * CLI shim binaries — scripts in skills that should be on $PATH.
- * Maps bin name → relative path from skills dir.
- * Shims are created only for skills that are actually installed.
- */
-const SKILL_SHIMS: Record<string, { skill: string; path: string }> = {
-  "search":      { skill: "searxng", path: "searxng/scripts/search" },
-  "fetch":       { skill: "fetch",   path: "fetch/scripts/fetch" },
-  "fetch-allow": { skill: "fetch",   path: "fetch/scripts/fetch-allow" },
-};
-
-/** Default allowed domains for the fetch skill (container-safe defaults). */
-const DEFAULT_FETCH_ALLOWLIST = `# Fetch domain allowlist (pi-remote defaults)
-# Add entries: fetch --allow-domain example.com
-
-# Documentation
-docs.python.org
-doc.rust-lang.org
-developer.mozilla.org
-devdocs.io
-developer.apple.com
-
-# Code hosting
-github.com
-raw.githubusercontent.com
-gitlab.com
-
-# Knowledge
-en.wikipedia.org
-stackoverflow.com
-arxiv.org
-
-# Tech
-news.ycombinator.com
-go.dev
-pytorch.org
-huggingface.co
-docs.anthropic.com
-example.com
-`;
+const DEFAULT_SKILLS = ["search", "fetch", "web-browser"];
 
 // ─── Types ───
 
@@ -121,6 +101,7 @@ export interface SandboxConfig {
 export interface SpawnOptions {
   sessionId: string;
   userId: string;
+  workspaceId: string;
   userName?: string;
   model?: string;
   /** Workspace configuration for this session. */
@@ -145,7 +126,8 @@ export class SandboxManager {
   readonly config: SandboxConfig;
   private skillRegistry: SkillRegistry | null = null;
   private authProxy: AuthProxy | null = null;
-  private running: Map<string, { containerId: string; process: ChildProcess }> = new Map();
+  /** Running workspace containers keyed by `${userId}/${workspaceId}`. */
+  private running: Map<string, { containerId: string }> = new Map();
 
   constructor(config?: Partial<SandboxConfig>) {
     this.config = { ...DEFAULTS, ...config };
@@ -166,16 +148,22 @@ export class SandboxManager {
     return this.config.sandboxBaseDir;
   }
 
+  private workspaceKey(userId: string, workspaceId: string): string {
+    return `${userId}/${workspaceId}`;
+  }
+
+  private workspaceContainerId(userId: string, workspaceId: string): string {
+    return `${WORKSPACE_CONTAINER_PREFIX}${userId}-${workspaceId}`;
+  }
+
   // ─── Image Management ───
 
   imageExists(): boolean {
     try {
       const out = execSync("container image list", { encoding: "utf-8" });
-      // Image list format: "pi-remote              local              digest..."
       const name = this.config.image.split(":")[0];
       const tag = this.config.image.split(":")[1] || "latest";
-      // Check for name and tag on the same line
-      return out.split("\n").some(line => {
+      return out.split("\n").some((line) => {
         const parts = line.trim().split(/\s+/);
         return parts[0] === name && parts[1] === tag;
       });
@@ -193,9 +181,11 @@ export class SandboxManager {
     console.log(`[sandbox] Building image ${this.config.image}...`);
 
     return new Promise((resolve, reject) => {
-      const proc = spawn("container", [
-        "build", "-t", this.config.image, "-f", containerfile, SANDBOX_DIR,
-      ], { stdio: "inherit" });
+      const proc = spawn(
+        "container",
+        ["build", "-t", this.config.image, "-f", containerfile, SANDBOX_DIR],
+        { stdio: "inherit" },
+      );
 
       proc.on("exit", (code) => {
         if (code === 0) {
@@ -216,46 +206,181 @@ export class SandboxManager {
   }
 
   /**
-   * Ensure the internal container network exists.
-   * Internal network = no internet egress, only host-gateway access.
+   * Ensure the container network exists.
+   * NAT network = internet access + host-gateway for auth proxy.
    * Idempotent — safe to call on every server start.
    */
   ensureNetwork(): void {
     try {
       execSync(
-        `container network create --internal --subnet ${INTERNAL_NETWORK_SUBNET} ${INTERNAL_NETWORK_NAME}`,
+        `container network create --subnet ${CONTAINER_NETWORK_SUBNET} ${CONTAINER_NETWORK_NAME}`,
         { stdio: "ignore" },
       );
-      console.log(`[sandbox] Created internal network ${INTERNAL_NETWORK_NAME} (${INTERNAL_NETWORK_SUBNET})`);
+      console.log(
+        `[sandbox] Created NAT network ${CONTAINER_NETWORK_NAME} (${CONTAINER_NETWORK_SUBNET})`,
+      );
     } catch {
       // Already exists — expected on subsequent starts
     }
   }
 
-  // ─── User Sandbox Setup ───
+  // ─── Directory Layout ───
+
+  getWorkspaceDir(userId: string, workspaceId: string): string {
+    return join(this.config.sandboxBaseDir, userId, workspaceId);
+  }
+
+  getSessionRootDir(userId: string, workspaceId: string, sessionId: string): string {
+    return join(this.getWorkspaceDir(userId, workspaceId), "sessions", sessionId);
+  }
+
+  // ─── Legacy Migration ───
+
+  /**
+   * Migrate a legacy session-scoped sandbox into workspace-scoped layout.
+   *
+   * Legacy: <sandboxBaseDir>/<userId>/<sessionId>/
+   * Target: <sandboxBaseDir>/<userId>/<workspaceId>/sessions/<sessionId>/
+   */
+  migrateLegacySessionLayout(userId: string, workspaceId: string, sessionId: string): void {
+    const legacyRoot = join(this.config.sandboxBaseDir, userId, sessionId);
+    if (!existsSync(legacyRoot)) return;
+
+    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
+    const sessionRoot = this.getSessionRootDir(userId, workspaceId, sessionId);
+
+    for (const dir of [workspaceRoot, sessionRoot]) {
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+
+    // Shared workspace data
+    const legacyWorkspace = join(legacyRoot, "workspace");
+    const targetWorkspace = join(workspaceRoot, "workspace");
+    if (existsSync(legacyWorkspace) && !existsSync(targetWorkspace)) {
+      cpSync(legacyWorkspace, targetWorkspace, { recursive: true });
+    }
+
+    // Session-local pi home + config
+    const copyPairs = [
+      { from: join(legacyRoot, "agent"), to: join(sessionRoot, "agent") },
+      { from: join(legacyRoot, "bin"), to: join(sessionRoot, "bin") },
+      { from: join(legacyRoot, ".config"), to: join(sessionRoot, ".config") },
+      { from: join(legacyRoot, "system-prompt.md"), to: join(sessionRoot, "system-prompt.md") },
+    ];
+
+    for (const pair of copyPairs) {
+      if (!existsSync(pair.from) || existsSync(pair.to)) continue;
+      cpSync(pair.from, pair.to, { recursive: true });
+    }
+
+    const markerDir = join(workspaceRoot, ".migration");
+    mkdirSync(markerDir, { recursive: true, mode: 0o700 });
+    const markerPath = join(markerDir, `${sessionId}.json`);
+    if (!existsSync(markerPath)) {
+      writeFileSync(
+        markerPath,
+        JSON.stringify(
+          {
+            migratedAt: new Date().toISOString(),
+            source: legacyRoot,
+            destination: sessionRoot,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Scan all legacy session-scoped sandboxes and migrate to workspace layout.
+   * Called once on server startup.
+   */
+  migrateAllLegacySandboxes(): { migrated: number; skipped: number; errors: string[] } {
+    const baseDir = this.config.sandboxBaseDir;
+    if (!existsSync(baseDir)) {
+      return { migrated: 0, skipped: 0, errors: [] };
+    }
+
+    let migrated = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    let userDirs: string[];
+    try {
+      userDirs = readdirSync(baseDir).filter((entry) => {
+        if (entry.startsWith("_") || entry.startsWith(".")) return false;
+        return statSync(join(baseDir, entry)).isDirectory();
+      });
+    } catch {
+      return { migrated: 0, skipped: 0, errors: ["Failed to read sandbox base dir"] };
+    }
+
+    for (const userId of userDirs) {
+      const userDir = join(baseDir, userId);
+      let entries: string[];
+      try {
+        entries = readdirSync(userDir).filter((e) => {
+          if (e.startsWith(".")) return false;
+          return statSync(join(userDir, e)).isDirectory();
+        });
+      } catch {
+        errors.push(`Failed to read user dir: ${userId}`);
+        continue;
+      }
+
+      for (const entry of entries) {
+        const entryPath = join(userDir, entry);
+        const hasAgent = existsSync(join(entryPath, "agent"));
+        const hasSessions = existsSync(join(entryPath, "sessions"));
+
+        if (hasSessions || !hasAgent) {
+          skipped++;
+          continue;
+        }
+
+        const sessionId = entry;
+        const workspaceId = `session-${sessionId}`;
+
+        try {
+          this.migrateLegacySessionLayout(userId, workspaceId, sessionId);
+          migrated++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`Migration failed for ${userId}/${sessionId}: ${msg}`);
+        }
+      }
+    }
+
+    return { migrated, skipped, errors };
+  }
+
+  // ─── Session Init ───
 
   /**
    * Initialize sandbox directories and sync host config. Idempotent.
    *
-   * Host layout (mirrors pi's expected ~/.pi/ structure):
-   *   <sandboxBaseDir>/<userId>/<sessionId>/
-   *   ├── agent/              # auth.json, models.json, extensions/, skills/
-   *   ├── bin/                # Shim binaries on $PATH
-   *   ├── .config/fetch/     # Fetch skill allowlist
-   *   ├── system-prompt.md    # Generated system prompt
-   *   └── workspace/          # User's working directory
-   *
-   * Each session gets its own pi home dir so JSONL files, workspace,
-   * and agent state are isolated between sessions.
+   * Host layout (workspace-scoped):
+   *   <sandboxBaseDir>/<userId>/<workspaceId>/
+   *   ├── workspace/                    # Shared working directory
+   *   ├── skills/                       # Shared skills (workspace-level)
+   *   └── sessions/<sessionId>/
+   *       ├── agent/                    # auth.json, models.json, extensions/
+   *       │   └── skills → ../../../skills  (symlink to workspace skills)
+   *       ├── bin/                      # Shim binaries on $PATH
+   *       ├── .config/fetch/            # Fetch skill allowlist
+   *       └── system-prompt.md          # Generated system prompt
    */
   initSession(
     userId: string,
+    workspaceId: string,
     sessionId: string,
     opts?: { userName?: string; model?: string; workspace?: Workspace },
   ): { piDir: string; workDir: string } {
-    const piDir = join(this.config.sandboxBaseDir, userId, sessionId);
+    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
+    const piDir = this.getSessionRootDir(userId, workspaceId, sessionId);
     const agentDir = join(piDir, "agent");
-    const workDir = join(piDir, "workspace");
+    const workDir = join(workspaceRoot, "workspace");
 
     for (const dir of [agentDir, workDir]) {
       if (!existsSync(dir)) {
@@ -268,55 +393,55 @@ export class SandboxManager {
       mkdirSync(this.config.uvCacheDir, { recursive: true });
     }
 
-    // Auth isolation: write stub auth.json with proxy placeholders for
-    // substitute-mode providers, real credentials for passthrough-mode providers.
-    // If no auth proxy is configured, fall back to copying the real auth.json.
+    // Auth isolation
     this.writeSessionAuth(agentDir, sessionId);
 
     // Sync models.json — rewrite localhost → host-gateway, inject proxy baseUrls
-    this.syncModels(
-      join(homedir(), ".pi", "agent", "models.json"),
-      join(agentDir, "models.json"),
-    );
+    this.syncModels(join(homedir(), ".pi", "agent", "models.json"), join(agentDir, "models.json"));
 
-    // Sync settings.json from host pi (if present) — carries defaultModel, defaultProvider, etc.
-    syncFile(
-      join(homedir(), ".pi", "agent", "settings.json"),
-      join(agentDir, "settings.json"),
-    );
+    // Sync settings.json
+    syncFile(join(homedir(), ".pi", "agent", "settings.json"), join(agentDir, "settings.json"));
 
-    // Install extensions to agent/extensions/ (pi auto-discovers from ~/.pi/agent/extensions/)
+    // Install extensions
     const extensionsDir = join(agentDir, "extensions");
     mkdirSync(extensionsDir, { recursive: true });
 
     if (existsSync(EXTENSION_SRC)) {
       const dest = join(extensionsDir, "permission-gate");
-      // Always re-copy to pick up changes
       if (existsSync(dest)) rmSync(dest, { recursive: true });
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    // Optional memory extension (workspace-controlled)
     syncOptionalFile(
       MEMORY_EXTENSION_SRC,
       join(extensionsDir, "memory.ts"),
       opts?.workspace?.memoryEnabled === true,
     );
 
-    // Sync skills — workspace-driven or fallback to defaults
+    // Sync skills (workspace-level, shared across sessions)
     const requestedSkills = opts?.workspace?.skills ?? DEFAULT_SKILLS;
-    const installedSkills = this.syncSkills(agentDir, requestedSkills);
+    const workspaceSkillsDir = join(workspaceRoot, "skills");
+    const installedSkills = syncSkills(workspaceSkillsDir, requestedSkills, this.skillRegistry);
+    linkSessionSkills(agentDir, workspaceSkillsDir);
 
     // Create shim binaries (bin/ on $PATH inside container)
-    this.createSkillShims(piDir, agentDir, installedSkills);
+    createSkillShims(piDir, agentDir, workspaceSkillsDir, installedSkills);
 
-    // Write default fetch allowlist (if not already present)
+    // Write .profile so login shells preserve our PATH
+    writeSessionProfile(piDir, sessionId, CONTAINER_WORKSPACE_ROOT);
+
+    // Write default fetch allowlist
     if (installedSkills.includes("fetch")) {
-      this.writeFetchAllowlist(piDir);
+      writeFetchAllowlist(piDir);
     }
 
     // Generate session system prompt
-    this.generateSystemPrompt(piDir, installedSkills, opts);
+    generateSystemPrompt(piDir, installedSkills, HOST_GATEWAY, {
+      userName: opts?.userName,
+      model: opts?.model,
+      workspace: opts?.workspace,
+      skillRegistry: this.skillRegistry,
+    });
 
     return { piDir, workDir };
   }
@@ -324,12 +449,39 @@ export class SandboxManager {
   // ─── Container Lifecycle ───
 
   /**
-   * Spawn pi inside an Apple container. Returns the ChildProcess
-   * with stdin/stdout/stderr piped for RPC communication.
+   * Spawn pi process inside a workspace-owned container.
    */
   spawnPi(opts: SpawnOptions): ChildProcess {
-    const { sessionId, userId, userName, model, workspace, gatePort, env: extraEnv } = opts;
-    const { piDir, workDir } = this.initSession(userId, sessionId, { userName, model, workspace });
+    const {
+      sessionId,
+      userId,
+      workspaceId,
+      userName,
+      model,
+      workspace,
+      gatePort,
+      env: extraEnv,
+    } = opts;
+    const { piDir, workDir } = this.initSession(userId, workspaceId, sessionId, {
+      userName,
+      model,
+      workspace,
+    });
+
+    // Resolve mounts
+    const workspaceRootMount = realpath(this.getWorkspaceDir(userId, workspaceId));
+    const workMount = workspace?.hostMount
+      ? realpath(resolveHomePath(workspace.hostMount))
+      : realpath(workDir);
+
+    // Ensure the workspace container is running
+    const containerId = this.ensureWorkspaceContainer(
+      userId,
+      workspaceId,
+      workMount,
+      workspaceRootMount,
+      workspace,
+    );
 
     // Build pi args
     const piArgs = ["--mode", "rpc"];
@@ -343,44 +495,110 @@ export class SandboxManager {
       }
     }
 
-    // Append system prompt if generated
     const systemPromptPath = join(piDir, "system-prompt.md");
+    const containerSessionRoot = `${CONTAINER_WORKSPACE_ROOT}/sessions/${sessionId}`;
+    const containerAgentDir = `${containerSessionRoot}/agent`;
+    const containerBinDir = `${containerSessionRoot}/bin`;
+
     if (existsSync(systemPromptPath)) {
-      piArgs.push("--append-system-prompt", "/tmp/system-prompt.md");
+      piArgs.push("--append-system-prompt", `${containerSessionRoot}/system-prompt.md`);
     }
 
-    const containerId = `pi-remote-${sessionId}`;
+    const execArgs = [
+      "exec",
+      "-i",
+      "-w",
+      CONTAINER_WORK,
+      "-e",
+      `PI_CODING_AGENT_DIR=${containerAgentDir}`,
+      "-e",
+      `HOME=${containerSessionRoot}`,
+      "-e",
+      `PATH=${containerBinDir}:/home/pi/.pi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+      "-e",
+      "PI_SANDBOX=1",
+      "-e",
+      `PI_REMOTE_SESSION=${sessionId}`,
+      "-e",
+      `PI_REMOTE_WORKSPACE=${workspaceId}`,
+      "-e",
+      `PI_REMOTE_USER=${userId}`,
+    ];
 
-    // Resolve work directory — workspace hostMount overrides default
-    const workMount = workspace?.hostMount
-      ? realpath(resolveHomePath(workspace.hostMount))
-      : realpath(workDir);
+    if (gatePort) {
+      execArgs.push("-e", `PI_REMOTE_GATE_HOST=${HOST_GATEWAY}`);
+      execArgs.push("-e", `PI_REMOTE_GATE_PORT=${gatePort}`);
+    }
 
-    // Optional workspace memory mount (for remember/recall extension)
+    if (extraEnv) {
+      for (const [k, v] of Object.entries(extraEnv)) {
+        execArgs.push("-e", `${k}=${v}`);
+      }
+    }
+
+    execArgs.push(containerId, "pi", ...piArgs);
+
+    return spawn("container", execArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  }
+
+  private ensureWorkspaceContainer(
+    userId: string,
+    workspaceId: string,
+    workMount: string,
+    workspaceRootMount: string,
+    workspace?: Workspace,
+  ): string {
+    const key = this.workspaceKey(userId, workspaceId);
+    const tracked = this.running.get(key);
+
+    if (tracked && this.isContainerRunning(tracked.containerId)) {
+      return tracked.containerId;
+    }
+
+    const containerId = this.workspaceContainerId(userId, workspaceId);
+
+    // Reuse existing running container after server restart
+    if (this.isContainerRunning(containerId)) {
+      this.running.set(key, { containerId });
+      return containerId;
+    }
+
     const memoryMount = this.resolveMemoryMount(userId, workspace);
 
-    // Build container run args
     const args = [
-      "run", "--rm", "-i",
-      "--name", containerId,
-      "--network", INTERNAL_NETWORK_NAME,
-      "-c", String(this.config.cpus),
-      "-m", `${this.config.memoryMb}M`,
-
-      // Mounts — resolve symlinks (container CLI doesn't follow them)
-      "-v", `${workMount}:${CONTAINER_WORK}`,
-      "-v", `${realpath(piDir)}:${CONTAINER_PI_HOME}`,
-      "-v", `${realpath(this.config.uvCacheDir)}:${CONTAINER_UV_CACHE}`,
-
-      "-w", CONTAINER_WORK,
-
-      // Environment
-      "-e", `SEARXNG_URL=http://${HOST_GATEWAY}:8888`,
-      "-e", `LMSTUDIO_URL=http://${HOST_GATEWAY}:1234`,
-      "-e", `UV_CACHE_DIR=${CONTAINER_UV_CACHE}`,
-      "-e", "PI_SANDBOX=1",
-      "-e", `PI_REMOTE_SESSION=${sessionId}`,
-      "-e", `PI_REMOTE_USER=${userId}`,
+      "run",
+      "--rm",
+      "-d",
+      "--name",
+      containerId,
+      "--network",
+      CONTAINER_NETWORK_NAME,
+      "-c",
+      String(this.config.cpus),
+      "-m",
+      `${this.config.memoryMb}M`,
+      "-v",
+      `${workMount}:${CONTAINER_WORK}`,
+      "-v",
+      `${workspaceRootMount}:${CONTAINER_WORKSPACE_ROOT}`,
+      "-v",
+      `${realpath(this.config.uvCacheDir)}:${CONTAINER_UV_CACHE}`,
+      "-w",
+      CONTAINER_WORK,
+      "-e",
+      `SEARXNG_URL=http://${HOST_GATEWAY}:8888`,
+      "-e",
+      `LMSTUDIO_URL=http://${HOST_GATEWAY}:1234`,
+      "-e",
+      `UV_CACHE_DIR=${CONTAINER_UV_CACHE}`,
+      "-e",
+      "PI_SANDBOX=1",
+      "-e",
+      `PI_REMOTE_WORKSPACE=${workspaceId}`,
+      "-e",
+      `PI_REMOTE_USER=${userId}`,
     ];
 
     if (memoryMount) {
@@ -388,95 +606,72 @@ export class SandboxManager {
       args.push("-e", `PI_REMOTE_MEMORY_NAMESPACE=${memoryMount.namespace}`);
     }
 
-    // Mount system prompt as read-only at /tmp/
-    if (existsSync(systemPromptPath)) {
-      args.push("-v", `${realpath(systemPromptPath)}:/tmp/system-prompt.md:ro`);
-    }
+    args.push(
+      "--entrypoint",
+      "sh",
+      this.config.image,
+      "-lc",
+      "trap 'exit 0' TERM INT; while true; do sleep 3600; done",
+    );
 
-    if (gatePort) {
-      args.push("-e", `PI_REMOTE_GATE_HOST=${HOST_GATEWAY}`);
-      args.push("-e", `PI_REMOTE_GATE_PORT=${gatePort}`);
-    }
+    execSync(`container ${args.map(escapeShellArg).join(" ")}`, { stdio: "ignore" });
 
-    // Extra env vars
-    if (extraEnv) {
-      for (const [k, v] of Object.entries(extraEnv)) {
-        args.push("-e", `${k}=${v}`);
-      }
-    }
-
-    // Image + pi entrypoint args
-    args.push(this.config.image, ...piArgs);
-
-    const proc = spawn("container", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    this.running.set(sessionId, { containerId, process: proc });
-    proc.on("exit", () => this.running.delete(sessionId));
-
-    return proc;
+    this.running.set(key, { containerId });
+    console.log(`[sandbox] Started workspace container ${containerId}`);
+    return containerId;
   }
 
-  /**
-   * Stop a container gracefully, then force-kill.
-   */
-  async stopContainer(sessionId: string): Promise<void> {
-    const entry = this.running.get(sessionId);
-    if (!entry) {
-      return;
-    }
+  async stopWorkspaceContainer(userId: string, workspaceId: string): Promise<void> {
+    const key = this.workspaceKey(userId, workspaceId);
+    const tracked = this.running.get(key);
+    const containerId = tracked?.containerId ?? this.workspaceContainerId(userId, workspaceId);
 
-    this.stopContainerById(entry.containerId);
-    this.running.delete(sessionId);
+    this.stopContainerById(containerId);
+    this.running.delete(key);
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all(
-      Array.from(this.running.keys()).map(id => this.stopContainer(id)),
-    );
+    for (const [key, entry] of this.running) {
+      this.stopContainerById(entry.containerId);
+      this.running.delete(key);
+    }
   }
 
-  /**
-   * Best-effort cleanup for stale session containers left by crashes.
-   *
-   * Note: this targets only containers we create (`pi-remote-<sessionId>`).
-   */
   async cleanupOrphanedContainers(): Promise<void> {
     const tracked = new Set(Array.from(this.running.values()).map((entry) => entry.containerId));
-    const candidates = this.listRunningSessionContainerIds();
+    const candidates = this.listRunningManagedContainerIds();
     const orphaned = candidates.filter((containerId) => !tracked.has(containerId));
 
-    if (orphaned.length === 0) {
-      return;
-    }
+    if (orphaned.length === 0) return;
 
     console.log(`[sandbox] Cleaning up ${orphaned.length} orphan container(s)`);
-
     for (const containerId of orphaned) {
       this.stopContainerById(containerId);
       console.log(`[sandbox] Stopped orphan ${containerId}`);
     }
   }
 
-  isRunning(sessionId: string): boolean {
-    return this.running.has(sessionId);
+  isRunningWorkspace(userId: string, workspaceId: string): boolean {
+    return this.running.has(this.workspaceKey(userId, workspaceId));
   }
 
-  private listRunningSessionContainerIds(): string[] {
+  private listRunningManagedContainerIds(): string[] {
     try {
-      const output = execSync("container list", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      const output = execSync("container list", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
       const ids: string[] = [];
-      const lines = output.split("\n");
 
-      for (const line of lines.slice(1)) {
+      for (const line of output.split("\n").slice(1)) {
         const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
+        if (!trimmed) continue;
 
         const containerId = trimmed.split(/\s+/)[0];
-        if (containerId.startsWith(SESSION_CONTAINER_PREFIX)) {
+        if (
+          containerId.startsWith(WORKSPACE_CONTAINER_PREFIX) ||
+          containerId.startsWith(LEGACY_SESSION_CONTAINER_PREFIX)
+        ) {
           ids.push(containerId);
         }
       }
@@ -484,6 +679,18 @@ export class SandboxManager {
       return ids;
     } catch {
       return [];
+    }
+  }
+
+  private isContainerRunning(containerId: string): boolean {
+    try {
+      const output = execSync("container list", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return output.split("\n").some((line) => line.trim().startsWith(`${containerId} `));
+    } catch {
+      return false;
     }
   }
 
@@ -504,32 +711,37 @@ export class SandboxManager {
 
   // ─── Convenience Getters ───
 
-  getWorkDir(userId: string, sessionId: string): string {
-    const workDir = join(this.config.sandboxBaseDir, userId, sessionId, "workspace");
+  getWorkDir(userId: string, sessionId: string, workspaceId?: string): string {
+    const resolvedWorkspaceId = workspaceId || sessionId;
+    const workDir = join(this.config.sandboxBaseDir, userId, resolvedWorkspaceId, "workspace");
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
     return workDir;
   }
 
   // ─── Session Validation ───
 
-  /**
-   * Validate a session sandbox after initSession() has run.
-   * Checks that required extensions and config files are present and readable.
-   *
-   * Returns errors (critical, session should not proceed) and warnings
-   * (non-critical, session can start with degraded functionality).
-   */
   validateSession(
     userId: string,
     sessionId: string,
-    opts?: { memoryEnabled?: boolean },
+    opts?: { memoryEnabled?: boolean; workspaceId?: string },
   ): { errors: string[]; warnings: string[] } {
-    const agentDir = join(this.config.sandboxBaseDir, userId, sessionId, "agent");
+    const workspaceId = opts?.workspaceId || sessionId;
+
+    const workspaceAgentDir = join(
+      this.config.sandboxBaseDir,
+      userId,
+      workspaceId,
+      "sessions",
+      sessionId,
+      "agent",
+    );
+    const legacyAgentDir = join(this.config.sandboxBaseDir, userId, sessionId, "agent");
+    const agentDir = existsSync(workspaceAgentDir) ? workspaceAgentDir : legacyAgentDir;
+
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Permission gate extension — required for tool call gating.
-    // Without it, every tool call is blocked ("Permission gate not connected").
+    // Permission gate extension
     const gateDir = join(agentDir, "extensions", "permission-gate");
     if (!existsSync(gateDir)) {
       errors.push("Permission gate extension directory missing");
@@ -542,7 +754,7 @@ export class SandboxManager {
       }
     }
 
-    // Memory extension — required only when workspace has memoryEnabled.
+    // Memory extension
     if (opts?.memoryEnabled) {
       const memExt = join(agentDir, "extensions", "memory.ts");
       if (!existsSync(memExt)) {
@@ -550,7 +762,7 @@ export class SandboxManager {
       }
     }
 
-    // Auth config — needed for API calls (may be a stub with proxy placeholders).
+    // Auth config
     if (!existsSync(join(agentDir, "auth.json"))) {
       warnings.push("auth.json not synced — API authentication may fail");
     }
@@ -558,230 +770,13 @@ export class SandboxManager {
     return { errors, warnings };
   }
 
-  // ─── Skill Sync ───
-
-  /**
-   * Sync requested skills into the session's agent/skills/ directory.
-   *
-   * Source priority: SkillRegistry (host paths) > bundled fallback.
-   * Returns list of skill names that were actually installed.
-   */
-  private syncSkills(agentDir: string, requestedSkills: string[]): string[] {
-    const skillsDir = join(agentDir, "skills");
-    if (!existsSync(skillsDir)) {
-      mkdirSync(skillsDir, { recursive: true });
-    }
-
-    const hostSkillsDir = join(homedir(), ".pi", "agent", "skills");
-    const installed: string[] = [];
-
-    for (const name of requestedSkills) {
-      const dest = join(skillsDir, name);
-
-      // Source priority: registry (exact host path) > host dotfiles > bundled
-      const registryPath = this.skillRegistry?.getPath(name);
-      const hostSrc = join(hostSkillsDir, name);
-      const bundledSrc = join(BUNDLED_SKILLS_DIR, name);
-
-      let src: string | null = null;
-      if (registryPath && existsSync(registryPath)) {
-        src = registryPath;
-      } else if (existsSync(hostSrc)) {
-        src = hostSrc;
-      } else if (existsSync(bundledSrc)) {
-        src = bundledSrc;
-      }
-
-      if (!src) {
-        console.log(`[sandbox] ⚠ Skill "${name}" not found, skipping`);
-        continue;
-      }
-
-      // Re-copy if source is newer or dest doesn't exist
-      if (!existsSync(dest) || isNewer(src, dest)) {
-        if (existsSync(dest)) rmSync(dest, { recursive: true });
-        cpSync(src, dest, { recursive: true, dereference: true });
-      }
-
-      installed.push(name);
-    }
-
-    if (installed.length > 0) {
-      console.log(`[sandbox] Synced ${installed.length} skill(s): ${installed.join(", ")}`);
-    }
-
-    return installed;
-  }
-
-  /**
-   * Create symlink shims in bin/ so skill scripts are on $PATH.
-   * Container has PATH="/home/pi/.pi/bin:..." so these are callable directly.
-   * Only creates shims for skills that were actually installed.
-   */
-  private createSkillShims(piDir: string, agentDir: string, installedSkills: string[]): void {
-    const binDir = join(piDir, "bin");
-    if (!existsSync(binDir)) {
-      mkdirSync(binDir, { recursive: true });
-    }
-
-    const installedSet = new Set(installedSkills);
-
-    for (const [binName, shim] of Object.entries(SKILL_SHIMS)) {
-      const link = join(binDir, binName);
-
-      // Only create shim if the skill is installed in this session
-      if (!installedSet.has(shim.skill)) {
-        // Clean up stale shims from previous runs with different workspaces
-        if (existsSync(link)) rmSync(link);
-        continue;
-      }
-
-      const target = join(agentDir, "skills", shim.path);
-      if (!existsSync(target)) continue;
-
-      if (existsSync(link)) rmSync(link);
-      const relTarget = relative(binDir, target);
-      symlinkSync(relTarget, link);
-    }
-  }
-
-  /**
-   * Write a default fetch domain allowlist so fetch works out of the box.
-   * Skips if the user already has one synced.
-   */
-  private writeFetchAllowlist(piDir: string): void {
-    const configDir = join(piDir, ".config", "fetch");
-    const allowlistPath = join(configDir, "allowed_domains.txt");
-
-    if (existsSync(allowlistPath)) return;
-
-    // Try to sync from host first
-    const hostAllowlist = join(homedir(), ".config", "fetch", "allowed_domains.txt");
-    if (existsSync(hostAllowlist)) {
-      mkdirSync(configDir, { recursive: true });
-      copyFileDereferenced(hostAllowlist, allowlistPath);
-      return;
-    }
-
-    // Fall back to sensible defaults
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(allowlistPath, DEFAULT_FETCH_ALLOWLIST);
-  }
-
-  /**
-   * Generate a session system prompt that tells the agent:
-   * - what environment it's in (including workspace name)
-   * - what tools/skills are available
-   * - workspace-specific instructions
-   * - how to behave for a phone-based user (mobile output contract)
-   */
-  private generateSystemPrompt(
-    piDir: string,
-    installedSkills: string[],
-    opts?: { userName?: string; model?: string; workspace?: Workspace },
-  ): void {
-    const skillsList = installedSkills.map((name) => {
-      // Try to get description from registry for richer skill docs
-      const info = this.skillRegistry?.get(name);
-      const desc = info?.description;
-
-      if (name === "searxng") return "- **searxng** — `search \"query\"` for private web search";
-      if (name === "fetch") return "- **fetch** — `fetch \"url\"` to extract readable content from URLs";
-      if (name === "web-browser") return "- **web-browser** — headless Chrome automation (screenshots, navigation)";
-      if (desc) return `- **${name}** — ${desc}`;
-      return `- **${name}**`;
-    }).join("\n");
-
-    const userName = opts?.userName ?? "the user";
-    const modelNote = opts?.model ? `\nModel: ${opts.model}` : "";
-    const workspace = opts?.workspace;
-    const wsNote = workspace ? `\nWorkspace: **${workspace.name}**${workspace.description ? ` — ${workspace.description}` : ""}` : "";
-
-    // Build CLI tools section based on installed skills
-    const cliTools: string[] = [];
-    if (installedSkills.includes("searxng")) {
-      cliTools.push('- `search "query"` — SearXNG web search (private, self-hosted)');
-    }
-    if (installedSkills.includes("fetch")) {
-      cliTools.push('- `fetch "url"` — Extract readable content from URLs');
-      cliTools.push('- `fetch "url" --browser` — Force headless Chromium for JS-rendered pages');
-    }
-    cliTools.push("- Standard dev tools: git, rg, fd, jq, make, tree, sqlite, uv");
-
-    const cliToolsList = cliTools.join("\n");
-
-    // Workspace-specific instructions
-    const wsPrompt = workspace?.systemPrompt
-      ? `\n## Workspace Instructions\n\n${workspace.systemPrompt}\n`
-      : "";
-
-    const memoryNote = workspace?.memoryEnabled
-      ? `\n## Memory\n\n- Persistent memory is enabled for this workspace (${workspace.memoryNamespace || `ws-${workspace.id}`}).\n- Use \`recall\` before re-investigating known topics.\n- Use \`remember\` for durable discoveries and decisions.\n`
-      : "";
-
-    const prompt = `# Pi Remote Session
-
-You are running inside a **Pi Remote container** — a sandboxed coding
-environment managed from a mobile app. ${userName} interacts with you from
-their phone.${modelNote}${wsNote}
-
-## Environment
-
-- **Working directory:** \`/work\` (persists across container restarts)
-- **Pi agent state:** \`/home/pi/.pi\` (skills, extensions, config)
-- **Container:** Alpine Linux, Node.js 22, Python 3, Chromium
-- **Network:** Can reach host services via ${HOST_GATEWAY}
-
-## CLI tools on PATH
-
-${cliToolsList}
-
-## Skills
-
-Load a skill's SKILL.md with \`read\` when the task matches:
-${skillsList}
-${wsPrompt}${memoryNote}
-## Mobile output contract
-
-**The user is on their phone.** This changes how you work:
-
-1. **Work autonomously.** Complete the full task before reporting back.
-   Don't pause for confirmation on intermediate steps.
-
-2. **Save output to files.** Never dump more than ~20 lines of output
-   inline. Write reports, code, data, and logs to \`/work\` and tell the
-   user the file path. They can browse \`/work\` on their phone.
-
-3. **End with a structured summary:**
-   - What you did (1–3 sentences)
-   - Files created or modified (list paths)
-   - Anything that needs their attention or next steps
-
-4. **For errors, be concise.** Show the key error message inline (1–3
-   lines). Save the full stack trace or log to a file if it's long.
-
-5. **Use brief progress markers** for multi-step work:
-   - "Searching for X..."
-   - "Found 12 results, analyzing..."
-   - "Done. Report saved to /work/report.md"
-
-## Permission gate
-
-Some tool calls require approval from the user's phone. When a call is
-gated, you'll get a clear message. Wait for the response — don't retry
-or work around it. The user sees the request on their phone and will
-approve or deny it.
-`;
-
-    writeFileSync(join(piDir, "system-prompt.md"), prompt);
-  }
-
   // ─── Helpers ───
 
-  private resolveMemoryMount(userId: string, workspace?: Workspace): { hostDir: string; namespace: string } | null {
-    if (!workspace?.memoryEnabled) {
-      return null;
-    }
+  private resolveMemoryMount(
+    userId: string,
+    workspace?: Workspace,
+  ): { hostDir: string; namespace: string } | null {
+    if (!workspace?.memoryEnabled) return null;
 
     const namespace = sanitizeMemoryNamespace(workspace.memoryNamespace || `ws-${workspace.id}`);
     const hostDir = join(this.config.sandboxBaseDir, "_memory", userId, namespace);
@@ -791,7 +786,10 @@ approve or deny it.
 
     const memoryFile = join(hostDir, "MEMORY.md");
     if (!existsSync(memoryFile)) {
-      writeFileSync(memoryFile, "# Memory\n\n## Rules\n\n- Never store secrets, credentials, API keys, or passwords via `remember`\n");
+      writeFileSync(
+        memoryFile,
+        "# Memory\n\n## Rules\n\n- Never store secrets, credentials, API keys, or passwords via `remember`\n",
+      );
     }
 
     return { hostDir, namespace };
@@ -800,26 +798,14 @@ approve or deny it.
   /**
    * Write session auth.json with credential isolation.
    *
-   * The auth proxy builds stub credentials for each provider:
-   * - Anthropic: placeholder "proxy-<sessionId>" (SDK sends as x-api-key)
-   * - OpenAI-Codex: fake JWT with real account ID + embedded session ID
-   *   (SDK extracts chatgpt_account_id from JWT payload successfully)
-   *
-   * Real credentials never enter the container. The auth proxy on the
-   * host substitutes real tokens at request time.
-   *
-   * Falls back to copying the host auth.json if no auth proxy is configured.
+   * Auth proxy builds stub credentials per provider — real creds never enter
+   * the container. Falls back to copying host auth.json if no proxy.
    */
   private writeSessionAuth(agentDir: string, sessionId: string): void {
     const destPath = join(agentDir, "auth.json");
 
     if (!this.authProxy) {
-      // No proxy — fall back to direct copy (pre-isolation behavior)
-      syncFile(
-        join(homedir(), ".pi", "agent", "auth.json"),
-        destPath,
-        { mode: 0o600 },
-      );
+      syncFile(join(homedir(), ".pi", "agent", "auth.json"), destPath, { mode: 0o600 });
       return;
     }
 
@@ -828,18 +814,18 @@ approve or deny it.
   }
 
   /**
-   * Sync models.json from host with two transforms:
+   * Sync models.json from host with transforms:
    * 1. localhost → host-gateway (for local providers like LM Studio)
-   * 2. Inject proxy baseUrl for remote providers (Anthropic, OpenAI-Codex)
+   * 2. Inject proxy baseUrl for remote providers
    */
   private syncModels(src: string, dest: string): void {
     if (!existsSync(src)) return;
     const content = readFileSync(src, "utf-8");
 
-    // Rewrite localhost → host-gateway (for local models)
+    // Rewrite localhost → host-gateway
     let transformed = content.replace(/http:\/\/localhost:/g, `http://${HOST_GATEWAY}:`);
 
-    // Inject proxy baseUrl overrides for remote providers
+    // Inject proxy baseUrl overrides
     if (this.authProxy) {
       const proxiedProviders = this.authProxy.getProxiedProviders();
       if (proxiedProviders.length > 0) {
@@ -864,31 +850,25 @@ approve or deny it.
 
 // ─── Utilities ───
 
+function escapeShellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 function sanitizeMemoryNamespace(value: string): string {
   const trimmed = value.trim().toLowerCase();
-  if (!trimmed) {
-    return "default";
-  }
+  if (!trimmed) return "default";
 
   const cleaned = trimmed
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  if (!cleaned) {
-    return "default";
-  }
-
-  return cleaned.slice(0, 64);
+  return cleaned ? cleaned.slice(0, 64) : "default";
 }
 
-/** Resolve ~ to home directory in a path string. */
 function resolveHomePath(p: string): string {
-  if (p.startsWith("~/")) {
-    return join(homedir(), p.slice(2));
-  }
-  if (p === "~") {
-    return homedir();
-  }
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  if (p === "~") return homedir();
   return p;
 }

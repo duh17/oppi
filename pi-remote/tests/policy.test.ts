@@ -107,9 +107,9 @@ describe("PolicyEngine (container)", () => {
     expect(d.action).toBe("allow");
   });
 
-  it("allows git push (non-force)", () => {
+  it("asks for git push (external action)", () => {
     const d = container.evaluate({ tool: "bash", input: { command: "git push origin main" }, toolCallId: "6" });
-    expect(d.action).toBe("allow");
+    expect(d.action).toBe("ask");
   });
 
   it("allows git commit", () => {

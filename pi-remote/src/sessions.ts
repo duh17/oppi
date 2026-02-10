@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -38,6 +38,11 @@ import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
 import type { AuthProxy } from "./auth-proxy.js";
 import { PolicyEngine, type PathAccess } from "./policy.js";
+import {
+  WorkspaceRuntime,
+  resolveRuntimeLimits,
+  type WorkspaceSessionIdentity,
+} from "./workspace-runtime.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -55,10 +60,7 @@ function ts(): string {
  * Pi normally streams assistant text via `message_update.text_delta`, but some
  * turns only include text in `message_end`. This helper bridges that gap.
  */
-export function computeAssistantTextTailDelta(
-  streamedText: string,
-  finalizedText: string,
-): string {
+export function computeAssistantTextTailDelta(streamedText: string, finalizedText: string): string {
   if (finalizedText.length === 0) return "";
   if (streamedText.length === 0) return finalizedText;
   if (finalizedText === streamedText) return "";
@@ -133,7 +135,11 @@ export class TurnDedupeCache {
     this.trimToCapacity();
   }
 
-  updateStage(clientTurnId: string, stage: TurnAckStage, now = Date.now()): TurnDedupeRecord | null {
+  updateStage(
+    clientTurnId: string,
+    stage: TurnAckStage,
+    now = Date.now(),
+  ): TurnDedupeRecord | null {
     const entry = this.entries.get(clientTurnId);
     if (!entry) {
       return null;
@@ -192,6 +198,7 @@ function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string 
 interface ActiveSession {
   session: Session;
   process: ChildProcess;
+  workspaceId: string;
   /** Runtime mode — determines how to stop the process. */
   runtime: "host" | "container";
   subscribers: Set<(msg: ServerMessage) => void>;
@@ -252,7 +259,11 @@ export interface ExtensionUIResponse {
 
 /** Fire-and-forget UI methods (no response needed) */
 const FIRE_AND_FORGET_METHODS = new Set([
-  "notify", "setStatus", "setWidget", "setTitle", "set_editor_text",
+  "notify",
+  "setStatus",
+  "setWidget",
+  "setTitle",
+  "set_editor_text",
 ]);
 
 // ─── Extension Paths ───
@@ -273,8 +284,10 @@ export class SessionManager extends EventEmitter {
   private gate: GateServer;
   private sandbox: SandboxManager;
   private authProxy: AuthProxy | null;
+  private runtimeManager: WorkspaceRuntime;
   private active: Map<string, ActiveSession> = new Map();
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
+  private workspaceIdleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
   private readonly piExecutable: string;
 
@@ -290,6 +303,7 @@ export class SessionManager extends EventEmitter {
     this.gate = gate;
     this.sandbox = sandbox;
     this.authProxy = authProxy ?? null;
+    this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
     this.piExecutable = this.resolvePiExecutable();
   }
 
@@ -301,7 +315,12 @@ export class SessionManager extends EventEmitter {
   /**
    * Start a new session — spawns pi on the host or in a container.
    */
-  async startSession(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
+  async startSession(
+    userId: string,
+    sessionId: string,
+    userName?: string,
+    workspace?: Workspace,
+  ): Promise<Session> {
     const key = `${userId}/${sessionId}`;
 
     const existing = this.active.get(key);
@@ -318,7 +337,15 @@ export class SessionManager extends EventEmitter {
       return pending;
     }
 
-    const promise = this.startSessionInner(userId, sessionId, userName, workspace);
+    const promise = this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+      const active = this.active.get(key);
+      if (active) {
+        this.resetIdleTimer(key);
+        return active.session;
+      }
+      return this.startSessionInner(userId, sessionId, userName, workspace);
+    });
+
     this.starting.set(key, promise);
     try {
       return await promise;
@@ -327,66 +354,150 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private async startSessionInner(userId: string, sessionId: string, userName?: string, workspace?: Workspace): Promise<Session> {
+  private async startSessionInner(
+    userId: string,
+    sessionId: string,
+    userName?: string,
+    workspace?: Workspace,
+  ): Promise<Session> {
     const key = `${userId}/${sessionId}`;
 
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-    const runtime = workspace?.runtime ?? "host";
-    const proc = runtime === "host"
-      ? await this.spawnPiHost(session, workspace)
-      : await this.spawnPiContainer(session, userName, workspace);
+    const identity = this.buildWorkspaceIdentity(session, workspace);
 
-    // Validate sandbox (container mode only — host mode has no sandbox to validate)
-    if (runtime === "container") {
-      const { errors, warnings } = this.sandbox.validateSession(
-        userId, sessionId, { memoryEnabled: workspace?.memoryEnabled },
-      );
+    return this.runtimeManager.withWorkspaceLock(
+      identity.userId,
+      identity.workspaceId,
+      async () => {
+        this.runtimeManager.reserveSessionStart(identity);
 
-      if (errors.length > 0) {
-        for (const e of errors) console.error(`${ts()} [session:${sessionId}] bootstrap error: ${e}`);
-        for (const w of warnings) console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
-        session.status = "error";
-        session.warnings = [...errors, ...warnings];
-        this.storage.saveSession(session);
-        await this.sandbox.stopContainer(sessionId);
-        this.gate.destroySessionSocket(sessionId);
-        throw new Error(`Session bootstrap failed: ${errors[0]}`);
-      }
+        const runtime = workspace?.runtime ?? "host";
 
-      if (warnings.length > 0) {
-        session.warnings = warnings;
-        for (const w of warnings) console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
-      }
+        try {
+          if (runtime === "container") {
+            this.clearWorkspaceIdleTimer(identity.userId, identity.workspaceId);
+          }
+
+          const proc =
+            runtime === "host"
+              ? await this.spawnPiHost(session, workspace)
+              : await this.spawnPiContainer(session, identity.workspaceId, userName, workspace);
+
+          // Validate sandbox (container mode only — host mode has no sandbox to validate)
+          if (runtime === "container") {
+            const { errors, warnings } = this.sandbox.validateSession(userId, sessionId, {
+              memoryEnabled: workspace?.memoryEnabled,
+              workspaceId: identity.workspaceId,
+            });
+
+            if (errors.length > 0) {
+              for (const e of errors)
+                console.error(`${ts()} [session:${sessionId}] bootstrap error: ${e}`);
+              for (const w of warnings)
+                console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
+              session.status = "error";
+              session.warnings = [...errors, ...warnings];
+              this.storage.saveSession(session);
+
+              if (!proc.killed) {
+                proc.kill("SIGTERM");
+              }
+
+              // If this was the only session attempt for the workspace, stop
+              // the workspace container so we don't leave an idle shell around.
+              if (
+                this.runtimeManager.getWorkspaceSessionCount(
+                  identity.userId,
+                  identity.workspaceId,
+                ) <= 1
+              ) {
+                await this.sandbox.stopWorkspaceContainer(identity.userId, identity.workspaceId);
+              }
+
+              this.gate.destroySessionSocket(sessionId);
+              throw new Error(`Session bootstrap failed: ${errors[0]}`);
+            }
+
+            if (warnings.length > 0) {
+              session.warnings = warnings;
+              for (const w of warnings)
+                console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
+            }
+          }
+
+          const activeSession: ActiveSession = {
+            session,
+            process: proc,
+            workspaceId: identity.workspaceId,
+            runtime,
+            subscribers: new Set(),
+            pendingResponses: new Map(),
+            pendingUIRequests: new Map(),
+            partialResults: new Map(),
+            streamedAssistantText: "",
+            turnCache: new TurnDedupeCache(),
+            pendingTurnStarts: [],
+          };
+
+          this.active.set(key, activeSession);
+          this.runtimeManager.markSessionReady(identity);
+
+          session.status = "ready";
+          session.runtime = runtime;
+          session.lastActivity = Date.now();
+          this.persistSessionNow(key, session);
+          this.resetIdleTimer(key);
+
+          // Best-effort: capture pi session file/UUID from get_state so trace
+          // loading works for host runtime sessions too.
+          void this.bootstrapSessionState(key);
+
+          return session;
+        } catch (err) {
+          // Gate socket may have been created inside spawnPiHost/spawnPiContainer
+          // before the error — always clean up.
+          this.gate.destroySessionSocket(sessionId);
+          this.authProxy?.removeSession(sessionId);
+
+          this.runtimeManager.releaseSession(identity);
+
+          if (
+            runtime === "container" &&
+            this.runtimeManager.getWorkspaceSessionCount(identity.userId, identity.workspaceId) ===
+              0
+          ) {
+            await this.sandbox.stopWorkspaceContainer(identity.userId, identity.workspaceId);
+          }
+
+          throw err;
+        }
+      },
+    );
+  }
+
+  private buildWorkspaceIdentity(
+    session: Session,
+    workspace?: Workspace,
+  ): WorkspaceSessionIdentity {
+    return {
+      userId: session.userId,
+      workspaceId: this.resolveSessionWorkspaceId(session, workspace),
+      sessionId: session.id,
+    };
+  }
+
+  private resolveSessionWorkspaceId(session: Session, workspace?: Workspace): string {
+    if (workspace?.id && workspace.id.trim().length > 0) {
+      return workspace.id;
     }
 
-    const activeSession: ActiveSession = {
-      session,
-      process: proc,
-      runtime,
-      subscribers: new Set(),
-      pendingResponses: new Map(),
-      pendingUIRequests: new Map(),
-      partialResults: new Map(),
-      streamedAssistantText: "",
-      turnCache: new TurnDedupeCache(),
-      pendingTurnStarts: [],
-    };
+    if (session.workspaceId && session.workspaceId.trim().length > 0) {
+      return session.workspaceId;
+    }
 
-    this.active.set(key, activeSession);
-
-    session.status = "ready";
-    session.runtime = runtime;
-    session.lastActivity = Date.now();
-    this.persistSessionNow(key, session);
-    this.resetIdleTimer(key);
-
-    // Best-effort: capture pi session file/UUID from get_state so trace
-    // loading works for host runtime sessions too.
-    void this.bootstrapSessionState(key);
-
-    return session;
+    return `session-${session.id}`;
   }
 
   /**
@@ -402,7 +513,10 @@ export class SessionManager extends EventEmitter {
     }
 
     try {
-      const discovered = execSync("which pi", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const discovered = execSync("which pi", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
       if (discovered.length > 0) {
         return discovered;
       }
@@ -430,14 +544,16 @@ export class SessionManager extends EventEmitter {
     const key = `${session.userId}/${session.id}`;
 
     // Create gate TCP socket (extension connects via localhost)
-    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspace?.id || "");
+    const gatePort = await this.gate.createSessionSocket(
+      session.id,
+      session.userId,
+      workspace?.id || "",
+    );
 
     // Configure per-session policy based on workspace settings.
     // Host sessions default to the restrictive "host" preset.
     const presetName = workspace?.policyPreset || "host";
-    const cwd = workspace?.hostMount
-      ? workspace.hostMount.replace(/^~/, homedir())
-      : homedir();
+    const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
 
     const allowedPaths: PathAccess[] = [
       // Workspace directory — full read/write
@@ -457,7 +573,9 @@ export class SessionManager extends EventEmitter {
     const allowedExecutables = workspace?.allowedExecutables;
     const policy = new PolicyEngine(presetName, { allowedPaths, allowedExecutables });
     this.gate.setSessionPolicy(session.id, policy);
-    console.log(`${ts()} [session:${session.id}] policy: preset=${presetName}, paths=${allowedPaths.map(p => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`);
+    console.log(
+      `${ts()} [session:${session.id}] policy: preset=${presetName}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
+    );
 
     // Build pi args.
     //
@@ -472,7 +590,9 @@ export class SessionManager extends EventEmitter {
     if (existsSync(PI_REMOTE_GATE_EXTENSION)) {
       piArgs.push("--extension", PI_REMOTE_GATE_EXTENSION);
     } else {
-      console.warn(`${ts()} [session:${session.id}] pi-remote gate extension not found at ${PI_REMOTE_GATE_EXTENSION}`);
+      console.warn(
+        `${ts()} [session:${session.id}] pi-remote gate extension not found at ${PI_REMOTE_GATE_EXTENSION}`,
+      );
     }
 
     // 2. Optionally load memory extension
@@ -506,7 +626,6 @@ export class SessionManager extends EventEmitter {
 
     // Resolve system prompt if workspace provides one
     if (workspace?.systemPrompt) {
-      const { mkdirSync, writeFileSync } = await import("node:fs");
       const promptDir = join(homedir(), ".config", "pi-remote", "prompts");
       mkdirSync(promptDir, { recursive: true });
       const promptPath = join(promptDir, `${session.id}.md`);
@@ -519,7 +638,9 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Host workspace path not found: ${cwd}`);
     }
 
-    console.log(`${ts()} [session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`);
+    console.log(
+      `${ts()} [session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`,
+    );
     console.log(`${ts()} [session:${session.id}] pi args: ${piArgs.join(" ")}`);
 
     const proc = spawn(this.piExecutable, piArgs, {
@@ -540,14 +661,22 @@ export class SessionManager extends EventEmitter {
   /**
    * Spawn pi inside a container via SandboxManager.
    */
-  private async spawnPiContainer(session: Session, userName?: string, workspace?: Workspace): Promise<ChildProcess> {
+  private async spawnPiContainer(
+    session: Session,
+    workspaceId: string,
+    userName?: string,
+    workspace?: Workspace,
+  ): Promise<ChildProcess> {
     const key = `${session.userId}/${session.id}`;
+
+    // Best-effort migration from legacy session-scoped sandbox to workspace-scoped layout.
+    this.sandbox.migrateLegacySessionLayout(session.userId, workspaceId, session.id);
 
     // Register session with auth proxy (proxy validates session tokens on API requests)
     this.authProxy?.registerSession(session.id, session.userId);
 
     // Create gate TCP socket (extension connects from container to host-gateway)
-    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspace?.id || "");
+    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspaceId);
 
     // Configure per-session policy for container (permissive — container IS the boundary)
     const presetName = workspace?.policyPreset || "container";
@@ -559,6 +688,7 @@ export class SessionManager extends EventEmitter {
     const proc = this.sandbox.spawnPi({
       sessionId: session.id,
       userId: session.userId,
+      workspaceId,
       userName,
       model: session.model,
       workspace,
@@ -572,7 +702,11 @@ export class SessionManager extends EventEmitter {
    * Wire up RPC line handling, stderr logging, exit/error handlers,
    * and wait for pi to be ready. Shared by host and container modes.
    */
-  private async setupProcHandlers(key: string, session: Session, proc: ChildProcess): Promise<ChildProcess> {
+  private async setupProcHandlers(
+    key: string,
+    session: Session,
+    proc: ChildProcess,
+  ): Promise<ChildProcess> {
     if (!proc.stdout) {
       throw new Error(`pi process for ${key} has no stdout — was it spawned with stdio: "pipe"?`);
     }
@@ -686,9 +820,8 @@ export class SessionManager extends EventEmitter {
     // don't hang until timeout.
     if (data.type === "response") {
       const command = typeof data.command === "string" ? data.command : "rpc";
-      const rawError = typeof data.error === "string" && data.error.length > 0
-        ? data.error
-        : "Unknown RPC error";
+      const rawError =
+        typeof data.error === "string" && data.error.length > 0 ? data.error : "Unknown RPC error";
       const errorText = this.normalizeRpcError(command, rawError);
 
       if (typeof data.id === "string" && data.id.length > 0) {
@@ -728,10 +861,17 @@ export class SessionManager extends EventEmitter {
 
     // 3. Agent event — translate and broadcast
     // Log lifecycle events (not high-frequency deltas)
-    if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end"
-        || data.type === "tool_execution_start" || data.type === "tool_execution_end") {
+    if (
+      data.type === "agent_start" ||
+      data.type === "agent_end" ||
+      data.type === "message_end" ||
+      data.type === "tool_execution_start" ||
+      data.type === "tool_execution_end"
+    ) {
       const tool = data.toolName ? ` tool=${data.toolName}` : "";
-      console.log(`${ts()} [pi:${active.session.id}] EVENT ${data.type}${tool} (subs=${active.subscribers.size})`);
+      console.log(
+        `${ts()} [pi:${active.session.id}] EVENT ${data.type}${tool} (subs=${active.subscribers.size})`,
+      );
     }
 
     const messages = this.translateEvent(data, active);
@@ -745,11 +885,7 @@ export class SessionManager extends EventEmitter {
 
     this.updateSessionFromEvent(key, active.session, data);
 
-    if (
-      data.type === "agent_start"
-      || data.type === "agent_end"
-      || data.type === "message_end"
-    ) {
+    if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end") {
       console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
       this.broadcast(key, { type: "state", session: active.session });
     }
@@ -999,13 +1135,19 @@ export class SessionManager extends EventEmitter {
       this.scheduleGuardCheck(key, sessionId);
     }
 
-    console.log(`${ts()} [rpc] prompt → pi (session=${sessionId}, status=${active.session.status}, guard=${active.guardCheckScheduled ? "scheduled" : "no"})`);
+    console.log(
+      `${ts()} [rpc] prompt → pi (session=${sessionId}, status=${active.session.status}, guard=${active.guardCheckScheduled ? "scheduled" : "no"})`,
+    );
     this.sendRpcCommand(key, cmd);
     this.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
   }
 
   /**
    * Send a steer message (interrupt agent after current tool).
+   *
+   * Guard: steer is only valid while the session is actively streaming.
+   * If called while idle, throw a deterministic error so the client can
+   * surface feedback instead of appearing stuck.
    */
   async sendSteer(
     userId: string,
@@ -1020,6 +1162,10 @@ export class SessionManager extends EventEmitter {
     const key = `${userId}/${sessionId}`;
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    if (active.session.status !== "busy") {
+      throw new Error("Steer requires an active streaming turn");
+    }
 
     const turn = this.beginTurnIntent(
       key,
@@ -1045,6 +1191,8 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Send a follow-up message (delivered after agent finishes).
+   *
+   * Guard: follow-up queueing is only meaningful while a turn is streaming.
    */
   async sendFollowUp(
     userId: string,
@@ -1059,6 +1207,10 @@ export class SessionManager extends EventEmitter {
     const key = `${userId}/${sessionId}`;
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
+
+    if (active.session.status !== "busy") {
+      throw new Error("Follow-up requires an active streaming turn");
+    }
 
     const turn = this.beginTurnIntent(
       key,
@@ -1191,20 +1343,33 @@ export class SessionManager extends EventEmitter {
    */
   private static readonly RPC_PASSTHROUGH: ReadonlySet<string> = new Set([
     // State
-    "get_state", "get_messages", "get_session_stats",
+    "get_state",
+    "get_messages",
+    "get_session_stats",
     // Model
-    "set_model", "cycle_model", "get_available_models",
+    "set_model",
+    "cycle_model",
+    "get_available_models",
     // Thinking
-    "set_thinking_level", "cycle_thinking_level",
+    "set_thinking_level",
+    "cycle_thinking_level",
     // Session
-    "new_session", "set_session_name", "compact", "set_auto_compaction",
-    "fork", "get_fork_messages", "switch_session",
+    "new_session",
+    "set_session_name",
+    "compact",
+    "set_auto_compaction",
+    "fork",
+    "get_fork_messages",
+    "switch_session",
     // Queue modes
-    "set_steering_mode", "set_follow_up_mode",
+    "set_steering_mode",
+    "set_follow_up_mode",
     // Retry
-    "set_auto_retry", "abort_retry",
+    "set_auto_retry",
+    "abort_retry",
     // Bash
-    "bash", "abort_bash",
+    "bash",
+    "abort_bash",
     // Commands
     "get_commands",
   ]);
@@ -1237,6 +1402,8 @@ export class SessionManager extends EventEmitter {
       if (cmdType === "get_state") {
         if (this.applyPiStateSnapshot(active.session, data)) {
           this.persistSessionNow(key, active.session);
+          // Broadcast updated session so clients see model/thinking/name changes
+          this.broadcast(key, { type: "state", session: active.session });
         }
       }
 
@@ -1248,6 +1415,25 @@ export class SessionManager extends EventEmitter {
         }
       }
 
+      // Track model changes so the session object stays in sync
+      if (cmdType === "set_model" || cmdType === "cycle_model") {
+        // set_model returns the model object, cycle_model returns { model, thinkingLevel, isScoped }
+        const modelData = cmdType === "cycle_model" ? data?.model : data;
+        const provider = modelData?.provider;
+        const modelId = modelData?.id;
+        if (typeof provider === "string" && typeof modelId === "string") {
+          const fullId = `${provider}/${modelId}`;
+          if (active.session.model !== fullId) {
+            active.session.model = fullId;
+            this.persistSessionNow(key, active.session);
+          }
+        }
+        // cycle_model also returns thinkingLevel
+        if (cmdType === "cycle_model" && typeof data?.thinkingLevel === "string") {
+          active.session.thinkingLevel = data.thinkingLevel;
+        }
+      }
+
       this.broadcast(key, {
         type: "rpc_result",
         command: cmdType,
@@ -1255,6 +1441,17 @@ export class SessionManager extends EventEmitter {
         success: true,
         data,
       });
+
+      // Broadcast updated session state after model/thinking changes
+      // so clients see the change immediately without waiting for next agent event
+      if (
+        cmdType === "set_model" ||
+        cmdType === "cycle_model" ||
+        cmdType === "set_thinking_level" ||
+        cmdType === "cycle_thinking_level"
+      ) {
+        this.broadcast(key, { type: "state", session: active.session });
+      }
     } catch (err) {
       const rawError = err instanceof Error ? err.message : String(err);
       this.broadcast(key, {
@@ -1361,7 +1558,11 @@ export class SessionManager extends EventEmitter {
    * Send RPC command and await the response.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
-  sendRpcCommandAsync(key: string, command: Record<string, unknown>, timeoutMs = 10_000): Promise<any> {
+  sendRpcCommandAsync(
+    key: string,
+    command: Record<string, unknown>,
+    timeoutMs = 10_000,
+  ): Promise<any> {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
 
@@ -1447,12 +1648,14 @@ export class SessionManager extends EventEmitter {
       }
 
       case "tool_execution_start":
-        return [{
-          type: "tool_start",
-          tool: event.toolName,
-          args: event.args || {},
-          toolCallId: event.toolCallId,
-        }];
+        return [
+          {
+            type: "tool_start",
+            tool: event.toolName,
+            args: event.args || {},
+            toolCallId: event.toolCallId,
+          },
+        ];
 
       case "tool_execution_update": {
         const contents = event.partialResult?.content;
@@ -1507,33 +1710,41 @@ export class SessionManager extends EventEmitter {
         return [{ type: "compaction_start", reason: event.reason ?? "threshold" }];
 
       case "auto_compaction_end":
-        return [{
-          type: "compaction_end",
-          aborted: event.aborted ?? false,
-          willRetry: event.willRetry ?? false,
-          summary: event.result?.summary,
-          tokensBefore: event.result?.tokensBefore,
-        }];
+        return [
+          {
+            type: "compaction_end",
+            aborted: event.aborted ?? false,
+            willRetry: event.willRetry ?? false,
+            summary: event.result?.summary,
+            tokensBefore: event.result?.tokensBefore,
+          },
+        ];
 
       case "auto_retry_start":
-        return [{
-          type: "retry_start",
-          attempt: event.attempt,
-          maxAttempts: event.maxAttempts,
-          delayMs: event.delayMs,
-          errorMessage: event.errorMessage,
-        }];
+        return [
+          {
+            type: "retry_start",
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            delayMs: event.delayMs,
+            errorMessage: event.errorMessage,
+          },
+        ];
 
       case "auto_retry_end":
-        return [{
-          type: "retry_end",
-          success: event.success,
-          attempt: event.attempt,
-          finalError: event.finalError,
-        }];
+        return [
+          {
+            type: "retry_end",
+            success: event.success,
+            attempt: event.attempt,
+            finalError: event.finalError,
+          },
+        ];
 
       case "extension_error":
-        console.error(`${ts()} [pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`);
+        console.error(
+          `${ts()} [pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`,
+        );
         return [];
 
       case "response":
@@ -1554,7 +1765,10 @@ export class SessionManager extends EventEmitter {
 
         const out: ServerMessage[] = [];
         const finalizedText = this.extractAssistantText(message);
-        const tailDelta = computeAssistantTextTailDelta(active.streamedAssistantText, finalizedText);
+        const tailDelta = computeAssistantTextTailDelta(
+          active.streamedAssistantText,
+          finalizedText,
+        );
         if (tailDelta.length > 0) {
           out.push({ type: "text_delta", delta: tailDelta });
         }
@@ -1562,7 +1776,11 @@ export class SessionManager extends EventEmitter {
         const content = message?.content;
         if (Array.isArray(content)) {
           for (const block of content) {
-            if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.length > 0) {
+            if (
+              block?.type === "thinking" &&
+              typeof block.thinking === "string" &&
+              block.thinking.length > 0
+            ) {
               out.push({ type: "thinking_delta", delta: block.thinking });
             }
           }
@@ -1605,9 +1823,7 @@ export class SessionManager extends EventEmitter {
         const assistantText = this.extractAssistantText(message);
 
         if (assistantText) {
-          const tokens = usage
-            ? { input: usage.input, output: usage.output }
-            : undefined;
+          const tokens = usage ? { input: usage.input, output: usage.output } : undefined;
 
           this.appendMessage(session, {
             role: "assistant",
@@ -1641,10 +1857,7 @@ export class SessionManager extends EventEmitter {
     this.markSessionDirty(key);
   }
 
-  private appendMessage(
-    session: Session,
-    message: Omit<SessionMessage, "id" | "sessionId">,
-  ): void {
+  private appendMessage(session: Session, message: Omit<SessionMessage, "id" | "sessionId">): void {
     this.storage.addSessionMessage(session.userId, session.id, message);
 
     // Keep the active in-memory session aligned with persisted stats.
@@ -1760,17 +1973,32 @@ export class SessionManager extends EventEmitter {
 
     // Cancel pending UI requests
     for (const [id] of active.pendingUIRequests) {
-      active.process.stdin?.write(JSON.stringify({
-        type: "extension_ui_response",
-        id,
-        cancelled: true,
-      }) + "\n");
+      active.process.stdin?.write(
+        JSON.stringify({
+          type: "extension_ui_response",
+          id,
+          cancelled: true,
+        }) + "\n",
+      );
     }
     active.pendingUIRequests.clear();
 
     this.broadcast(key, { type: "session_ended", reason });
     this.clearIdleTimer(key);
     this.active.delete(key);
+
+    this.runtimeManager.releaseSession({
+      userId: active.session.userId,
+      workspaceId: active.workspaceId,
+      sessionId: active.session.id,
+    });
+
+    if (
+      active.runtime === "container" &&
+      !this.hasActiveContainerSession(active.session.userId, active.workspaceId)
+    ) {
+      this.scheduleWorkspaceIdleStop(active.session.userId, active.workspaceId);
+    }
   }
 
   // ─── Subscribe / Broadcast ───
@@ -1789,7 +2017,11 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return;
     for (const cb of active.subscribers) {
-      try { cb(message); } catch (err) { console.error("Subscriber error:", err); }
+      try {
+        cb(message);
+      } catch (err) {
+        console.error("Subscriber error:", err);
+      }
     }
   }
 
@@ -1797,40 +2029,49 @@ export class SessionManager extends EventEmitter {
 
   async stopSession(userId: string, sessionId: string): Promise<void> {
     const key = `${userId}/${sessionId}`;
-    const active = this.active.get(key);
-    if (!active) return;
 
-    // Graceful: abort current operation
-    try {
-      active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
-    } catch {
-      // process stdin already closed
-    }
+    await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+      const active = this.active.get(key);
+      if (!active) return;
 
-    // Wait briefly then stop
-    await new Promise(r => setTimeout(r, 1000));
+      await this.runtimeManager.withWorkspaceLock(userId, active.workspaceId, async () => {
+        // Graceful: abort current operation
+        try {
+          active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
+        } catch {
+          // process stdin already closed
+        }
 
-    if (active.runtime === "host") {
-      // Host mode: kill the process directly
-      if (!active.process.killed) {
-        active.process.kill("SIGTERM");
-      }
-    } else {
-      // Container mode: stop via sandbox
-      await this.sandbox.stopContainer(sessionId);
-    }
+        // Wait briefly then stop
+        await new Promise((r) => setTimeout(r, 1000));
 
-    this.handleSessionEnd(key, "stopped");
+        // Host mode and container mode both stop the session process directly.
+        // In container runtime this is the `container exec` child process;
+        // workspace container lifecycle is managed separately.
+        if (!active.process.killed) {
+          active.process.kill("SIGTERM");
+        }
+
+        this.handleSessionEnd(key, "stopped");
+      });
+    });
   }
 
   async stopAll(): Promise<void> {
     const keys = Array.from(this.active.keys());
     await Promise.all(
-      keys.map(key => {
+      keys.map((key) => {
         const [userId, sessionId] = key.split("/");
         return this.stopSession(userId, sessionId);
       }),
     );
+
+    for (const timer of this.workspaceIdleTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.workspaceIdleTimers.clear();
+
+    await this.sandbox.stopAll();
   }
 
   // ─── State Queries ───
@@ -1852,11 +2093,14 @@ export class SessionManager extends EventEmitter {
 
   private resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
+
+    const timeoutMs = this.runtimeManager.getLimits().sessionIdleTimeoutMs;
     const timer = setTimeout(() => {
       console.log(`${ts()} [session] idle timeout: ${key}`);
       const [userId, sessionId] = key.split("/");
       this.stopSession(userId, sessionId);
-    }, this.config.sessionTimeout);
+    }, timeoutMs);
+
     this.idleTimers.set(key, timer);
   }
 
@@ -1866,5 +2110,50 @@ export class SessionManager extends EventEmitter {
       clearTimeout(timer);
       this.idleTimers.delete(key);
     }
+  }
+
+  private workspaceKey(userId: string, workspaceId: string): string {
+    return `${userId}/${workspaceId}`;
+  }
+
+  private clearWorkspaceIdleTimer(userId: string, workspaceId: string): void {
+    const key = this.workspaceKey(userId, workspaceId);
+    const timer = this.workspaceIdleTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.workspaceIdleTimers.delete(key);
+    }
+  }
+
+  private hasActiveContainerSession(userId: string, workspaceId: string): boolean {
+    for (const active of this.active.values()) {
+      if (
+        active.runtime === "container" &&
+        active.session.userId === userId &&
+        active.workspaceId === workspaceId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private scheduleWorkspaceIdleStop(userId: string, workspaceId: string): void {
+    this.clearWorkspaceIdleTimer(userId, workspaceId);
+
+    const key = this.workspaceKey(userId, workspaceId);
+    const timeoutMs = this.runtimeManager.getLimits().workspaceIdleTimeoutMs;
+
+    const timer = setTimeout(() => {
+      if (this.hasActiveContainerSession(userId, workspaceId)) {
+        return;
+      }
+
+      console.log(`${ts()} [workspace] idle timeout: ${key}`);
+      void this.sandbox.stopWorkspaceContainer(userId, workspaceId);
+      this.workspaceIdleTimers.delete(key);
+    }, timeoutMs);
+
+    this.workspaceIdleTimers.set(key, timer);
   }
 }

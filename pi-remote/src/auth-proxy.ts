@@ -6,7 +6,8 @@
  * from the host's auth.json before forwarding to upstream APIs.
  *
  * Per-provider credential stubs:
- *   Anthropic:    api_key "proxy-<sessionId>" → proxy injects real OAuth Bearer
+ *   Anthropic:    api_key "sk-ant-oat01-proxy-<sessionId>" (OAuth-shaped)
+ *                 → proxy injects real OAuth Bearer
  *   OpenAI-Codex: api_key "<fake-jwt>" → fake JWT embeds session ID + real account ID
  *                 (SDK extracts chatgpt_account_id from fake JWT successfully,
  *                  proxy swaps Authorization header with real JWT)
@@ -30,11 +31,11 @@ import { homedir } from "node:os";
 
 export const AUTH_PROXY_PORT = 7751;
 const PROXY_TOKEN_PREFIX = "proxy-";
+const ANTHROPIC_OAUTH_STUB_PREFIX = "sk-ant-oat01-proxy-";
 
 /**
  * OAuth beta headers required by Anthropic for Claude Code auth flow.
- * Added by the proxy because the container SDK doesn't add these
- * (placeholder token doesn't look like OAuth to the SDK).
+ * Added/merged by the proxy to guarantee required OAuth betas are present.
  */
 const ANTHROPIC_OAUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"];
 
@@ -63,10 +64,12 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
  */
 function buildFakeJwt(sessionId: string, accountId: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64");
-  const payload = Buffer.from(JSON.stringify({
-    [OPENAI_AUTH_CLAIM]: { chatgpt_account_id: accountId },
-    pi_remote_session: sessionId,
-  })).toString("base64");
+  const payload = Buffer.from(
+    JSON.stringify({
+      [OPENAI_AUTH_CLAIM]: { chatgpt_account_id: accountId },
+      pi_remote_session: sessionId,
+    }),
+  ).toString("base64");
   return `${header}.${payload}.placeholder`;
 }
 
@@ -76,6 +79,12 @@ function extractAccountId(jwt: string): string | null {
   const auth = payload?.[OPENAI_AUTH_CLAIM] as Record<string, unknown> | undefined;
   const id = auth?.chatgpt_account_id;
   return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/** Extract bearer token value from an Authorization header. */
+function getBearerToken(authHeader: string | undefined): string | null {
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  return authHeader.slice(7);
 }
 
 // ─── Provider Routes ───
@@ -92,7 +101,10 @@ export interface ProviderRoute {
   /** Inject real auth headers, replacing the placeholder. */
   injectAuth: (token: string, headers: Record<string, string>) => void;
   /** Build the stub credential for the container's auth.json. */
-  buildStubCredential: (sessionId: string, realCredential: Record<string, unknown>) => Record<string, unknown>;
+  buildStubCredential: (
+    sessionId: string,
+    realCredential: Record<string, unknown>,
+  ) => Record<string, unknown>;
 }
 
 export const ROUTES: ProviderRoute[] = [
@@ -102,8 +114,18 @@ export const ROUTES: ProviderRoute[] = [
     upstream: "https://api.anthropic.com",
 
     extractSessionId(headers: Record<string, string>): string | null {
+      // Preferred path: OAuth-shaped Anthropic placeholder in Authorization header.
+      const bearer = getBearerToken(headers["authorization"]);
+      if (bearer?.startsWith(ANTHROPIC_OAUTH_STUB_PREFIX)) {
+        return bearer.slice(ANTHROPIC_OAUTH_STUB_PREFIX.length);
+      }
+
+      // Backward compatibility: older sessions used x-api-key proxy-<sessionId>.
       const key = headers["x-api-key"];
       if (key?.startsWith(PROXY_TOKEN_PREFIX)) return key.slice(PROXY_TOKEN_PREFIX.length);
+      if (key?.startsWith(ANTHROPIC_OAUTH_STUB_PREFIX))
+        return key.slice(ANTHROPIC_OAUTH_STUB_PREFIX.length);
+
       return null;
     },
 
@@ -113,8 +135,11 @@ export const ROUTES: ProviderRoute[] = [
       headers["authorization"] = `Bearer ${token}`;
 
       // Merge OAuth-required beta headers with existing ones from the SDK
-      const existing = headers["anthropic-beta"]
-        ?.split(",").map(s => s.trim()).filter(Boolean) ?? [];
+      const existing =
+        headers["anthropic-beta"]
+          ?.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean) ?? [];
       const merged = [...new Set([...ANTHROPIC_OAUTH_BETAS, ...existing])];
       headers["anthropic-beta"] = merged.join(",");
 
@@ -124,7 +149,9 @@ export const ROUTES: ProviderRoute[] = [
     },
 
     buildStubCredential(sessionId: string): Record<string, unknown> {
-      return { type: "api_key", key: `${PROXY_TOKEN_PREFIX}${sessionId}` };
+      // Must look like a real Anthropic OAuth token so pi uses OAuth codepath.
+      // Session ID is embedded for proxy-side lookup.
+      return { type: "api_key", key: `${ANTHROPIC_OAUTH_STUB_PREFIX}${sessionId}` };
     },
   },
   {
@@ -136,9 +163,7 @@ export const ROUTES: ProviderRoute[] = [
       const auth = headers["authorization"];
       if (!auth?.startsWith("Bearer ")) return null;
       const payload = decodeJwtPayload(auth.slice(7));
-      return typeof payload?.pi_remote_session === "string"
-        ? payload.pi_remote_session
-        : null;
+      return typeof payload?.pi_remote_session === "string" ? payload.pi_remote_session : null;
     },
 
     injectAuth(token: string, headers: Record<string, string>): void {
@@ -149,13 +174,40 @@ export const ROUTES: ProviderRoute[] = [
       headers["authorization"] = `Bearer ${token}`;
     },
 
-    buildStubCredential(sessionId: string, realCred: Record<string, unknown>): Record<string, unknown> {
+    buildStubCredential(
+      sessionId: string,
+      realCred: Record<string, unknown>,
+    ): Record<string, unknown> {
       const realJwt = (realCred.access ?? "") as string;
       const accountId = extractAccountId(realJwt) ?? "unknown";
       return { type: "api_key", key: buildFakeJwt(sessionId, accountId) };
     },
   },
 ];
+
+/**
+ * Resolve full upstream URL while preserving any upstream base path prefix.
+ *
+ * Example:
+ *   upstreamBase: https://chatgpt.com/backend-api
+ *   routePrefix:  /openai-codex
+ *   incoming:     /openai-codex/codex/responses?x=1
+ *   result:       https://chatgpt.com/backend-api/codex/responses?x=1
+ */
+export function buildUpstreamUrl(upstreamBase: string, routePrefix: string, incoming: URL): URL {
+  const upstream = new URL(upstreamBase);
+
+  const pathAfterPrefix = incoming.pathname.slice(routePrefix.length).replace(/^\/+/, "");
+
+  const basePath = upstream.pathname.replace(/\/+$/, "");
+  upstream.pathname =
+    pathAfterPrefix.length > 0
+      ? `${basePath}/${pathAfterPrefix}`.replace(/\/{2,}/g, "/")
+      : basePath || "/";
+
+  upstream.search = incoming.search;
+  return upstream;
+}
 
 // ─── Types ───
 
@@ -239,14 +291,12 @@ export class AuthProxy {
   /** All providers that have a proxy route. */
   getProxiedProviders(): string[] {
     this.ensureAuthLoaded();
-    return ROUTES
-      .filter(r => r.authKey in this.authData)
-      .map(r => r.authKey);
+    return ROUTES.filter((r) => r.authKey in this.authData).map((r) => r.authKey);
   }
 
   /** Get the proxy baseUrl for a provider (for models.json override). */
   getProviderProxyUrl(authKey: string, hostGateway: string): string | undefined {
-    const route = ROUTES.find(r => r.authKey === authKey);
+    const route = ROUTES.find((r) => r.authKey === authKey);
     if (!route) return undefined;
     return `http://${hostGateway}:${this.port}${route.prefix}`;
   }
@@ -255,7 +305,7 @@ export class AuthProxy {
    * Build stub auth.json entries for all proxied providers.
    *
    * Each provider's route defines how to build its stub credential:
-   * - Anthropic: simple placeholder "proxy-<sessionId>"
+   * - Anthropic: OAuth-shaped placeholder "sk-ant-oat01-proxy-<sessionId>"
    * - OpenAI-Codex: fake JWT with real account ID + embedded session ID
    */
   buildStubAuth(sessionId: string): Record<string, unknown> {
@@ -264,7 +314,10 @@ export class AuthProxy {
     for (const route of ROUTES) {
       const cred = this.authData[route.authKey];
       if (!cred) continue;
-      stub[route.authKey] = route.buildStubCredential(sessionId, cred as unknown as Record<string, unknown>);
+      stub[route.authKey] = route.buildStubCredential(
+        sessionId,
+        cred as unknown as Record<string, unknown>,
+      );
     }
     return stub;
   }
@@ -272,27 +325,28 @@ export class AuthProxy {
   // ─── Request Handler ───
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = req.url || "/";
+    const requestUrl = new URL(req.url || "/", "http://pi-remote-auth-proxy.local");
 
-    if (url === "/health") {
+    if (requestUrl.pathname === "/health") {
       this.sendJson(res, 200, { ok: true, sessions: this.sessions.size });
       return;
     }
 
-    const route = ROUTES.find(r => url.startsWith(r.prefix));
+    const route = ROUTES.find((r) => requestUrl.pathname.startsWith(r.prefix));
     if (!route) {
+      console.warn(`[auth-proxy] Unknown provider route: ${requestUrl.pathname}`);
       this.sendError(res, 404, "Unknown provider route");
       return;
     }
 
-    this.handleRoute(req, res, route, url);
+    this.handleRoute(req, res, route, requestUrl);
   }
 
   private handleRoute(
     req: IncomingMessage,
     res: ServerResponse,
     route: ProviderRoute,
-    url: string,
+    requestUrl: URL,
   ): void {
     const headers = this.copyHeaders(req);
 
@@ -321,8 +375,7 @@ export class AuthProxy {
       return;
     }
 
-    const upstreamPath = url.slice(route.prefix.length) || "/";
-    const upstreamUrl = new URL(upstreamPath, route.upstream);
+    const upstreamUrl = buildUpstreamUrl(route.upstream, route.prefix, requestUrl);
 
     route.injectAuth(token, headers);
     headers["host"] = upstreamUrl.hostname;

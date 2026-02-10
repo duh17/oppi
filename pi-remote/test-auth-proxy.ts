@@ -5,7 +5,7 @@
  * 1. Health endpoint
  * 2. Provider queries (all providers proxied, no passthrough)
  * 3. Session lifecycle (register, reject unregistered, remove)
- * 4. Anthropic: placeholder → real OAuth injection + beta headers
+ * 4. Anthropic: OAuth-shaped placeholder → real OAuth injection + beta headers
  * 5. OpenAI-Codex: fake JWT → session ID extraction + real JWT injection
  * 6. Stub auth building (buildStubAuth)
  * 7. Expired token handling
@@ -14,7 +14,7 @@
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { AuthProxy, ROUTES } from "./src/auth-proxy.js";
+import { AuthProxy, ROUTES, buildUpstreamUrl } from "./src/auth-proxy.js";
 
 // ─── Test Helpers ───
 
@@ -108,11 +108,38 @@ async function main(): Promise<void> {
     const codexUrl = proxy.getProviderProxyUrl("openai-codex", "10.200.0.1");
     assert(codexUrl === `http://10.200.0.1:${proxyPort}/openai-codex`, `Codex proxy URL: ${codexUrl}`);
 
+    // --- Upstream URL path joining ---
+    console.log("\nUpstream URL joining:");
+    {
+      const codexUpstream = buildUpstreamUrl(
+        "https://chatgpt.com/backend-api",
+        "/openai-codex",
+        new URL("http://proxy/openai-codex/codex/responses?x=1"),
+      );
+      assert(
+        codexUpstream.toString() === "https://chatgpt.com/backend-api/codex/responses?x=1",
+        `Codex upstream keeps /backend-api prefix: ${codexUpstream.toString()}`,
+      );
+
+      const anthropicUpstream = buildUpstreamUrl(
+        "https://api.anthropic.com",
+        "/anthropic",
+        new URL("http://proxy/anthropic/v1/messages"),
+      );
+      assert(
+        anthropicUpstream.toString() === "https://api.anthropic.com/v1/messages",
+        `Anthropic upstream path: ${anthropicUpstream.toString()}`,
+      );
+    }
+
     // --- Unregistered session → 403 ---
     console.log("\nUnregistered session:");
     const unregistered = await fetchJson(`http://127.0.0.1:${proxyPort}/anthropic/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": "proxy-unknown-session", "content-type": "application/json" },
+      headers: {
+        authorization: "Bearer sk-ant-oat01-proxy-unknown-session",
+        "content-type": "application/json",
+      },
       body: "{}",
     });
     assert(unregistered.status === 403, `Unregistered → 403 (got ${unregistered.status})`);
@@ -133,7 +160,10 @@ async function main(): Promise<void> {
     console.log("\nBad prefix:");
     const badPrefix = await fetchJson(`http://127.0.0.1:${proxyPort}/anthropic/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": "not-proxy-prefix", "content-type": "application/json" },
+      headers: {
+        authorization: "Bearer not-proxy-prefix",
+        "content-type": "application/json",
+      },
       body: "{}",
     });
     assert(badPrefix.status === 401, `Bad prefix → 401 (got ${badPrefix.status})`);
@@ -148,7 +178,10 @@ async function main(): Promise<void> {
     proxy.removeSession("sess-001");
     const removed = await fetchJson(`http://127.0.0.1:${proxyPort}/anthropic/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": "proxy-sess-001", "content-type": "application/json" },
+      headers: {
+        authorization: "Bearer sk-ant-oat01-proxy-sess-001",
+        "content-type": "application/json",
+      },
       body: "{}",
     });
     assert(removed.status === 403, `Removed session → 403 (got ${removed.status})`);
@@ -178,8 +211,15 @@ async function main(): Promise<void> {
     console.log("\nAnthropic session ID extraction:");
     {
       const route = ROUTES.find(r => r.prefix === "/anthropic")!;
-      assert(route.extractSessionId({ "x-api-key": "proxy-sess-abc" }) === "sess-abc", "Extracts from x-api-key");
-      assert(route.extractSessionId({ "x-api-key": "not-a-proxy" }) === null, "Rejects non-proxy key");
+      assert(
+        route.extractSessionId({ authorization: "Bearer sk-ant-oat01-proxy-sess-abc" }) === "sess-abc",
+        "Extracts from OAuth-shaped Authorization token",
+      );
+      assert(
+        route.extractSessionId({ "x-api-key": "proxy-sess-legacy" }) === "sess-legacy",
+        "Extracts from legacy x-api-key token",
+      );
+      assert(route.extractSessionId({ authorization: "Bearer not-a-proxy" }) === null, "Rejects non-proxy bearer");
       assert(route.extractSessionId({}) === null, "Rejects missing key");
     }
 
@@ -246,13 +286,20 @@ async function main(): Promise<void> {
         body: "{}",
       });
 
-      // The proxy forwarded to chatgpt.com which returned 403 (test JWT is invalid).
-      // Any response from the upstream proves the proxy accepted the session
-      // and forwarded the request (not blocked at 401/403 by the proxy itself).
-      // Our proxy returns plain text errors; HTML body = upstream response.
+      // Any non-proxy error body proves the request passed session validation
+      // and reached upstream. Proxy-side auth failures are plain text with one
+      // of these exact messages.
+      const proxyErrors = [
+        "Missing or invalid session token",
+        "Session not registered",
+        "Session not authorized for",
+        "No credential for",
+        "Unknown provider route",
+      ];
+      const blockedByProxy = proxyErrors.some((m) => result.body.includes(m));
       assert(
-        result.body.includes("<html") || result.status === 502,
-        `Request reached upstream (status ${result.status}, body is HTML from chatgpt.com)`,
+        !blockedByProxy,
+        `Request reached upstream (status ${result.status}, body starts: ${result.body.slice(0, 80)})`,
       );
 
       proxy.removeSession("sess-codex-e2e");
@@ -268,7 +315,10 @@ async function main(): Promise<void> {
       // Anthropic stub
       const antStub = stub["anthropic"] as Record<string, string>;
       assert(antStub.type === "api_key", "Anthropic stub type is api_key");
-      assert(antStub.key === "proxy-sess-stub-test", "Anthropic stub key is proxy-<sessionId>");
+      assert(
+        antStub.key === "sk-ant-oat01-proxy-sess-stub-test",
+        "Anthropic stub key is sk-ant-oat01-proxy-<sessionId>",
+      );
 
       // OpenAI-Codex stub
       const codexStub = stub["openai-codex"] as Record<string, string>;
@@ -297,7 +347,10 @@ async function main(): Promise<void> {
     proxy.registerSession("sess-expired", "user-001");
     const expired = await fetchJson(`http://127.0.0.1:${proxyPort}/anthropic/v1/messages`, {
       method: "POST",
-      headers: { "x-api-key": "proxy-sess-expired", "content-type": "application/json" },
+      headers: {
+        authorization: "Bearer sk-ant-oat01-proxy-sess-expired",
+        "content-type": "application/json",
+      },
       body: "{}",
     });
     assert(expired.status === 502, `Expired token → 502 (got ${expired.status})`);
