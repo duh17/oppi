@@ -263,7 +263,25 @@ struct SessionRow: View {
                     .fontWeight(pendingCount > 0 ? .semibold : .regular)
                     .lineLimit(1)
 
-                // Row 2: model + compact metrics
+                // Row 2: change status
+                if let stats = session.changeStats {
+                    HStack(spacing: 8) {
+                        Text(filesTouchedSummary(stats.filesChanged))
+                            .foregroundStyle(changeSummaryColor(stats))
+
+                        Text("+\(stats.addedLines)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(.tokyoGreen)
+
+                        Text("-\(stats.removedLines)")
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(.tokyoRed)
+                    }
+                    .font(.caption2)
+                    .lineLimit(1)
+                }
+
+                // Row 3: model + compact metrics
                 HStack(spacing: 6) {
                     if let model = modelShort {
                         Text(model)
@@ -271,12 +289,6 @@ struct SessionRow: View {
 
                     if session.messageCount > 0 {
                         Text("\(session.messageCount) msgs")
-                    }
-
-                    if let stats = session.changeStats,
-                       stats.mutatingToolCalls > 0 {
-                        Text(changeSummary(stats))
-                            .foregroundStyle(changeSummaryColor(stats))
                     }
 
                     if let pct = contextPercent {
@@ -290,14 +302,6 @@ struct SessionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-
-                // Row 3: last message preview
-                if let preview = session.lastMessage, !preview.isEmpty {
-                    Text(preview)
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
             }
 
             Spacer(minLength: 4)
@@ -327,14 +331,8 @@ struct SessionRow: View {
             : String(format: "$%.3f", cost)
     }
 
-    private func changeSummary(_ stats: SessionChangeStats) -> String {
-        let files = stats.filesChanged
-        let changes = stats.mutatingToolCalls
-
-        if files > 0 {
-            return "\(changes) chg • \(files) files"
-        }
-        return "\(changes) chg"
+    private func filesTouchedSummary(_ filesChanged: Int) -> String {
+        filesChanged == 1 ? "1 file touched" : "\(filesChanged) files touched"
     }
 
     private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
