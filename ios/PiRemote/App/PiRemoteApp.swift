@@ -11,8 +11,8 @@ struct PiRemoteApp: App {
     @State private var connection = ServerConnection()
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
-    @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 #if DEBUG
+    @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
     @State private var autoClientLogUploadInFlight = false
     @State private var lastAutoClientLogUploadMs: Int64 = 0
 #endif
@@ -20,40 +20,51 @@ struct PiRemoteApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(connection)
-                .environment(connection.sessionStore)
-                .environment(connection.permissionStore)
-                .environment(connection.reducer)
-                .environment(connection.reducer.toolOutputStore)
-                .environment(connection.reducer.toolArgsStore)
-                .environment(connection.audioPlayer)
-                .environment(navigation)
-                .environment(themeStore)
-                .environment(\.theme, themeStore.appTheme)
-                .preferredColorScheme(themeStore.preferredColorScheme)
-                .onChange(of: scenePhase) { _, phase in
-                    handleScenePhase(phase)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    handleMemoryWarning()
-                }
-                .task {
-                    configureWatchdogHooks()
-                    mainThreadLagWatchdog.start()
-                    await setupNotifications()
-                    await reconnectOnLaunch()
-                }
+            if UIHangHarnessConfig.isEnabled {
+                UIHangHarnessView()
+            } else {
+                ContentView()
+                    .environment(connection)
+                    .environment(connection.sessionStore)
+                    .environment(connection.permissionStore)
+                    .environment(connection.reducer)
+                    .environment(connection.reducer.toolOutputStore)
+                    .environment(connection.reducer.toolArgsStore)
+                    .environment(connection.audioPlayer)
+                    .environment(navigation)
+                    .environment(themeStore)
+                    .environment(\.theme, themeStore.appTheme)
+                    .preferredColorScheme(themeStore.preferredColorScheme)
+                    .onChange(of: scenePhase) { _, phase in
+                        handleScenePhase(phase)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                        handleMemoryWarning()
+                    }
+                    .task {
+                        await SentryService.shared.configure()
+#if DEBUG
+                        configureWatchdogHooks()
+                        mainThreadLagWatchdog.start()
+#endif
+                        await setupNotifications()
+                        await reconnectOnLaunch()
+                    }
+            }
         }
     }
 
     private func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
+#if DEBUG
             mainThreadLagWatchdog.start()
+#endif
             Task { await connection.reconnectIfNeeded() }
         case .background:
+#if DEBUG
             mainThreadLagWatchdog.stop()
+#endif
             connection.flushAndSuspend()
             RestorationState.save(from: connection, navigation: navigation)
         case .inactive:
@@ -118,7 +129,15 @@ struct PiRemoteApp: App {
             ]
         )
 
-        let entries = await ClientLogBuffer.shared.snapshot(limit: 500)
+        await SentryService.shared.captureMainThreadStall(
+            thresholdMs: context.thresholdMs,
+            footprintMB: context.footprintMB,
+            crumb: context.crumb,
+            rows: context.rows,
+            sessionId: sessionId
+        )
+
+        let entries = await ClientLogBuffer.shared.snapshot(limit: 500, sessionId: sessionId)
         guard !entries.isEmpty else {
             autoClientLogUploadInFlight = false
             return
@@ -244,6 +263,85 @@ struct PiRemoteApp: App {
     }
 }
 
+private enum UIHangHarnessConfig {
+    static var isEnabled: Bool {
+#if DEBUG
+        let processInfo = ProcessInfo.processInfo
+        return processInfo.arguments.contains("--ui-hang-harness")
+            || processInfo.environment["PI_UI_HANG_HARNESS"] == "1"
+#else
+        return false
+#endif
+    }
+}
+
+private struct UIHangHarnessView: View {
+    private enum HarnessSession: String, CaseIterable {
+        case alpha
+        case beta
+        case gamma
+
+        var title: String { rawValue.capitalized }
+        var accessibilityID: String { "harness.session.\(rawValue)" }
+    }
+
+    private static let fixtureRows: [HarnessSession: [String]] = {
+        Dictionary(uniqueKeysWithValues: HarnessSession.allCases.map { session in
+            let rows = (1...60).map { index in
+                "\(session.title) item \(index)"
+            }
+            return (session, rows)
+        })
+    }()
+
+    @State private var selectedSession: HarnessSession = .alpha
+    @State private var heartbeat = 0
+
+    private var currentRows: [String] {
+        Self.fixtureRows[selectedSession] ?? []
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Harness Ready")
+                .font(.caption)
+                .accessibilityIdentifier("harness.ready")
+
+            HStack(spacing: 12) {
+                ForEach(HarnessSession.allCases, id: \.self) { session in
+                    Button(session.title) {
+                        selectedSession = session
+                        heartbeat &+= 1
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier(session.accessibilityID)
+                }
+            }
+
+            List(currentRows, id: \.self) { row in
+                Text(row)
+            }
+            .listStyle(.plain)
+
+            HStack {
+                diagnosticValue(id: "diag.heartbeat", value: heartbeat)
+                diagnosticValue(id: "diag.stallCount", value: 0)
+                diagnosticValue(id: "diag.itemCount", value: currentRows.count)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding()
+    }
+
+    private func diagnosticValue(id: String, value: Int) -> some View {
+        Text("\(value)")
+            .font(.caption2)
+            .accessibilityIdentifier(id)
+            .accessibilityLabel("\(value)")
+            .accessibilityValue("\(value)")
+    }
+}
+
 // MARK: - Main Thread Breadcrumb
 
 /// Thread-safe breadcrumb for the main thread watchdog.
@@ -251,6 +349,7 @@ struct PiRemoteApp: App {
 /// Read from the watchdog background thread to identify where the main
 /// thread is stuck during a stall.
 enum MainThreadBreadcrumb {
+#if DEBUG
     // Atomic string stored in a lock-free box.
     // Written on main thread, read on watchdog thread.
     private static let _value = OSAllocatedUnfairLock(initialState: "idle")
@@ -282,8 +381,16 @@ enum MainThreadBreadcrumb {
     static var rowCount: Int {
         _rowCount.withLock { $0 }
     }
+#else
+    static var current: String { "n/a" }
+    static func set(_ crumb: String) { _ = crumb }
+    static func incrementRowCount() -> Int { 0 }
+    static func resetRowCount() {}
+    static var rowCount: Int { 0 }
+#endif
 }
 
+#if DEBUG
 private struct MainThreadStallContext: Sendable {
     let thresholdMs: Int
     let footprintMB: Int?
@@ -326,7 +433,6 @@ private final class MainThreadLagWatchdog {
     }
 
     private func probeMainThread() {
-        let scheduledNs = DispatchTime.now().uptimeNanoseconds
         let thresholdMs = warnThresholdMs
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -344,34 +450,6 @@ private final class MainThreadLagWatchdog {
             let rows = MainThreadBreadcrumb.rowCount
             let footprintMB = Self.currentFootprintMB()
 
-            if let footprintMB {
-                appLog.error(
-                    "PERF main-thread stall: >\(thresholdMs, privacy: .public)ms footprint=\(footprintMB, privacy: .public)MB crumb=\(crumb, privacy: .public) rows=\(rows, privacy: .public)"
-                )
-                ClientLog.error(
-                    "App",
-                    "PERF main-thread stall",
-                    metadata: [
-                        "thresholdMs": String(thresholdMs),
-                        "footprintMB": String(footprintMB),
-                        "crumb": crumb,
-                        "rows": String(rows),
-                    ]
-                )
-            } else {
-                appLog.error("PERF main-thread stall: >\(thresholdMs, privacy: .public)ms footprint=n/a crumb=\(crumb, privacy: .public) rows=\(rows, privacy: .public)")
-                ClientLog.error(
-                    "App",
-                    "PERF main-thread stall",
-                    metadata: [
-                        "thresholdMs": String(thresholdMs),
-                        "footprintMB": "n/a",
-                        "crumb": crumb,
-                        "rows": String(rows),
-                    ]
-                )
-            }
-
             onStall?(
                 MainThreadStallContext(
                     thresholdMs: thresholdMs,
@@ -379,38 +457,6 @@ private final class MainThreadLagWatchdog {
                     crumb: crumb,
                     rows: rows
                 )
-            )
-            return
-        }
-
-        let nowNs = DispatchTime.now().uptimeNanoseconds
-        let lagMs = Int((nowNs - scheduledNs) / 1_000_000)
-        guard lagMs >= thresholdMs else { return }
-
-        let crumb = MainThreadBreadcrumb.current
-        if let footprintMB = Self.currentFootprintMB() {
-            appLog.error(
-                "PERF main-thread lag: \(lagMs, privacy: .public)ms footprint=\(footprintMB, privacy: .public)MB crumb=\(crumb, privacy: .public)"
-            )
-            ClientLog.error(
-                "App",
-                "PERF main-thread lag",
-                metadata: [
-                    "lagMs": String(lagMs),
-                    "footprintMB": String(footprintMB),
-                    "crumb": crumb,
-                ]
-            )
-        } else {
-            appLog.error("PERF main-thread lag: \(lagMs, privacy: .public)ms footprint=n/a crumb=\(crumb, privacy: .public)")
-            ClientLog.error(
-                "App",
-                "PERF main-thread lag",
-                metadata: [
-                    "lagMs": String(lagMs),
-                    "footprintMB": "n/a",
-                    "crumb": crumb,
-                ]
             )
         }
     }
@@ -429,3 +475,4 @@ private final class MainThreadLagWatchdog {
         return Int(info.phys_footprint / 1_048_576)
     }
 }
+#endif

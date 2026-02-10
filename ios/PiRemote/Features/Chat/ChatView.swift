@@ -1,8 +1,5 @@
-import os.log
 import SwiftUI
 import UIKit
-
-private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "ChatView")
 
 struct ChatView: View {
     let sessionId: String
@@ -368,7 +365,7 @@ struct ChatView: View {
         Task { @MainActor in
             defer { uploadingClientLogs = false }
 
-            let entries = await ClientLogBuffer.shared.snapshot(limit: 500)
+            let entries = await ClientLogBuffer.shared.snapshot(limit: 800, sessionId: sessionId)
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
             let request = ClientLogUploadRequest(
@@ -576,6 +573,9 @@ private struct SessionEndedFooter: View {
 /// It only re-evaluates when its own dependencies change (reducer.items,
 /// renderVersion, session status) — NOT when the parent's @State changes.
 private struct ChatTimelineView: View {
+    private static let initialRenderWindow = 80
+    private static let renderWindowStep = 60
+
     let sessionId: String
     let isBusy: Bool
     let scrollController: ChatScrollController
@@ -584,18 +584,39 @@ private struct ChatTimelineView: View {
 
     @Environment(TimelineReducer.self) private var reducer
 
+    @State private var renderWindow = Self.initialRenderWindow
+
+    private var visibleItems: ArraySlice<ChatItem> {
+        reducer.items.suffix(renderWindow)
+    }
+
+    private var hiddenCount: Int {
+        max(0, reducer.items.count - visibleItems.count)
+    }
+
     var body: some View {
-        MainThreadBreadcrumb.set("timeline-body:\(reducer.items.count)items")
-        return ScrollViewReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(reducer.items) { item in
+                    if hiddenCount > 0 {
+                        Button {
+                            renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
+                        } label: {
+                            Text("Show \(min(Self.renderWindowStep, hiddenCount)) earlier messages (\(hiddenCount) hidden)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.tokyoBlue)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    ForEach(visibleItems) { item in
                         ChatItemRow(
                             item: item,
                             isStreaming: item.id == reducer.streamingAssistantID,
                             onFork: onFork
                         )
-                        .id(item.id)
                     }
 
                     if isBusy && reducer.streamingAssistantID == nil {
@@ -613,6 +634,7 @@ private struct ChatTimelineView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 8)
             }
+            .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 PermissionOverlay(sessionId: sessionId)
             }
@@ -622,11 +644,8 @@ private struct ChatTimelineView: View {
                     ChatEmptyState()
                 }
             }
-            .onChange(of: reducer.renderVersion) { _, newVersion in
-                let rowsRendered = MainThreadBreadcrumb.rowCount
-                MainThreadBreadcrumb.resetRowCount()
-                perfLog.error("PERF renderVersion=\(newVersion, privacy: .public) items=\(reducer.items.count, privacy: .public) rowsSinceLastRV=\(rowsRendered, privacy: .public)")
-                scrollController._diagnosticItemCount = reducer.items.count
+            .onChange(of: reducer.renderVersion) { _, _ in
+                scrollController._diagnosticItemCount = visibleItems.count
                 scrollController.handleRenderVersionChange(
                     proxy: proxy,
                     streamingID: reducer.streamingAssistantID
@@ -638,7 +657,11 @@ private struct ChatTimelineView: View {
                 scrollController.needsInitialScroll = true
                 scrollController.handleInitialScroll(proxy: proxy)
             }
-            .onChange(of: scrollController.scrollTargetID) { _, _ in
+            .onChange(of: scrollController.scrollTargetID) { _, targetID in
+                guard let targetID else { return }
+                if !visibleItems.contains(where: { $0.id == targetID }) {
+                    renderWindow = reducer.items.count
+                }
                 scrollController.handleScrollTarget(proxy: proxy)
             }
         }

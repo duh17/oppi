@@ -166,7 +166,8 @@ struct ChatInputBar: View {
                             textColor: UIColor(Color.tokyoFg),
                             tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
                             maxLines: 8,
-                            onPasteImages: handlePastedImages
+                            onPasteImages: handlePastedImages,
+                            accessibilityIdentifier: "chat.input"
                         )
                     }
 
@@ -284,6 +285,7 @@ struct ChatInputBar: View {
                         .foregroundStyle(.tokyoPurple)
                 }
                 .frame(width: 36, height: 36)
+                .accessibilityIdentifier("chat.send")
             }
 
             Button(action: onStop) {
@@ -298,6 +300,7 @@ struct ChatInputBar: View {
             }
             .disabled(isStopping)
             .frame(width: 36, height: 36)
+            .accessibilityIdentifier("chat.stop")
         } else {
             Button(action: handleSend) {
                 if isSending {
@@ -312,6 +315,7 @@ struct ChatInputBar: View {
             }
             .disabled(!canSend || isSending)
             .frame(width: 36, height: 36)
+            .accessibilityIdentifier("chat.send")
         }
     }
 
@@ -345,16 +349,11 @@ struct ChatInputBar: View {
             guard !cmd.isEmpty else { return }
             onBash(cmd)
         } else {
-            // Emergency stability guard:
-            // proactively dismiss keyboard before prompt send so UITextInput
-            // candidate generation / placement updates don't contend with
-            // timeline relayout in the same interaction window.
-            UIApplication.shared.sendAction(
-                #selector(UIResponder.resignFirstResponder),
-                to: nil,
-                from: nil,
-                for: nil
-            )
+            // Keyboard stays open during send. Stability input traits
+            // (autocorrect/candidates disabled) prevent UITextInput from
+            // generating layout-interfering updates. Dismissing keyboard
+            // here caused a SafeArea resize → LazyVStack full placement
+            // cascade (2s+ hang). Let .scrollDismissesKeyboard handle it.
             onSend()
         }
     }

@@ -60,13 +60,33 @@ actor ClientLogBuffer {
         }
     }
 
-    func snapshot(limit: Int = 400) -> [ClientLogEntry] {
+    func snapshot(limit: Int = 400, sessionId: String? = nil) -> [ClientLogEntry] {
         guard limit > 0 else { return [] }
-        if entries.count <= limit {
-            return entries
+
+        let source: [ClientLogEntry]
+        if let sessionId, !sessionId.isEmpty {
+            let filtered = entries.filter { entry in
+                guard let metadata = entry.metadata else { return false }
+                return Self.sessionMetadataKeys.contains { key in
+                    metadata[key] == sessionId
+                }
+            }
+            source = filtered.isEmpty ? entries : filtered
+        } else {
+            source = entries
         }
-        return Array(entries.suffix(limit))
+
+        if source.count <= limit {
+            return source
+        }
+        return Array(source.suffix(limit))
     }
+
+    private static let sessionMetadataKeys = [
+        "sessionId",
+        "targetSession",
+        "wsSession",
+    ]
 
     private static func nowMs() -> Int64 {
         Int64((Date().timeIntervalSince1970 * 1_000.0).rounded())
@@ -80,16 +100,27 @@ enum ClientLog {
         message: String,
         metadata: [String: String] = [:]
     ) {
-#if DEBUG
+#if !DEBUG
+        // Keep release breadcrumb volume low. Sentry gets warning+error only.
+        guard level == .warning || level == .error else { return }
+#endif
+
         Task.detached(priority: .utility) {
+            await SentryService.shared.recordBreadcrumb(
+                level: level,
+                category: category,
+                message: message,
+                metadata: metadata
+            )
+#if DEBUG
             await ClientLogBuffer.shared.record(
                 level: level,
                 category: category,
                 message: message,
                 metadata: metadata
             )
-        }
 #endif
+        }
     }
 
     static func info(_ category: String, _ message: String, metadata: [String: String] = [:]) {

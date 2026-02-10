@@ -11,15 +11,17 @@ struct DiffContentView: View {
     let oldText: String
     let newText: String
     let filePath: String?
+    let showHeader: Bool
     private let diffLines: [DiffLine]
 
     @Environment(\.theme) private var theme
     @State private var showFullScreen = false
 
-    init(oldText: String, newText: String, filePath: String? = nil) {
+    init(oldText: String, newText: String, filePath: String? = nil, showHeader: Bool = true) {
         self.oldText = oldText
         self.newText = newText
         self.filePath = filePath
+        self.showHeader = showHeader
         self.diffLines = DiffEngine.compute(old: oldText, new: newText)
     }
 
@@ -33,7 +35,9 @@ struct DiffContentView: View {
         let lines = diffLines
 
         VStack(alignment: .leading, spacing: 0) {
-            diffHeader(changeStats: DiffEngine.stats(lines))
+            if showHeader {
+                diffHeader(changeStats: DiffEngine.stats(lines))
+            }
 
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -51,6 +55,9 @@ struct DiffContentView: View {
                 .stroke(theme.text.tertiary.opacity(0.35), lineWidth: 1)
         )
         .contextMenu {
+            Button("Expand", systemImage: "arrow.up.left.and.arrow.down.right") {
+                showFullScreen = true
+            }
             Button("Copy New Text", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = newText
             }

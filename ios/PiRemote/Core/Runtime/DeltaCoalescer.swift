@@ -1,7 +1,4 @@
 import Foundation
-import os.log
-
-private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Coalescer")
 
 /// Batches high-frequency stream deltas for smooth 30fps rendering.
 ///
@@ -73,13 +70,9 @@ final class DeltaCoalescer {
     private func deliverBuffer() {
         guard !buffer.isEmpty else { return }
         let events = buffer
-        let bytes = bufferedBytes
         buffer.removeAll(keepingCapacity: true)
         bufferedBytes = 0
-        MainThreadBreadcrumb.set("coalescer-flush:\(events.count)ev")
-        perfLog.debug("coalescer flush \(events.count) events (\(bytes) bytes)")
         onFlush?(events)
-        MainThreadBreadcrumb.set("idle")
     }
 
     private func appendBuffered(_ event: AgentEvent) {
@@ -87,10 +80,6 @@ final class DeltaCoalescer {
         bufferedBytes += estimatedPayloadBytes(event)
 
         if buffer.count >= maxBufferedEvents || bufferedBytes >= maxBufferedBytes {
-            // Persisted at .error for post-mortem diagnostics in device archives.
-            perfLog.error(
-                "PERF coalescer forced flush: \(self.buffer.count) events (\(self.bufferedBytes) bytes)"
-            )
             flushNow()
         } else {
             scheduleFlushIfNeeded()

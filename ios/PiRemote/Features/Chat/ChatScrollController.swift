@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Manages scroll behavior for the chat timeline.
 ///
@@ -18,11 +19,67 @@ final class ChatScrollController {
     /// where a debounce pattern (cancel + reschedule) would never fire.
     private var scrollTask: Task<Void, Never>?
 
+    /// Last completed auto-scroll timestamp.
+    private var lastAutoScrollAt: ContinuousClock.Instant?
+
+    /// Guardrail for very large timelines where repeated ScrollViewReader
+    /// `scrollTo` can wedge SwiftUI's lazy layout pass.
+    private let heavyTimelineThreshold = 120
+    /// In heavy timelines, back off auto-scroll cadence to reduce layout churn.
+    private let heavyTimelineAutoScrollMinInterval: Duration = .milliseconds(320)
+
+    /// During keyboard show/hide/frame-change animations, suppress automatic
+    /// timeline scrolling until layout settles.
+    private let keyboardSettleDuration: Duration = .milliseconds(500)
+    private var keyboardTransitionUntil: ContinuousClock.Instant?
+    nonisolated(unsafe) private var keyboardObservers: [NSObjectProtocol] = []
+
     /// Set by outline view to scroll to a specific item.
     var scrollTargetID: String?
 
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
+
+    init() {
+        startKeyboardObservers()
+    }
+
+    deinit {
+        let center = NotificationCenter.default
+        for token in keyboardObservers {
+            center.removeObserver(token)
+        }
+    }
+
+    private func startKeyboardObservers() {
+        let center = NotificationCenter.default
+        let names: [NSNotification.Name] = [
+            UIResponder.keyboardWillShowNotification,
+            UIResponder.keyboardWillHideNotification,
+            UIResponder.keyboardWillChangeFrameNotification,
+        ]
+
+        keyboardObservers = names.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    self?.markKeyboardTransition()
+                }
+            }
+        }
+    }
+
+    private func markKeyboardTransition() {
+        keyboardTransitionUntil = ContinuousClock.now.advanced(by: keyboardSettleDuration)
+    }
+
+    private var isKeyboardTransitionActive: Bool {
+        guard let keyboardTransitionUntil else { return false }
+        if ContinuousClock.now < keyboardTransitionUntil {
+            return true
+        }
+        self.keyboardTransitionUntil = nil
+        return false
+    }
 
     // MARK: - Sentinel Callbacks
 
@@ -44,26 +101,41 @@ final class ChatScrollController {
     /// from bouncing as the sentinel position shifts with content growth.
     func handleRenderVersionChange(proxy: ScrollViewProxy, streamingID: String? = nil) {
         guard anchor.isNearBottom else { return }
+        guard !isKeyboardTransitionActive else { return }
+
+        let isHeavyTimeline = _diagnosticItemCount >= heavyTimelineThreshold
+
+        // Guardrail: in very large timelines, non-streaming auto-scrolls are
+        // usually redundant (the user is already at the tail) and can trigger
+        // expensive LazyVStack placement cascades.
+        if isHeavyTimeline, streamingID == nil {
+            return
+        }
+
         guard scrollTask == nil else { return }
+
+        if isHeavyTimeline,
+           let lastAutoScrollAt,
+           ContinuousClock.now - lastAutoScrollAt < heavyTimelineAutoScrollMinInterval {
+            return
+        }
 
         // During active streaming, scroll to the message itself so the
         // cursor stays pinned in the viewport. Fall back to the sentinel
         // for non-streaming updates (tool rows, working indicator, etc.).
         let targetID = streamingID ?? "bottom-sentinel"
+        let throttleDelay: Duration = isHeavyTimeline ? .milliseconds(180) : .milliseconds(60)
 
         scrollTask = Task { @MainActor in
-            // 50ms throttle (was 100ms) — tighter tracking reduces the
-            // visible bounce between content growth and scroll catch-up.
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: throttleDelay)
             scrollTask = nil
             guard !Task.isCancelled else { return }
             guard anchor.isNearBottom else { return }
 
-            MainThreadBreadcrumb.set("scrollTo-bottom")
             withTransaction(Transaction(animation: nil)) {
                 proxy.scrollTo(targetID, anchor: .bottom)
             }
-            MainThreadBreadcrumb.set("idle")
+            lastAutoScrollAt = ContinuousClock.now
         }
     }
 
@@ -77,11 +149,9 @@ final class ChatScrollController {
         needsInitialScroll = false
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            MainThreadBreadcrumb.set("scrollTo-initial")
             withTransaction(Transaction(animation: nil)) {
                 proxy.scrollTo("bottom-sentinel", anchor: .bottom)
             }
-            MainThreadBreadcrumb.set("idle")
         }
     }
 
@@ -102,6 +172,8 @@ final class ChatScrollController {
     func cancel() {
         scrollTask?.cancel()
         scrollTask = nil
+        lastAutoScrollAt = nil
+        keyboardTransitionUntil = nil
     }
 }
 

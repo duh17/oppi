@@ -1,9 +1,5 @@
 // swiftlint:disable file_length
-import Darwin.Mach
 import Foundation
-import os.log
-
-private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Reducer")
 
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///
@@ -12,9 +8,9 @@ private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Reduce
 @MainActor @Observable
 final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Maximum items before trimming oldest from the front.
-    static let maxItems = 500
+    static let maxItems = 200
     /// Target count after trimming — keeps a buffer to avoid trimming on every event.
-    static let trimTarget = 400
+    static let trimTarget = 160
 
     private(set) var items: [ChatItem] = []
 
@@ -99,11 +95,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         let previousItemCount = items.count
         if previousItemCount >= Self.markdownCachePurgeItemThreshold {
-            let cacheStats = MarkdownSegmentCache.shared.snapshot()
             MarkdownSegmentCache.shared.clearAll()
-            perfLog.error(
-                "PERF markdown-cache purge on reset: previousItems=\(previousItemCount) entries=\(cacheStats.entries) bytes=\(cacheStats.totalSourceBytes)"
-            )
         }
 
         items.removeAll()
@@ -150,12 +142,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Includes tool calls, tool results, thinking blocks, compaction
     /// summaries, and system events (model/thinking level changes).
     func loadSession(_ events: [TraceEvent]) {
-        MainThreadBreadcrumb.set("loadSession:\(events.count)ev")
-        defer { MainThreadBreadcrumb.set("idle") }
         cancelMarkdownPrewarm()
 
-        let start = ContinuousClock.now
-        let memoryBefore = Self.currentFootprintBytes()
         let dateFormatter = Self.makeTraceDateFormatter()
 
         if let appendStart = incrementalAppendStartIndex(for: events) {
@@ -163,11 +151,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             // No-op reload: trace unchanged and timeline already canonical.
             if appendStart == events.count {
-                let elapsedMs = (ContinuousClock.now - start).ms
-                let memoryAfter = Self.currentFootprintBytes()
-                perfLog.error(
-                    "PERF loadSession incremental no-op: \(events.count) events in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
-                )
                 return
             }
 
@@ -187,11 +170,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             bumpRenderVersion()
             timelineMatchesTrace = true
 
-            let elapsedMs = (ContinuousClock.now - start).ms
-            let memoryAfter = Self.currentFootprintBytes()
-            perfLog.error(
-                "PERF loadSession incremental: +\(events.count - appendStart) events -> \(self.items.count) items in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
-            )
             prewarmMarkdownCache(for: assistantTextsToCache)
             return
         }
@@ -219,11 +197,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         bumpRenderVersion()
         timelineMatchesTrace = true
 
-        let elapsedMs = (ContinuousClock.now - start).ms
-        let memoryAfter = Self.currentFootprintBytes()
-        perfLog.error(
-            "PERF loadSession full: \(events.count) events -> \(self.items.count) items in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
-        )
         prewarmMarkdownCache(for: assistantTextsToCache)
     }
 
@@ -370,10 +343,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         textsToCache.reverse()
 
         markdownPrewarmTask = Task.detached(priority: .utility) {
-            let start = ContinuousClock.now
-            let memoryBefore = Self.currentFootprintBytes()
-            var warmedCount = 0
-
             for text in textsToCache {
                 if Task.isCancelled { return }
                 if MarkdownSegmentCache.shared.get(text) != nil { continue }
@@ -383,17 +352,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
                 let segments = FlatSegment.build(from: blocks)
                 MarkdownSegmentCache.shared.set(text, segments: segments)
-                warmedCount += 1
             }
-
-            if Task.isCancelled { return }
-
-            let ms = (ContinuousClock.now - start).ms
-            let memoryAfter = Self.currentFootprintBytes()
-            let cacheStats = MarkdownSegmentCache.shared.snapshot()
-            perfLog.error(
-                "PERF cache-warm: \(warmedCount) messages (\(totalChars) chars) in \(ms)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public) cache entries=\(cacheStats.entries) bytes=\(cacheStats.totalSourceBytes)"
-            )
         }
     }
 
@@ -408,29 +367,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return formatter
     }
 
-    nonisolated private static func currentFootprintBytes() -> UInt64? {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-
-        let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
-            }
-        }
-
-        guard result == KERN_SUCCESS else { return nil }
-        return info.phys_footprint
-    }
-
-    nonisolated private static func memorySummary(before: UInt64?, after: UInt64?) -> String {
-        guard let before, let after else { return "n/a" }
-        let beforeMB = Int(before / 1_048_576)
-        let afterMB = Int(after / 1_048_576)
-        let deltaMB = afterMB - beforeMB
-        let sign = deltaMB >= 0 ? "+" : ""
-        return "\(beforeMB)->\(afterMB)MB (\(sign)\(deltaMB)MB)"
-    }
-
     // MARK: - Process Agent Events
 
     /// Process a batch of events with a single renderVersion bump.
@@ -439,9 +375,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Perf note: text/thinking/tool-output deltas are high-frequency. In a
     /// batch, append to local accumulators and upsert affected rows once.
     func processBatch(_ events: [AgentEvent]) {
-        MainThreadBreadcrumb.set("processBatch:\(events.count)ev/\(items.count)items")
-        defer { MainThreadBreadcrumb.set("idle") }
-        let start = ContinuousClock.now
         var hasPendingAssistantUpsert = false
         var hasPendingThinkingUpsert = false
         var didMutate = false
@@ -522,10 +455,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if didMutate {
             bumpRenderVersion()
             timelineMatchesTrace = false
-        }
-        let elapsedMs = (ContinuousClock.now - start).ms
-        if elapsedMs > 5 {
-            perfLog.error("PERF processBatch slow: \(elapsedMs)ms for \(events.count) events, \(self.items.count) items")
         }
     }
 

@@ -325,12 +325,18 @@ struct AsyncDiffView: View {
     let oldText: String
     let newText: String
     let filePath: String?
+    var showHeader: Bool = true
 
     @State private var ready = false
 
     var body: some View {
         if ready {
-            DiffContentView(oldText: oldText, newText: newText, filePath: filePath)
+            DiffContentView(
+                oldText: oldText,
+                newText: newText,
+                filePath: filePath,
+                showHeader: showHeader
+            )
         } else {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

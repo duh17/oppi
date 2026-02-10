@@ -32,13 +32,6 @@ struct ChatItemRow: View {
     }
 
     var body: some View {
-        let _ = {
-            let count = MainThreadBreadcrumb.incrementRowCount()
-            if count % 20 == 0 {
-                MainThreadBreadcrumb.set("itemRow-body:#\(count)")
-            }
-        }()
-
         switch item {
         case .userMessage(_, let text, let images, _):
             UserMessageBubble(text: text, images: images, onFork: forkAction)
@@ -129,8 +122,6 @@ private struct UserMessageBubble: View {
                     onFork()
                 }
             }
-        } preview: {
-            MessagePreviewCard(text: text, icon: "❯", iconColor: .blue)
         }
     }
 }
@@ -220,8 +211,6 @@ private struct AssistantMessageBubble: View {
                     onFork()
                 }
             }
-        } preview: {
-            MessagePreviewCard(text: text, icon: "π", iconColor: .purple)
         }
     }
 }
@@ -436,6 +425,29 @@ private struct ToolCallRow: View {
     private var shouldHideBashPreviewInHeader: Bool {
         isExpanded && shouldShowExpandedBashCommand
     }
+    private var commandClipboardText: String {
+        if normalizedTool == "bash", let bashRawCommand {
+            return bashRawCommand
+        }
+        if let args, !args.isEmpty {
+            return args
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value.summary())" }
+                .joined(separator: ", ")
+        }
+        if !argsSummary.isEmpty {
+            return argsSummary
+        }
+        return tool
+    }
+
+    private func copyCommandToClipboard() {
+        UIPasteboard.general.string = commandClipboardText
+    }
+
+    private func copyOutputToClipboard(_ output: String) {
+        UIPasteboard.general.string = output
+    }
 
     /// Background + border colors based on tool execution state.
     private var stateBackground: Color {
@@ -483,11 +495,11 @@ private struct ToolCallRow: View {
             .contextMenu {
                 if !outputPreview.isEmpty {
                     Button("Copy Output", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = toolOutputStore.fullOutput(for: id)
+                        copyOutputToClipboard(toolOutputStore.fullOutput(for: id))
                     }
                 }
                 Button("Copy Command", systemImage: "terminal") {
-                    UIPasteboard.general.string = "\(tool): \(argsSummary)"
+                    copyCommandToClipboard()
                 }
                 if toolFilePath != nil, sessionId != nil {
                     Button("Open File", systemImage: "doc.text.magnifyingglass") { openFile() }
@@ -639,6 +651,25 @@ private struct ToolCallRow: View {
 
     private var trailingInfo: some View {
         HStack(spacing: 4) {
+            if normalizedTool == "edit",
+               let stats = ToolCallFormatting.editDiffStats(from: args) {
+                if stats.added > 0 {
+                    Text("+\(stats.added)")
+                        .font(.caption2.monospaced().bold())
+                        .foregroundStyle(.tokyoGreen)
+                }
+                if stats.removed > 0 {
+                    Text("-\(stats.removed)")
+                        .font(.caption2.monospaced().bold())
+                        .foregroundStyle(.tokyoRed)
+                }
+                if stats.added == 0 && stats.removed == 0 {
+                    Text("modified")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tokyoComment)
+                }
+            }
+
             if outputByteCount > 0 {
                 Text(ToolCallFormatting.formatBytes(outputByteCount))
                     .font(.caption2).foregroundStyle(.tokyoComment)
@@ -664,7 +695,7 @@ private struct ToolCallRow: View {
             if !isError { previewLines(ToolCallFormatting.headLines(outputPreview)) }
 
         case "edit":
-            if !isError { editStats }
+            EmptyView()
 
         default:
             if isError, !outputPreview.isEmpty {
@@ -732,6 +763,14 @@ private struct ToolCallRow: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(theme.accent.blue.opacity(0.35), lineWidth: 1)
             )
+            .onTapGesture(count: 2) {
+                copyCommandToClipboard()
+            }
+            .contextMenu {
+                Button("Copy Command", systemImage: "terminal") {
+                    copyCommandToClipboard()
+                }
+            }
         }
     }
 
@@ -744,13 +783,19 @@ private struct ToolCallRow: View {
         if ToolCallFormatting.isEditTool(tool), !isError,
            let oldText = args?["oldText"]?.stringValue,
            let newText = args?["newText"]?.stringValue {
-            AsyncDiffView(oldText: oldText, newText: newText, filePath: toolFilePath)
+            AsyncDiffView(oldText: oldText, newText: newText, filePath: toolFilePath, showHeader: false)
         } else if ToolCallFormatting.isWriteTool(tool), !isError, let content = args?["content"]?.stringValue {
             FileContentView(content: content, filePath: toolFilePath)
         } else if ToolCallFormatting.isReadTool(tool), !isError, !fullOutput.isEmpty {
             AsyncToolOutput(output: fullOutput, isError: false, filePath: toolFilePath, startLine: readStartLine)
+                .onTapGesture(count: 2) {
+                    copyOutputToClipboard(fullOutput)
+                }
         } else if !fullOutput.isEmpty {
             AsyncToolOutput(output: fullOutput, isError: isError)
+                .onTapGesture(count: 2) {
+                    copyOutputToClipboard(fullOutput)
+                }
         }
     }
 }
@@ -864,34 +909,4 @@ private struct ErrorRow: View {
     }
 }
 
-// MARK: - Context Menu Preview
 
-/// Clean preview card for context menu lift effect.
-/// Shows a compact, readable version of the message instead of the full row.
-private struct MessagePreviewCard: View {
-    let text: String
-    let icon: String
-    let iconColor: Color
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(icon)
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-                .foregroundStyle(iconColor)
-
-            Text(previewText)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-                .lineLimit(12)
-        }
-        .padding(16)
-        .frame(width: 320, alignment: .leading)
-    }
-
-    private var previewText: String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 500 { return trimmed }
-        return String(trimmed.prefix(497)) + "..."
-    }
-}

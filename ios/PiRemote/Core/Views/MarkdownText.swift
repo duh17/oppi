@@ -1,8 +1,5 @@
 // swiftlint:disable file_length
-import os.log
 import SwiftUI
-
-private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Markdown")
 
 // MARK: - Global Segment Cache
 
@@ -182,13 +179,10 @@ struct MarkdownText: View {
                         return
                     }
 
-                    let start = ContinuousClock.now
                     let segments = await Task.detached {
                         let blocks = parseCommonMark(text)
                         return FlatSegment.build(from: blocks)
                     }.value
-                    let elapsedMs = (ContinuousClock.now - start).ms
-                    perfLog.error("PERF parseCommonMark: \(text.count) chars -> \(segments.count) segments in \(elapsedMs)ms")
 
                     if shouldUseCache {
                         MarkdownSegmentCache.shared.set(text, segments: segments)
@@ -457,193 +451,9 @@ enum FlatSegment: Sendable {
     }
 }
 
-// MARK: - CommonMark View (Legacy — kept for reference)
-
-/// Full CommonMark renderer using SwiftUI view tree.
-///
-/// **WARNING**: This causes layout freezes (7-60s) due to deep VStack + AnyView nesting.
-/// Use `FlatMarkdownView` instead. Kept for reference and tests.
-///
-/// Renders the `[MarkdownBlock]` tree produced by `parseCommonMark(_:)`.
-/// Supports all CommonMark block and inline elements plus GFM tables.
-private struct CommonMarkView: View {
-    let blocks: [MarkdownBlock]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
-            }
-        }
-    }
-
-    // MARK: Block Rendering
-
-    /// Renders a single block node.
-    ///
-    /// Returns `AnyView` to prevent Swift type-checker explosion from the
-    /// 9-branch switch + recursive calls (blockQuote/list → blockView).
-    private func blockView(_ block: MarkdownBlock) -> AnyView {
-        switch block {
-        case .heading(let level, let inlines):
-            AnyView(headingView(level: level, inlines: inlines))
-        case .paragraph(let inlines):
-            AnyView(paragraphView(inlines))
-        case .blockQuote(let children):
-            AnyView(blockQuoteView(children))
-        case .codeBlock(let language, let code):
-            AnyView(CodeBlockView(language: language, code: code))
-        case .unorderedList(let items):
-            AnyView(unorderedListView(items))
-        case .orderedList(let start, let items):
-            AnyView(orderedListView(start: start, items: items))
-        case .thematicBreak:
-            AnyView(thematicBreakView())
-        case .table(let headers, let rows):
-            AnyView(TableBlockView(headers: headers, rows: rows))
-        case .htmlBlock(let html):
-            AnyView(htmlBlockView(html))
-        }
-    }
-
-    // MARK: Heading
-
-    private func headingView(level: Int, inlines: [MarkdownInline]) -> some View {
-        renderInlines(inlines)
-            .font(headingFont(level: level))
-            .foregroundStyle(Color.tokyoFg)
-            .textSelection(.enabled)
-    }
-
-    private func headingFont(level: Int) -> Font {
-        switch level {
-        case 1: return .title.bold()
-        case 2: return .title2.bold()
-        case 3: return .title3.bold()
-        case 4: return .headline
-        case 5: return .subheadline.bold()
-        default: return .subheadline
-        }
-    }
-
-    // MARK: Paragraph
-
-    private func paragraphView(_ inlines: [MarkdownInline]) -> some View {
-        renderInlines(inlines)
-            .foregroundStyle(Color.tokyoFg)
-            .textSelection(.enabled)
-    }
-
-    // MARK: Block Quote
-
-    private func blockQuoteView(_ children: [MarkdownBlock]) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.tokyoPurple.opacity(0.6))
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(children.enumerated()), id: \.offset) { _, child in
-                    blockView(child)
-                }
-            }
-            .foregroundStyle(Color.tokyoFgDim)
-        }
-    }
-
-    // MARK: Lists
-
-    private func unorderedListView(_ items: [[MarkdownBlock]]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, blocks in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\u{2022}")
-                        .foregroundStyle(.tokyoFgDim)
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                            blockView(block)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func orderedListView(start: Int, items: [[MarkdownBlock]]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, blocks in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(start + index).")
-                        .foregroundStyle(.tokyoFgDim)
-                        .frame(minWidth: 20, alignment: .trailing)
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                            blockView(block)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: Thematic Break
-
-    private func thematicBreakView() -> some View {
-        Rectangle()
-            .fill(Color.tokyoComment.opacity(0.4))
-            .frame(height: 1)
-            .padding(.vertical, 4)
-    }
-
-    // MARK: HTML Block
-
-    private func htmlBlockView(_ html: String) -> some View {
-        Text(html.trimmingCharacters(in: .whitespacesAndNewlines))
-            .font(.system(.caption, design: .monospaced))
-            .foregroundStyle(Color.tokyoComment)
-    }
-
-    // MARK: Inline Rendering
-
-    /// Render inline nodes as a composed SwiftUI `Text` value.
-    ///
-    /// Uses `Text` concatenation (`+`) to preserve per-run styling
-    /// (bold, italic, code, links) within a single text flow.
-    private func renderInlines(_ inlines: [MarkdownInline]) -> Text {
-        inlines.reduce(Text("")) { $0 + renderInline($1) }
-    }
-
-    private func renderInline(_ inline: MarkdownInline) -> Text {
-        switch inline {
-        case .text(let string):
-            return Text(string)
-        case .emphasis(let children):
-            return renderInlines(children).italic()
-        case .strong(let children):
-            return renderInlines(children).bold()
-        case .code(let code):
-            return Text(code)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(Color.tokyoCyan)
-        case .link(let children, _):
-            return renderInlines(children)
-                .foregroundStyle(Color.tokyoBlue)
-                .underline()
-        case .image(let alt, _):
-            if alt.isEmpty { return Text("") }
-            return Text("[\(alt)]")
-                .foregroundStyle(Color.tokyoComment)
-        case .softBreak:
-            return Text("\n")
-        case .hardBreak:
-            return Text("\n")
-        case .html(let raw):
-            return Text(raw)
-                .foregroundStyle(Color.tokyoComment)
-        case .strikethrough(let children):
-            return renderInlines(children).strikethrough()
-        }
-    }
-}
+// NOTE: Legacy CommonMarkView (~190 lines) removed 2026-02-10.
+// Caused 7-60s layout freezes from deep VStack + AnyView nesting.
+// Replaced by FlatMarkdownView above. See git history if needed.
 
 // MARK: - Code Block Views
 

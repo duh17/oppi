@@ -4,6 +4,7 @@ import UIKit
 @MainActor
 private func applyStabilityInputTraits(to textView: UITextView) {
     textView.autocorrectionType = .no
+    textView.autocapitalizationType = .none
     textView.spellCheckingType = .no
     textView.smartQuotesType = .no
     textView.smartDashesType = .no
@@ -30,6 +31,7 @@ struct PastableTextView: UIViewRepresentable {
     let tintColor: UIColor
     let maxLines: Int
     let onPasteImages: ([UIImage]) -> Void
+    let accessibilityIdentifier: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
@@ -57,27 +59,25 @@ struct PastableTextView: UIViewRepresentable {
         // layout behavior under SwiftUI pressure on device.
         _ = textView.layoutManager
 
+        textView.isAccessibilityElement = true
+        textView.accessibilityIdentifier = accessibilityIdentifier
+
         return textView
     }
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
-        MainThreadBreadcrumb.set("textview-update")
-        defer { MainThreadBreadcrumb.set("idle") }
-
         if textView.text != text {
             textView.text = text
         }
         textView.onPasteImages = onPasteImages
         textView.tintColor = tintColor
+        textView.accessibilityIdentifier = accessibilityIdentifier
 
         // Keep update path side-effect free: no layout invalidation, no dynamic
         // scroll toggling, no text-container mutation.
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: PastableUITextView, context: Context) -> CGSize? {
-        MainThreadBreadcrumb.set("textview-sizeThatFits")
-        defer { MainThreadBreadcrumb.set("idle") }
-
         // Emergency hardening:
         // Use a fixed inline height and internal scrolling, instead of
         // dynamic text measurement. This removes the auto-resize feedback
@@ -184,6 +184,9 @@ struct FullSizeTextView: UIViewRepresentable {
 final class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
 
+    private var cachedPasteboardChangeCount: Int = -1
+    private var cachedPasteboardHasImages = false
+
     override var intrinsicContentSize: CGSize {
         // Return noIntrinsicMetric — sizeThatFits is the authoritative source
         // for SwiftUI layout. Having intrinsicContentSize compete with
@@ -192,13 +195,27 @@ final class PastableUITextView: UITextView {
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-        if action == #selector(paste(_:)) {
-            let pb = UIPasteboard.general
-            if pb.hasImages || pb.hasStrings {
-                return true
-            }
+        guard action == #selector(paste(_:)) else {
+            return super.canPerformAction(action, withSender: sender)
         }
-        return super.canPerformAction(action, withSender: sender)
+
+        if super.canPerformAction(action, withSender: sender) {
+            return true
+        }
+
+        // Selection gestures invoke canPerformAction frequently.
+        // Cache by pasteboard changeCount to avoid repeated expensive probes.
+        return pasteboardHasImages()
+    }
+
+    private func pasteboardHasImages() -> Bool {
+        let pb = UIPasteboard.general
+        let changeCount = pb.changeCount
+        if changeCount != cachedPasteboardChangeCount {
+            cachedPasteboardChangeCount = changeCount
+            cachedPasteboardHasImages = pb.hasImages
+        }
+        return cachedPasteboardHasImages
     }
 
     override func paste(_ sender: Any?) {

@@ -244,7 +244,10 @@ struct ReliabilityTests {
     @Test func timelineTrimPrefersConversationMessagesOverToolRows() {
         let reducer = TimelineReducer()
 
-        for i in 0..<300 {
+        // Add enough items to trigger trimming: each iteration adds 3 items
+        // (user + toolStart + toolEnd). We want total > maxItems.
+        let turnCount = (TimelineReducer.maxItems / 3) + 40
+        for i in 0..<turnCount {
             reducer.appendUserMessage("msg-\(i)")
             let toolId = "t\(i)"
             reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: [:]))
@@ -258,9 +261,11 @@ struct ReliabilityTests {
             return text
         }
 
+        // Trim should prefer dropping tool rows over user messages.
+        // All user messages should survive since tool rows are trimmable first.
         #expect(remainingMessages.contains("msg-0"), "Oldest user messages should be retained when tool rows are trimmable")
-        #expect(remainingMessages.contains("msg-299"))
-        #expect(remainingMessages.count == 300)
+        #expect(remainingMessages.contains("msg-\(turnCount - 1)"))
+        #expect(remainingMessages.count == turnCount)
     }
 
     @MainActor
