@@ -16,17 +16,11 @@
  * - Response correlation for RPC commands
  */
 
-import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createInterface } from "node:readline";
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { homedir } from "node:os";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+
 import type {
   Session,
-  SessionMessage,
   ServerMessage,
   ServerConfig,
   TurnAckStage,
@@ -37,12 +31,29 @@ import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
 import type { AuthProxy } from "./auth-proxy.js";
-import { PolicyEngine, type PathAccess } from "./policy.js";
+
 import {
   WorkspaceRuntime,
   resolveRuntimeLimits,
   type WorkspaceSessionIdentity,
 } from "./workspace-runtime.js";
+import { EventRing } from "./event-ring.js";
+import { TurnDedupeCache, computeTurnPayloadHash } from "./turn-cache.js";
+import {
+  translatePiEvent,
+  extractAssistantText,
+  normalizeRpcError,
+  updateSessionChangeStats,
+  appendSessionMessage,
+  applyMessageEndToSession,
+  type TranslationContext,
+} from "./session-protocol.js";
+import {
+  resolvePiExecutable,
+  spawnPiHost,
+  spawnPiContainer,
+  type SpawnDeps,
+} from "./session-spawn.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -54,184 +65,14 @@ function ts(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
-/**
- * Compute the missing assistant text tail from streamed deltas and finalized text.
- *
- * Pi normally streams assistant text via `message_update.text_delta`, but some
- * turns only include text in `message_end`. This helper bridges that gap.
- */
-export function computeAssistantTextTailDelta(streamedText: string, finalizedText: string): string {
-  if (finalizedText.length === 0) return "";
-  if (streamedText.length === 0) return finalizedText;
-  if (finalizedText === streamedText) return "";
+// Re-exported from session-protocol — kept here for backward compatibility.
+export { computeAssistantTextTailDelta } from "./session-protocol.js";
 
-  if (finalizedText.startsWith(streamedText)) {
-    return finalizedText.slice(streamedText.length);
-  }
+// Re-exported from dedicated module — kept here for backward compatibility.
+export { TurnDedupeCache, type TurnDedupeRecord } from "./turn-cache.js";
 
-  // Fallback for unexpected divergence: append from common prefix forward.
-  // We cannot retract already-streamed text, but this avoids dropping content.
-  let commonPrefix = 0;
-  const max = Math.min(streamedText.length, finalizedText.length);
-  while (commonPrefix < max && streamedText[commonPrefix] === finalizedText[commonPrefix]) {
-    commonPrefix += 1;
-  }
-
-  return finalizedText.slice(commonPrefix);
-}
-
-export interface TurnDedupeRecord {
-  command: TurnCommand;
-  payloadHash: string;
-  stage: TurnAckStage;
-  acceptedAt: number;
-  updatedAt: number;
-}
-
-interface TurnDedupeEntry {
-  record: TurnDedupeRecord;
-  expiresAt: number;
-}
-
-const TURN_STAGE_ORDER: Record<TurnAckStage, number> = {
-  accepted: 1,
-  dispatched: 2,
-  started: 3,
-};
-
-export class TurnDedupeCache {
-  private entries: Map<string, TurnDedupeEntry> = new Map();
-
-  constructor(
-    private readonly capacity = 256,
-    private readonly ttlMs = 15 * 60_000,
-  ) {}
-
-  get(clientTurnId: string, now = Date.now()): TurnDedupeRecord | null {
-    this.purgeExpired(now);
-    const entry = this.entries.get(clientTurnId);
-    if (!entry) {
-      return null;
-    }
-
-    if (entry.expiresAt <= now) {
-      this.entries.delete(clientTurnId);
-      return null;
-    }
-
-    this.entries.delete(clientTurnId);
-    entry.expiresAt = now + this.ttlMs;
-    this.entries.set(clientTurnId, entry);
-    return entry.record;
-  }
-
-  set(clientTurnId: string, record: TurnDedupeRecord, now = Date.now()): void {
-    this.purgeExpired(now);
-    this.entries.delete(clientTurnId);
-    this.entries.set(clientTurnId, {
-      record,
-      expiresAt: now + this.ttlMs,
-    });
-    this.trimToCapacity();
-  }
-
-  updateStage(
-    clientTurnId: string,
-    stage: TurnAckStage,
-    now = Date.now(),
-  ): TurnDedupeRecord | null {
-    const entry = this.entries.get(clientTurnId);
-    if (!entry) {
-      return null;
-    }
-
-    if (entry.expiresAt <= now) {
-      this.entries.delete(clientTurnId);
-      return null;
-    }
-
-    if (TURN_STAGE_ORDER[stage] > TURN_STAGE_ORDER[entry.record.stage]) {
-      entry.record.stage = stage;
-    }
-    entry.record.updatedAt = now;
-
-    this.entries.delete(clientTurnId);
-    entry.expiresAt = now + this.ttlMs;
-    this.entries.set(clientTurnId, entry);
-    return entry.record;
-  }
-
-  size(now = Date.now()): number {
-    this.purgeExpired(now);
-    return this.entries.size;
-  }
-
-  private purgeExpired(now: number): void {
-    for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= now) {
-        this.entries.delete(key);
-      }
-    }
-  }
-
-  private trimToCapacity(): void {
-    while (this.entries.size > this.capacity) {
-      const oldest = this.entries.keys().next().value;
-      if (!oldest) {
-        break;
-      }
-      this.entries.delete(oldest);
-    }
-  }
-}
-
-export interface SequencedEvent {
-  seq: number;
-  event: ServerMessage;
-  timestamp: number;
-}
-
-export class EventRing {
-  private events: SequencedEvent[] = [];
-
-  constructor(private readonly capacity = 500) {}
-
-  push(event: SequencedEvent): void {
-    if (!Number.isInteger(event.seq) || event.seq <= 0) {
-      throw new Error(`EventRing sequence must be a positive integer (received ${event.seq})`);
-    }
-
-    const last = this.events[this.events.length - 1];
-    if (last && event.seq <= last.seq) {
-      throw new Error(
-        `EventRing sequence must be strictly increasing (last=${last.seq}, next=${event.seq})`,
-      );
-    }
-
-    this.events.push(event);
-    if (this.events.length > this.capacity) {
-      this.events.shift();
-    }
-  }
-
-  since(sinceSeq: number): SequencedEvent[] {
-    const idx = this.events.findIndex((entry) => entry.seq > sinceSeq);
-    return idx === -1 ? [] : this.events.slice(idx);
-  }
-
-  get currentSeq(): number {
-    const last = this.events[this.events.length - 1];
-    return last?.seq ?? 0;
-  }
-
-  get oldestSeq(): number {
-    return this.events[0]?.seq ?? 0;
-  }
-
-  canServe(sinceSeq: number): boolean {
-    return this.events.length === 0 || sinceSeq >= this.oldestSeq - 1;
-  }
-}
+// Re-exported from dedicated module — kept here for backward compatibility.
+export { EventRing, type SequencedEvent } from "./event-ring.js";
 
 export interface SessionCatchUpResponse {
   events: ServerMessage[];
@@ -247,13 +88,6 @@ export interface SessionBroadcastEvent {
   durable: boolean;
 }
 
-function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string {
-  return createHash("sha1")
-    .update(command)
-    .update(":")
-    .update(JSON.stringify(payload))
-    .digest("hex");
-}
 
 // ─── Types ───
 
@@ -344,19 +178,6 @@ const FIRE_AND_FORGET_METHODS = new Set([
   "set_editor_text",
 ]);
 
-// ─── Extension Paths ───
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/** Pi-remote TCP permission gate extension (pi-remote/extensions/permission-gate/). */
-const PI_REMOTE_GATE_EXTENSION = join(__dirname, "..", "extensions", "permission-gate");
-
-/** Host memory extension (user's pi config). */
-const HOST_MEMORY_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
-
-/** Host todo extension (user's pi config). */
-const HOST_TODOS_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
-
 // ─── Session Manager ───
 
 export class SessionManager extends EventEmitter {
@@ -388,7 +209,7 @@ export class SessionManager extends EventEmitter {
     this.sandbox = sandbox;
     this.authProxy = authProxy ?? null;
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
-    this.piExecutable = this.resolvePiExecutable();
+    this.piExecutable = resolvePiExecutable();
   }
 
   // ─── Session Lifecycle ───
@@ -466,8 +287,8 @@ export class SessionManager extends EventEmitter {
 
           const proc =
             runtime === "host"
-              ? await this.spawnPiHost(session, workspace)
-              : await this.spawnPiContainer(session, identity.workspaceId, userName, workspace);
+              ? await spawnPiHost(session, workspace, this.spawnDeps)
+              : await spawnPiContainer(session, identity.workspaceId, userName, workspace, this.spawnDeps);
 
           // Validate sandbox (container mode only — host mode has no sandbox to validate)
           if (runtime === "container") {
@@ -586,305 +407,18 @@ export class SessionManager extends EventEmitter {
     return `session-${session.id}`;
   }
 
-  /**
-   * Resolve the pi executable path for host runtime sessions.
-   *
-   * tmux/systemd launches may have a minimal PATH that does not include npm
-   * global bins. Prefer an explicit env override, then common install paths.
-   */
-  private resolvePiExecutable(): string {
-    const envPath = process.env.PI_REMOTE_PI_BIN;
-    if (envPath && existsSync(envPath)) {
-      return envPath;
-    }
+  // ─── Spawn Dependencies ───
 
-    try {
-      const discovered = execSync("which pi", {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-      if (discovered.length > 0) {
-        return discovered;
-      }
-    } catch {
-      // Fall through to known locations
-    }
-
-    for (const candidate of ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"]) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    // Final fallback; spawn will surface ENOENT with actionable logs.
-    return "pi";
-  }
-
-  /**
-   * Spawn pi directly on the host — no container, no sandbox.
-   *
-   * Pi runs as the current user with full access to the host filesystem.
-   * The permission gate is the only security layer.
-   */
-  private async spawnPiHost(session: Session, workspace?: Workspace): Promise<ChildProcess> {
-    const key = `${session.userId}/${session.id}`;
-
-    // Create gate TCP socket (extension connects via localhost)
-    const gatePort = await this.gate.createSessionSocket(
-      session.id,
-      session.userId,
-      workspace?.id || "",
-    );
-
-    // Configure per-session policy based on workspace settings.
-    // Host sessions default to the restrictive "host" preset.
-    const presetName = workspace?.policyPreset || "host";
-    const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
-
-    const allowedPaths: PathAccess[] = [
-      // Workspace directory — full read/write
-      { path: cwd, access: "readwrite" },
-      // Pi agent config — read-only (for recall, memory, skills)
-      { path: join(homedir(), ".pi"), access: "read" },
-    ];
-
-    // Add workspace-configured extra paths
-    if (workspace?.allowedPaths) {
-      for (const entry of workspace.allowedPaths) {
-        const resolved = entry.path.replace(/^~/, homedir());
-        allowedPaths.push({ path: resolved, access: entry.access });
-      }
-    }
-
-    const allowedExecutables = workspace?.allowedExecutables;
-    const policy = new PolicyEngine(presetName, { allowedPaths, allowedExecutables });
-    this.gate.setSessionPolicy(session.id, policy);
-    console.log(
-      `${ts()} [session:${session.id}] policy: preset=${presetName}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
-    );
-
-    // Build pi args.
-    //
-    // Host-mode uses --no-extensions to suppress auto-discovery of the user's
-    // local extensions (which include a different permission-gate that doesn't
-    // know about TCP gates). We then explicitly load:
-    //   1. The pi-remote TCP permission gate extension (always)
-    //   2. The memory extension (if workspace.memoryEnabled)
-    //   3. The todo extension (if installed)
-    const piArgs = ["--mode", "rpc", "--no-extensions"];
-
-    // 1. Always load the pi-remote TCP permission gate extension
-    if (existsSync(PI_REMOTE_GATE_EXTENSION)) {
-      piArgs.push("--extension", PI_REMOTE_GATE_EXTENSION);
-    } else {
-      console.warn(
-        `${ts()} [session:${session.id}] pi-remote gate extension not found at ${PI_REMOTE_GATE_EXTENSION}`,
-      );
-    }
-
-    // 2. Optionally load memory extension
-    if (workspace?.memoryEnabled && existsSync(HOST_MEMORY_EXTENSION)) {
-      piArgs.push("--extension", HOST_MEMORY_EXTENSION);
-    }
-
-    // 3. Optionally load todo extension
-    if (existsSync(HOST_TODOS_EXTENSION)) {
-      piArgs.push("--extension", HOST_TODOS_EXTENSION);
-    }
-
-    if (session.model) {
-      const slash = session.model.indexOf("/");
-      if (slash > 0) {
-        piArgs.push("--provider", session.model.slice(0, slash));
-        piArgs.push("--model", session.model.slice(slash + 1));
-      } else {
-        piArgs.push("--model", session.model);
-      }
-    }
-
-    // Resume existing session if JSONL file exists.
-    // This preserves conversation history across server restarts.
-    if (session.piSessionFile && existsSync(session.piSessionFile)) {
-      piArgs.push("--session", session.piSessionFile);
-      console.log(`${ts()} [session:${session.id}] resuming from ${session.piSessionFile}`);
-    } else if (session.piSessionFiles?.length) {
-      // Fall back to the most recent session file
-      const lastFile = session.piSessionFiles[session.piSessionFiles.length - 1];
-      if (existsSync(lastFile)) {
-        piArgs.push("--session", lastFile);
-        console.log(`${ts()} [session:${session.id}] resuming from ${lastFile} (fallback)`);
-      }
-    }
-
-    // Resolve system prompt if workspace provides one
-    if (workspace?.systemPrompt) {
-      const promptDir = join(homedir(), ".config", "pi-remote", "prompts");
-      mkdirSync(promptDir, { recursive: true });
-      const promptPath = join(promptDir, `${session.id}.md`);
-      writeFileSync(promptPath, workspace.systemPrompt);
-      piArgs.push("--append-system-prompt", promptPath);
-    }
-
-    // Working directory — already resolved above for policy config
-    if (!existsSync(cwd)) {
-      throw new Error(`Host workspace path not found: ${cwd}`);
-    }
-
-    console.log(
-      `${ts()} [session:${session.id}] spawning pi (host mode) in ${cwd} via ${this.piExecutable}`,
-    );
-    console.log(`${ts()} [session:${session.id}] pi args: ${piArgs.join(" ")}`);
-
-    const proc = spawn(this.piExecutable, piArgs, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        PI_REMOTE_SESSION: session.id,
-        PI_REMOTE_USER: session.userId,
-        PI_REMOTE_GATE_HOST: "127.0.0.1",
-        PI_REMOTE_GATE_PORT: String(gatePort),
-      },
-    });
-
-    return this.setupProcHandlers(key, session, proc);
-  }
-
-  /**
-   * Spawn pi inside a container via SandboxManager.
-   */
-  private async spawnPiContainer(
-    session: Session,
-    workspaceId: string,
-    userName?: string,
-    workspace?: Workspace,
-  ): Promise<ChildProcess> {
-    const key = `${session.userId}/${session.id}`;
-
-    // Best-effort migration from legacy session-scoped sandbox to workspace-scoped layout.
-    this.sandbox.migrateLegacySessionLayout(session.userId, workspaceId, session.id);
-
-    // Register session with auth proxy (proxy validates session tokens on API requests)
-    this.authProxy?.registerSession(session.id, session.userId);
-
-    // Create gate TCP socket (extension connects from container to host-gateway)
-    const gatePort = await this.gate.createSessionSocket(session.id, session.userId, workspaceId);
-
-    // Configure per-session policy for container (permissive — container IS the boundary)
-    const presetName = workspace?.policyPreset || "container";
-    const containerPolicy = new PolicyEngine(presetName);
-    this.gate.setSessionPolicy(session.id, containerPolicy);
-    console.log(`${ts()} [session:${session.id}] policy: preset=${presetName} (container mode)`);
-
-    // Spawn pi in container
-    const proc = this.sandbox.spawnPi({
-      sessionId: session.id,
-      userId: session.userId,
-      workspaceId,
-      userName,
-      model: session.model,
-      workspace,
-      gatePort,
-    });
-
-    return this.setupProcHandlers(key, session, proc);
-  }
-
-  /**
-   * Wire up RPC line handling, stderr logging, exit/error handlers,
-   * and wait for pi to be ready. Shared by host and container modes.
-   */
-  private async setupProcHandlers(
-    key: string,
-    session: Session,
-    proc: ChildProcess,
-  ): Promise<ChildProcess> {
-    if (!proc.stdout) {
-      throw new Error(`pi process for ${key} has no stdout — was it spawned with stdio: "pipe"?`);
-    }
-
-    // Single readline consumer for stdout — handles all RPC events
-    const rl = createInterface({ input: proc.stdout });
-    let readyResolve: (() => void) | null = null;
-    let readyReject: ((err: Error) => void) | null = null;
-
-    const settleReady = (err?: Error): void => {
-      if (err) {
-        const reject = readyReject;
-        readyResolve = null;
-        readyReject = null;
-        reject?.(err);
-        return;
-      }
-
-      const resolve = readyResolve;
-      readyResolve = null;
-      readyReject = null;
-      resolve?.();
+  /** Build the SpawnDeps object for spawn functions. */
+  private get spawnDeps(): SpawnDeps {
+    return {
+      gate: this.gate,
+      sandbox: this.sandbox,
+      authProxy: this.authProxy,
+      piExecutable: this.piExecutable,
+      onRpcLine: (key, line) => this.handleRpcLine(key, line),
+      onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
     };
-
-    rl.on("line", (line) => {
-      // If waiting for ready, any valid JSON means pi is up
-      if (readyResolve || readyReject) {
-        try {
-          const data = JSON.parse(line);
-          if (data.type) {
-            settleReady();
-          }
-        } catch {
-          // non-JSON line from pi, ignore
-        }
-      }
-      // Always route to handler (no messages lost)
-      this.handleRpcLine(key, line);
-    });
-
-    // stderr → log
-    proc.stderr?.on("data", (data: Buffer) => {
-      console.error(`${ts()} [pi:${session.id}] ${data.toString().trim()}`);
-    });
-
-    // Process exit
-    proc.on("exit", (code) => {
-      if (readyReject) {
-        settleReady(new Error(`pi exited before ready: ${session.id} (${code ?? "null"})`));
-      }
-      console.log(`${ts()} [pi:${session.id}] exited (${code})`);
-      this.handleSessionEnd(key, code === 0 ? "completed" : "error");
-    });
-
-    proc.on("error", (err) => {
-      if (readyReject) {
-        settleReady(new Error(`pi spawn error before ready: ${session.id} (${err.message})`));
-      }
-      console.error(`${ts()} [pi:${session.id}] spawn error:`, err);
-      this.handleSessionEnd(key, "error");
-    });
-
-    // Wait for pi to be ready (probe with get_state)
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        settleReady(new Error(`Timeout waiting for pi: ${session.id}`));
-      }, 30_000);
-
-      readyResolve = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      readyReject = (err) => {
-        clearTimeout(timer);
-        reject(err);
-      };
-
-      // Probe readiness
-      setTimeout(() => {
-        if (!proc.killed) {
-          proc.stdin?.write(JSON.stringify({ type: "get_state" }) + "\n");
-        }
-      }, 500);
-    });
-
-    return proc;
   }
 
   // ─── RPC Line Handler ───
@@ -914,7 +448,7 @@ export class SessionManager extends EventEmitter {
       const command = typeof data.command === "string" ? data.command : "rpc";
       const rawError =
         typeof data.error === "string" && data.error.length > 0 ? data.error : "Unknown RPC error";
-      const errorText = this.normalizeRpcError(command, rawError);
+      const errorText = normalizeRpcError(command, rawError);
 
       if (typeof data.id === "string" && data.id.length > 0) {
         const handler = active.pendingResponses.get(data.id);
@@ -966,7 +500,9 @@ export class SessionManager extends EventEmitter {
       );
     }
 
-    const messages = this.translateEvent(data, active);
+    const ctx = this.translationContext(active);
+    const messages = translatePiEvent(data, ctx);
+    active.streamedAssistantText = ctx.streamedAssistantText;
     for (const message of messages) {
       this.broadcast(key, message);
     }
@@ -987,7 +523,7 @@ export class SessionManager extends EventEmitter {
         this.broadcast(key, {
           type: "message_end",
           role,
-          content: this.extractAssistantText(data.message),
+          content: extractAssistantText(data.message),
         });
       }
     }
@@ -1218,11 +754,17 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    this.appendMessage(active.session, {
-      role: "user",
-      content: message,
-      timestamp: opts?.timestamp ?? Date.now(),
-    });
+    appendSessionMessage(
+      active.session,
+      {
+        role: "user",
+        content: message,
+        timestamp: opts?.timestamp ?? Date.now(),
+      },
+      (uid, sid, msg) => {
+        this.storage.addSessionMessage(uid, sid, msg);
+      },
+    );
 
     const cmd: Record<string, unknown> = {
       type: "prompt",
@@ -1561,6 +1103,20 @@ export class SessionManager extends EventEmitter {
         }
       }
 
+      // Track session name changes so optimistic client renames don't get
+      // overwritten by stale local get_state snapshots.
+      if (cmdType === "set_session_name") {
+        const requestedName =
+          typeof message.name === "string" ? message.name.trim() : "";
+        const responseName =
+          typeof data?.name === "string" ? data.name.trim() : "";
+        const nextName = responseName.length > 0 ? responseName : requestedName;
+        if (nextName.length > 0 && active.session.name !== nextName) {
+          active.session.name = nextName;
+          this.persistSessionNow(key, active.session);
+        }
+      }
+
       this.broadcast(key, {
         type: "rpc_result",
         command: cmdType,
@@ -1569,13 +1125,14 @@ export class SessionManager extends EventEmitter {
         data,
       });
 
-      // Broadcast updated session state after model/thinking changes
+      // Broadcast updated session state after model/thinking/name changes
       // so clients see the change immediately without waiting for next agent event
       if (
         cmdType === "set_model" ||
         cmdType === "cycle_model" ||
         cmdType === "set_thinking_level" ||
-        cmdType === "cycle_thinking_level"
+        cmdType === "cycle_thinking_level" ||
+        cmdType === "set_session_name"
       ) {
         this.broadcast(key, { type: "state", session: active.session });
       }
@@ -1586,32 +1143,12 @@ export class SessionManager extends EventEmitter {
         command: cmdType,
         requestId,
         success: false,
-        error: this.normalizeRpcError(cmdType, rawError),
+        error: normalizeRpcError(cmdType, rawError),
       });
     }
   }
 
-  /**
-   * Normalize noisy/low-level RPC errors into user-facing text.
-   */
-  private normalizeRpcError(command: string, error: string): string {
-    const trimmed = error.trim();
-    const parsePrefix = "Failed to parse command:";
 
-    let normalized = trimmed;
-    if (trimmed.startsWith(parsePrefix)) {
-      const remainder = trimmed.slice(parsePrefix.length).trim();
-      if (remainder.length > 0) {
-        normalized = remainder;
-      }
-    }
-
-    if (command === "compact" && /already compacted/i.test(normalized)) {
-      return "Already compacted";
-    }
-
-    return normalized;
-  }
 
   /**
    * Abort the current agent operation.
@@ -1729,215 +1266,23 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  // ─── Event Translation ───
+  // ─── Event Translation (delegated to session-protocol module) ───
 
   /**
-   * Translate pi RPC events to our simplified WebSocket format.
-   *
-   * Tool events plumb the stable toolCallId from pi RPC so the client can
-   * correlate tool_start/tool_output/tool_end without synthesizing IDs.
-   *
-   * partialResult handling: pi RPC tool_execution_update sends partialResult
-   * with replace semantics (accumulated output so far). We compute deltas
-   * here so the client can use simple append semantics.
-   *
-   * Media handling: pi's Read tool can return image/audio files as content
-   * blocks (base64 + mimeType). We encode these as data URIs in tool_output
-   * text so iOS extractors can detect and render playable media.
+   * Build the TranslationContext for an active session.
+   * The context holds mutable streaming state that translatePiEvent reads/writes.
    */
-  /**
-   * Extract image/audio content blocks as data URI tool_output messages.
-   * Pi sends media as { type: "image"|"audio", data: "base64...", mimeType: "..." }.
-   * We encode as data URIs so iOS extractors can detect and render them.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi content blocks are untyped
-  private extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
-    const out: ServerMessage[] = [];
-    for (const block of contents) {
-      if ((block.type === "image" || block.type === "audio") && block.data) {
-        const defaultMime = block.type === "image" ? "image/png" : "audio/wav";
-        const dataUri = `data:${block.mimeType || defaultMime};base64,${block.data}`;
-        out.push({ type: "tool_output", output: dataUri, toolCallId });
-      }
-    }
-    return out;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
-  private translateEvent(event: any, active: ActiveSession): ServerMessage[] {
-    const session = active.session;
-
-    switch (event.type) {
-      case "agent_start":
-        active.streamedAssistantText = "";
-        return [{ type: "agent_start" }];
-
-      case "agent_end":
-        active.streamedAssistantText = "";
-        return [{ type: "agent_end" }];
-
-      case "message_update": {
-        const evt = event.assistantMessageEvent;
-        if (evt?.type === "text_delta" && typeof evt.delta === "string") {
-          active.streamedAssistantText += evt.delta;
-          return [{ type: "text_delta", delta: evt.delta }];
-        }
-        if (evt?.type === "thinking_delta") {
-          return [{ type: "thinking_delta", delta: evt.delta }];
-        }
-        return [];
-      }
-
-      case "tool_execution_start":
-        return [
-          {
-            type: "tool_start",
-            tool: event.toolName,
-            args: event.args || {},
-            toolCallId: event.toolCallId,
-          },
-        ];
-
-      case "tool_execution_update": {
-        const contents = event.partialResult?.content;
-        if (!Array.isArray(contents) || contents.length === 0) return [];
-
-        const toolCallId: string | undefined = event.toolCallId;
-        const messages: ServerMessage[] = [];
-
-        for (const block of contents) {
-          if (block.type === "text") {
-            const fullText: string = block.text;
-
-            // Compute delta from last partialResult to avoid duplication.
-            // partialResult is accumulated (replace semantics) — we convert
-            // to delta so the client can append without duplicating output.
-            const key = toolCallId ?? "";
-            const lastText = active.partialResults.get(key) ?? "";
-            active.partialResults.set(key, fullText);
-            const delta = fullText.slice(lastText.length);
-
-            if (delta) {
-              messages.push({ type: "tool_output", output: delta, toolCallId });
-            }
-          }
-        }
-
-        messages.push(...this.extractMediaOutputs(contents, toolCallId));
-        return messages;
-      }
-
-      case "tool_execution_end": {
-        const toolCallId: string | undefined = event.toolCallId;
-        active.partialResults.delete(toolCallId ?? "");
-
-        // Extract media from final result — some tools (like read for images)
-        // don't stream partialResults and only include content in the final result.
-        const resultContents = event.result?.content;
-        const messages: ServerMessage[] = Array.isArray(resultContents)
-          ? this.extractMediaOutputs(resultContents, toolCallId)
-          : [];
-
-        messages.push({
-          type: "tool_end",
-          tool: event.toolName,
-          toolCallId,
-        });
-
-        return messages;
-      }
-
-      case "auto_compaction_start":
-        return [{ type: "compaction_start", reason: event.reason ?? "threshold" }];
-
-      case "auto_compaction_end":
-        return [
-          {
-            type: "compaction_end",
-            aborted: event.aborted ?? false,
-            willRetry: event.willRetry ?? false,
-            summary: event.result?.summary,
-            tokensBefore: event.result?.tokensBefore,
-          },
-        ];
-
-      case "auto_retry_start":
-        return [
-          {
-            type: "retry_start",
-            attempt: event.attempt,
-            maxAttempts: event.maxAttempts,
-            delayMs: event.delayMs,
-            errorMessage: event.errorMessage,
-          },
-        ];
-
-      case "auto_retry_end":
-        return [
-          {
-            type: "retry_end",
-            success: event.success,
-            attempt: event.attempt,
-            finalError: event.finalError,
-          },
-        ];
-
-      case "extension_error":
-        console.error(
-          `${ts()} [pi:${session.id}] extension error: ${event.extensionPath}: ${event.error}`,
-        );
-        return [];
-
-      case "response":
-        // Uncorrelated responses (no id) — ignore unless error
-        if (!event.success) {
-          return [{ type: "error", error: `${event.command}: ${event.error}` }];
-        }
-        return [];
-
-      // Pi can deliver final assistant text/thinking only in message_end.
-      // Recover any missing text tail and emit thinking blocks for iOS.
-      case "message_end": {
-        const message = event.message;
-        if (message?.role !== "assistant") {
-          active.streamedAssistantText = "";
-          return [];
-        }
-
-        const out: ServerMessage[] = [];
-        const finalizedText = this.extractAssistantText(message);
-        const tailDelta = computeAssistantTextTailDelta(
-          active.streamedAssistantText,
-          finalizedText,
-        );
-        if (tailDelta.length > 0) {
-          out.push({ type: "text_delta", delta: tailDelta });
-        }
-
-        const content = message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block?.type === "thinking" &&
-              typeof block.thinking === "string" &&
-              block.thinking.length > 0
-            ) {
-              out.push({ type: "thinking_delta", delta: block.thinking });
-            }
-          }
-        }
-
-        active.streamedAssistantText = "";
-        return out;
-      }
-
-      default:
-        return [];
-    }
+  private translationContext(active: ActiveSession): TranslationContext {
+    return {
+      sessionId: active.session.id,
+      partialResults: active.partialResults,
+      streamedAssistantText: active.streamedAssistantText,
+    };
   }
 
   /**
    * Update session state from pi events.
+   * Delegates extraction to session-protocol functions; handles persistence here.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   private updateSessionFromEvent(key: string, session: Session, event: any): void {
@@ -1957,42 +1302,14 @@ export class SessionManager extends EventEmitter {
         break;
 
       case "tool_execution_start":
-        this.updateSessionChangeStats(session, event.toolName, event.args);
+        updateSessionChangeStats(session, event.toolName, event.args);
         break;
 
-      case "message_end": {
-        const message = event.message;
-        const role = message?.role;
-
-        // Only persist assistant messages — user messages are already stored on prompt receipt
-        if (role === "user") break;
-
-        const usage = this.extractUsage(message);
-        const assistantText = this.extractAssistantText(message);
-
-        if (assistantText) {
-          const tokens = usage ? { input: usage.input, output: usage.output } : undefined;
-
-          this.appendMessage(session, {
-            role: "assistant",
-            content: assistantText,
-            timestamp: Date.now(),
-            model: session.model,
-            tokens,
-            cost: usage?.cost,
-          });
-        } else if (usage) {
-          session.tokens.input += usage.input;
-          session.tokens.output += usage.output;
-          session.cost += usage.cost;
-        }
-
-        // Track context usage for status display (matches pi TUI calculation)
-        if (usage) {
-          session.contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-        }
+      case "message_end":
+        applyMessageEndToSession(session, event.message, (userId, sessionId, msg) => {
+          this.storage.addSessionMessage(userId, sessionId, msg);
+        });
         break;
-      }
     }
 
     session.lastActivity = Date.now();
@@ -2005,156 +1322,6 @@ export class SessionManager extends EventEmitter {
     this.markSessionDirty(key);
   }
 
-  private appendMessage(session: Session, message: Omit<SessionMessage, "id" | "sessionId">): void {
-    this.storage.addSessionMessage(session.userId, session.id, message);
-
-    // Keep the active in-memory session aligned with persisted stats.
-    session.messageCount += 1;
-    session.lastMessage = message.content.slice(0, 100);
-    session.lastActivity = message.timestamp;
-
-    if (message.tokens) {
-      session.tokens.input += message.tokens.input;
-      session.tokens.output += message.tokens.output;
-    }
-
-    if (message.cost) {
-      session.cost += message.cost;
-    }
-  }
-
-  private updateSessionChangeStats(session: Session, rawToolName: unknown, rawArgs: unknown): void {
-    const toolName = typeof rawToolName === "string" ? rawToolName.toLowerCase() : "";
-    if (toolName !== "edit" && toolName !== "write") {
-      return;
-    }
-
-    const existing = session.changeStats;
-    const stats = {
-      mutatingToolCalls: existing?.mutatingToolCalls ?? 0,
-      filesChanged: existing?.filesChanged ?? 0,
-      changedFiles: Array.isArray(existing?.changedFiles)
-        ? existing.changedFiles.filter((f) => typeof f === "string" && f.length > 0)
-        : [],
-      addedLines: existing?.addedLines ?? 0,
-      removedLines: existing?.removedLines ?? 0,
-    };
-    stats.filesChanged = Math.max(stats.filesChanged, stats.changedFiles.length);
-
-    stats.mutatingToolCalls += 1;
-
-    const path = this.extractChangedFilePath(rawArgs);
-    if (path && !stats.changedFiles.includes(path)) {
-      stats.changedFiles.push(path);
-      stats.filesChanged = stats.changedFiles.length;
-    }
-
-    const { added, removed } = this.estimateLineDelta(toolName, rawArgs);
-    stats.addedLines += added;
-    stats.removedLines += removed;
-
-    session.changeStats = stats;
-  }
-
-  private extractChangedFilePath(rawArgs: unknown): string | null {
-    if (!rawArgs || typeof rawArgs !== "object") {
-      return null;
-    }
-
-    const args = rawArgs as Record<string, unknown>;
-    const candidate = args.path ?? args.file_path;
-    if (typeof candidate !== "string") {
-      return null;
-    }
-
-    const normalized = candidate.trim();
-    return normalized.length > 0 ? normalized : null;
-  }
-
-  private estimateLineDelta(
-    toolName: "edit" | "write",
-    rawArgs: unknown,
-  ): { added: number; removed: number } {
-    if (!rawArgs || typeof rawArgs !== "object") {
-      return { added: 0, removed: 0 };
-    }
-
-    const args = rawArgs as Record<string, unknown>;
-
-    if (toolName === "write") {
-      const content = typeof args.content === "string" ? args.content : "";
-      if (content.length === 0) {
-        return { added: 0, removed: 0 };
-      }
-      return { added: this.countLines(content), removed: 0 };
-    }
-
-    const oldText = typeof args.oldText === "string" ? args.oldText : "";
-    const newText = typeof args.newText === "string" ? args.newText : "";
-    if (oldText.length === 0 && newText.length === 0) {
-      return { added: 0, removed: 0 };
-    }
-
-    const oldLines = this.countLines(oldText);
-    const newLines = this.countLines(newText);
-
-    return {
-      added: Math.max(0, newLines - oldLines),
-      removed: Math.max(0, oldLines - newLines),
-    };
-  }
-
-  private countLines(text: string): number {
-    if (text.length === 0) {
-      return 0;
-    }
-    return text.split("\n").length;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-  private extractAssistantText(message: any): string {
-    const content = message?.content;
-
-    if (typeof content === "string") {
-      return content;
-    }
-
-    if (!Array.isArray(content)) {
-      return "";
-    }
-
-    const textParts: string[] = [];
-    for (const part of content) {
-      const isTextPart = part?.type === "text" || part?.type === "output_text";
-      if (isTextPart && typeof part.text === "string") {
-        textParts.push(part.text);
-      }
-    }
-
-    return textParts.join("");
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-  private extractUsage(message: any): {
-    input: number;
-    output: number;
-    cost: number;
-    cacheRead: number;
-    cacheWrite: number;
-  } | null {
-    const usage = message?.usage;
-    if (!usage) {
-      return null;
-    }
-
-    return {
-      input: usage.input || 0,
-      output: usage.output || 0,
-      cost: usage.cost?.total || 0,
-      cacheRead: usage.cacheRead || 0,
-      cacheWrite: usage.cacheWrite || 0,
-    };
-  }
 
   private markSessionDirty(key: string): void {
     this.dirtySessions.add(key);

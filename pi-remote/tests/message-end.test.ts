@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAssistantTextTailDelta } from "../src/sessions.js";
+import { computeAssistantTextTailDelta } from "../src/session-protocol.js";
 
 describe("computeAssistantTextTailDelta", () => {
   it("returns finalized text when no text_delta streamed", () => {

@@ -7,7 +7,8 @@
  */
 
 import { WebSocket } from "ws";
-import { EventRing, type SessionManager } from "./sessions.js";
+import { EventRing } from "./event-ring.js";
+import type { SessionManager } from "./sessions.js";
 import type { GateServer, PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, User, Workspace } from "./types.js";

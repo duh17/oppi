@@ -1,6 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import { EventRing, SessionManager, TurnDedupeCache } from "../src/sessions.js";
+import { EventRing } from "../src/event-ring.js";
+import { SessionManager } from "../src/sessions.js";
+import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
 import type { SandboxManager } from "../src/sandbox.js";
 import type { Storage } from "../src/storage.js";

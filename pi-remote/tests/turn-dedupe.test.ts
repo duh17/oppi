@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServerMessage } from "../src/types.js";
-import { TurnDedupeCache, type TurnDedupeRecord } from "../src/sessions.js";
+import { TurnDedupeCache, type TurnDedupeRecord } from "../src/turn-cache.js";
 
 describe("TurnDedupeCache", () => {
   it("stores and returns entries", () => {

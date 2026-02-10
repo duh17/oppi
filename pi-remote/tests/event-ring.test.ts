@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EventRing } from "../src/sessions.js";
+import { EventRing } from "../src/event-ring.js";
 
 describe("EventRing", () => {
   it("returns events strictly newer than since seq", () => {
