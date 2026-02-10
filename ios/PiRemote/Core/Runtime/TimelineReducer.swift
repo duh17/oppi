@@ -110,8 +110,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     /// Drop non-essential in-memory state on iOS memory warning.
-    /// Keeps visible timeline rows intact, but clears expandable payloads.
-    func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int) {
+    /// Keeps visible timeline rows intact, but clears expandable payloads
+    /// and strips heavy data (base64 images) from retained items.
+    func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int, imagesStripped: Int) {
         cancelMarkdownPrewarm()
 
         let clearedBytes = toolOutputStore.totalBytes
@@ -121,13 +122,27 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let expandedCount = expandedItemIDs.count
         expandedItemIDs.removeAll()
 
-        // Row previews and item list remain unchanged, but expansion state/data
-        // changed so force a redraw.
+        // Strip base64 image data from user messages — these can be 1-2MB each.
+        // The message text is preserved; images show "unavailable" placeholder.
+        var imagesStripped = 0
+        for (index, item) in items.enumerated() {
+            if case .userMessage(let id, let text, let images, let ts) = item, !images.isEmpty {
+                imagesStripped += images.count
+                items[index] = .userMessage(id: id, text: text, images: [], timestamp: ts)
+            }
+        }
+
+        // Drop trace event IDs — forces full rebuild on next loadSession
+        // instead of incremental append, freeing the ID array.
+        loadedTraceEventIDs.removeAll()
+        timelineMatchesTrace = false
+
         bumpRenderVersion()
 
         return (
             toolOutputBytesCleared: clearedBytes,
-            expandedItemsCollapsed: expandedCount
+            expandedItemsCollapsed: expandedCount,
+            imagesStripped: imagesStripped
         )
     }
 

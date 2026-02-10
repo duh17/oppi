@@ -84,9 +84,15 @@ struct PiRemoteApp: App {
         let cacheBytes = cacheStats.totalSourceBytes
         let toolOutputBytes = reducerStats.toolOutputBytesCleared
         let collapsedExpandedItems = reducerStats.expandedItemsCollapsed
+        let imagesStripped = reducerStats.imagesStripped
 
         appLog.error(
-            "MEM warning: cacheEntries=\(cacheEntries, privacy: .public) cacheBytes=\(cacheBytes, privacy: .public) toolOutputBytes=\(toolOutputBytes, privacy: .public) collapsedExpandedItems=\(collapsedExpandedItems, privacy: .public)"
+            """
+            MEM warning: cache=\(cacheEntries, privacy: .public)/\(cacheBytes, privacy: .public)B \
+            toolOutput=\(toolOutputBytes, privacy: .public)B \
+            expanded=\(collapsedExpandedItems, privacy: .public) \
+            images=\(imagesStripped, privacy: .public)
+            """
         )
     }
 
@@ -158,14 +164,6 @@ struct PiRemoteApp: App {
 
         do {
             try await api.uploadClientLogs(sessionId: sessionId, request: request)
-            ClientLog.info(
-                "Diagnostics",
-                "Auto-upload succeeded",
-                metadata: [
-                    "sessionId": sessionId,
-                    "entries": String(entries.count),
-                ]
-            )
             if connection.sessionStore.activeSessionId == sessionId {
                 connection.reducer.appendSystemEvent("Auto-uploaded \(entries.count) client log entries after stall")
             }
@@ -226,11 +224,13 @@ struct PiRemoteApp: App {
         }
         navigation.showOnboarding = false
 
-        // 2. Restore UI state (tab, active session, draft)
+        // 2. Restore UI state (tab, active session, draft, scroll position)
         if let restored = RestorationState.load() {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
             connection.sessionStore.activeSessionId = restored.activeSessionId
             connection.composerDraft = restored.composerDraft
+            connection.scrollAnchorItemId = restored.scrollAnchorItemId
+            connection.scrollWasNearBottom = restored.wasNearBottom ?? true
         }
 
         // 3. Show cached data immediately (before any network calls)

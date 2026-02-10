@@ -13,6 +13,8 @@ struct RestorationStateTests {
             activeSessionId: "s1",
             selectedTab: "sessions",
             composerDraft: "draft text",
+            scrollAnchorItemId: "item-42",
+            wasNearBottom: false,
             timestamp: Date()
         )
 
@@ -23,6 +25,8 @@ struct RestorationStateTests {
         #expect(decoded.activeSessionId == "s1")
         #expect(decoded.selectedTab == "sessions")
         #expect(decoded.composerDraft == "draft text")
+        #expect(decoded.scrollAnchorItemId == "item-42")
+        #expect(decoded.wasNearBottom == false)
     }
 
     @Test func encodeDecodeNilOptionals() throws {
@@ -31,6 +35,8 @@ struct RestorationStateTests {
             activeSessionId: nil,
             selectedTab: "settings",
             composerDraft: nil,
+            scrollAnchorItemId: nil,
+            wasNearBottom: nil,
             timestamp: Date()
         )
 
@@ -39,6 +45,8 @@ struct RestorationStateTests {
 
         #expect(decoded.activeSessionId == nil)
         #expect(decoded.composerDraft == nil)
+        #expect(decoded.scrollAnchorItemId == nil)
+        #expect(decoded.wasNearBottom == nil)
         #expect(decoded.selectedTab == "settings")
     }
 
@@ -77,6 +85,8 @@ struct RestorationStateTests {
             activeSessionId: "s1",
             selectedTab: "sessions",
             composerDraft: nil,
+            scrollAnchorItemId: nil,
+            wasNearBottom: nil,
             timestamp: Date().addingTimeInterval(-7200) // 2 hours ago
         )
 
@@ -99,6 +109,8 @@ struct RestorationStateTests {
             activeSessionId: "s1",
             selectedTab: "sessions",
             composerDraft: nil,
+            scrollAnchorItemId: nil,
+            wasNearBottom: nil,
             timestamp: Date()
         )
 
@@ -140,6 +152,59 @@ struct RestorationStateTests {
         UserDefaults.standard.set("not json".data(using: .utf8), forKey: RestorationState.key)
         #expect(RestorationState.load() == nil)
         RestorationState.clear()
+    }
+
+    // MARK: - Scroll restoration
+
+    @MainActor
+    @Test func saveAndLoadScrollPosition() {
+        RestorationState.clear()
+
+        let conn = ServerConnection()
+        conn.sessionStore.activeSessionId = "s1"
+        conn.scrollAnchorItemId = "msg-77"
+        conn.scrollWasNearBottom = false
+
+        let nav = AppNavigation()
+        RestorationState.save(from: conn, navigation: nav)
+
+        let loaded = RestorationState.load()
+        #expect(loaded != nil)
+        #expect(loaded?.scrollAnchorItemId == "msg-77")
+        #expect(loaded?.wasNearBottom == false)
+
+        RestorationState.clear()
+    }
+
+    @MainActor
+    @Test func scrollNearBottomSavedCorrectly() {
+        RestorationState.clear()
+
+        let conn = ServerConnection()
+        conn.sessionStore.activeSessionId = "s1"
+        conn.scrollAnchorItemId = "msg-99"
+        conn.scrollWasNearBottom = true
+
+        let nav = AppNavigation()
+        RestorationState.save(from: conn, navigation: nav)
+
+        let loaded = RestorationState.load()
+        #expect(loaded?.wasNearBottom == true)
+        #expect(loaded?.scrollAnchorItemId == "msg-99")
+
+        RestorationState.clear()
+    }
+
+    @Test func v1StateWithoutScrollFieldsDecodesGracefully() throws {
+        // Simulate a v1 state that lacks scroll fields
+        let v1JSON = """
+        {"version":1,"activeSessionId":"s1","selectedTab":"sessions","composerDraft":null,"timestamp":0}
+        """
+        let data = Data(v1JSON.utf8)
+        let decoded = try JSONDecoder().decode(RestorationState.self, from: data)
+
+        #expect(decoded.scrollAnchorItemId == nil)
+        #expect(decoded.wasNearBottom == nil)
     }
 }
 

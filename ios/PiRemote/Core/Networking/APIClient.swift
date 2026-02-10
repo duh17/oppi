@@ -73,58 +73,51 @@ actor APIClient {
     }
 
     /// Fetch sequenced durable session events after `since` for reconnect catch-up.
+    ///
+    /// Decodes the response in a single pass using `Decodable` — no intermediate
+    /// `JSONValue` tree, no per-event re-encode/re-decode round-trip.
     func getSessionEvents(id: String, since: Int) async throws -> SessionEventsResponse {
-        var components = URLComponents(url: baseURL.appendingPathComponent("/sessions/\(id)/events"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "since", value: String(since))]
+        let data = try await get("/sessions/\(id)/events?since=\(since)")
 
-        guard let url = components?.url else {
-            throw APIError.invalidResponse
-        }
+        let payload = try JSONDecoder().decode(SessionEventsPayload.self, from: data)
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        logger.debug("GET /sessions/\(id)/events")
-
-        let (data, response) = try await session.data(for: request)
-        try checkStatus(response, data: data)
-
-        let root = try JSONDecoder().decode(JSONValue.self, from: data)
-
-        guard case .object(let object) = root,
-              let currentSeq = object["currentSeq"]?.numberValue.map(Int.init),
-              let catchUpComplete = object["catchUpComplete"]?.boolValue,
-              let sessionValue = object["session"],
-              let eventValues = object["events"]?.arrayValue else {
-            throw APIError.invalidResponse
-        }
-
-        let sessionData = try JSONEncoder().encode(sessionValue)
-        let session = try JSONDecoder().decode(Session.self, from: sessionData)
-
-        var events: [SequencedServerEvent] = []
-        events.reserveCapacity(eventValues.count)
-
-        for value in eventValues {
-            guard let seq = value.objectValue?["seq"]?.numberValue.map(Int.init) else {
-                continue
-            }
-
-            let eventData = try JSONEncoder().encode(value)
-            guard let eventText = String(data: eventData, encoding: .utf8) else {
-                continue
-            }
-
-            let message = try ServerMessage.decode(from: eventText)
-            events.append(SequencedServerEvent(seq: seq, message: message))
+        let events = payload.events.map {
+            SequencedServerEvent(seq: $0.seq, message: $0.message)
         }
 
         return SessionEventsResponse(
             events: events,
-            currentSeq: currentSeq,
-            session: session,
-            catchUpComplete: catchUpComplete
+            currentSeq: payload.currentSeq,
+            session: payload.session,
+            catchUpComplete: payload.catchUpComplete
         )
+    }
+
+    /// Wire format for `/sessions/:id/events` response.
+    ///
+    /// Each event object has `seq` alongside the `ServerMessage` fields:
+    /// `{ "seq": 42, "type": "text_delta", "delta": "hello" }`.
+    /// The wrapper decodes `seq` then delegates the rest to `ServerMessage.init(from:)`.
+    private struct SessionEventsPayload: Decodable {
+        let events: [SequencedEventEntry]
+        let currentSeq: Int
+        let catchUpComplete: Bool
+        let session: Session
+    }
+
+    private struct SequencedEventEntry: Decodable {
+        let seq: Int
+        let message: ServerMessage
+
+        private enum CodingKeys: String, CodingKey {
+            case seq
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            seq = try container.decode(Int.self, forKey: .seq)
+            message = try ServerMessage(from: decoder)
+        }
     }
 
     /// Get a session with its resolved context (compaction-aware, same view as pi TUI).

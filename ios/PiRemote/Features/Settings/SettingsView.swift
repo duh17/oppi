@@ -7,6 +7,9 @@ struct SettingsView: View {
 
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var biometricThreshold = BiometricService.shared.threshold
+    @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
+        forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
+    ) as? Bool ?? true
 
     var body: some View {
         List {
@@ -49,6 +52,23 @@ struct SettingsView: View {
                 } label: {
                     Label("Manage Workspaces", systemImage: "square.grid.2x2")
                 }
+            }
+
+            Section {
+                Toggle("Auto-name new sessions", isOn: $autoSessionTitleEnabled)
+                    .onChange(of: autoSessionTitleEnabled) { _, newValue in
+                        UserDefaults.standard.set(
+                            newValue,
+                            forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
+                        )
+                    }
+            } header: {
+                Text("Sessions")
+            } footer: {
+                Text(
+                    "Uses the first prompt to generate a short title on device. "
+                        + "Enabled by default."
+                )
             }
 
             biometricSection

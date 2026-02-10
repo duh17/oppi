@@ -40,6 +40,30 @@ final class ChatScrollController {
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
 
+    // MARK: - Scroll Position Tracking (Non-Reactive)
+
+    /// Binding for `ScrollView.scrollPosition(id:anchor:)`.
+    ///
+    /// Reads/writes through the non-reactive `ScrollAnchorState` so that
+    /// scroll position changes do NOT trigger SwiftUI body re-evaluation.
+    /// The ForEach item IDs are `String`, so this binding is `String?`.
+    var scrollPositionBinding: Binding<String?> {
+        Binding<String?>(
+            get: { [anchor] in anchor.topVisibleItemId },
+            set: { [anchor] in anchor.topVisibleItemId = $0 }
+        )
+    }
+
+    /// Current topmost visible item ID. Read-only, for saving to restoration state.
+    var currentTopVisibleItemId: String? {
+        anchor.topVisibleItemId
+    }
+
+    /// Whether the user is currently scrolled to the bottom. Read-only, for restoration.
+    var isCurrentlyNearBottom: Bool {
+        anchor.isNearBottom
+    }
+
     init() {
         startKeyboardObservers()
     }
@@ -190,4 +214,7 @@ final class ChatScrollController {
 /// but property changes are invisible to SwiftUI's observation system.
 private final class ScrollAnchorState {
     var isNearBottom = true
+    /// ID of the topmost visible item, updated via `scrollPosition(id:)`.
+    /// Non-reactive: mutations do NOT trigger SwiftUI body re-evaluation.
+    var topVisibleItemId: String?
 }

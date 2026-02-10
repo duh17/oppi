@@ -341,6 +341,27 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func memoryWarningStripsImageAttachments() {
+        let reducer = TimelineReducer()
+
+        let images = [ImageAttachment(data: String(repeating: "A", count: 10_000), mimeType: "image/png")]
+        reducer.appendUserMessage("check this image", images: images)
+        reducer.appendUserMessage("no images here")
+
+        let stats = reducer.handleMemoryWarning()
+
+        #expect(stats.imagesStripped == 1)
+
+        // User message text preserved, images cleared
+        if case .userMessage(_, let text, let imgs, _) = reducer.items.first {
+            #expect(text == "check this image")
+            #expect(imgs.isEmpty)
+        } else {
+            Issue.record("Expected userMessage as first item")
+        }
+    }
+
+    @MainActor
     @Test func markdownSegmentCacheSkipsOversizedEntries() {
         let cache = MarkdownSegmentCache.shared
         cache.clearAll()

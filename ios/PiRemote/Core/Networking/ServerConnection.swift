@@ -59,6 +59,11 @@ final class ServerConnection {
     /// Composer draft text — saved/restored across background cycles.
     var composerDraft: String?
 
+    /// Scroll position shuttle — written by ChatView, read by RestorationState.
+    /// `@ObservationIgnored` so scroll tracking doesn't trigger view re-evaluations.
+    @ObservationIgnored var scrollAnchorItemId: String?
+    @ObservationIgnored var scrollWasNearBottom: Bool = true
+
     /// Current thinking level — synced from server session state on connect,
     /// then updated by `cycle_thinking_level` / `set_thinking_level` RPC responses.
     var thinkingLevel: ThinkingLevel = .medium
@@ -471,7 +476,7 @@ final class ServerConnection {
         do {
             try await send(.getCommands(requestId: requestId))
         } catch {
-            logger.warning("Failed to request slash commands: \(error.localizedDescription, privacy: .public)")
+            slashCommandsRequestId = nil
         }
     }
 
@@ -491,7 +496,6 @@ final class ServerConnection {
         defer { slashCommandsRequestId = nil }
 
         guard success else {
-            logger.warning("get_commands failed: \((error ?? "unknown"), privacy: .public)")
             return
         }
 
@@ -550,11 +554,23 @@ final class ServerConnection {
 
     // MARK: - Reconnect (foreground)
 
-    /// Called when app returns to foreground.
-    func reconnectIfNeeded() async {
-        guard let apiClient, let sessionId = activeSessionId else { return }
+    /// Reentrancy guard — prevents concurrent `reconnectIfNeeded` calls
+    /// from rapid background→foreground cycling.
+    private(set) var foregroundRecoveryInFlight = false
 
-        // Show cached session list immediately, then refresh
+    /// Called when app returns to foreground.
+    ///
+    /// Refreshes session list, workspaces, and session metadata.
+    /// Does NOT touch the timeline — `ChatSessionManager` owns trace loading,
+    /// catch-up, and reconnect. Mixing both paths causes double-load races
+    /// and visual flashes.
+    func reconnectIfNeeded() async {
+        guard let apiClient else { return }
+        guard !foregroundRecoveryInFlight else { return }
+        foregroundRecoveryInFlight = true
+        defer { foregroundRecoveryInFlight = false }
+
+        // 1. Refresh session list (always, even without active session)
         if sessionStore.sessions.isEmpty,
            let cached = await TimelineCache.shared.loadSessionList() {
             sessionStore.sessions = cached
@@ -568,10 +584,10 @@ final class ServerConnection {
             logger.error("Failed to refresh sessions: \(error)")
         }
 
-        // Refresh workspaces + skills (cache-backed)
+        // 2. Refresh workspaces + skills (cache-backed)
         await workspaceStore.load(api: apiClient)
 
-        // Sweep expired permissions (safety net for missed WS messages)
+        // 3. Sweep expired permissions (safety net for missed WS messages)
         let expiredRequests = permissionStore.sweepExpired()
         for request in expiredRequests {
             reducer.resolvePermission(
@@ -581,8 +597,9 @@ final class ServerConnection {
             PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
         }
 
-        // Treat connecting/reconnecting as alive for this session so foreground
-        // refresh does not race and clobber in-flight ChatView connect work.
+        // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
+        guard let sessionId = activeSessionId else { return }
+
         let streamAttached = wsClient?.connectedSessionId == sessionId
         let streamAlive: Bool
         if streamAttached {
@@ -597,22 +614,20 @@ final class ServerConnection {
         }
 
         if !streamAlive {
-            // Clear stale extension dialog — server will re-send if still pending
+            // Clear stale extension dialog — server will re-send if still pending.
+            // Timeline recovery is handled by ChatSessionManager auto-reconnect.
             activeExtensionDialog = nil
             extensionTimeoutTask?.cancel()
             extensionTimeoutTask = nil
 
             do {
-                let (session, trace) = try await apiClient.getSession(id: sessionId)
+                let (session, _) = try await apiClient.getSession(id: sessionId)
                 sessionStore.upsert(session)
-                if !trace.isEmpty {
-                    reducer.loadSession(trace)
-                }
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
             }
         } else {
-            // Stream alive — just refresh session metadata without touching timeline
+            // Stream alive — refresh session metadata
             do {
                 let (session, _) = try await apiClient.getSession(id: sessionId)
                 sessionStore.upsert(session)
@@ -621,7 +636,7 @@ final class ServerConnection {
             }
         }
 
-        // Ask server for freshest state once the active stream is connected.
+        // 5. Ask server for freshest state once the active stream is connected.
         if streamAttached, wsClient?.status == .connected {
             try? await requestState()
         }
@@ -633,7 +648,6 @@ final class ServerConnection {
     /// Ignores messages for non-active sessions (stale stream race).
     func handleServerMessage(_ message: ServerMessage, sessionId: String) {
         guard sessionId == activeSessionId else {
-            logger.error("PIPE: DROPPING \(message.typeLabel, privacy: .public) — stale session \(sessionId, privacy: .public) (active: \(self.activeSessionId ?? "none", privacy: .public))")
             return
         }
 
@@ -665,7 +679,6 @@ final class ServerConnection {
 
         // Permission events → store + overlay (NOT inline timeline)
         case .permissionRequest(let perm):
-            logger.info("Permission request received: \(perm.id) tool=\(perm.tool) summary=\(perm.displaySummary)")
             permissionStore.add(perm)
             // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
             coalescer.receive(.permissionRequest(perm))
@@ -897,7 +910,6 @@ final class ServerConnection {
                     break
                 } else if elapsed >= Self.silenceTimeout && !probed {
                     // Tier 1: probe — maybe the agent is just thinking
-                    logger.warning("Silence watchdog: no events for \(elapsed) — requesting state")
                     try? await self.requestState()
                     probed = true
                 }

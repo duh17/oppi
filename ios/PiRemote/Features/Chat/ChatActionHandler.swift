@@ -1,3 +1,4 @@
+import FoundationModels
 import os.log
 import SwiftUI
 
@@ -28,6 +29,25 @@ final class ChatActionHandler {
     /// Test seam: override async task launch to simulate scheduling races.
     var _launchTaskForTesting: (((@escaping @MainActor () async -> Void)) -> Void)?
 
+    /// Test seam: override auto title generation.
+    var _generateSessionTitleForTesting: ((String) async -> String?)?
+
+    private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
+    private var autoTitleAttemptedSessionIds: Set<String> = []
+
+    private static let autoTitleSourceLimit = 600
+    private static let autoTitleMaxLength = 64
+    static let autoTitleEnabledDefaultsKey = "dev.chenda.PiRemote.session.autoTitle.enabled"
+    private static var isAutoTitleEnabled: Bool {
+        UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? true
+    }
+    private static let autoTitleInstructions = """
+        You create concise coding session titles.
+        Return only the title text.
+        Use 2 to 6 words.
+        No quotes, no markdown, no trailing punctuation.
+        """
+
     var sendProgressText: String? {
         if let sendAckStage {
             switch sendAckStage {
@@ -55,6 +75,7 @@ final class ChatActionHandler {
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionId: String,
+        sessionStore: SessionStore? = nil,
         onDispatchStarted: (() -> Void)? = nil,
         onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)? = nil,
         onNeedsReconnect: (() -> Void)? = nil
@@ -63,30 +84,6 @@ final class ChatActionHandler {
         let attachments = images.map(\.attachment)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return text }
         guard !isSending else { return text }
-
-        let wsStatus = String(describing: connection.wsClient?.status)
-        let wsSessionId = connection.wsClient?.connectedSessionId ?? "nil"
-        let sendPreview = String(trimmed.prefix(60))
-        log.error(
-            """
-            SEND tap: isBusy=\(isBusy, privacy: .public) \
-            wsStatus=\(wsStatus, privacy: .public) \
-            wsSession=\(wsSessionId, privacy: .public) \
-            targetSession=\(sessionId, privacy: .public) \
-            text=\"\(sendPreview, privacy: .public)\"
-            """
-        )
-        ClientLog.error(
-            "Action",
-            "SEND tap",
-            metadata: [
-                "isBusy": String(isBusy),
-                "wsStatus": wsStatus,
-                "wsSession": wsSessionId,
-                "targetSession": sessionId,
-                "text": sendPreview,
-            ]
-        )
 
         if isBusy {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
@@ -101,22 +98,12 @@ final class ChatActionHandler {
                     : "→ \(trimmed) [\(attachments.count) image\(attachments.count == 1 ? "" : "s")]"
                 reducer.appendSystemEvent(label)
 
-                let sendStatus = String(describing: connection.wsClient?.status)
-                log.error("SEND steer Task started, wsStatus=\(sendStatus, privacy: .public)")
-                ClientLog.error(
-                    "Action",
-                    "SEND steer Task started",
-                    metadata: ["wsStatus": sendStatus, "sessionId": sessionId]
-                )
-
                 do {
                     let steerImages = attachments.isEmpty ? nil : attachments
                     try await connection.sendSteer(trimmed, images: steerImages, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     self.scheduleSendStageClear()
-                    log.error("SEND steer OK")
-                    ClientLog.info("Action", "SEND steer OK", metadata: ["sessionId": sessionId])
                 } catch {
                     self.clearSendStageNow()
                     log.error("SEND steer FAILED: \(error.localizedDescription, privacy: .public)")
@@ -148,29 +135,18 @@ final class ChatActionHandler {
                         onDispatchStarted()
                     }
                 }
-                log.error("SEND prompt appended msgId=\(messageId, privacy: .public)")
-                ClientLog.info(
-                    "Action",
-                    "SEND prompt appended",
-                    metadata: ["sessionId": sessionId, "messageId": messageId]
-                )
-
-                let sendStatus = String(describing: connection.wsClient?.status)
-                log.error("SEND prompt Task started, wsStatus=\(sendStatus, privacy: .public)")
-                ClientLog.error(
-                    "Action",
-                    "SEND prompt Task started",
-                    metadata: ["wsStatus": sendStatus, "sessionId": sessionId]
-                )
-
                 do {
                     let promptImages = attachments.isEmpty ? nil : attachments
                     try await connection.sendPrompt(trimmed, images: promptImages, onAckStage: { stage in
                         self.updateSendAckStage(stage)
                     })
                     self.scheduleSendStageClear()
-                    log.error("SEND prompt OK")
-                    ClientLog.info("Action", "SEND prompt OK", metadata: ["sessionId": sessionId])
+                    self.scheduleAutoSessionTitleIfNeeded(
+                        firstMessage: trimmed,
+                        sessionId: sessionId,
+                        connection: connection,
+                        sessionStore: sessionStore
+                    )
                 } catch {
                     self.clearSendStageNow()
                     log.error("SEND prompt FAILED: \(error.localizedDescription, privacy: .public)")
@@ -397,6 +373,145 @@ final class ChatActionHandler {
 
     // MARK: - Helpers
 
+    private func scheduleAutoSessionTitleIfNeeded(
+        firstMessage: String,
+        sessionId: String,
+        connection: ServerConnection,
+        sessionStore: SessionStore?
+    ) {
+        guard Self.isAutoTitleEnabled else { return }
+        guard let sessionStore else { return }
+
+        let source = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return }
+        guard !autoTitleAttemptedSessionIds.contains(sessionId) else { return }
+        guard let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
+              Self.shouldAutoTitle(session: session) else {
+            return
+        }
+
+        autoTitleAttemptedSessionIds.insert(sessionId)
+        autoTitleTasksBySessionId[sessionId]?.cancel()
+
+        autoTitleTasksBySessionId[sessionId] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.autoTitleTasksBySessionId[sessionId] = nil }
+
+            let limitedSource = String(source.prefix(Self.autoTitleSourceLimit))
+            let generated = await self.generateSessionTitle(from: limitedSource)
+            guard !Task.isCancelled, let generated else { return }
+
+            guard var latest = sessionStore.sessions.first(where: { $0.id == sessionId }),
+                  Self.shouldAutoTitle(session: latest) else {
+                return
+            }
+
+            let previousName = latest.name
+            latest.name = generated
+            sessionStore.upsert(latest)
+
+            do {
+                try await connection.setSessionName(generated)
+                // Pull canonical state from pi so any backend-normalized name wins.
+                try? await connection.requestState()
+            } catch {
+                log.error("Auto title set_session_name failed: \(error.localizedDescription, privacy: .public)")
+                if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }),
+                   rollback.name == generated {
+                    rollback.name = previousName
+                    sessionStore.upsert(rollback)
+                }
+            }
+        }
+    }
+
+    private static func shouldAutoTitle(session: Session) -> Bool {
+        if let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return false
+        }
+        return session.messageCount <= 1
+    }
+
+    private func generateSessionTitle(from firstMessage: String) async -> String? {
+        if let hook = _generateSessionTitleForTesting {
+            let candidate = await hook(firstMessage)
+            return Self.normalizeTitle(candidate)
+        }
+
+        return await Task.detached(priority: .utility) {
+            await Self.generateSessionTitleOffMain(from: firstMessage)
+        }.value
+    }
+
+    private static func generateSessionTitleOffMain(from firstMessage: String) async -> String? {
+        let fallback = heuristicTitle(from: firstMessage)
+
+        let model = SystemLanguageModel.default
+        guard case .available = model.availability else {
+            return fallback
+        }
+
+        let prompt = """
+            Create a short session title from this first user message.
+
+            First user message:
+            \(firstMessage)
+            """
+
+        do {
+            let session = LanguageModelSession(instructions: autoTitleInstructions)
+            let response = try await session.respond(to: prompt)
+            return normalizeTitle(response.content) ?? fallback
+        } catch {
+            log.error("Auto title generation failed: \(error.localizedDescription, privacy: .public)")
+            return fallback
+        }
+    }
+
+    private static func heuristicTitle(from firstMessage: String) -> String? {
+        let collapsed = collapseWhitespace(firstMessage)
+        guard !collapsed.isEmpty else { return nil }
+
+        let firstLine = collapsed.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? collapsed
+        let tokens = firstLine
+            .split(whereSeparator: { $0.isWhitespace })
+            .prefix(6)
+            .map(String.init)
+            .joined(separator: " ")
+
+        return normalizeTitle(tokens)
+    }
+
+    private static func normalizeTitle(_ raw: String?) -> String? {
+        guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            return nil
+        }
+
+        if let newline = title.firstIndex(of: "\n") {
+            title = String(title[..<newline])
+        }
+
+        title = title.replacingOccurrences(
+            of: "(?i)^title\\s*:\\s*",
+            with: "",
+            options: .regularExpression
+        )
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`“”‘’[]() "))
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?"))
+        title = collapseWhitespace(title)
+
+        if title.count > autoTitleMaxLength {
+            title = String(title.prefix(autoTitleMaxLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard !title.isEmpty else { return nil }
+        return title
+    }
+
+    private static func collapseWhitespace(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+    }
+
     private func beginSendTracking() {
         sendStageClearTask?.cancel()
         sendStageClearTask = nil
@@ -464,6 +579,12 @@ final class ChatActionHandler {
     func cleanup() {
         forceStopTask?.cancel()
         forceStopTask = nil
+
+        for task in autoTitleTasksBySessionId.values {
+            task.cancel()
+        }
+        autoTitleTasksBySessionId.removeAll()
+
         clearSendStageNow()
         isSending = false
     }

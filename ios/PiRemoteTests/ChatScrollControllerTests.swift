@@ -47,4 +47,47 @@ struct ChatScrollControllerTests {
         controller.needsInitialScroll = true
         #expect(controller.needsInitialScroll)
     }
+
+    // MARK: - Scroll Position Tracking
+
+    @MainActor
+    @Test func scrollPositionBindingTracksTopVisibleItem() {
+        let controller = ChatScrollController()
+        #expect(controller.currentTopVisibleItemId == nil)
+
+        // Simulate scrollPosition(id:) setter firing as user scrolls
+        controller.scrollPositionBinding.wrappedValue = "item-42"
+        #expect(controller.currentTopVisibleItemId == "item-42")
+
+        controller.scrollPositionBinding.wrappedValue = "item-99"
+        #expect(controller.currentTopVisibleItemId == "item-99")
+
+        // nil when scrolled past all identified items
+        controller.scrollPositionBinding.wrappedValue = nil
+        #expect(controller.currentTopVisibleItemId == nil)
+    }
+
+    @MainActor
+    @Test func isCurrentlyNearBottomReflectsSentinel() {
+        let controller = ChatScrollController()
+
+        // Default: near bottom (sentinel visible by default assumption)
+        #expect(controller.isCurrentlyNearBottom)
+
+        controller.onSentinelDisappear()
+        #expect(!controller.isCurrentlyNearBottom)
+
+        controller.onSentinelAppear()
+        #expect(controller.isCurrentlyNearBottom)
+    }
+
+    @MainActor
+    @Test func scrollPositionBindingGetReturnsCurrentValue() {
+        let controller = ChatScrollController()
+
+        // Write through set, read through get — verify round-trip
+        controller.scrollPositionBinding.wrappedValue = "msg-123"
+        let readBack = controller.scrollPositionBinding.wrappedValue
+        #expect(readBack == "msg-123")
+    }
 }

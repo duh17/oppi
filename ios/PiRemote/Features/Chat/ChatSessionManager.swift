@@ -26,6 +26,10 @@ final class ChatSessionManager {
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
 
+    /// Set from restored scroll state — one-shot, consumed after first use.
+    /// When non-nil, the chat scrolls to this item instead of the bottom.
+    var restorationScrollItemId: String?
+
     private var reconcileTask: Task<Void, Never>?
     private var historyReloadTask: Task<Void, Never>?
     private var stateSyncTask: Task<Void, Never>?
@@ -135,7 +139,19 @@ final class ChatSessionManager {
 
         if let cached, !cached.events.isEmpty {
             reducer.loadSession(cached.events)
-            needsInitialScroll = true
+
+            // Check for scroll position restoration (one-shot from RestorationState).
+            // If the user was scrolled up when the app backgrounded, restore that
+            // position instead of jumping to bottom.
+            if let anchor = connection.scrollAnchorItemId,
+               !connection.scrollWasNearBottom,
+               connection.sessionStore.activeSessionId == sessionId {
+                restorationScrollItemId = anchor
+                connection.scrollAnchorItemId = nil  // Consume once
+                log.info("Restoring scroll to \(anchor) for \(self.sessionId)")
+            } else {
+                needsInitialScroll = true
+            }
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
         }
 
@@ -180,12 +196,8 @@ final class ChatSessionManager {
         }
 
         var hasReceivedConnected = false
-        log.error("PIPE: for-await loop starting for \(self.sessionId, privacy: .public)")
-        ClientLog.info("ChatSession", "PIPE loop starting", metadata: ["sessionId": sessionId])
         for await message in stream {
             if Task.isCancelled {
-                log.error("PIPE: task cancelled, breaking for-await loop")
-                ClientLog.warning("ChatSession", "PIPE loop cancelled", metadata: ["sessionId": sessionId])
                 break
             }
 
@@ -235,12 +247,6 @@ final class ChatSessionManager {
         }
 
         let wasCancelled = Task.isCancelled
-        log.error("PIPE: stream loop EXITED for \(self.sessionId, privacy: .public) — cancelled=\(wasCancelled, privacy: .public)")
-        ClientLog.error(
-            "ChatSession",
-            "PIPE stream loop exited",
-            metadata: ["sessionId": sessionId, "cancelled": String(wasCancelled)]
-        )
 
         let shouldAutoReconnect = !wasCancelled
             && hasReceivedConnected
@@ -252,18 +258,20 @@ final class ChatSessionManager {
         if shouldAutoReconnect {
             unexpectedStreamExitCount += 1
             let reconnectPolicy = Self.reconnectDelay(for: unexpectedStreamExitCount)
-            log.error(
-                "PIPE: unexpected stream exit for \(self.sessionId, privacy: .public) (attempt \(self.unexpectedStreamExitCount, privacy: .public)) — reconnect in \(reconnectPolicy.delayMs, privacy: .public)ms"
-            )
-            ClientLog.error(
-                "ChatSession",
-                "Unexpected stream exit; scheduling reconnect",
-                metadata: [
-                    "sessionId": sessionId,
-                    "attempt": String(unexpectedStreamExitCount),
-                    "delayMs": String(reconnectPolicy.delayMs),
-                ]
-            )
+            if unexpectedStreamExitCount > 1 {
+                log.error(
+                    "PIPE: repeated stream exit for \(self.sessionId, privacy: .public) (attempt \(self.unexpectedStreamExitCount, privacy: .public)) — reconnect in \(reconnectPolicy.delayMs, privacy: .public)ms"
+                )
+                ClientLog.error(
+                    "ChatSession",
+                    "Repeated stream exit; scheduling reconnect",
+                    metadata: [
+                        "sessionId": sessionId,
+                        "attempt": String(unexpectedStreamExitCount),
+                        "delayMs": String(reconnectPolicy.delayMs),
+                    ]
+                )
+            }
             reducer.appendSystemEvent("Connection dropped — reconnecting…")
             scheduleAutoReconnect(after: reconnectPolicy.duration, generation: generation)
         } else {

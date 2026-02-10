@@ -116,17 +116,12 @@ final class WebSocketClient {
     func send(_ message: ClientMessage) async throws {
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
-            wsLogInfo(
-                "Send waiting for connection",
-                metadata: ["status": String(describing: status)]
-            )
             let waited = try await waitForConnection()
             if !waited {
                 logger.error("WS send: wait failed, throwing notConnected")
                 wsLogError("Send failed waiting for connection")
                 throw WebSocketError.notConnected
             }
-            wsLogInfo("Send wait succeeded")
         }
 
         guard let ws = webSocket, status == .connected else {
@@ -141,10 +136,6 @@ final class WebSocketClient {
             throw WebSocketError.notConnected
         }
         let data = try message.jsonString()
-        wsLogInfo(
-            "WS send",
-            metadata: ["type": message.typeLabel, "bytes": String(data.count)]
-        )
         let sendTimeout = self.sendTimeout
 
         do {
@@ -171,8 +162,6 @@ final class WebSocketClient {
             }
             throw error
         }
-
-        wsLogInfo("WS send complete", metadata: ["type": message.typeLabel])
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
@@ -228,14 +217,12 @@ final class WebSocketClient {
         // Already disconnected with no reconnect in progress — don't wait
         if status == .disconnected { return false }
 
-        logger.info("Waiting for connection (status: \(String(describing: self.status)))")
         let deadline = ContinuousClock.now + waitForConnectionTimeout
         while ContinuousClock.now < deadline {
             try await Task.sleep(for: waitPollInterval)
             if status == .connected { return true }
             if status == .disconnected { return false }
         }
-        logger.warning("Timed out waiting for connection")
         return false
     }
 
@@ -298,10 +285,6 @@ final class WebSocketClient {
         ClientLog.info("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
     }
 
-    private func wsLogWarning(_ message: String, metadata: [String: String] = [:]) {
-        ClientLog.warning("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
-    }
-
     private func wsLogError(_ message: String, metadata: [String: String] = [:]) {
         ClientLog.error("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
     }
@@ -319,22 +302,12 @@ final class WebSocketClient {
         self.webSocket = ws
         ws.resume()
 
-        logger.info("Connecting to \(url.absoluteString)")
-        wsLogInfo(
-            "Opening socket",
-            metadata: [
-                "urlPath": url.path,
-                "workspaceId": workspaceId ?? "none",
-            ]
-        )
-
         startReceiveLoop(ws: ws, continuation: continuation)
         startPingTimer(ws: ws)
     }
 
     private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<ServerMessage>.Continuation) {
         receiveTask = Task { [weak self] in
-            self?.wsLogInfo("Receive loop started")
             while !Task.isCancelled {
                 do {
                     let wsMessage = try await ws.receive()
@@ -396,11 +369,6 @@ final class WebSocketClient {
             }
 
             // Connection lost — attempt reconnect
-            logger.error("Receive loop exited — cancelled=\(Task.isCancelled)")
-            self?.wsLogInfo(
-                "Receive loop exited",
-                metadata: ["cancelled": String(Task.isCancelled)]
-            )
             await MainActor.run {
                 guard let self, self.connectedSessionId != nil else { return }
                 self.attemptReconnect()
@@ -418,18 +386,11 @@ final class WebSocketClient {
                 let failed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
                     ws.sendPing { error in
                         cont.resume(returning: error != nil)
-                        if let error {
-                            logger.warning("Ping failed: \(error)")
-                        }
                     }
                 }
 
                 if failed {
                     consecutiveFailures += 1
-                    self?.wsLogInfo(
-                        "Ping failed",
-                        metadata: ["failures": String(consecutiveFailures)]
-                    )
                     // Two consecutive failures → treat as dead connection.
                     // Single failures can be transient (brief network blip).
                     if consecutiveFailures >= 2 {
@@ -470,14 +431,6 @@ final class WebSocketClient {
         let nextAttempt = attempt + 1
         status = .reconnecting(attempt: nextAttempt)
         let delay = Self.reconnectDelay(attempt: nextAttempt)
-        logger.info("Reconnecting in \(delay)s (attempt \(nextAttempt))")
-        wsLogInfo(
-            "Reconnect scheduled",
-            metadata: [
-                "attempt": String(nextAttempt),
-                "delayMs": String(Int((delay * 1_000).rounded())),
-            ]
-        )
 
         // Cancel old tasks
         receiveTask?.cancel()
@@ -493,10 +446,6 @@ final class WebSocketClient {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, let cont = self.continuation else { return }
-                self.wsLogInfo(
-                    "Reconnect opening socket",
-                    metadata: ["attempt": String(nextAttempt)]
-                )
                 self.openWebSocket(sessionId: sessionId, workspaceId: self.connectedWorkspaceId, continuation: cont)
             }
         }

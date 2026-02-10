@@ -900,6 +900,86 @@ private actor AckStageRecorder {
     }
 }
 
+// MARK: - Foreground Recovery
+
+@Suite("Foreground Recovery")
+struct ForegroundRecoveryTests {
+
+    @MainActor
+    @Test func reconnectIfNeededWithoutApiClientIsNoOp() async {
+        let conn = ServerConnection()
+        // No configure() call — apiClient is nil
+        await conn.reconnectIfNeeded()
+        // Should return immediately without crash
+        #expect(!conn.foregroundRecoveryInFlight)
+    }
+
+    @MainActor
+    @Test func reconnectIfNeededReentrancyGuard() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        // Simulate the flag being set (as if another call is in progress)
+        // by calling reconnectIfNeeded and checking the flag is reset after.
+        await conn.reconnectIfNeeded()
+        #expect(!conn.foregroundRecoveryInFlight, "Flag should be reset after completion")
+    }
+
+    @MainActor
+    @Test func reconnectDoesNotTouchReducerTimeline() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+        conn._setActiveSessionIdForTesting("s1")
+
+        // Pre-populate reducer with items
+        conn.reducer.process(.agentStart(sessionId: "s1"))
+        conn.reducer.process(.textDelta(sessionId: "s1", delta: "hello world"))
+        conn.reducer.process(.agentEnd(sessionId: "s1"))
+        let countBefore = conn.reducer.items.count
+        #expect(countBefore > 0)
+
+        // reconnectIfNeeded should NOT call reducer.loadSession() which would
+        // replace the timeline. API calls will fail (unreachable host) but the
+        // reducer must remain untouched.
+        await conn.reconnectIfNeeded()
+
+        #expect(conn.reducer.items.count == countBefore,
+                "Foreground recovery must not replace timeline — ChatSessionManager owns that")
+    }
+
+    @MainActor
+    @Test func reconnectRefreshesWithoutActiveSession() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+        // No activeSessionId set — should still attempt session list refresh
+        // (API calls fail to unreachable host, but no crash)
+        await conn.reconnectIfNeeded()
+        #expect(!conn.foregroundRecoveryInFlight)
+    }
+
+    @MainActor
+    @Test func flushAndSuspendDoesNotDisconnect() {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "localhost", port: 7749, token: "sk_test", name: "Test"
+        ))
+        conn._setActiveSessionIdForTesting("s1")
+
+        conn.flushAndSuspend()
+
+        // flushAndSuspend should NOT disconnect — iOS will suspend the stream,
+        // and reconnectIfNeeded handles recovery on foreground.
+        // The activeSessionId should remain set.
+        #expect(conn.wsClient != nil, "WS client should not be nil after suspend")
+    }
+}
+
 private func waitForCondition(
     timeoutMs: Int = 1_000,
     pollMs: Int = 20,

@@ -8,6 +8,7 @@ struct ChatView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
@@ -161,6 +162,11 @@ struct ChatView: View {
                 sessionManager.cancelReconciliation()
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                saveScrollState()
+            }
+        }
         .onDisappear {
             actionHandler.cleanup()
             sessionManager.cleanup()
@@ -168,6 +174,7 @@ struct ChatView: View {
             audioPlayer.stop()
             let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             connection.composerDraft = draft.isEmpty ? nil : draft
+            saveScrollState()
             // Only disconnect if WE are still the active session.
             // A new ChatView may have already taken over the WS.
             if connection.wsClient?.connectedSessionId == sessionId
@@ -250,6 +257,7 @@ struct ChatView: View {
             connection: connection,
             reducer: reducer,
             sessionId: sessionId,
+            sessionStore: sessionStore,
             onDispatchStarted: {
                 inputText = ""
                 pendingImages = []
@@ -338,6 +346,11 @@ struct ChatView: View {
             reducer: reducer,
             sessionId: sessionId
         )
+    }
+
+    private func saveScrollState() {
+        connection.scrollAnchorItemId = scrollController.currentTopVisibleItemId
+        connection.scrollWasNearBottom = scrollController.isCurrentlyNearBottom
     }
 
     private func copySessionID() {
@@ -634,6 +647,7 @@ private struct ChatTimelineView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 8)
             }
+            .scrollPosition(id: scrollController.scrollPositionBinding, anchor: .top)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 PermissionOverlay(sessionId: sessionId)
@@ -663,6 +677,15 @@ private struct ChatTimelineView: View {
                     renderWindow = reducer.items.count
                 }
                 scrollController.handleScrollTarget(proxy: proxy)
+            }
+            .onChange(of: sessionManager.restorationScrollItemId) { _, itemId in
+                guard let itemId else { return }
+                sessionManager.restorationScrollItemId = nil
+                // Expand render window so the target item is in the view hierarchy.
+                if !visibleItems.contains(where: { $0.id == itemId }) {
+                    renderWindow = reducer.items.count
+                }
+                scrollController.scrollTargetID = itemId
             }
         }
     }

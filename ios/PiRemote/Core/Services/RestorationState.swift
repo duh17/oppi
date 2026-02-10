@@ -12,6 +12,11 @@ struct RestorationState: Codable {
     let activeSessionId: String?
     let selectedTab: String  // "sessions", "settings"
     let composerDraft: String?
+    /// ID of the topmost visible chat item when the app was backgrounded.
+    let scrollAnchorItemId: String?
+    /// Whether the user was scrolled to the bottom of the chat timeline.
+    /// `nil` treated as `true` for backward compatibility with v1 states.
+    let wasNearBottom: Bool?
     let timestamp: Date
 
     // MARK: - Save
@@ -23,6 +28,8 @@ struct RestorationState: Codable {
             activeSessionId: connection.sessionStore.activeSessionId,
             selectedTab: navigation.selectedTab.rawString,
             composerDraft: connection.composerDraft,
+            scrollAnchorItemId: connection.scrollAnchorItemId,
+            wasNearBottom: connection.scrollWasNearBottom,
             timestamp: Date()
         )
 
