@@ -32,7 +32,9 @@ If no concrete task given, read `README.md`, then ask which module to work on. B
 
 **pi-remote:** Read these in parallel:
 - `pi-remote/src/types.ts` — shared protocol types
-- `pi-remote/src/server.ts` — HTTP + WebSocket server
+- `pi-remote/src/server.ts` — HTTP + WebSocket server (orchestrator, auth, legacy WS)
+- `pi-remote/src/routes.ts` — REST route handlers (dispatch + all HTTP endpoints)
+- `pi-remote/src/stream.ts` — user stream mux (event ring, subscriptions, /stream WS)
 - `pi-remote/src/sessions.ts` — pi process lifecycle (RPC, container spawn)
 - `pi-remote/src/gate.ts` — permission gate (TCP, per-session ports)
 - `pi-remote/src/policy.ts` — layered policy engine
@@ -71,21 +73,35 @@ Key patterns:
 ```
 pi-remote/
 ├── src/
-│   ├── index.ts       # CLI entrypoint (serve, invite, users, status)
-│   ├── server.ts      # HTTP + WebSocket server
-│   ├── sessions.ts    # Pi process lifecycle (RPC, container spawn)
-│   ├── gate.ts        # Permission gate (TCP, per-session)
-│   ├── policy.ts      # Layered policy engine
-│   ├── sandbox.ts     # Apple container management
-│   ├── push.ts        # APNs push notifications
-│   ├── storage.ts     # JSON file persistence
-│   ├── trace.ts       # Pi session JSONL reader
-│   └── types.ts       # Shared type definitions
+│   ├── index.ts            # CLI entrypoint (serve, invite, users, status)
+│   ├── server.ts           # HTTP + WebSocket orchestrator (auth, legacy WS, client msg)
+│   ├── routes.ts           # REST route handlers (dispatch + all HTTP endpoints)
+│   ├── stream.ts           # User stream mux (event ring, subscriptions, /stream WS)
+│   ├── sessions.ts         # Pi process lifecycle (RPC, container spawn)
+│   ├── gate.ts             # Permission gate (TCP, per-session)
+│   ├── policy.ts           # Layered policy engine (presets, heuristics)
+│   ├── rules.ts            # Learned rule store (session/workspace/global)
+│   ├── audit.ts            # Permission audit log
+│   ├── sandbox.ts          # Apple container management
+│   ├── sandbox-prompt.ts   # Sandbox system prompt builder
+│   ├── sandbox-skills.ts   # Skill sync into sandboxes
+│   ├── skills.ts           # Skill registry + user skill store
+│   ├── auth-proxy.ts       # Credential proxy (Anthropic/OpenAI)
+│   ├── host.ts             # Host filesystem discovery
+│   ├── workspace-runtime.ts # Workspace container lifecycle
+│   ├── push.ts             # APNs push notifications
+│   ├── storage.ts          # JSON file persistence
+│   ├── sync.ts             # File sync helpers
+│   ├── trace.ts            # Pi session JSONL reader
+│   └── types.ts            # Shared type definitions
+├── tests/                   # Vitest unit tests (30 files, ~470 tests)
 ├── extensions/
-│   └── permission-gate/  # Pi extension (runs inside container)
+│   └── permission-gate/     # Pi extension (runs inside container)
 ├── sandbox/
-│   └── Containerfile  # Container image definition
-├── test-*.ts          # Test scripts
+│   └── Containerfile        # Container image definition
+├── test-e2e.ts              # Full E2E integration test
+├── test-gate-client.ts      # Manual gate test client
+├── test-load-ws.ts          # WebSocket load test harness
 ├── package.json
 └── tsconfig.json
 ```
@@ -112,10 +128,13 @@ npm run build
 # Run server (dev)
 npx tsx src/index.ts serve
 
-# Run specific test file
-npx tsx test-policy.ts
-npx tsx test-gate.ts
-npx tsx test-gate-client.ts
+# Run vitest unit tests
+npx vitest run
+
+# Run specific vitest file
+npx vitest run tests/policy.test.ts
+
+# Run integration tests (need running server)
 npx tsx test-e2e.ts
 ```
 

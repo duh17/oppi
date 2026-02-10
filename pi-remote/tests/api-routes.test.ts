@@ -23,6 +23,9 @@ const ROUTES = {
   wsSessionEvents:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
+  userStream:          /^\/stream$/,
+  userStreamEvents:    /^\/stream\/events$/,
+  permissionsPending:  /^\/permissions\/pending$/,
 
   // v1 legacy routes
   legacySessions:      /^\/sessions$/,
@@ -96,6 +99,18 @@ describe("Workspace-scoped API routes (v2)", () => {
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("s1");
   });
+
+  it("matches multiplexed WS /stream", () => {
+    expect("/stream".match(ROUTES.userStream)).toBeTruthy();
+  });
+
+  it("matches user stream events catch-up route", () => {
+    expect("/stream/events".match(ROUTES.userStreamEvents)).toBeTruthy();
+  });
+
+  it("matches pending permissions snapshot route", () => {
+    expect("/permissions/pending".match(ROUTES.permissionsPending)).toBeTruthy();
+  });
 });
 
 describe("Legacy session routes (v1 compat)", () => {
@@ -163,5 +178,17 @@ describe("Route priority: v2 workspace routes take precedence", () => {
 
   it("workspace session events does NOT match legacy events", () => {
     expect("/workspaces/ws-1/sessions/s1/events".match(ROUTES.legacyEvents)).toBeFalsy();
+  });
+
+  it("multiplexed /stream does NOT match legacy session stream", () => {
+    expect("/stream".match(ROUTES.legacyStream)).toBeFalsy();
+  });
+
+  it("/stream/events does NOT match legacy session events", () => {
+    expect("/stream/events".match(ROUTES.legacyEvents)).toBeFalsy();
+  });
+
+  it("/permissions/pending does NOT match legacy session detail", () => {
+    expect("/permissions/pending".match(ROUTES.legacyDetail)).toBeFalsy();
   });
 });

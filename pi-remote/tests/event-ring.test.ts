@@ -40,4 +40,18 @@ describe("EventRing", () => {
     expect(ring.canServe(5)).toBe(true);
     expect(ring.canServe(3)).toBe(false);
   });
+
+  it("enforces strictly increasing sequences", () => {
+    const ring = new EventRing(5);
+
+    ring.push({ seq: 1, event: { type: "agent_start", seq: 1 }, timestamp: 1 });
+
+    expect(() =>
+      ring.push({ seq: 1, event: { type: "agent_end", seq: 1 }, timestamp: 2 }),
+    ).toThrow("strictly increasing");
+
+    expect(() =>
+      ring.push({ seq: 0, event: { type: "agent_end", seq: 0 }, timestamp: 3 }),
+    ).toThrow("positive integer");
+  });
 });

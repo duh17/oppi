@@ -197,6 +197,17 @@ export class EventRing {
   constructor(private readonly capacity = 500) {}
 
   push(event: SequencedEvent): void {
+    if (!Number.isInteger(event.seq) || event.seq <= 0) {
+      throw new Error(`EventRing sequence must be a positive integer (received ${event.seq})`);
+    }
+
+    const last = this.events[this.events.length - 1];
+    if (last && event.seq <= last.seq) {
+      throw new Error(
+        `EventRing sequence must be strictly increasing (last=${last.seq}, next=${event.seq})`,
+      );
+    }
+
     this.events.push(event);
     if (this.events.length > this.capacity) {
       this.events.shift();
@@ -227,6 +238,13 @@ export interface SessionCatchUpResponse {
   currentSeq: number;
   session: Session;
   catchUpComplete: boolean;
+}
+
+export interface SessionBroadcastEvent {
+  userId: string;
+  sessionId: string;
+  event: ServerMessage;
+  durable: boolean;
 }
 
 function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string {
@@ -2182,6 +2200,13 @@ export class SessionManager extends EventEmitter {
       timestamp: Date.now(),
     });
 
+    this.emit("session_event", {
+      userId: active.session.userId,
+      sessionId: active.session.id,
+      event: sequenced,
+      durable: true,
+    } satisfies SessionBroadcastEvent);
+
     for (const cb of active.subscribers) {
       try {
         cb(sequenced);
@@ -2194,6 +2219,18 @@ export class SessionManager extends EventEmitter {
   private broadcastEphemeral(key: string, message: ServerMessage): void {
     const active = this.active.get(key);
     if (!active) return;
+
+    // Only emit low-frequency ephemeral events to global observers.
+    // High-frequency deltas (text/thinking/tool_output) should not fan out
+    // through EventEmitter to avoid hot-path overhead.
+    if (message.type === "state") {
+      this.emit("session_event", {
+        userId: active.session.userId,
+        sessionId: active.session.id,
+        event: message,
+        durable: false,
+      } satisfies SessionBroadcastEvent);
+    }
 
     for (const cb of active.subscribers) {
       try {
