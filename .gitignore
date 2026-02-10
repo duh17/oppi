@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.js.map
 ios/PiRemote.xcodeproj/
+.pi/todos/

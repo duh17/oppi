@@ -336,6 +336,9 @@ const PI_REMOTE_GATE_EXTENSION = join(__dirname, "..", "extensions", "permission
 /** Host memory extension (user's pi config). */
 const HOST_MEMORY_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
 
+/** Host todo extension (user's pi config). */
+const HOST_TODOS_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
+
 // ─── Session Manager ───
 
 export class SessionManager extends EventEmitter {
@@ -649,6 +652,7 @@ export class SessionManager extends EventEmitter {
     // know about TCP gates). We then explicitly load:
     //   1. The pi-remote TCP permission gate extension (always)
     //   2. The memory extension (if workspace.memoryEnabled)
+    //   3. The todo extension (if installed)
     const piArgs = ["--mode", "rpc", "--no-extensions"];
 
     // 1. Always load the pi-remote TCP permission gate extension
@@ -663,6 +667,11 @@ export class SessionManager extends EventEmitter {
     // 2. Optionally load memory extension
     if (workspace?.memoryEnabled && existsSync(HOST_MEMORY_EXTENSION)) {
       piArgs.push("--extension", HOST_MEMORY_EXTENSION);
+    }
+
+    // 3. Optionally load todo extension
+    if (existsSync(HOST_TODOS_EXTENSION)) {
+      piArgs.push("--extension", HOST_TODOS_EXTENSION);
     }
 
     if (session.model) {
@@ -1405,7 +1414,11 @@ export class SessionManager extends EventEmitter {
       typeof rawProvider === "string" && typeof rawModelId === "string" && !rawModelId.includes("/")
         ? `${rawProvider}/${rawModelId}`
         : rawModelId;
-    if (typeof fullModelId === "string" && fullModelId.length > 0 && session.model !== fullModelId) {
+    if (
+      typeof fullModelId === "string" &&
+      fullModelId.length > 0 &&
+      session.model !== fullModelId
+    ) {
       session.model = fullModelId;
       if (this.contextWindowResolver) {
         session.contextWindow = this.contextWindowResolver(fullModelId);
@@ -2068,16 +2081,17 @@ export class SessionManager extends EventEmitter {
 
     const pendingStop = this.clearPendingStop(active);
     if (pendingStop?.mode === "terminate") {
-      this.broadcast(key, { type: "stop_confirmed", source: pendingStop.source, reason: "Session terminated" });
+      this.broadcast(key, {
+        type: "stop_confirmed",
+        source: pendingStop.source,
+        reason: "Session terminated",
+      });
     } else if (pendingStop?.mode === "abort") {
-      this.broadcast(
-        key,
-        {
-          type: "stop_failed",
-          source: "server",
-          reason: `Session ended before stop completed (${reason})`,
-        },
-      );
+      this.broadcast(key, {
+        type: "stop_failed",
+        source: "server",
+        reason: `Session ended before stop completed (${reason})`,
+      });
     }
 
     active.session.status = "stopped";
@@ -2346,16 +2360,8 @@ export class SessionManager extends EventEmitter {
         return;
       }
 
-      const timeoutReason =
-        `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; force terminating session`;
-      this.promotePendingStop(
-        key,
-        current,
-        "terminate",
-        "timeout",
-        timeoutReason,
-        true,
-      );
+      const timeoutReason = `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; force terminating session`;
+      this.promotePendingStop(key, current, "terminate", "timeout", timeoutReason, true);
       this.forceTerminateSessionProcess(
         key,
         current,
@@ -2434,9 +2440,7 @@ export class SessionManager extends EventEmitter {
     }
 
     const canServe = active.eventRing.canServe(sinceSeq);
-    const events = canServe
-      ? active.eventRing.since(sinceSeq).map((entry) => entry.event)
-      : [];
+    const events = canServe ? active.eventRing.since(sinceSeq).map((entry) => entry.event) : [];
 
     return {
       events,

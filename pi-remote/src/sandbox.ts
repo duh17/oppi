@@ -79,6 +79,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOX_DIR = join(__dirname, "..", "sandbox");
 const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
 const MEMORY_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
+const TODOS_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
 
 /** Fallback skills when no workspace is configured. */
 const DEFAULT_SKILLS = ["search", "fetch", "web-browser"];
@@ -416,6 +417,11 @@ export class SandboxManager {
       MEMORY_EXTENSION_SRC,
       join(extensionsDir, "memory.ts"),
       opts?.workspace?.memoryEnabled === true,
+    );
+    syncOptionalFile(
+      TODOS_EXTENSION_SRC,
+      join(extensionsDir, "todos.ts"),
+      existsSync(TODOS_EXTENSION_SRC),
     );
 
     // Sync skills (workspace-level, shared across sessions)
