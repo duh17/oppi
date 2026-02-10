@@ -2,8 +2,9 @@ import SwiftUI
 
 /// Condensed session outline for navigating long conversations.
 ///
-/// Shows a scannable list of all timeline entries. Tap to jump.
-/// Filter by entry type and search by content.
+/// Shows two panes:
+/// - Outline: scannable timeline entries, filterable by type
+/// - Changes: centralized file-change summary (edit/write) grouped by file
 struct SessionOutlineView: View {
     let items: [ChatItem]
     let onSelect: (String) -> Void
@@ -14,6 +15,12 @@ struct SessionOutlineView: View {
 
     @State private var searchText = ""
     @State private var filter: OutlineFilter = .all
+    @State private var mode: OutlineMode = .outline
+
+    enum OutlineMode: String, CaseIterable {
+        case outline = "Outline"
+        case changes = "Changes"
+    }
 
     enum OutlineFilter: String, CaseIterable {
         case all = "All"
@@ -48,70 +55,98 @@ struct SessionOutlineView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Filter chips
-                HStack(spacing: 8) {
-                    ForEach(OutlineFilter.allCases, id: \.self) { f in
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                filter = f
-                            }
-                        } label: {
-                            Text(f.rawValue)
-                                .font(.caption.bold())
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    filter == f ? Color.tokyoBlue : Color.tokyoBgHighlight,
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(filter == f ? .white : .tokyoFgDim)
-                        }
-                        .buttonStyle(.plain)
+                Picker("View", selection: $mode) {
+                    ForEach(OutlineMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
-                    Spacer()
-                    Text("\(filteredItems.count) items")
-                        .font(.caption2)
-                        .foregroundStyle(.tokyoComment)
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .padding(.vertical, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
 
                 Divider().overlay(Color.tokyoComment.opacity(0.3))
 
-                // Outline list
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                            Button {
-                                onSelect(item.id)
-                                dismiss()
-                            } label: {
-                                OutlineRow(
-                                    item: item,
-                                    summary: outlineSummary(for: item),
-                                    showDivider: index < filteredItems.count - 1
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                if let onFork, isForkable(item) {
-                                    Button("Fork from here", systemImage: "arrow.triangle.branch") {
-                                        onFork(item.id)
-                                        dismiss()
-                                    }
-                                }
-                            }
-                        }
-                    }
+                switch mode {
+                case .outline:
+                    outlinePane
+                case .changes:
+                    SessionChangesView(items: items, searchText: searchText)
                 }
             }
             .background(Color.tokyoBg)
-            .searchable(text: $searchText, prompt: "Search session…")
-            .navigationTitle("Outline")
+            .searchable(
+                text: $searchText,
+                prompt: mode == .outline ? "Search session…" : "Search changed files…"
+            )
+            .navigationTitle(mode.rawValue)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var outlinePane: some View {
+        VStack(spacing: 0) {
+            // Filter chips
+            HStack(spacing: 8) {
+                ForEach(OutlineFilter.allCases, id: \.self) { f in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            filter = f
+                        }
+                    } label: {
+                        Text(f.rawValue)
+                            .font(.caption.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                filter == f ? Color.tokyoBlue : Color.tokyoBgHighlight,
+                                in: Capsule()
+                            )
+                            .foregroundStyle(filter == f ? .white : .tokyoFgDim)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+                Text("\(filteredItems.count) items")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider().overlay(Color.tokyoComment.opacity(0.3))
+
+            // Outline list
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                        Button {
+                            onSelect(item.id)
+                            dismiss()
+                        } label: {
+                            OutlineRow(
+                                item: item,
+                                summary: outlineSummary(for: item),
+                                diffStats: outlineDiffStats(for: item),
+                                showDivider: index < filteredItems.count - 1
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            if let onFork, isForkable(item) {
+                                Button("Fork from here", systemImage: "arrow.triangle.branch") {
+                                    onFork(item.id)
+                                    dismiss()
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -198,6 +233,12 @@ struct SessionOutlineView: View {
             return "\(tool): \(String(argsSummary.prefix(80)))"
         }
     }
+
+    private func outlineDiffStats(for item: ChatItem) -> ToolCallFormatting.DiffStats? {
+        guard case .toolCall(let id, let tool, _, _, _, _, _) = item,
+              ToolCallFormatting.isEditTool(tool) else { return nil }
+        return ToolCallFormatting.editDiffStats(from: toolArgsStore.args(for: id))
+    }
 }
 
 // MARK: - Outline Row
@@ -205,6 +246,7 @@ struct SessionOutlineView: View {
 private struct OutlineRow: View {
     let item: ChatItem
     let summary: String
+    var diffStats: ToolCallFormatting.DiffStats?
     let showDivider: Bool
 
     var body: some View {
@@ -223,6 +265,22 @@ private struct OutlineRow: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Diff stats for edit tools
+                if let stats = diffStats {
+                    HStack(spacing: 3) {
+                        if stats.added > 0 {
+                            Text("+\(stats.added)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.tokyoGreen)
+                        }
+                        if stats.removed > 0 {
+                            Text("-\(stats.removed)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.tokyoRed)
+                        }
+                    }
+                }
 
                 // Timestamp (if available)
                 if let ts = item.timestamp {

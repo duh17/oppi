@@ -992,7 +992,12 @@ export class SessionManager extends EventEmitter {
       }
     }
 
-    if (data.type === "agent_start" || data.type === "agent_end" || data.type === "message_end") {
+    if (
+      data.type === "agent_start" ||
+      data.type === "agent_end" ||
+      data.type === "message_end" ||
+      data.type === "tool_execution_start"
+    ) {
       console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
       this.broadcast(key, { type: "state", session: active.session });
     }
@@ -1951,6 +1956,10 @@ export class SessionManager extends EventEmitter {
         shouldFlushNow = true;
         break;
 
+      case "tool_execution_start":
+        this.updateSessionChangeStats(session, event.toolName, event.args);
+        break;
+
       case "message_end": {
         const message = event.message;
         const role = message?.role;
@@ -2012,6 +2021,94 @@ export class SessionManager extends EventEmitter {
     if (message.cost) {
       session.cost += message.cost;
     }
+  }
+
+  private updateSessionChangeStats(session: Session, rawToolName: unknown, rawArgs: unknown): void {
+    const toolName = typeof rawToolName === "string" ? rawToolName.toLowerCase() : "";
+    if (toolName !== "edit" && toolName !== "write") {
+      return;
+    }
+
+    const existing = session.changeStats;
+    const stats = {
+      mutatingToolCalls: existing?.mutatingToolCalls ?? 0,
+      filesChanged: existing?.filesChanged ?? 0,
+      changedFiles: Array.isArray(existing?.changedFiles)
+        ? existing.changedFiles.filter((f) => typeof f === "string" && f.length > 0)
+        : [],
+      addedLines: existing?.addedLines ?? 0,
+      removedLines: existing?.removedLines ?? 0,
+    };
+    stats.filesChanged = Math.max(stats.filesChanged, stats.changedFiles.length);
+
+    stats.mutatingToolCalls += 1;
+
+    const path = this.extractChangedFilePath(rawArgs);
+    if (path && !stats.changedFiles.includes(path)) {
+      stats.changedFiles.push(path);
+      stats.filesChanged = stats.changedFiles.length;
+    }
+
+    const { added, removed } = this.estimateLineDelta(toolName, rawArgs);
+    stats.addedLines += added;
+    stats.removedLines += removed;
+
+    session.changeStats = stats;
+  }
+
+  private extractChangedFilePath(rawArgs: unknown): string | null {
+    if (!rawArgs || typeof rawArgs !== "object") {
+      return null;
+    }
+
+    const args = rawArgs as Record<string, unknown>;
+    const candidate = args.path ?? args.file_path;
+    if (typeof candidate !== "string") {
+      return null;
+    }
+
+    const normalized = candidate.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private estimateLineDelta(
+    toolName: "edit" | "write",
+    rawArgs: unknown,
+  ): { added: number; removed: number } {
+    if (!rawArgs || typeof rawArgs !== "object") {
+      return { added: 0, removed: 0 };
+    }
+
+    const args = rawArgs as Record<string, unknown>;
+
+    if (toolName === "write") {
+      const content = typeof args.content === "string" ? args.content : "";
+      if (content.length === 0) {
+        return { added: 0, removed: 0 };
+      }
+      return { added: this.countLines(content), removed: 0 };
+    }
+
+    const oldText = typeof args.oldText === "string" ? args.oldText : "";
+    const newText = typeof args.newText === "string" ? args.newText : "";
+    if (oldText.length === 0 && newText.length === 0) {
+      return { added: 0, removed: 0 };
+    }
+
+    const oldLines = this.countLines(oldText);
+    const newLines = this.countLines(newText);
+
+    return {
+      added: Math.max(0, newLines - oldLines),
+      removed: Math.max(0, oldLines - newLines),
+    };
+  }
+
+  private countLines(text: string): number {
+    if (text.length === 0) {
+      return 0;
+    }
+    return text.split("\n").length;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped

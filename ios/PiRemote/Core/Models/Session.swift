@@ -29,6 +29,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var messageCount: Int
     var tokens: TokenUsage
     var cost: Double
+    var changeStats: SessionChangeStats? = nil
 
     // Context usage (pi TUI-style status bar)
     var contextTokens: Int?    // input+output+cacheRead+cacheWrite from last message
@@ -47,13 +48,21 @@ struct TokenUsage: Codable, Sendable, Equatable {
     var output: Int
 }
 
+struct SessionChangeStats: Codable, Sendable, Equatable {
+    var mutatingToolCalls: Int
+    var filesChanged: Int
+    var changedFiles: [String]
+    var addedLines: Int
+    var removedLines: Int
+}
+
 // MARK: - Codable (Unix millisecond timestamps)
 
 extension Session: Codable {
     enum CodingKeys: String, CodingKey {
         case id, userId, workspaceId, workspaceName
         case name, status, createdAt, lastActivity
-        case model, runtime, messageCount, tokens, cost
+        case model, runtime, messageCount, tokens, cost, changeStats
         case contextTokens, contextWindow, lastMessage
         case thinkingLevel
     }
@@ -71,6 +80,7 @@ extension Session: Codable {
         messageCount = try c.decode(Int.self, forKey: .messageCount)
         tokens = try c.decode(TokenUsage.self, forKey: .tokens)
         cost = try c.decode(Double.self, forKey: .cost)
+        changeStats = try c.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
         contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
         contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
@@ -97,6 +107,7 @@ extension Session: Codable {
         try c.encode(messageCount, forKey: .messageCount)
         try c.encode(tokens, forKey: .tokens)
         try c.encode(cost, forKey: .cost)
+        try c.encodeIfPresent(changeStats, forKey: .changeStats)
         try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
         try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try c.encodeIfPresent(lastMessage, forKey: .lastMessage)

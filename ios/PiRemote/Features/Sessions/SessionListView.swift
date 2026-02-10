@@ -24,6 +24,7 @@ struct SessionListView: View {
             || (session.workspaceName?.lowercased().contains(query) ?? false)
             || (session.model?.lowercased().contains(query) ?? false)
             || (session.lastMessage?.lowercased().contains(query) ?? false)
+            || (session.changeStats?.changedFiles.contains(where: { $0.lowercased().contains(query) }) ?? false)
         }
     }
 
@@ -272,6 +273,12 @@ struct SessionRow: View {
                         Text("\(session.messageCount) msgs")
                     }
 
+                    if let stats = session.changeStats,
+                       stats.mutatingToolCalls > 0 {
+                        Text(changeSummary(stats))
+                            .foregroundStyle(changeSummaryColor(stats))
+                    }
+
                     if let pct = contextPercent {
                         NativeContextGauge(percent: pct)
                     }
@@ -318,6 +325,26 @@ struct SessionRow: View {
         cost >= 0.01
             ? String(format: "$%.2f", cost)
             : String(format: "$%.3f", cost)
+    }
+
+    private func changeSummary(_ stats: SessionChangeStats) -> String {
+        let files = stats.filesChanged
+        let changes = stats.mutatingToolCalls
+
+        if files > 0 {
+            return "\(changes) chg • \(files) files"
+        }
+        return "\(changes) chg"
+    }
+
+    private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
+        if stats.filesChanged >= 25 || stats.mutatingToolCalls >= 80 {
+            return .tokyoRed
+        }
+        if stats.filesChanged >= 10 || stats.mutatingToolCalls >= 30 {
+            return .tokyoOrange
+        }
+        return .tokyoGreen
     }
 }
 

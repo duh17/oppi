@@ -54,6 +54,19 @@ export interface Workspace {
 
 // ─── Sessions ───
 
+export interface SessionChangeStats {
+  /** Count of mutating file tool calls (edit/write) observed in this session. */
+  mutatingToolCalls: number;
+  /** Unique file count mutated by edit/write tools. */
+  filesChanged: number;
+  /** Deduplicated file paths changed in this session. */
+  changedFiles: string[];
+  /** Best-effort aggregate line additions (from edit/write args). */
+  addedLines: number;
+  /** Best-effort aggregate line removals (from edit args). */
+  removedLines: number;
+}
+
 export interface Session {
   id: string;
   userId: string;
@@ -69,6 +82,7 @@ export interface Session {
   messageCount: number;
   tokens: { input: number; output: number };
   cost: number;
+  changeStats?: SessionChangeStats;
 
   // Context usage (pi TUI-style)
   contextTokens?: number; // input+output+cacheRead+cacheWrite from last message
