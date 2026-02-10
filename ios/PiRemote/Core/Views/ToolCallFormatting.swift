@@ -34,13 +34,13 @@ enum ToolCallFormatting {
 
     // MARK: - Display Formatting
 
-    /// Format bash command for header display (truncated to 120 chars).
+    /// Format bash command for header display (truncated to 200 chars).
     static func bashCommand(args: [String: JSONValue]?, argsSummary: String) -> String {
         if let cmd = args?["command"]?.stringValue {
-            return String(cmd.prefix(120))
+            return String(cmd.prefix(200))
         }
         if argsSummary.hasPrefix("command: ") {
-            return String(argsSummary.dropFirst(9).prefix(120))
+            return String(argsSummary.dropFirst(9).prefix(200))
         }
         return argsSummary
     }
@@ -89,5 +89,54 @@ enum ToolCallFormatting {
         if bytes < 1024 { return "\(bytes)B" }
         if bytes < 1024 * 1024 { return "\(bytes / 1024)KB" }
         return String(format: "%.1fMB", Double(bytes) / (1024 * 1024))
+    }
+
+    // MARK: - Tool Name Normalization
+
+    /// Canonical lowercase tool name for switch matching.
+    static func normalized(_ name: String) -> String {
+        name.lowercased()
+    }
+
+    static func isBashTool(_ name: String) -> Bool { normalized(name) == "bash" }
+    static func isGrepTool(_ name: String) -> Bool { normalized(name) == "grep" }
+    static func isFindTool(_ name: String) -> Bool { normalized(name) == "find" }
+    static func isLsTool(_ name: String) -> Bool { normalized(name) == "ls" }
+
+    // MARK: - Edit Diff Stats
+
+    /// Compute +added/-removed line counts from edit args.
+    struct DiffStats {
+        let added: Int
+        let removed: Int
+    }
+
+    static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {
+        guard let oldText = args?["oldText"]?.stringValue,
+              let newText = args?["newText"]?.stringValue else { return nil }
+        let oldLines = oldText.split(separator: "\n", omittingEmptySubsequences: false).count
+        let newLines = newText.split(separator: "\n", omittingEmptySubsequences: false).count
+        return DiffStats(
+            added: max(0, newLines - oldLines),
+            removed: max(0, oldLines - newLines)
+        )
+    }
+
+    // MARK: - Preview Extraction
+
+    /// Extract tail lines from text (for bash collapsed preview).
+    static func tailLines(_ text: String, count: Int = 3) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.suffix(count).joined(separator: "\n")
+    }
+
+    /// Extract head lines from text (for read collapsed preview).
+    static func headLines(_ text: String, count: Int = 3) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.prefix(count).joined(separator: "\n")
     }
 }

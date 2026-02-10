@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Messages sent from the iOS client to the server over WebSocket.
 ///
@@ -7,11 +8,12 @@ import Foundation
 /// returns `rpc_result` with the same `requestId` for commands forwarded to pi RPC.
 enum ClientMessage: Sendable {
     // ── Prompting ──
-    case prompt(message: String, images: [ImageAttachment]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil)
-    case steer(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil)
-    case followUp(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil)
-    case stop(requestId: String? = nil)
+    case prompt(message: String, images: [ImageAttachment]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case steer(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case followUp(message: String, images: [ImageAttachment]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case stop(requestId: String? = nil)       // Abort current turn only
     case abort(requestId: String? = nil)
+    case stopSession(requestId: String? = nil) // Kill session process entirely
 
     // ── State ──
     case getState(requestId: String? = nil)
@@ -60,9 +62,15 @@ enum ClientMessage: Sendable {
 
 // MARK: - Supporting Types
 
-struct ImageAttachment: Codable, Sendable {
+struct ImageAttachment: Codable, Sendable, Equatable {
     let data: String      // base64
     let mimeType: String  // image/jpeg, image/png, etc.
+
+    /// Decode base64 data to UIImage for display.
+    var decodedImage: UIImage? {
+        guard let imageData = Data(base64Encoded: data) else { return nil }
+        return UIImage(data: imageData)
+    }
 }
 
 enum StreamingBehavior: String, Codable, Sendable {
@@ -99,24 +107,27 @@ extension ClientMessage: Encodable {
 
         switch self {
         // ── Prompting ──
-        case .prompt(let message, let images, let behavior, let reqId):
+        case .prompt(let message, let images, let behavior, let reqId, let turnId):
             try c.encode("prompt", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(images, forKey: .images)
             try c.encodeIfPresent(behavior, forKey: .streamingBehavior)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .steer(let message, let images, let reqId):
+        case .steer(let message, let images, let reqId, let turnId):
             try c.encode("steer", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(images, forKey: .images)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .followUp(let message, let images, let reqId):
+        case .followUp(let message, let images, let reqId, let turnId):
             try c.encode("follow_up", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(images, forKey: .images)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
         case .stop(let reqId):
             try c.encode("stop", forKey: .type)
@@ -124,6 +135,10 @@ extension ClientMessage: Encodable {
 
         case .abort(let reqId):
             try c.encode("abort", forKey: .type)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        case .stopSession(let reqId):
+            try c.encode("stop_session", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── State ──
@@ -253,7 +268,7 @@ extension ClientMessage: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, message, images, streamingBehavior, requestId
+        case type, message, images, streamingBehavior, requestId, clientTurnId
         case id, action, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command
@@ -263,6 +278,42 @@ extension ClientMessage: Encodable {
 // MARK: - Convenience
 
 extension ClientMessage {
+    /// Short type label for logging (avoids associated-value noise).
+    var typeLabel: String {
+        switch self {
+        case .prompt: return "prompt"
+        case .steer: return "steer"
+        case .followUp: return "follow_up"
+        case .stop: return "stop"
+        case .abort: return "abort"
+        case .stopSession: return "stop_session"
+        case .getState: return "get_state"
+        case .getMessages: return "get_messages"
+        case .getSessionStats: return "get_session_stats"
+        case .setModel: return "set_model"
+        case .cycleModel: return "cycle_model"
+        case .getAvailableModels: return "get_available_models"
+        case .setThinkingLevel: return "set_thinking_level"
+        case .cycleThinkingLevel: return "cycle_thinking_level"
+        case .newSession: return "new_session"
+        case .setSessionName: return "set_session_name"
+        case .compact: return "compact"
+        case .setAutoCompaction: return "set_auto_compaction"
+        case .fork: return "fork"
+        case .getForkMessages: return "get_fork_messages"
+        case .switchSession: return "switch_session"
+        case .setSteeringMode: return "set_steering_mode"
+        case .setFollowUpMode: return "set_follow_up_mode"
+        case .setAutoRetry: return "set_auto_retry"
+        case .abortRetry: return "abort_retry"
+        case .bash: return "bash"
+        case .abortBash: return "abort_bash"
+        case .getCommands: return "get_commands"
+        case .permissionResponse: return "permission_response"
+        case .extensionUIResponse: return "extension_ui_response"
+        }
+    }
+
     /// Encode to JSON data for WebSocket send.
     func jsonData() throws -> Data {
         try JSONEncoder().encode(self)

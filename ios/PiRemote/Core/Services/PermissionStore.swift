@@ -4,6 +4,9 @@ import Foundation
 ///
 /// Separate from SessionStore so permission timer ticks don't re-render
 /// the session list.
+///
+/// Key design: `take(id:)` removes AND returns the full request so callers
+/// can pass tool/summary to the reducer for resolved timeline markers.
 @MainActor @Observable
 final class PermissionStore {
     var pending: [PermissionRequest] = []
@@ -18,19 +21,15 @@ final class PermissionStore {
         pending.append(request)
     }
 
-    /// Remove a resolved or cancelled permission.
+    /// Remove and return a permission (caller needs tool/summary for resolved marker).
+    func take(id: String) -> PermissionRequest? {
+        guard let idx = pending.firstIndex(where: { $0.id == id }) else { return nil }
+        return pending.remove(at: idx)
+    }
+
+    /// Remove without returning (fire-and-forget cleanup).
     func remove(id: String) {
         pending.removeAll { $0.id == id }
-    }
-
-    /// Mark a permission as resolved (remove from pending).
-    func resolve(id: String) {
-        remove(id: id)
-    }
-
-    /// Mark a permission as expired (remove from pending).
-    func expire(id: String) {
-        remove(id: id)
     }
 
     /// Pending permissions for a specific session.
@@ -39,12 +38,11 @@ final class PermissionStore {
     }
 
     /// Remove permissions whose timeout has passed.
-    /// Returns the IDs of removed permissions for timeline resolution.
-    func sweepExpired() -> [String] {
+    /// Returns the full requests so callers can record resolved markers with tool/summary.
+    func sweepExpired() -> [PermissionRequest] {
         let now = Date()
         let expired = pending.filter { $0.timeoutAt < now }
-        let ids = expired.map(\.id)
         pending.removeAll { $0.timeoutAt < now }
-        return ids
+        return expired
     }
 }

@@ -13,6 +13,11 @@ struct ContentView: View {
                 OnboardingView()
             } else {
                 TabView(selection: $nav.selectedTab) {
+                    SwiftUI.Tab("Workspaces", systemImage: "square.grid.2x2", value: AppTab.workspaces) {
+                        NavigationStack {
+                            WorkspaceHomeView()
+                        }
+                    }
                     SwiftUI.Tab("Sessions", systemImage: "terminal", value: AppTab.sessions) {
                         NavigationStack {
                             SessionListView()

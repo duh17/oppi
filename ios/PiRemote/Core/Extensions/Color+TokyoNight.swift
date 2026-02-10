@@ -1,22 +1,29 @@
 import SwiftUI
 
-/// Tokyo Night palette (Night variant) used by host terminal theme.
+/// Legacy color API used throughout the app (`.tokyo*` names).
+///
+/// Names are preserved for compatibility while values are now resolved from
+/// the currently selected runtime theme.
 extension Color {
-    static let tokyoBg = Color(red: 26.0 / 255.0, green: 27.0 / 255.0, blue: 38.0 / 255.0)
-    static let tokyoBgDark = Color(red: 22.0 / 255.0, green: 22.0 / 255.0, blue: 30.0 / 255.0)
-    static let tokyoBgHighlight = Color(red: 41.0 / 255.0, green: 46.0 / 255.0, blue: 66.0 / 255.0)
+    private static var palette: ThemePalette {
+        ThemeRuntimeState.currentPalette()
+    }
 
-    static let tokyoFg = Color(red: 192.0 / 255.0, green: 202.0 / 255.0, blue: 245.0 / 255.0)
-    static let tokyoFgDim = Color(red: 169.0 / 255.0, green: 177.0 / 255.0, blue: 214.0 / 255.0)
-    static let tokyoComment = Color(red: 86.0 / 255.0, green: 95.0 / 255.0, blue: 137.0 / 255.0)
+    static var tokyoBg: Color { palette.bg }
+    static var tokyoBgDark: Color { palette.bgDark }
+    static var tokyoBgHighlight: Color { palette.bgHighlight }
 
-    static let tokyoBlue = Color(red: 122.0 / 255.0, green: 162.0 / 255.0, blue: 247.0 / 255.0)
-    static let tokyoCyan = Color(red: 125.0 / 255.0, green: 207.0 / 255.0, blue: 255.0 / 255.0)
-    static let tokyoGreen = Color(red: 158.0 / 255.0, green: 206.0 / 255.0, blue: 106.0 / 255.0)
-    static let tokyoOrange = Color(red: 255.0 / 255.0, green: 158.0 / 255.0, blue: 100.0 / 255.0)
-    static let tokyoPurple = Color(red: 187.0 / 255.0, green: 154.0 / 255.0, blue: 247.0 / 255.0)
-    static let tokyoRed = Color(red: 247.0 / 255.0, green: 118.0 / 255.0, blue: 142.0 / 255.0)
-    static let tokyoYellow = Color(red: 224.0 / 255.0, green: 175.0 / 255.0, blue: 104.0 / 255.0)
+    static var tokyoFg: Color { palette.fg }
+    static var tokyoFgDim: Color { palette.fgDim }
+    static var tokyoComment: Color { palette.comment }
+
+    static var tokyoBlue: Color { palette.blue }
+    static var tokyoCyan: Color { palette.cyan }
+    static var tokyoGreen: Color { palette.green }
+    static var tokyoOrange: Color { palette.orange }
+    static var tokyoPurple: Color { palette.purple }
+    static var tokyoRed: Color { palette.red }
+    static var tokyoYellow: Color { palette.yellow }
 }
 
 extension ShapeStyle where Self == Color {

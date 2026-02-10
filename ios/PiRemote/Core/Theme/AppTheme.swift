@@ -1,13 +1,10 @@
 import SwiftUI
+import UIKit
 
 /// Centralized theme definition for the entire app.
 ///
 /// Organizes all visual tokens — colors, code metrics, diff styling —
 /// into a single `Sendable` value type. Injected via `@Environment(\.theme)`.
-///
-/// Current theme: Tokyo Night.
-/// To add a new theme, create a new `AppTheme` static instance and
-/// set it on the root view via `.environment(\.theme, .newTheme)`.
 struct AppTheme: Sendable {
     let bg: BgColors
     let text: TextColors
@@ -80,63 +77,110 @@ struct AppTheme: Sendable {
     }
 }
 
-// MARK: - Tokyo Night
+// MARK: - Theme Variants
 
 extension AppTheme {
-    /// Tokyo Night (Night variant) — the default theme.
-    static let tokyoNight = AppTheme(
-        bg: BgColors(
-            primary: .tokyoBg,
-            secondary: .tokyoBgDark,
-            highlight: .tokyoBgHighlight
-        ),
-        text: TextColors(
-            primary: .tokyoFg,
-            secondary: .tokyoFgDim,
-            tertiary: .tokyoComment
-        ),
-        accent: AccentColors(
-            blue: .tokyoBlue,
-            cyan: .tokyoCyan,
-            green: .tokyoGreen,
-            orange: .tokyoOrange,
-            purple: .tokyoPurple,
-            red: .tokyoRed,
-            yellow: .tokyoYellow
-        ),
-        diff: DiffColors(
-            // Subtle green tint over the Night bg (#1a1b26)
-            addedBg: Color(red: 30 / 255, green: 50 / 255, blue: 40 / 255),
-            // Subtle red tint over the Night bg
-            removedBg: Color(red: 58 / 255, green: 30 / 255, blue: 40 / 255),
-            addedAccent: .tokyoGreen,
-            removedAccent: .tokyoRed,
-            contextFg: .tokyoFgDim,
-            hunkFg: .tokyoPurple
-        ),
-        syntax: SyntaxColors(
-            keyword: .tokyoPurple,
-            string: .tokyoGreen,
-            comment: .tokyoComment,
-            number: .tokyoOrange,
-            type: .tokyoCyan,
-            decorator: .tokyoYellow,
-            preprocessor: .tokyoPurple,
-            plain: .tokyoFg,
-            jsonKey: .tokyoCyan,
-            jsonDim: .tokyoFgDim
-        ),
-        code: CodeMetrics(
-            fontSize: 11,
-            gutterWidthPerDigit: 7.5
-        )
+    /// Tokyo Night (Night variant) — default app palette.
+    static let tokyoNight = makeTheme(
+        palette: ThemePalettes.tokyoNight,
+        diffAddedBg: Color(red: 30.0 / 255.0, green: 50.0 / 255.0, blue: 40.0 / 255.0),
+        diffRemovedBg: Color(red: 58.0 / 255.0, green: 30.0 / 255.0, blue: 40.0 / 255.0),
+        diffContextFg: ThemePalettes.tokyoNight.fgDim,
+        diffHunkFg: ThemePalettes.tokyoNight.purple
     )
+
+    /// Tokyo Night Day (light variant).
+    static let tokyoNightDay = makeTheme(
+        palette: ThemePalettes.tokyoNightDay,
+        diffAddedBg: Color(red: 213.0 / 255.0, green: 232.0 / 255.0, blue: 213.0 / 255.0),
+        diffRemovedBg: Color(red: 232.0 / 255.0, green: 213.0 / 255.0, blue: 213.0 / 255.0),
+        diffContextFg: ThemePalettes.tokyoNightDay.fgDim,
+        diffHunkFg: ThemePalettes.tokyoNightDay.purple
+    )
+
+    /// Apple-native semantic dark palette.
+    static let appleDark = makeTheme(
+        palette: ThemePalettes.appleDark,
+        diffAddedBg: Color(uiColor: UIColor.systemGreen.withAlphaComponent(0.18)),
+        diffRemovedBg: Color(uiColor: UIColor.systemRed.withAlphaComponent(0.16)),
+        diffContextFg: ThemePalettes.appleDark.fgDim,
+        diffHunkFg: ThemePalettes.appleDark.purple
+    )
+
+    private static func makeTheme(
+        palette: ThemePalette,
+        diffAddedBg: Color,
+        diffRemovedBg: Color,
+        diffContextFg: Color,
+        diffHunkFg: Color
+    ) -> AppTheme {
+        AppTheme(
+            bg: BgColors(
+                primary: palette.bg,
+                secondary: palette.bgDark,
+                highlight: palette.bgHighlight
+            ),
+            text: TextColors(
+                primary: palette.fg,
+                secondary: palette.fgDim,
+                tertiary: palette.comment
+            ),
+            accent: AccentColors(
+                blue: palette.blue,
+                cyan: palette.cyan,
+                green: palette.green,
+                orange: palette.orange,
+                purple: palette.purple,
+                red: palette.red,
+                yellow: palette.yellow
+            ),
+            diff: DiffColors(
+                addedBg: diffAddedBg,
+                removedBg: diffRemovedBg,
+                addedAccent: palette.green,
+                removedAccent: palette.red,
+                contextFg: diffContextFg,
+                hunkFg: diffHunkFg
+            ),
+            syntax: SyntaxColors(
+                keyword: palette.purple,
+                string: palette.green,
+                comment: palette.comment,
+                number: palette.orange,
+                type: palette.cyan,
+                decorator: palette.yellow,
+                preprocessor: palette.purple,
+                plain: palette.fg,
+                jsonKey: palette.cyan,
+                jsonDim: palette.fgDim
+            ),
+            code: CodeMetrics(
+                fontSize: 11,
+                gutterWidthPerDigit: 7.5
+            )
+        )
+    }
+}
+
+extension ThemeID {
+    var appTheme: AppTheme {
+        switch self {
+        case .tokyoNight:
+            return .tokyoNight
+        case .tokyoNightDay:
+            return .tokyoNightDay
+        case .appleDark:
+            return .appleDark
+        }
+    }
 }
 
 // MARK: - Environment
 
 private struct ThemeKey: EnvironmentKey {
-    static let defaultValue: AppTheme = .tokyoNight
+    static var defaultValue: AppTheme {
+        ThemeRuntimeState.currentThemeID().appTheme
+    }
 }
 
 extension EnvironmentValues {

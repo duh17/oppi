@@ -17,6 +17,11 @@ final class DeltaCoalescer {
     private var flushTask: Task<Void, Never>?
     private let flushInterval: Duration = .milliseconds(33)
 
+    /// Guardrail caps to prevent runaway queue growth during bursty streams.
+    private let maxBufferedEvents = 512
+    private let maxBufferedBytes = 256 * 1024
+    private var bufferedBytes = 0
+
     /// Called when coalesced events should be delivered.
     var onFlush: (([AgentEvent]) -> Void)?
 
@@ -24,8 +29,7 @@ final class DeltaCoalescer {
         switch event {
         // High-frequency: batch
         case .textDelta, .thinkingDelta, .toolOutput:
-            buffer.append(event)
-            scheduleFlushIfNeeded()
+            appendBuffered(event)
 
         // Everything else: flush pending deltas first, then deliver immediately
         case .permissionRequest,
@@ -68,8 +72,40 @@ final class DeltaCoalescer {
     private func deliverBuffer() {
         guard !buffer.isEmpty else { return }
         let events = buffer
+        let bytes = bufferedBytes
         buffer.removeAll(keepingCapacity: true)
-        perfLog.debug("flush \(events.count) events")
+        bufferedBytes = 0
+        MainThreadBreadcrumb.set("coalescer-flush:\(events.count)ev")
+        perfLog.debug("coalescer flush \(events.count) events (\(bytes) bytes)")
         onFlush?(events)
+        MainThreadBreadcrumb.set("idle")
+    }
+
+    private func appendBuffered(_ event: AgentEvent) {
+        buffer.append(event)
+        bufferedBytes += estimatedPayloadBytes(event)
+
+        if buffer.count >= maxBufferedEvents || bufferedBytes >= maxBufferedBytes {
+            // Persisted at .error for post-mortem diagnostics in device archives.
+            perfLog.error(
+                "PERF coalescer forced flush: \(self.buffer.count) events (\(self.bufferedBytes) bytes)"
+            )
+            flushNow()
+        } else {
+            scheduleFlushIfNeeded()
+        }
+    }
+
+    private func estimatedPayloadBytes(_ event: AgentEvent) -> Int {
+        switch event {
+        case .textDelta(_, let delta):
+            return delta.utf8.count
+        case .thinkingDelta(_, let delta):
+            return delta.utf8.count
+        case .toolOutput(_, _, let output, _):
+            return output.utf8.count
+        default:
+            return 0
+        }
     }
 }

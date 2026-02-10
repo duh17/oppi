@@ -8,6 +8,7 @@ enum FileType: Equatable {
     case code(language: SyntaxLanguage)
     case json
     case image
+    case audio
     case plain
 
     /// Detect from file path extension (or well-known filenames).
@@ -32,6 +33,8 @@ enum FileType: Equatable {
             return .markdown
         case "jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "tiff":
             return .image
+        case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "caf":
+            return .audio
         default:
             let lang = SyntaxLanguage.detect(ext)
             if lang == .json { return .json }
@@ -46,6 +49,7 @@ enum FileType: Equatable {
         case .code(let lang): return lang.displayName
         case .json: return "JSON"
         case .image: return "Image"
+        case .audio: return "Audio"
         case .plain: return "Text"
         }
     }
@@ -60,6 +64,7 @@ enum FileType: Equatable {
 /// - Markdown: rendered prose with raw toggle
 /// - JSON: pretty-printed with colored keys/values
 /// - Images: inline preview with tap-to-zoom
+/// - Audio: inline playback rows for extracted data URIs
 /// - Plain text: monospaced with line numbers
 struct FileContentView: View {
     let content: String
@@ -98,6 +103,8 @@ struct FileContentView: View {
             JSONFileView(content: content, startLine: startLine)
         case .image:
             ImageOutputView(content: content)
+        case .audio:
+            AudioOutputView(content: content)
         case .plain:
             PlainTextView(content: content, startLine: startLine)
         }
@@ -130,6 +137,7 @@ private struct CodeFileView: View {
     let startLine: Int
 
     @State private var highlighted: AttributedString?
+    @State private var showFullScreen = false
 
     private var displayContent: String {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
@@ -146,7 +154,8 @@ private struct CodeFileView: View {
             FileHeader(
                 label: language.displayName,
                 lineCount: lines.count,
-                copyContent: content
+                copyContent: content,
+                onExpand: { showFullScreen = true }
             )
 
             codeArea(
@@ -164,6 +173,11 @@ private struct CodeFileView: View {
             Button("Copy File Content", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
+        }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenCodeView(content: .code(
+                content: content, language: language.displayName, filePath: nil, startLine: startLine
+            ))
         }
         .task(id: content.count) {
             let lang = language
@@ -241,52 +255,37 @@ private struct MarkdownFileView: View {
 // MARK: - JSONFileView
 
 /// Pretty-printed JSON with colored keys and values.
+///
+/// Both pretty-printing (JSONSerialization) and syntax highlighting run
+/// off the main thread to avoid blocking scrolling on large JSON files.
 private struct JSONFileView: View {
     let content: String
     let startLine: Int
 
-    @State private var highlighted: AttributedString?
-
-    private var prettyContent: String {
-        guard let data = content.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(
-                  withJSONObject: json,
-                  options: [.prettyPrinted, .sortedKeys]
-              ),
-              let result = String(data: pretty, encoding: .utf8)
-        else {
-            return content
-        }
-        return result
-    }
-
-    private var displayLines: (text: String, lineCount: Int, totalLines: Int) {
-        let lines = prettyContent.split(separator: "\n", omittingEmptySubsequences: false)
-        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
-        let text = lines.prefix(lineCount).joined(separator: "\n")
-        return (text, lineCount, lines.count)
-    }
+    /// Combined pretty-print + highlight result, computed off main thread.
+    @State private var prepared: JSONPrepared?
+    @State private var showFullScreen = false
 
     var body: some View {
-        let info = displayLines
+        let info = prepared ?? JSONPrepared.placeholder(from: content)
         let isTruncated = info.totalLines > FileContentView.maxDisplayLines
 
         VStack(alignment: .leading, spacing: 0) {
             FileHeader(
                 label: "JSON",
                 lineCount: info.totalLines,
-                copyContent: content
+                copyContent: content,
+                onExpand: { showFullScreen = true }
             )
 
             codeArea(
-                highlighted: highlighted ?? AttributedString(info.text),
-                lineCount: info.lineCount,
+                highlighted: info.highlighted ?? AttributedString(info.displayText),
+                lineCount: info.displayLineCount,
                 startLine: startLine
             )
 
             if isTruncated {
-                TruncationNotice(showing: info.lineCount, total: info.totalLines)
+                TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
             }
         }
         .codeBlockChrome()
@@ -295,13 +294,53 @@ private struct JSONFileView: View {
                 UIPasteboard.general.string = content
             }
         }
-        .task(id: content.count) {
-            let text = info.text
-            let result = await Task.detached(priority: .userInitiated) {
-                SyntaxHighlighter.highlight(text, language: .json)
-            }.value
-            highlighted = result
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenCodeView(content: .code(
+                content: content, language: "json", filePath: nil, startLine: startLine
+            ))
         }
+        .task(id: content.count) {
+            let raw = content
+            prepared = await Task.detached(priority: .userInitiated) {
+                JSONPrepared.prepare(raw)
+            }.value
+        }
+    }
+}
+
+/// Pre-computed JSON display data — all expensive work done off main thread.
+private struct JSONPrepared: Sendable {
+    let displayText: String
+    let displayLineCount: Int
+    let totalLines: Int
+    let highlighted: AttributedString?
+
+    /// Quick placeholder from raw content (no parsing, no highlighting).
+    static func placeholder(from content: String) -> JSONPrepared {
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
+        let text = lines.prefix(lineCount).joined(separator: "\n")
+        return JSONPrepared(displayText: text, displayLineCount: lineCount, totalLines: lines.count, highlighted: nil)
+    }
+
+    /// Full preparation: pretty-print + syntax highlight.
+    static func prepare(_ content: String) -> JSONPrepared {
+        let pretty: String
+        if let data = content.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data),
+           let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
+           let result = String(data: prettyData, encoding: .utf8) {
+            pretty = result
+        } else {
+            pretty = content
+        }
+
+        let lines = pretty.split(separator: "\n", omittingEmptySubsequences: false)
+        let lineCount = min(lines.count, FileContentView.maxDisplayLines)
+        let displayText = lines.prefix(lineCount).joined(separator: "\n")
+        let highlighted = SyntaxHighlighter.highlight(displayText, language: .json)
+
+        return JSONPrepared(displayText: displayText, displayLineCount: lineCount, totalLines: lines.count, highlighted: highlighted)
     }
 }
 
@@ -311,6 +350,8 @@ private struct JSONFileView: View {
 private struct PlainTextView: View {
     let content: String
     let startLine: Int
+
+    @State private var showFullScreen = false
 
     var body: some View {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
@@ -331,9 +372,17 @@ private struct PlainTextView: View {
         }
         .codeBlockChrome()
         .contextMenu {
+            Button("Expand", systemImage: "arrow.up.left.and.arrow.down.right") {
+                showFullScreen = true
+            }
             Button("Copy Content", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
+        }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenCodeView(content: .code(
+                content: content, language: nil, filePath: nil, startLine: startLine
+            ))
         }
     }
 }
@@ -341,25 +390,82 @@ private struct PlainTextView: View {
 // MARK: - ImageOutputView
 
 /// Renders image content via ImageExtractor.
+///
+/// Runs regex extraction off main thread to avoid blocking on large
+/// base64 blobs during scroll.
 private struct ImageOutputView: View {
     let content: String
 
-    var body: some View {
-        let images = ImageExtractor.extract(from: content)
+    @State private var images: [ImageExtractor.ExtractedImage]?
 
-        if images.isEmpty {
-            Text("Image file (binary content not displayable)")
-                .font(.caption)
-                .foregroundStyle(.tokyoComment)
-                .italic()
-                .padding(8)
-        } else {
-            VStack(spacing: 8) {
-                ForEach(images) { image in
-                    ImageBlobView(base64: image.base64, mimeType: image.mimeType)
+    var body: some View {
+        if let images {
+            if images.isEmpty {
+                Text("Image file (binary content not displayable)")
+                    .font(.caption)
+                    .foregroundStyle(.tokyoComment)
+                    .italic()
+                    .padding(8)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(images) { image in
+                        ImageBlobView(base64: image.base64, mimeType: image.mimeType)
+                    }
                 }
+                .padding(8)
             }
-            .padding(8)
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .padding(8)
+                .task {
+                    let text = content
+                    images = await Task.detached(priority: .userInitiated) {
+                        ImageExtractor.extract(from: text)
+                    }.value
+                }
+        }
+    }
+}
+
+// MARK: - AudioOutputView
+
+/// Renders audio content via AudioExtractor.
+private struct AudioOutputView: View {
+    let content: String
+
+    @State private var clips: [AudioExtractor.ExtractedAudio]?
+
+    var body: some View {
+        if let clips {
+            if clips.isEmpty {
+                Text("Audio file (binary content not displayable)")
+                    .font(.caption)
+                    .foregroundStyle(.tokyoComment)
+                    .italic()
+                    .padding(8)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(clips.enumerated()), id: \.offset) { index, clip in
+                        AsyncAudioBlob(
+                            id: "file-audio-\(index)-\(clip.base64.prefix(24))",
+                            base64: clip.base64,
+                            mimeType: clip.mimeType
+                        )
+                    }
+                }
+                .padding(8)
+            }
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .padding(8)
+                .task {
+                    let text = content
+                    clips = await Task.detached(priority: .userInitiated) {
+                        AudioExtractor.extract(from: text)
+                    }.value
+                }
         }
     }
 }
@@ -371,6 +477,7 @@ private struct FileHeader: View {
     let label: String
     let lineCount: Int
     let copyContent: String
+    var onExpand: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -385,6 +492,15 @@ private struct FileHeader: View {
                 .foregroundStyle(.tokyoComment)
 
             Spacer()
+
+            if let onExpand {
+                Button { onExpand() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tokyoFgDim)
+            }
 
             CopyButton(content: copyContent)
         }

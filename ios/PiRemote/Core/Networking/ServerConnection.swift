@@ -26,6 +26,9 @@ final class ServerConnection {
     let permissionStore = PermissionStore()
     let workspaceStore = WorkspaceStore()
 
+    // Audio
+    let audioPlayer = AudioPlayerService()
+
     // Runtime pipeline
     let reducer = TimelineReducer()
     private let coalescer = DeltaCoalescer()
@@ -34,6 +37,21 @@ final class ServerConnection {
     // Stream lifecycle
     private var activeSessionId: String?
 
+    /// Pending prompt/steer/follow-up acknowledgements keyed by requestId.
+    /// Resolved by `turn_ack` stage progress (preferred) and `rpc_result` fallback.
+    private var pendingTurnSendsByRequestId: [String: PendingTurnSend] = [:]
+    private var pendingTurnRequestIdByClientTurnId: [String: String] = [:]
+    private static let sendAckTimeoutDefault: Duration = .seconds(4)
+    private static let turnSendRetryDelay: Duration = .milliseconds(250)
+    private static let turnSendMaxAttempts = 2
+    private static let turnSendRequiredStage: TurnAckStage = .dispatched
+
+    /// Test seam: override outbound send path without opening a real WebSocket.
+    var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
+
+    /// Test seam: shorten ack timeout in integration-style tests.
+    var _sendAckTimeoutForTesting: Duration?
+
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
@@ -41,12 +59,30 @@ final class ServerConnection {
     /// Composer draft text — saved/restored across background cycles.
     var composerDraft: String?
 
-    /// Current thinking level (tracked client-side from RPC responses).
-    /// Reset to `.medium` on session switch; updated by `cycle_thinking_level` responses.
+    /// Current thinking level — synced from server session state on connect,
+    /// then updated by `cycle_thinking_level` / `set_thinking_level` RPC responses.
     var thinkingLevel: ThinkingLevel = .medium
+
+    /// Cached slash command metadata for composer autocomplete.
+    private(set) var slashCommands: [SlashCommand] = []
+    private var slashCommandsCacheKey: String?
+    private var slashCommandsRequestId: String?
+    private var slashCommandsTask: Task<Void, Never>?
 
     /// Timer that auto-dismisses extension dialogs after their timeout expires.
     private var extensionTimeoutTask: Task<Void, Never>?
+
+    /// Watchdog: if the session reports busy but no stream events arrive for
+    /// this duration, trigger a state reconciliation.
+    private static let silenceTimeout: Duration = .seconds(15)
+    /// Tracks the last time a meaningful stream event was routed.
+    private var lastEventTime: ContinuousClock.Instant?
+    /// Watchdog task — monitors for silence during busy sessions.
+    private var silenceWatchdog: Task<Void, Never>?
+
+    /// Set when server sends a fatal error (e.g. session limit).
+    /// ChatSessionManager checks this to suppress auto-reconnect.
+    var fatalSetupError = false
 
     init() {
         // Wire coalescer to reducer (batch) + Live Activity (throttled).
@@ -82,7 +118,7 @@ final class ServerConnection {
     ///
     /// The caller owns stream consumption and task lifecycle.
     /// On stream termination, `WebSocketClient` disconnects via `onTermination`.
-    func streamSession(_ sessionId: String) -> AsyncStream<ServerMessage>? {
+    func streamSession(_ sessionId: String, workspaceId: String? = nil) -> AsyncStream<ServerMessage>? {
         guard let wsClient else { return nil }
 
         // v1 one-stream policy
@@ -90,19 +126,26 @@ final class ServerConnection {
 
         activeSessionId = sessionId
         toolMapper.reset()
-        thinkingLevel = .medium  // Reset to default; server state arrives via rpcResult
-        return wsClient.connect(sessionId: sessionId)
+        thinkingLevel = .medium  // Reset to default; overwritten by session.thinkingLevel on connect
+        return wsClient.connect(sessionId: sessionId, workspaceId: workspaceId)
     }
 
     /// Disconnect from the current session stream.
     func disconnectSession() {
         coalescer.flushNow()
+        failPendingSendAcks(error: WebSocketError.notConnected)
         wsClient?.disconnect()
         activeSessionId = nil
         // Clear stale extension dialog — it's tied to the active session stream
         activeExtensionDialog = nil
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
+        stopSilenceWatchdog()
+        slashCommandsTask?.cancel()
+        slashCommandsTask = nil
+        slashCommandsRequestId = nil
+        slashCommandsCacheKey = nil
+        slashCommands = []
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
     }
@@ -116,24 +159,59 @@ final class ServerConnection {
 
     // MARK: - Actions
 
-    /// Send a prompt to the connected session.
-    func sendPrompt(_ text: String) async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.prompt(message: text))
+    /// Send a prompt to the connected session and await server acceptance.
+    ///
+    /// Uses request/response correlation (`requestId`) plus `clientTurnId`
+    /// idempotency so reconnect retries do not duplicate work.
+    func sendPrompt(_ text: String, images: [ImageAttachment]? = nil) async throws {
+        let requestId = UUID().uuidString
+        let clientTurnId = UUID().uuidString
+        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "prompt") {
+            .prompt(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+        }
     }
 
-    /// Stop the current agent operation.
+    /// Send a steering message to a busy session and await acceptance.
+    func sendSteer(_ text: String, images: [ImageAttachment]? = nil) async throws {
+        let requestId = UUID().uuidString
+        let clientTurnId = UUID().uuidString
+        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "steer") {
+            .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+        }
+    }
+
+    /// Queue a follow-up message and await acceptance.
+    func sendFollowUp(_ text: String, images: [ImageAttachment]? = nil) async throws {
+        let requestId = UUID().uuidString
+        let clientTurnId = UUID().uuidString
+        try await sendTurnWithAck(requestId: requestId, clientTurnId: clientTurnId, command: "follow_up") {
+            .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+        }
+    }
+
+    /// Abort the current turn. The session stays alive for the next prompt.
     func sendStop() async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.stop())
+    }
+
+    /// Kill the session process entirely. Requires explicit user action.
+    func sendStopSession() async throws {
+        guard let wsClient else { throw WebSocketError.notConnected }
+        try await wsClient.send(.stopSession())
     }
 
     /// Respond to a permission request.
     func respondToPermission(id: String, action: PermissionAction) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(.permissionResponse(id: id, action: action))
-        permissionStore.resolve(id: id)
-        reducer.resolvePermission(id: id, action: action)
+        let outcome: PermissionOutcome = action == .allow ? .allowed : .denied
+        if let request = permissionStore.take(id: id) {
+            reducer.resolvePermission(
+                id: id, outcome: outcome,
+                tool: request.tool, summary: request.displaySummary
+            )
+        }
         PermissionNotificationService.shared.cancelNotification(permissionId: id)
     }
 
@@ -148,14 +226,193 @@ final class ServerConnection {
 
     /// Request current state from server.
     func requestState() async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.getState())
+        try await send(.getState())
     }
 
     /// Send any client message.
     func send(_ message: ClientMessage) async throws {
+        try await dispatchSend(message)
+    }
+
+    /// Test seam: set active stream session without opening a real socket.
+    func _setActiveSessionIdForTesting(_ sessionId: String?) {
+        activeSessionId = sessionId
+    }
+
+    private func dispatchSend(_ message: ClientMessage) async throws {
+        if let sendHook = _sendMessageForTesting {
+            try await sendHook(message)
+            return
+        }
+
         guard let wsClient else { throw WebSocketError.notConnected }
         try await wsClient.send(message)
+    }
+
+    private func sendTurnWithAck(
+        requestId: String,
+        clientTurnId: String,
+        command: String,
+        message: () -> ClientMessage
+    ) async throws {
+        if _sendMessageForTesting == nil, wsClient == nil {
+            throw WebSocketError.notConnected
+        }
+
+        let pending = PendingTurnSend(command: command, requestId: requestId, clientTurnId: clientTurnId)
+        registerPendingTurnSend(pending)
+        defer {
+            unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+        }
+
+        var lastError: Error?
+
+        for attempt in 1...Self.turnSendMaxAttempts {
+            if attempt > 1 {
+                pending.resetWaiter()
+                try? await Task.sleep(for: Self.turnSendRetryDelay)
+            }
+
+            do {
+                try await dispatchSend(message())
+            } catch {
+                lastError = error
+                if attempt < Self.turnSendMaxAttempts, Self.isReconnectableSendError(error) {
+                    continue
+                }
+                pending.waiter.resolve(.failure(error))
+                throw error
+            }
+
+            do {
+                try await waitForSendAck(waiter: pending.waiter, command: command)
+                return
+            } catch {
+                lastError = error
+                if attempt < Self.turnSendMaxAttempts, Self.isReconnectableSendError(error) {
+                    continue
+                }
+                throw error
+            }
+        }
+
+        throw lastError ?? SendAckError.timeout(command: command)
+    }
+
+    private func waitForSendAck(waiter: SendAckWaiter, command: String) async throws {
+        let timeout = _sendAckTimeoutForTesting ?? Self.sendAckTimeoutDefault
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await waiter.wait()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw SendAckError.timeout(command: command)
+            }
+
+            do {
+                try await group.next()
+                group.cancelAll()
+            } catch {
+                // CRITICAL: resolve waiter on timeout so task group can drain.
+                // waiter.wait() uses a CheckedContinuation that ignores task
+                // cancellation. Without explicit resolve, the waiter task blocks
+                // forever and the task group never finishes (2026-02-09 hang fix).
+                if let sendAckError = error as? SendAckError,
+                   case .timeout = sendAckError {
+                    waiter.resolve(.failure(sendAckError))
+                }
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private func registerPendingTurnSend(_ pending: PendingTurnSend) {
+        pendingTurnSendsByRequestId[pending.requestId] = pending
+        pendingTurnRequestIdByClientTurnId[pending.clientTurnId] = pending.requestId
+    }
+
+    private func unregisterPendingTurnSend(requestId: String, clientTurnId: String) {
+        pendingTurnSendsByRequestId.removeValue(forKey: requestId)
+        if pendingTurnRequestIdByClientTurnId[clientTurnId] == requestId {
+            pendingTurnRequestIdByClientTurnId.removeValue(forKey: clientTurnId)
+        }
+    }
+
+    private func resolveTurnAck(
+        command: String,
+        clientTurnId: String,
+        stage: TurnAckStage,
+        requestId: String?
+    ) -> Bool {
+        let lookupRequestId = requestId ?? pendingTurnRequestIdByClientTurnId[clientTurnId]
+        guard let lookupRequestId,
+              let pending = pendingTurnSendsByRequestId[lookupRequestId],
+              pending.command == command,
+              pending.clientTurnId == clientTurnId else {
+            return false
+        }
+
+        pending.latestStage = stage
+
+        if stage.rank >= Self.turnSendRequiredStage.rank {
+            pending.waiter.resolve(.success(()))
+        }
+
+        return true
+    }
+
+    private func resolveTurnRpcResult(
+        command: String,
+        requestId: String,
+        success: Bool,
+        error: String?
+    ) -> Bool {
+        guard let pending = pendingTurnSendsByRequestId[requestId], pending.command == command else {
+            return false
+        }
+
+        if success {
+            // Backward compatibility for servers that only emit rpc_result.
+            if pending.latestStage == nil {
+                pending.waiter.resolve(.success(()))
+            }
+        } else {
+            pending.waiter.resolve(.failure(SendAckError.rejected(command: command, reason: error)))
+        }
+
+        return true
+    }
+
+    private func failPendingSendAcks(error: Error) {
+        let pending = Array(pendingTurnSendsByRequestId.values)
+        pendingTurnSendsByRequestId.removeAll()
+        pendingTurnRequestIdByClientTurnId.removeAll()
+
+        for send in pending {
+            send.waiter.resolve(.failure(error))
+        }
+    }
+
+    private static func isReconnectableSendError(_ error: Error) -> Bool {
+        if let wsError = error as? WebSocketError {
+            switch wsError {
+            case .notConnected, .sendTimeout:
+                return true
+            }
+        }
+
+        if let ackError = error as? SendAckError {
+            switch ackError {
+            case .timeout:
+                return true
+            case .rejected:
+                return false
+            }
+        }
+
+        return false
     }
 
     // ── Model ──
@@ -176,6 +433,97 @@ final class ServerConnection {
 
     func cycleThinkingLevel() async throws {
         try await send(.cycleThinkingLevel())
+    }
+
+    /// Sync thinking level from a session state update (connected/state messages).
+    private func syncThinkingLevel(from session: Session) {
+        guard let levelStr = session.thinkingLevel,
+              let level = ThinkingLevel(rawValue: levelStr),
+              thinkingLevel != level else { return }
+        thinkingLevel = level
+    }
+
+    private func slashCommandCacheKey(for session: Session) -> String {
+        "\(session.id)|\(session.workspaceId ?? "")"
+    }
+
+    private func scheduleSlashCommandsRefresh(for session: Session, force: Bool) {
+        slashCommandsTask?.cancel()
+        slashCommandsTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshSlashCommands(for: session, force: force)
+        }
+    }
+
+    private func refreshSlashCommands(for session: Session, force: Bool) async {
+        let cacheKey = slashCommandCacheKey(for: session)
+        if !force,
+           slashCommandsCacheKey == cacheKey,
+           !slashCommands.isEmpty {
+            return
+        }
+
+        let requestId = UUID().uuidString
+        slashCommandsRequestId = requestId
+
+        do {
+            try await send(.getCommands(requestId: requestId))
+        } catch {
+            logger.warning("Failed to request slash commands: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func handleSlashCommandsResult(
+        requestId: String?,
+        success: Bool,
+        data: JSONValue?,
+        error: String?,
+        sessionId: String
+    ) {
+        if let expectedRequestId = slashCommandsRequestId,
+           let requestId,
+           requestId != expectedRequestId {
+            return
+        }
+
+        defer { slashCommandsRequestId = nil }
+
+        guard success else {
+            logger.warning("get_commands failed: \((error ?? "unknown"), privacy: .public)")
+            return
+        }
+
+        slashCommands = Self.parseSlashCommands(from: data)
+
+        if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+            slashCommandsCacheKey = slashCommandCacheKey(for: session)
+        } else {
+            slashCommandsCacheKey = nil
+        }
+    }
+
+    private static func parseSlashCommands(from data: JSONValue?) -> [SlashCommand] {
+        guard let commandValues = data?.objectValue?["commands"]?.arrayValue else {
+            return []
+        }
+
+        var deduped: [String: SlashCommand] = [:]
+        for value in commandValues {
+            guard let command = SlashCommand(value) else { continue }
+            let key = command.name.lowercased()
+            if deduped[key] == nil {
+                deduped[key] = command
+            }
+        }
+
+        return deduped.values.sorted { lhs, rhs in
+            let lhsName = lhs.name.lowercased()
+            let rhsName = rhs.name.lowercased()
+            if lhsName == rhsName {
+                return lhs.source.sortRank < rhs.source.sortRank
+            }
+            return lhsName < rhsName
+        }
     }
 
     // ── Session ──
@@ -204,22 +552,31 @@ final class ServerConnection {
     func reconnectIfNeeded() async {
         guard let apiClient, let sessionId = activeSessionId else { return }
 
-        // Refresh session list (doesn't touch timeline)
+        // Show cached session list immediately, then refresh
+        if sessionStore.sessions.isEmpty,
+           let cached = await TimelineCache.shared.loadSessionList() {
+            sessionStore.sessions = cached
+        }
+
         do {
             let sessions = try await apiClient.listSessions()
             sessionStore.sessions = sessions
+            Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
         } catch {
             logger.error("Failed to refresh sessions: \(error)")
         }
 
-        // Refresh workspaces + skills
+        // Refresh workspaces + skills (cache-backed)
         await workspaceStore.load(api: apiClient)
 
         // Sweep expired permissions (safety net for missed WS messages)
-        let expiredIds = permissionStore.sweepExpired()
-        for id in expiredIds {
-            reducer.resolvePermission(id: id, action: .deny)
-            PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        let expiredRequests = permissionStore.sweepExpired()
+        for request in expiredRequests {
+            reducer.resolvePermission(
+                id: request.id, outcome: .expired,
+                tool: request.tool, summary: request.displaySummary
+            )
+            PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
         }
 
         // Treat connecting/reconnecting as alive for this session so foreground
@@ -244,32 +601,13 @@ final class ServerConnection {
             extensionTimeoutTask = nil
 
             do {
-                let (traceSession, trace) = try await apiClient.getSessionTrace(id: sessionId)
-                sessionStore.upsert(traceSession)
-
-                if !trace.isEmpty, traceAppearsComplete(trace, messageCount: traceSession.messageCount) {
-                    reducer.loadFromTrace(trace)
-                } else {
-                    do {
-                        let (restSession, messages) = try await apiClient.getSession(id: sessionId)
-                        sessionStore.upsert(restSession)
-                        reducer.loadFromREST(messages)
-                    } catch {
-                        if !trace.isEmpty {
-                            reducer.loadFromTrace(trace)
-                        } else {
-                            logger.error("Failed to refresh session \(sessionId): \(error)")
-                        }
-                    }
+                let (session, trace) = try await apiClient.getSession(id: sessionId)
+                sessionStore.upsert(session)
+                if !trace.isEmpty {
+                    reducer.loadSession(trace)
                 }
             } catch {
-                do {
-                    let (session, messages) = try await apiClient.getSession(id: sessionId)
-                    sessionStore.upsert(session)
-                    reducer.loadFromREST(messages)
-                } catch {
-                    logger.error("Failed to refresh session \(sessionId): \(error)")
-                }
+                logger.error("Failed to refresh session \(sessionId): \(error)")
             }
         } else {
             // Stream alive — just refresh session metadata without touching timeline
@@ -287,36 +625,26 @@ final class ServerConnection {
         }
     }
 
-    private func traceAppearsComplete(_ trace: [TraceEvent], messageCount: Int) -> Bool {
-        guard messageCount > 0 else {
-            return true
-        }
-
-        let traceMessageCount = trace.reduce(into: 0) { count, event in
-            if event.type == .user || event.type == .assistant {
-                count += 1
-            }
-        }
-        return traceMessageCount >= messageCount
-    }
-
     // MARK: - Message Router
 
     /// Route a ServerMessage to the appropriate store or pipeline.
     /// Ignores messages for non-active sessions (stale stream race).
     func handleServerMessage(_ message: ServerMessage, sessionId: String) {
+        MainThreadBreadcrumb.set("handleMsg:\(message.typeLabel)")
+        defer { MainThreadBreadcrumb.set("idle") }
+
         guard sessionId == activeSessionId else {
-            logger.debug("Ignoring message for stale session \(sessionId) (active: \(self.activeSessionId ?? "none"))")
+            logger.error("PIPE: DROPPING \(message.typeLabel, privacy: .public) — stale session \(sessionId, privacy: .public) (active: \(self.activeSessionId ?? "none", privacy: .public))")
             return
         }
 
         switch message {
         // Direct state updates (not timeline events)
         case .connected(let session):
-            sessionStore.upsert(session)
+            handleConnected(session)
 
         case .state(let session):
-            sessionStore.upsert(session)
+            handleState(session)
 
         case .extensionUIRequest(let request):
             extensionTimeoutTask?.cancel()
@@ -326,52 +654,79 @@ final class ServerConnection {
         case .extensionUINotification(_, let message, _, _, _):
             extensionToast = message
 
+        case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
+            _ = resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId)
+
         case .unknown:
             break  // Already logged in WebSocketClient
 
-        // Permission events → store + pipeline + notification
+        // Permission events → store + overlay (NOT inline timeline)
         case .permissionRequest(let perm):
             logger.info("Permission request received: \(perm.id) tool=\(perm.tool) summary=\(perm.displaySummary)")
             permissionStore.add(perm)
+            // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
             coalescer.receive(.permissionRequest(perm))
             PermissionNotificationService.shared.notifyIfBackgrounded(perm)
 
         case .permissionExpired(let id, _):
-            permissionStore.expire(id: id)
+            if let request = permissionStore.take(id: id) {
+                reducer.resolvePermission(
+                    id: id, outcome: .expired,
+                    tool: request.tool, summary: request.displaySummary
+                )
+            }
             coalescer.receive(.permissionExpired(id: id))
+            PermissionNotificationService.shared.cancelNotification(permissionId: id)
 
         case .permissionCancelled(let id):
-            permissionStore.remove(id: id)
-            reducer.resolvePermission(id: id, action: .deny)
+            if let request = permissionStore.take(id: id) {
+                reducer.resolvePermission(
+                    id: id, outcome: .cancelled,
+                    tool: request.tool, summary: request.displaySummary
+                )
+            }
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
 
         // Agent events → pipeline
         case .agentStart:
             coalescer.receive(.agentStart(sessionId: sessionId))
+            startSilenceWatchdog()
 
         case .agentEnd:
             coalescer.receive(.agentEnd(sessionId: sessionId))
+            stopSilenceWatchdog()
 
         case .textDelta(let delta):
+            lastEventTime = .now
             coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
 
         case .thinkingDelta(let delta):
+            lastEventTime = .now
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
 
         case .toolStart(let tool, let args, let toolCallId):
+            lastEventTime = .now
             coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId))
 
         case .toolOutput(let output, let isError, let toolCallId):
+            lastEventTime = .now
             coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
 
         case .toolEnd(_, let toolCallId):
+            lastEventTime = .now
             coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId))
 
         case .sessionEnded(let reason):
+            stopSilenceWatchdog()
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
-        case .error(let msg):
+        case .error(let msg, _, let fatal):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
+            if fatal {
+                // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
+                // The server closed the WS after this; retrying would just loop.
+                fatalSetupError = true
+            }
 
         // Compaction events → pipeline
         case .compactionStart(let reason):
@@ -389,18 +744,134 @@ final class ServerConnection {
 
         // RPC results → pipeline (for model changes, stats, etc.)
         case .rpcResult(let command, let requestId, let success, let data, let error):
-            // Track thinking level from RPC responses
-            if success && (command == "cycle_thinking_level" || command == "set_thinking_level") {
-                if let levelStr = data?.objectValue?["level"]?.stringValue,
-                   let level = ThinkingLevel(rawValue: levelStr) {
-                    thinkingLevel = level
-                } else if command == "cycle_thinking_level" {
-                    // Server didn't return data — cycle locally
-                    thinkingLevel = thinkingLevel.next
+            handleRPCResult(
+                command: command,
+                requestId: requestId,
+                success: success,
+                data: data,
+                error: error,
+                sessionId: sessionId
+            )
+        }
+    }
+
+    private func handleConnected(_ session: Session) {
+        sessionStore.upsert(session)
+        syncThinkingLevel(from: session)
+        scheduleSlashCommandsRefresh(for: session, force: true)
+    }
+
+    private func handleState(_ session: Session) {
+        let previousWorkspaceId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
+        sessionStore.upsert(session)
+        syncThinkingLevel(from: session)
+
+        if previousWorkspaceId != session.workspaceId {
+            scheduleSlashCommandsRefresh(for: session, force: true)
+        }
+    }
+
+    private func handleRPCResult(
+        command: String,
+        requestId: String?,
+        success: Bool,
+        data: JSONValue?,
+        error: String?,
+        sessionId: String
+    ) {
+        // Resolve prompt/steer/follow-up acceptance acks first.
+        // These are local send-path control messages, not timeline events.
+        if let requestId,
+           command == "prompt" || command == "steer" || command == "follow_up",
+           resolveTurnRpcResult(command: command, requestId: requestId, success: success, error: error) {
+            return
+        }
+
+        if command == "get_commands" {
+            handleSlashCommandsResult(
+                requestId: requestId,
+                success: success,
+                data: data,
+                error: error,
+                sessionId: sessionId
+            )
+            return
+        }
+
+        syncThinkingLevelFromRPC(command: command, success: success, data: data)
+
+        coalescer.receive(
+            .rpcResult(
+                sessionId: sessionId,
+                command: command,
+                requestId: requestId,
+                success: success,
+                data: data,
+                error: error
+            )
+        )
+    }
+
+    private func syncThinkingLevelFromRPC(command: String, success: Bool, data: JSONValue?) {
+        guard success, command == "cycle_thinking_level" || command == "set_thinking_level" else {
+            return
+        }
+
+        if let levelStr = data?.objectValue?["level"]?.stringValue,
+           let level = ThinkingLevel(rawValue: levelStr) {
+            thinkingLevel = level
+        } else if command == "cycle_thinking_level" {
+            // Server didn't return data — cycle locally
+            thinkingLevel = thinkingLevel.next
+        }
+    }
+
+    // MARK: - Silence Watchdog
+
+    /// Start monitoring for silence during an active agent turn.
+    ///
+    /// Two tiers:
+    /// 1. After `silenceTimeout` (15s): send `requestState()` as a probe.
+    /// 2. After `silenceReconnectTimeout` (45s): the WS receive path is likely
+    ///    zombie (TCP alive but no frames delivered). Force a full reconnect
+    ///    via `sessionManager.reconnect()` to recover.
+    private static let silenceReconnectTimeout: Duration = .seconds(45)
+
+    /// Callback for the silence watchdog to trigger a full reconnection.
+    /// Set by `ChatSessionManager` when connecting.
+    var onSilenceReconnect: (() -> Void)?
+
+    private func startSilenceWatchdog() {
+        lastEventTime = .now
+        silenceWatchdog?.cancel()
+        silenceWatchdog = Task { @MainActor [weak self] in
+            var probed = false
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.silenceTimeout)
+                guard !Task.isCancelled, let self else { return }
+                guard let lastEvent = self.lastEventTime else { break }
+
+                let elapsed = ContinuousClock.now - lastEvent
+                if elapsed >= Self.silenceReconnectTimeout {
+                    // Tier 2: WS is zombie — force full reconnect
+                    logger.error("Silence watchdog: no events for \(elapsed) — forcing WS reconnect")
+                    self.onSilenceReconnect?()
+                    break
+                } else if elapsed >= Self.silenceTimeout && !probed {
+                    // Tier 1: probe — maybe the agent is just thinking
+                    logger.warning("Silence watchdog: no events for \(elapsed) — requesting state")
+                    try? await self.requestState()
+                    probed = true
                 }
             }
-            coalescer.receive(.rpcResult(sessionId: sessionId, command: command, requestId: requestId, success: success, data: data, error: error))
         }
+    }
+
+    /// Stop the silence watchdog (agent turn ended normally).
+    private func stopSilenceWatchdog() {
+        silenceWatchdog?.cancel()
+        silenceWatchdog = nil
+        lastEventTime = nil
     }
 
     // MARK: - Extension Timeout
@@ -415,6 +886,75 @@ final class ServerConnection {
             guard let self, self.activeExtensionDialog?.id == request.id else { return }
             self.activeExtensionDialog = nil
             self.extensionToast = "Extension request timed out"
+        }
+    }
+}
+
+// MARK: - Turn Send Tracking
+
+@MainActor
+private final class PendingTurnSend {
+    let command: String
+    let requestId: String
+    let clientTurnId: String
+
+    var latestStage: TurnAckStage?
+    var waiter = SendAckWaiter()
+
+    init(command: String, requestId: String, clientTurnId: String) {
+        self.command = command
+        self.requestId = requestId
+        self.clientTurnId = clientTurnId
+    }
+
+    func resetWaiter() {
+        waiter = SendAckWaiter()
+    }
+}
+
+// MARK: - Send Ack Waiter
+
+@MainActor
+private final class SendAckWaiter {
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var pendingResult: Result<Void, Error>?
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            if let pendingResult {
+                continuation.resume(with: pendingResult)
+            } else {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func resolve(_ result: Result<Void, Error>) {
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(with: result)
+            return
+        }
+
+        pendingResult = result
+    }
+}
+
+// MARK: - Send Ack Errors
+
+enum SendAckError: LocalizedError {
+    case timeout(command: String)
+    case rejected(command: String, reason: String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout(let command):
+            return "\(command) acknowledgement timed out"
+        case .rejected(let command, let reason):
+            if let reason, !reason.isEmpty {
+                return "\(command) rejected: \(reason)"
+            }
+            return "\(command) rejected"
         }
     }
 }

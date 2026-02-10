@@ -7,8 +7,10 @@ import Foundation
 /// - Full output lives in `ToolOutputStore`, keyed by item ID
 /// - Expansion state is external (`Set<String>` in reducer)
 enum ChatItem: Identifiable, Equatable {
-    case userMessage(id: String, text: String, timestamp: Date)
+    case userMessage(id: String, text: String, images: [ImageAttachment] = [], timestamp: Date)
     case assistantMessage(id: String, text: String, timestamp: Date)
+    /// Locally generated audio clip for playback in the timeline.
+    case audioClip(id: String, title: String, fileURL: URL, timestamp: Date)
     case thinking(id: String, preview: String, hasMore: Bool, isDone: Bool = false)
     case toolCall(
         id: String,
@@ -19,19 +21,22 @@ enum ChatItem: Identifiable, Equatable {
         isError: Bool,
         isDone: Bool
     )
+    /// Historical permission from trace replay. Not interactive — rendered
+    /// as a resolved marker (the permission is long past).
     case permission(PermissionRequest)
-    case permissionResolved(id: String, action: PermissionAction)
+    case permissionResolved(id: String, outcome: PermissionOutcome, tool: String, summary: String)
     case systemEvent(id: String, message: String)
     case error(id: String, message: String)
 
     var id: String {
         switch self {
-        case .userMessage(let id, _, _): return id
+        case .userMessage(let id, _, _, _): return id
         case .assistantMessage(let id, _, _): return id
+        case .audioClip(let id, _, _, _): return id
         case .thinking(let id, _, _, _): return id
         case .toolCall(let id, _, _, _, _, _, _): return id
         case .permission(let request): return request.id
-        case .permissionResolved(let id, _): return id
+        case .permissionResolved(let id, _, _, _): return id
         case .systemEvent(let id, _): return id
         case .error(let id, _): return id
         }
@@ -45,15 +50,18 @@ enum ChatItem: Identifiable, Equatable {
 /// ChatItem.toolCall only carries a ≤500 char preview and byte count.
 /// The full output is fetched on-demand when the user expands a tool call row.
 ///
-/// Memory bounded: per-item cap of 256KB, total cap of 2MB.
+/// Memory bounded: per-item cap of 2MB, total cap of 16MB.
 /// When total cap is exceeded, oldest items are evicted (FIFO).
 @MainActor @Observable
 final class ToolOutputStore {
     /// Max bytes stored per tool call output.
-    /// Sized for image data URIs — a typical screenshot is ~300-500KB as base64.
-    static let perItemCap = 512 * 1024  // 512KB
+    /// Needs headroom for image/audio data URIs (base64 inflates ~33%).
+    /// 1024x1024 PNGs can exceed 512KB once encoded; 2MB avoids truncating
+    /// common tool-read images while still bounding memory.
+    static let perItemCap = 2 * 1024 * 1024  // 2MB
     /// Max total bytes across all stored outputs.
-    static let totalCap = 4 * 1024 * 1024  // 4MB
+    /// Keeps several large media outputs resident without immediate eviction.
+    static let totalCap = 16 * 1024 * 1024  // 16MB
     /// Suffix appended when output is truncated.
     static let truncationMarker = "\n\n… [output truncated]"
 
@@ -153,8 +161,9 @@ extension ChatItem {
     /// Timestamp for outline display.
     var timestamp: Date? {
         switch self {
-        case .userMessage(_, _, let ts): return ts
+        case .userMessage(_, _, _, let ts): return ts
         case .assistantMessage(_, _, let ts): return ts
+        case .audioClip(_, _, _, let ts): return ts
         default: return nil
         }
     }

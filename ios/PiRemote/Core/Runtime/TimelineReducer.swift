@@ -1,3 +1,5 @@
+// swiftlint:disable file_length
+import Darwin.Mach
 import Foundation
 import os.log
 
@@ -7,19 +9,8 @@ private let perfLog = Logger(subsystem: "dev.chenda.PiRemote", category: "Reduce
 ///
 /// State machine that accumulates deltas into items, manages tool correlation,
 /// and produces the item array that drives the chat `LazyVStack`.
-///
-/// ## Transition Rules
-/// - `agentStart`: clear turn buffers, begin new assistant context
-/// - `thinkingDelta`: append to thinking buffer, upsert thinking item
-/// - `textDelta`: append to assistant buffer, upsert assistant message
-/// - `toolStart`: finalize pending assistant text, append new toolCall item
-/// - `toolOutput`: append to ToolOutputStore, update toolCall preview
-/// - `toolEnd`: mark toolCall as done
-/// - `agentEnd`: finalize assistant message, thinking, close orphaned tools
-/// - `error`: append error or system event item
-/// - `sessionEnded`: finalize assistant message, append system event
 @MainActor @Observable
-final class TimelineReducer {
+final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Maximum items before trimming oldest from the front.
     static let maxItems = 500
     /// Target count after trimming — keeps a buffer to avoid trimming on every event.
@@ -40,7 +31,12 @@ final class TimelineReducer {
     private var currentAssistantTimestamp: Date?
 
     private var currentThinkingID: String?
+    /// Live thinking preview buffer (capped to `ChatItem.maxPreviewLength`).
     private var thinkingBuffer: String = ""
+    /// True once thinking text exceeds preview capacity.
+    private var thinkingOverflowed = false
+    /// True once overflowed thinking has been spilled to `toolOutputStore`.
+    private var thinkingStoredInOutputStore = false
 
     /// The item ID currently being streamed (non-nil while deltas arrive).
     /// Used by views to enable streaming-optimized rendering (e.g., plain text).
@@ -52,140 +48,375 @@ final class TimelineReducer {
     /// Separate store for full tool output (and full thinking text).
     let toolOutputStore = ToolOutputStore()
 
+    /// O(1) item lookup by ID — avoids linear scans on every 33ms upsert.
+    /// Invalidated on insert, remove, and reset.
+    private var itemIndexByID: [String: Int] = [:]
+
     /// Separate store for structured tool args.
     let toolArgsStore = ToolArgsStore()
+
+    /// Trace event IDs from the last successful history load.
+    /// Used to detect append-only reloads and avoid full rebuilds.
+    private var loadedTraceEventIDs: [String] = []
+
+    /// True when current timeline rows are an exact projection of the last
+    /// loaded trace (no live/local mutations since then).
+    private var timelineMatchesTrace = false
+
+    /// Test seam: true when the most recent `loadSession` used incremental
+    /// append/no-op mode instead of a destructive full rebuild.
+    private(set) var _lastLoadWasIncrementalForTesting = false
+
+    /// Detached markdown cache prewarm task for history loads.
+    /// Cancelled on reset/new load to avoid piling up background parse jobs
+    /// during rapid session switching.
+    private var markdownPrewarmTask: Task<Void, Never>?
+
+    /// Prewarm limits — sized for 128+ item sessions to avoid LazyVStack cascade.
+    private static let markdownPrewarmMaxMessages = 48
+    private static let markdownPrewarmMaxCharsPerMessage = 12_000
+    private static let markdownPrewarmMaxTotalChars = 192_000
+    /// Purge global markdown cache when resetting after a very large timeline.
+    private static let markdownCachePurgeItemThreshold = 250
 
     // MARK: - Reset
 
     /// Clear all state — call when switching sessions.
     func reset() {
+        cancelMarkdownPrewarm()
+
+        let previousItemCount = items.count
+        if previousItemCount >= Self.markdownCachePurgeItemThreshold {
+            let cacheStats = MarkdownSegmentCache.shared.snapshot()
+            MarkdownSegmentCache.shared.clearAll()
+            perfLog.error(
+                "PERF markdown-cache purge on reset: previousItems=\(previousItemCount) entries=\(cacheStats.entries) bytes=\(cacheStats.totalSourceBytes)"
+            )
+        }
+
         items.removeAll()
-        assistantBuffer = ""
-        thinkingBuffer = ""
-        currentAssistantID = nil
-        currentThinkingID = nil
+        itemIndexByID.removeAll()
+        clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
+        loadedTraceEventIDs.removeAll()
+        timelineMatchesTrace = false
+        _lastLoadWasIncrementalForTesting = false
         renderVersion &+= 1
     }
 
-    // MARK: - Load from REST (reconnect)
+    /// Drop non-essential in-memory state on iOS memory warning.
+    /// Keeps visible timeline rows intact, but clears expandable payloads.
+    func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int) {
+        cancelMarkdownPrewarm()
 
-    /// Rebuild timeline from stored messages (after reconnect/foreground).
-    /// Only contains user/assistant/system messages — tool events are lost.
-    func loadFromREST(_ messages: [SessionMessage]) {
-        items.removeAll()
-        assistantBuffer = ""
-        thinkingBuffer = ""
-        currentAssistantID = nil
-        currentThinkingID = nil
+        let clearedBytes = toolOutputStore.totalBytes
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
 
-        for msg in messages {
-            switch msg.role {
-            case .user:
-                items.append(.userMessage(id: msg.id, text: msg.content, timestamp: msg.timestamp))
-            case .assistant:
-                items.append(.assistantMessage(id: msg.id, text: msg.content, timestamp: msg.timestamp))
-            case .system:
-                items.append(.systemEvent(id: msg.id, message: msg.content))
-            }
-        }
+        let expandedCount = expandedItemIDs.count
+        expandedItemIDs.removeAll()
 
-        trimIfNeeded()
+        // Row previews and item list remain unchanged, but expansion state/data
+        // changed so force a redraw.
         bumpRenderVersion()
+
+        return (
+            toolOutputBytesCleared: clearedBytes,
+            expandedItemsCollapsed: expandedCount
+        )
     }
 
-    // MARK: - Load from Trace (full history including tool calls)
+    // MARK: - Load Session (full history including tool calls)
 
-    /// Rebuild timeline from full pi JSONL trace.
-    /// Includes tool calls, tool results, and thinking blocks.
-    func loadFromTrace(_ events: [TraceEvent]) {
+    /// Rebuild timeline from pi session context.
+    ///
+    /// The server builds session context from JSONL entries using the same
+    /// algorithm as pi TUI's `buildSessionContext()` — tree walk from leaf
+    /// to root, compaction-aware (pre-compaction messages hidden).
+    ///
+    /// Includes tool calls, tool results, thinking blocks, compaction
+    /// summaries, and system events (model/thinking level changes).
+    func loadSession(_ events: [TraceEvent]) {
+        MainThreadBreadcrumb.set("loadSession:\(events.count)ev")
+        defer { MainThreadBreadcrumb.set("idle") }
+        cancelMarkdownPrewarm()
+
+        let start = ContinuousClock.now
+        let memoryBefore = Self.currentFootprintBytes()
+        let dateFormatter = Self.makeTraceDateFormatter()
+
+        if let appendStart = incrementalAppendStartIndex(for: events) {
+            _lastLoadWasIncrementalForTesting = true
+
+            // No-op reload: trace unchanged and timeline already canonical.
+            if appendStart == events.count {
+                let elapsedMs = (ContinuousClock.now - start).ms
+                let memoryAfter = Self.currentFootprintBytes()
+                perfLog.error(
+                    "PERF loadSession incremental no-op: \(events.count) events in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
+                )
+                return
+            }
+
+            clearTurnBuffers()
+
+            var assistantTextsToCache: [String] = []
+            assistantTextsToCache.reserveCapacity(events.count - appendStart)
+
+            for event in events[appendStart...] {
+                if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter) {
+                    assistantTextsToCache.append(assistantText)
+                }
+            }
+
+            loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
+            trimIfNeeded()
+            bumpRenderVersion()
+            timelineMatchesTrace = true
+
+            let elapsedMs = (ContinuousClock.now - start).ms
+            let memoryAfter = Self.currentFootprintBytes()
+            perfLog.error(
+                "PERF loadSession incremental: +\(events.count - appendStart) events -> \(self.items.count) items in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
+            )
+            prewarmMarkdownCache(for: assistantTextsToCache)
+            return
+        }
+
+        _lastLoadWasIncrementalForTesting = false
+
         items.removeAll()
-        assistantBuffer = ""
-        thinkingBuffer = ""
-        currentAssistantID = nil
-        currentThinkingID = nil
+        itemIndexByID.removeAll()
+        clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
 
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var assistantTextsToCache: [String] = []
+        assistantTextsToCache.reserveCapacity(events.count)
 
         for event in events {
-            let date = dateFormatter.date(from: event.timestamp) ?? Date()
-
-            switch event.type {
-            case .user:
-                items.append(.userMessage(
-                    id: event.id,
-                    text: event.text ?? "",
-                    timestamp: date
-                ))
-
-            case .assistant:
-                items.append(.assistantMessage(
-                    id: event.id,
-                    text: event.text ?? "",
-                    timestamp: date
-                ))
-
-            case .thinking:
-                let thinking = event.thinking ?? ""
-                let preview = ChatItem.preview(thinking)
-                items.append(.thinking(
-                    id: event.id,
-                    preview: preview,
-                    hasMore: thinking.count > ChatItem.maxPreviewLength,
-                    isDone: true  // Historical = always done
-                ))
-                // Store full thinking text for expand view
-                if thinking.count > ChatItem.maxPreviewLength {
-                    toolOutputStore.append(thinking, to: event.id)
-                }
-
-            case .toolCall:
-                let args = event.args ?? [:]
-                let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
-                    .joined(separator: ", ")
-                items.append(.toolCall(
-                    id: event.id,
-                    tool: event.tool ?? "unknown",
-                    argsSummary: ChatItem.preview(argsSummary),
-                    outputPreview: "",
-                    outputByteCount: 0,
-                    isError: false,
-                    isDone: true  // Historical = always done
-                ))
-                // Store structured args for smart rendering
-                if !args.isEmpty {
-                    toolArgsStore.set(args, for: event.id)
-                }
-
-            case .toolResult:
-                let output = event.output ?? ""
-                // Match to the originating toolCall by toolCallId
-                let matchId = event.toolCallId ?? event.id
-                toolOutputStore.append(output, to: matchId)
-                updateToolCallPreview(id: matchId, isError: event.isError ?? false)
-
-            case .system:
-                items.append(.systemEvent(
-                    id: event.id,
-                    message: event.text ?? ""
-                ))
-
-            case .compaction:
-                items.append(.systemEvent(
-                    id: event.id,
-                    message: "Context compacted"
-                ))
+            if let assistantText = applyTraceEvent(event, dateFormatter: dateFormatter) {
+                assistantTextsToCache.append(assistantText)
             }
         }
 
+        loadedTraceEventIDs = events.map(\.id)
         trimIfNeeded()
+        rebuildIndex()
         bumpRenderVersion()
+        timelineMatchesTrace = true
+
+        let elapsedMs = (ContinuousClock.now - start).ms
+        let memoryAfter = Self.currentFootprintBytes()
+        perfLog.error(
+            "PERF loadSession full: \(events.count) events -> \(self.items.count) items in \(elapsedMs)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public)"
+        )
+        prewarmMarkdownCache(for: assistantTextsToCache)
+    }
+
+    private func incrementalAppendStartIndex(for events: [TraceEvent]) -> Int? {
+        guard timelineMatchesTrace else { return nil }
+        guard !loadedTraceEventIDs.isEmpty else { return nil }
+        guard events.count >= loadedTraceEventIDs.count else { return nil }
+
+        for (index, loadedID) in loadedTraceEventIDs.enumerated() {
+            guard events[index].id == loadedID else { return nil }
+        }
+
+        return loadedTraceEventIDs.count
+    }
+
+    @discardableResult
+    private func applyTraceEvent(_ event: TraceEvent, dateFormatter: ISO8601DateFormatter) -> String? {
+        let date = dateFormatter.date(from: event.timestamp) ?? Date()
+
+        switch event.type {
+        case .user:
+            let rawText = event.text ?? ""
+            let (cleanText, images) = Self.extractImagesFromText(rawText)
+            upsertHistoryItem(.userMessage(
+                id: event.id,
+                text: cleanText,
+                images: images,
+                timestamp: date
+            ))
+            return nil
+
+        case .assistant:
+            let text = event.text ?? ""
+            // Skip whitespace-only assistant messages. The API often emits
+            // a leading "\n\n" text block before thinking/tool content blocks
+            // in the same response. These create empty bubbles in the UI.
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            upsertHistoryItem(.assistantMessage(
+                id: event.id,
+                text: text,
+                timestamp: date
+            ))
+            return text
+
+        case .thinking:
+            let thinking = event.thinking ?? ""
+            upsertHistoryItem(.thinking(
+                id: event.id,
+                preview: ChatItem.preview(thinking),
+                hasMore: thinking.count > ChatItem.maxPreviewLength,
+                isDone: true
+            ))
+
+            // Store full thinking text for expand view
+            if thinking.count > ChatItem.maxPreviewLength {
+                toolOutputStore.append(thinking, to: event.id)
+            }
+            return nil
+
+        case .toolCall:
+            let args = event.args ?? [:]
+            let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
+                .joined(separator: ", ")
+
+            upsertHistoryItem(.toolCall(
+                id: event.id,
+                tool: event.tool ?? "unknown",
+                argsSummary: ChatItem.preview(argsSummary),
+                outputPreview: "",
+                outputByteCount: 0,
+                isError: false,
+                isDone: true
+            ))
+
+            // Store structured args for smart rendering
+            if !args.isEmpty {
+                toolArgsStore.set(args, for: event.id)
+            }
+            return nil
+
+        case .toolResult:
+            let output = event.output ?? ""
+            let matchId = event.toolCallId ?? event.id
+            toolOutputStore.append(output, to: matchId)
+            updateToolCallPreview(id: matchId, isError: event.isError ?? false)
+            return nil
+
+        case .system:
+            upsertHistoryItem(.systemEvent(
+                id: event.id,
+                message: event.text ?? ""
+            ))
+            return nil
+
+        case .compaction:
+            upsertHistoryItem(.systemEvent(
+                id: event.id,
+                message: "Context compacted"
+            ))
+            return nil
+        }
+    }
+
+    private func upsertHistoryItem(_ item: ChatItem) {
+        if let idx = indexForID(item.id) {
+            items[idx] = item
+        } else {
+            items.append(item)
+            indexAppend(item)
+        }
+    }
+
+    private func prewarmMarkdownCache(for assistantTexts: [String]) {
+        cancelMarkdownPrewarm()
+        guard !assistantTexts.isEmpty else { return }
+
+        var seen: Set<String> = []
+        var totalChars = 0
+        var textsToCache: [String] = []
+        textsToCache.reserveCapacity(min(Self.markdownPrewarmMaxMessages, assistantTexts.count))
+
+        // Prefer newest assistant messages first, with conservative size limits.
+        for text in assistantTexts.reversed() {
+            guard seen.insert(text).inserted else { continue }
+            guard text.count <= Self.markdownPrewarmMaxCharsPerMessage else { continue }
+            guard MarkdownSegmentCache.shared.shouldCache(text) else { continue }
+            guard MarkdownSegmentCache.shared.get(text) == nil else { continue }
+
+            if totalChars + text.count > Self.markdownPrewarmMaxTotalChars {
+                continue
+            }
+
+            textsToCache.append(text)
+            totalChars += text.count
+
+            if textsToCache.count >= Self.markdownPrewarmMaxMessages {
+                break
+            }
+        }
+
+        guard !textsToCache.isEmpty else { return }
+        textsToCache.reverse()
+
+        markdownPrewarmTask = Task.detached(priority: .utility) {
+            let start = ContinuousClock.now
+            let memoryBefore = Self.currentFootprintBytes()
+            var warmedCount = 0
+
+            for text in textsToCache {
+                if Task.isCancelled { return }
+                if MarkdownSegmentCache.shared.get(text) != nil { continue }
+
+                let blocks = parseCommonMark(text)
+                if Task.isCancelled { return }
+
+                let segments = FlatSegment.build(from: blocks)
+                MarkdownSegmentCache.shared.set(text, segments: segments)
+                warmedCount += 1
+            }
+
+            if Task.isCancelled { return }
+
+            let ms = (ContinuousClock.now - start).ms
+            let memoryAfter = Self.currentFootprintBytes()
+            let cacheStats = MarkdownSegmentCache.shared.snapshot()
+            perfLog.error(
+                "PERF cache-warm: \(warmedCount) messages (\(totalChars) chars) in \(ms)ms mem \(Self.memorySummary(before: memoryBefore, after: memoryAfter), privacy: .public) cache entries=\(cacheStats.entries) bytes=\(cacheStats.totalSourceBytes)"
+            )
+        }
+    }
+
+    private func cancelMarkdownPrewarm() {
+        markdownPrewarmTask?.cancel()
+        markdownPrewarmTask = nil
+    }
+
+    private static func makeTraceDateFormatter() -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }
+
+    nonisolated private static func currentFootprintBytes() -> UInt64? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+
+        let result: kern_return_t = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else { return nil }
+        return info.phys_footprint
+    }
+
+    nonisolated private static func memorySummary(before: UInt64?, after: UInt64?) -> String {
+        guard let before, let after else { return "n/a" }
+        let beforeMB = Int(before / 1_048_576)
+        let afterMB = Int(after / 1_048_576)
+        let deltaMB = afterMB - beforeMB
+        let sign = deltaMB >= 0 ? "+" : ""
+        return "\(beforeMB)->\(afterMB)MB (\(sign)\(deltaMB)MB)"
     }
 
     // MARK: - Process Agent Events
@@ -196,11 +427,18 @@ final class TimelineReducer {
     /// Perf note: text/thinking/tool-output deltas are high-frequency. In a
     /// batch, append to local accumulators and upsert affected rows once.
     func processBatch(_ events: [AgentEvent]) {
+        MainThreadBreadcrumb.set("processBatch:\(events.count)ev/\(items.count)items")
+        defer { MainThreadBreadcrumb.set("idle") }
         let start = ContinuousClock.now
         var hasPendingAssistantUpsert = false
         var hasPendingThinkingUpsert = false
+        var didMutate = false
 
-        var pendingToolOutputByID: [String: String] = [:]
+        var pendingAssistantDeltas: [String] = []
+
+        // Keep tool output chunks segmented during accumulation to avoid
+        // repeated O(n²) string concatenation in large output bursts.
+        var pendingToolOutputChunksByID: [String: [String]] = [:]
         var pendingToolOutputIsError: [String: Bool] = [:]
         var pendingToolOutputOrder: [String] = []
 
@@ -208,61 +446,74 @@ final class TimelineReducer {
             if hasPendingThinkingUpsert {
                 upsertThinking()
                 hasPendingThinkingUpsert = false
+                didMutate = true
             }
 
             if hasPendingAssistantUpsert {
+                if !pendingAssistantDeltas.isEmpty {
+                    assistantBuffer += pendingAssistantDeltas.joined()
+                    pendingAssistantDeltas.removeAll(keepingCapacity: true)
+                }
                 upsertAssistantMessage()
                 hasPendingAssistantUpsert = false
+                didMutate = true
             }
 
             if !pendingToolOutputOrder.isEmpty {
                 for toolEventId in pendingToolOutputOrder {
-                    if let output = pendingToolOutputByID[toolEventId], !output.isEmpty {
-                        toolOutputStore.append(output, to: toolEventId)
+                    if let chunks = pendingToolOutputChunksByID[toolEventId], !chunks.isEmpty {
+                        let mergedOutput = chunks.count == 1 ? chunks[0] : chunks.joined()
+                        toolOutputStore.append(mergedOutput, to: toolEventId)
                     }
                     updateToolCallPreview(
                         id: toolEventId,
                         isError: pendingToolOutputIsError[toolEventId] ?? false
                     )
                 }
-                pendingToolOutputByID.removeAll(keepingCapacity: true)
+                pendingToolOutputChunksByID.removeAll(keepingCapacity: true)
                 pendingToolOutputIsError.removeAll(keepingCapacity: true)
                 pendingToolOutputOrder.removeAll(keepingCapacity: true)
+                didMutate = true
             }
         }
 
         for event in events {
             switch event {
             case .textDelta(_, let delta):
-                assistantBuffer += delta
+                pendingAssistantDeltas.append(delta)
                 hasPendingAssistantUpsert = true
 
             case .thinkingDelta(_, let delta):
-                thinkingBuffer += delta
-                hasPendingThinkingUpsert = true
+                // Keep only preview-size text in memory for live rendering.
+                // Once overflowed, continue collecting full text in ToolOutputStore
+                // for post-turn expansion, but skip no-op rerenders.
+                if appendThinkingDelta(delta) {
+                    hasPendingThinkingUpsert = true
+                }
 
             case .toolOutput(_, let toolEventId, let output, let isError):
-                if pendingToolOutputByID[toolEventId] == nil {
+                if pendingToolOutputChunksByID[toolEventId] == nil {
                     pendingToolOutputOrder.append(toolEventId)
-                    pendingToolOutputByID[toolEventId] = output
-                    pendingToolOutputIsError[toolEventId] = isError
-                } else {
-                    pendingToolOutputByID[toolEventId, default: ""] += output
-                    pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || isError
                 }
+                pendingToolOutputChunksByID[toolEventId, default: []].append(output)
+                pendingToolOutputIsError[toolEventId] = (pendingToolOutputIsError[toolEventId] ?? false) || isError
 
             default:
                 flushPendingUpserts()
                 processInternal(event)
+                didMutate = true
             }
         }
 
         flushPendingUpserts()
         trimIfNeeded()
-        bumpRenderVersion()
-        let elapsed = ContinuousClock.now - start
-        if elapsed > .milliseconds(5) {
-            perfLog.warning("processBatch slow: \(elapsed) for \(events.count) events, \(self.items.count) items")
+        if didMutate {
+            bumpRenderVersion()
+            timelineMatchesTrace = false
+        }
+        let elapsedMs = (ContinuousClock.now - start).ms
+        if elapsedMs > 5 {
+            perfLog.error("PERF processBatch slow: \(elapsedMs)ms for \(events.count) events, \(self.items.count) items")
         }
     }
 
@@ -271,26 +522,32 @@ final class TimelineReducer {
         processInternal(event)
         trimIfNeeded()
         bumpRenderVersion()
+        timelineMatchesTrace = false
     }
 
     private func processInternal(_ event: AgentEvent) {
         switch event {
         case .agentStart:
+            // Finalize any leftover state from a previous turn that didn't
+            // end cleanly (missed agentEnd, reconnect gap, etc.).
+            finalizeAssistantMessage()
+            finalizeThinking()
+            closeAllOrphanedTools()
             clearTurnBuffers()
-            // New assistant turn — ID assigned on first text delta
 
         case .agentEnd:
             finalizeAssistantMessage()
             finalizeThinking()
-            closeOrphanedTool()
+            closeAllOrphanedTools()
 
         case .textDelta(_, let delta):
             assistantBuffer += delta
             upsertAssistantMessage()
 
         case .thinkingDelta(_, let delta):
-            thinkingBuffer += delta
-            upsertThinking()
+            if appendThinkingDelta(delta) {
+                upsertThinking()
+            }
 
         case .toolStart(_, let toolEventId, let tool, let args):
             // Split assistant text around tool boundaries so chronology in the
@@ -300,7 +557,7 @@ final class TimelineReducer {
 
             let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
                 .joined(separator: ", ")
-            items.append(.toolCall(
+            let toolItem = ChatItem.toolCall(
                 id: toolEventId,
                 tool: tool,
                 argsSummary: ChatItem.preview(argsSummary),
@@ -308,7 +565,9 @@ final class TimelineReducer {
                 outputByteCount: 0,
                 isError: false,
                 isDone: false
-            ))
+            )
+            items.append(toolItem)
+            indexAppend(toolItem)
             // Store structured args for smart rendering
             if !args.isEmpty {
                 toolArgsStore.set(args, for: toolEventId)
@@ -321,14 +580,19 @@ final class TimelineReducer {
         case .toolEnd(_, let toolEventId):
             updateToolCallDone(id: toolEventId)
 
-        case .permissionRequest(let request):
-            items.append(.permission(request))
+        case .permissionRequest:
+            // Pending permissions live in PermissionStore/overlay, not the timeline.
+            // ServerConnection routes these to PermissionStore directly.
+            break
 
-        case .permissionExpired(let id):
-            resolvePermission(id: id, action: .deny)
+        case .permissionExpired:
+            // Handled by ServerConnection via PermissionStore.take() + resolvePermission().
+            break
 
         case .sessionEnded(_, let reason):
             finalizeAssistantMessage()
+            finalizeThinking()
+            closeAllOrphanedTools()
             items.append(.systemEvent(id: UUID().uuidString, message: "Session ended: \(reason)"))
 
         case .error(_, let message):
@@ -373,22 +637,27 @@ final class TimelineReducer {
     // MARK: - User Message (from local prompt)
 
     @discardableResult
-    func appendUserMessage(_ text: String) -> String {
+    func appendUserMessage(_ text: String, images: [ImageAttachment] = []) -> String {
         let id = UUID().uuidString
         items.append(.userMessage(
             id: id,
             text: text,
+            images: images,
             timestamp: Date()
         ))
         trimIfNeeded()
         bumpRenderVersion()
+        timelineMatchesTrace = false
         return id
     }
 
     /// Remove a specific item by ID (e.g., retract optimistic user message on send failure).
     func removeItem(id: String) {
         items.removeAll { $0.id == id }
+        itemIndexByID.removeValue(forKey: id)
+        rebuildIndex()
         bumpRenderVersion()
+        timelineMatchesTrace = false
     }
 
     // MARK: - System Events (from local actions)
@@ -399,16 +668,38 @@ final class TimelineReducer {
         items.append(.systemEvent(id: UUID().uuidString, message: message))
         trimIfNeeded()
         bumpRenderVersion()
+        timelineMatchesTrace = false
+    }
+
+    /// Append a locally generated audio clip to the timeline.
+    func appendAudioClip(title: String, fileURL: URL) {
+        let item = ChatItem.audioClip(
+            id: UUID().uuidString,
+            title: title,
+            fileURL: fileURL,
+            timestamp: Date()
+        )
+        items.append(item)
+        indexAppend(item)
+        trimIfNeeded()
+        bumpRenderVersion()
+        timelineMatchesTrace = false
     }
 
     // MARK: - Permission Resolution
 
-    func resolvePermission(id: String, action: PermissionAction) {
-        // Replace the permission item with a resolved badge
-        if let idx = items.firstIndex(where: { $0.id == id }) {
-            items[idx] = .permissionResolved(id: id, action: action)
-            bumpRenderVersion()
+    func resolvePermission(id: String, outcome: PermissionOutcome, tool: String, summary: String) {
+        let resolved = ChatItem.permissionResolved(id: id, outcome: outcome, tool: tool, summary: summary)
+        if let idx = indexForID(id) {
+            // Replace old inline card (trace replay or legacy)
+            items[idx] = resolved
+        } else {
+            // New flow: permission was never inline — append the marker
+            items.append(resolved)
+            indexAppend(resolved)
         }
+        bumpRenderVersion()
+        timelineMatchesTrace = false
     }
 
     // MARK: - Private
@@ -416,6 +707,8 @@ final class TimelineReducer {
     private func clearTurnBuffers() {
         assistantBuffer = ""
         thinkingBuffer = ""
+        thinkingOverflowed = false
+        thinkingStoredInOutputStore = false
         currentAssistantID = nil
         currentAssistantTimestamp = nil
         currentThinkingID = nil
@@ -434,33 +727,119 @@ final class TimelineReducer {
             timestamp: currentAssistantTimestamp ?? Date()
         )
 
-        if let idx = items.firstIndex(where: { $0.id == id }) {
+        if let idx = indexForID(id) {
             items[idx] = item
         } else {
             items.append(item)
+            indexAppend(item)
         }
     }
 
-    private func upsertThinking() {
-        let id = currentThinkingID ?? UUID().uuidString
-        if currentThinkingID == nil { currentThinkingID = id }
+    private func ensureCurrentThinkingID() -> String {
+        if let currentThinkingID {
+            return currentThinkingID
+        }
+        let id = UUID().uuidString
+        currentThinkingID = id
+        return id
+    }
 
-        let preview = ChatItem.preview(thinkingBuffer)
+    private func thinkingPreviewText() -> String {
+        guard thinkingOverflowed else {
+            return thinkingBuffer
+        }
+        guard ChatItem.maxPreviewLength > 1 else {
+            return "…"
+        }
+        return String(thinkingBuffer.prefix(ChatItem.maxPreviewLength - 1)) + "…"
+    }
+
+    /// Append a thinking delta into the capped preview buffer.
+    ///
+    /// Returns `true` only when visible thinking UI should update
+    /// (preview or hasMore changed). Overflow tail is still preserved in
+    /// `toolOutputStore` for expand view, but those tail-only chunks do not
+    /// trigger rerenders.
+    @discardableResult
+    private func appendThinkingDelta(_ delta: String) -> Bool {
+        guard !delta.isEmpty else { return false }
+
+        let previousPreview = thinkingPreviewText()
+        let previousHasMore = thinkingOverflowed
+
+        if !thinkingOverflowed {
+            let remaining = max(0, ChatItem.maxPreviewLength - thinkingBuffer.count)
+            if delta.count <= remaining {
+                thinkingBuffer += delta
+            } else {
+                let previewHead = String(delta.prefix(remaining))
+                let overflowTail = String(delta.dropFirst(remaining))
+                thinkingBuffer += previewHead
+                thinkingOverflowed = true
+
+                let id = ensureCurrentThinkingID()
+                if !thinkingStoredInOutputStore {
+                    toolOutputStore.append(thinkingBuffer, to: id)
+                    thinkingStoredInOutputStore = true
+                }
+                if !overflowTail.isEmpty {
+                    toolOutputStore.append(overflowTail, to: id)
+                }
+            }
+        } else {
+            let id = ensureCurrentThinkingID()
+            if !thinkingStoredInOutputStore {
+                toolOutputStore.append(thinkingBuffer, to: id)
+                thinkingStoredInOutputStore = true
+            }
+            toolOutputStore.append(delta, to: id)
+        }
+
+        let newPreview = thinkingPreviewText()
+        let newHasMore = thinkingOverflowed
+        return newPreview != previousPreview || newHasMore != previousHasMore
+    }
+
+    private func upsertThinking() {
+        let id = ensureCurrentThinkingID()
+
         let item = ChatItem.thinking(
             id: id,
-            preview: preview,
-            hasMore: thinkingBuffer.count > ChatItem.maxPreviewLength
+            preview: thinkingPreviewText(),
+            hasMore: thinkingOverflowed
         )
 
-        if let idx = items.firstIndex(where: { $0.id == id }) {
+        if let idx = indexForID(id) {
             items[idx] = item
         } else {
-            items.append(item)
+            // Pi RPC doesn't stream thinking_delta live — thinking arrives
+            // in message_end, AFTER text_delta has already been streaming.
+            // Insert the thinking block BEFORE the current assistant message
+            // so the timeline reads: thinking → response text.
+            if let assistantID = currentAssistantID,
+               let assistantIdx = indexForID(assistantID) {
+                items.insert(item, at: assistantIdx)
+                rebuildIndex()
+            } else {
+                items.append(item)
+                indexAppend(item)
+            }
         }
     }
 
     private func finalizeAssistantMessage() {
         guard !assistantBuffer.isEmpty else {
+            return
+        }
+        // If the buffer is only whitespace (e.g., "\n\n" before a tool call),
+        // discard it instead of creating an empty bubble.
+        if assistantBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Remove the in-progress item if it was already appended
+            if let id = currentAssistantID {
+                items.removeAll { $0.id == id }
+            }
+            assistantBuffer = ""
+            currentAssistantID = nil
             return
         }
         upsertAssistantMessage()
@@ -471,33 +850,42 @@ final class TimelineReducer {
     private func finalizeThinking() {
         // Mark the thinking item as done so the spinner stops
         if let thinkingID = currentThinkingID,
-           let idx = items.firstIndex(where: { $0.id == thinkingID }),
+           let idx = indexForID(thinkingID),
            case .thinking(let id, let preview, let hasMore, _) = items[idx] {
             items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
-            // Store full thinking text for expand view
-            if thinkingBuffer.count > ChatItem.maxPreviewLength {
+
+            // Overflowed thinking is streamed into ToolOutputStore as deltas.
+            // This fallback handles unexpected paths where overflow happened
+            // but nothing was spilled yet.
+            if thinkingOverflowed, !thinkingStoredInOutputStore {
                 toolOutputStore.append(thinkingBuffer, to: thinkingID)
+                thinkingStoredInOutputStore = true
             }
         }
         thinkingBuffer = ""
+        thinkingOverflowed = false
+        thinkingStoredInOutputStore = false
         currentThinkingID = nil
     }
 
-    private func closeOrphanedTool() {
-        // If the last tool item isn't marked done, mark it now
-        if let last = items.last,
-           case .toolCall(let id, let tool, let args, let preview, let bytes, let isErr, let isDone) = last,
-           !isDone {
-            items[items.count - 1] = .toolCall(
-                id: id, tool: tool, argsSummary: args,
-                outputPreview: preview, outputByteCount: bytes,
-                isError: isErr, isDone: true
-            )
+    /// Close ALL in-progress tool call rows, not just the last one.
+    /// Handles cases where multiple tool calls are orphaned (e.g., missed
+    /// agentEnd during reconnect, or concurrent tool calls in future protocol).
+    private func closeAllOrphanedTools() {
+        for idx in items.indices {
+            if case .toolCall(let id, let tool, let args, let preview, let bytes, let isErr, let isDone) = items[idx],
+               !isDone {
+                items[idx] = .toolCall(
+                    id: id, tool: tool, argsSummary: args,
+                    outputPreview: preview, outputByteCount: bytes,
+                    isError: isErr, isDone: true
+                )
+            }
         }
     }
 
     private func updateToolCallPreview(id: String, isError: Bool) {
-        guard let idx = items.firstIndex(where: { $0.id == id }),
+        guard let idx = indexForID(id),
               case .toolCall(_, let tool, let args, _, _, let existingError, let isDone) = items[idx]
         else {
             return
@@ -516,7 +904,7 @@ final class TimelineReducer {
     }
 
     private func updateToolCallDone(id: String) {
-        guard let idx = items.firstIndex(where: { $0.id == id }),
+        guard let idx = indexForID(id),
               case .toolCall(_, let tool, let args, let preview, let bytes, let isErr, _) = items[idx]
         else {
             return
@@ -587,9 +975,67 @@ final class TimelineReducer {
             toolArgsStore.clear(itemIDs: removedToolLikeIDs)
             expandedItemIDs.subtract(removedToolLikeIDs)
         }
+
+        // Rebuild index after removals shifted positions
+        rebuildIndex()
     }
 
     private func bumpRenderVersion() {
         renderVersion &+= 1
+    }
+
+    // MARK: - Indexed Helpers
+
+    /// Find an item's index by ID using the O(1) cache.
+    /// Falls back to linear scan if cache is stale (should not happen in practice).
+    private func indexForID(_ id: String) -> Int? {
+        if let idx = itemIndexByID[id], idx < items.count, items[idx].id == id {
+            return idx
+        }
+        // Cache miss — linear fallback + repair
+        if let idx = items.firstIndex(where: { $0.id == id }) {
+            itemIndexByID[id] = idx
+            return idx
+        }
+        return nil
+    }
+
+    /// Rebuild the full index. Call after bulk mutations (reset, loadSession, trim).
+    private func rebuildIndex() {
+        itemIndexByID.removeAll(keepingCapacity: true)
+        for (i, item) in items.enumerated() {
+            itemIndexByID[item.id] = i
+        }
+    }
+
+    /// Register a newly appended item in the index.
+    private func indexAppend(_ item: ChatItem) {
+        itemIndexByID[item.id] = items.count - 1
+    }
+
+    // MARK: - Image Extraction
+
+    /// Extract data URI images from user message text.
+    ///
+    /// Trace events store images as `data:image/...;base64,...` inline in the
+    /// text field. Rendering 1MB+ of base64 as `SwiftUI.Text` freezes the
+    /// main thread. This splits the text into clean display text + image
+    /// attachments for proper thumbnail rendering.
+    private static func extractImagesFromText(_ text: String) -> (String, [ImageAttachment]) {
+        let extracted = ImageExtractor.extract(from: text)
+        guard !extracted.isEmpty else { return (text, []) }
+
+        var cleanText = text
+        // Remove data URIs from text in reverse order to preserve ranges
+        for image in extracted.reversed() {
+            cleanText.removeSubrange(image.range)
+        }
+        cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let attachments = extracted.map { img in
+            ImageAttachment(data: img.base64, mimeType: img.mimeType ?? "image/jpeg")
+        }
+
+        return (cleanText, attachments)
     }
 }

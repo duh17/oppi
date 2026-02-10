@@ -1,0 +1,305 @@
+import SwiftUI
+
+/// Full-screen code viewer — dismissible overlay for code blocks and diffs.
+///
+/// Removes the inline height cap so the user can scroll through the full file.
+/// Supports two modes:
+/// - `.code`: syntax-highlighted source with line numbers
+/// - `.diff`: unified diff with add/remove coloring
+enum FullScreenCodeContent {
+    case code(content: String, language: String?, filePath: String?, startLine: Int)
+    case diff(oldText: String, newText: String, filePath: String?)
+}
+
+struct FullScreenCodeView: View {
+    let content: FullScreenCodeContent
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            codeBody
+                .background(Color.tokyoBgDark)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { dismiss() }
+                            .foregroundStyle(.tokyoCyan)
+                    }
+                    ToolbarItem(placement: .principal) {
+                        titleView
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        copyButton
+                    }
+                }
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
+        }
+    }
+
+    // MARK: - Title
+
+    @ViewBuilder
+    private var titleView: some View {
+        switch content {
+        case .code(_, let language, let filePath, _):
+            VStack(spacing: 1) {
+                if let path = filePath {
+                    Text(path.shortenedPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoFg)
+                        .lineLimit(1)
+                }
+                Text(language ?? "code")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+            }
+        case .diff(_, _, let filePath):
+            VStack(spacing: 1) {
+                if let path = filePath {
+                    Text(path.shortenedPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoFg)
+                        .lineLimit(1)
+                }
+                Text("Diff")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+            }
+        }
+    }
+
+    // MARK: - Copy
+
+    @ViewBuilder
+    private var copyButton: some View {
+        switch content {
+        case .code(let text, _, _, _):
+            CopyIconButton(text: text)
+        case .diff(_, let newText, _):
+            CopyIconButton(text: newText)
+        }
+    }
+
+    // MARK: - Body
+
+    @ViewBuilder
+    private var codeBody: some View {
+        switch content {
+        case .code(let text, let language, _, let startLine):
+            FullScreenCodeBody(content: text, language: language, startLine: startLine)
+        case .diff(let oldText, let newText, let filePath):
+            FullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath)
+        }
+    }
+}
+
+// MARK: - Full Screen Code Body
+
+/// Full code view without height cap — scrolls vertically and horizontally.
+private struct FullScreenCodeBody: View {
+    let content: String
+    let language: String?
+    let startLine: Int
+
+    @State private var highlighted: AttributedString?
+
+    private var syntaxLanguage: SyntaxLanguage {
+        guard let lang = language else { return .unknown }
+        return SyntaxLanguage.detect(lang)
+    }
+
+    var body: some View {
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+        let lineCount = lines.count
+        let (numbers, gutterWidth) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
+
+        ScrollView([.vertical, .horizontal]) {
+            HStack(alignment: .top, spacing: 0) {
+                // Gutter
+                Text(numbers)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.tokyoComment)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: gutterWidth, alignment: .trailing)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 8)
+
+                // Separator
+                Rectangle()
+                    .fill(Color.tokyoComment.opacity(0.2))
+                    .frame(width: 1)
+
+                // Code
+                Group {
+                    if let highlighted {
+                        Text(highlighted)
+                            .font(.system(size: 12, design: .monospaced))
+                    } else {
+                        Text(content)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tokyoFg)
+                    }
+                }
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+            }
+        }
+        .task(id: content.count) {
+            let lang = syntaxLanguage
+            guard lang != .unknown else { return }
+            let text = content
+            highlighted = await Task.detached(priority: .userInitiated) {
+                SyntaxHighlighter.highlight(text, language: lang)
+            }.value
+        }
+    }
+}
+
+// MARK: - Full Screen Diff Body
+
+/// Full diff view without height cap.
+private struct FullScreenDiffBody: View {
+    let oldText: String
+    let newText: String
+    let filePath: String?
+
+    private var diffLines: [DiffLine] {
+        DiffEngine.compute(old: oldText, new: newText)
+    }
+
+    private var language: SyntaxLanguage {
+        guard let path = filePath else { return .unknown }
+        let ext = (path as NSString).pathExtension
+        return ext.isEmpty ? .unknown : SyntaxLanguage.detect(ext)
+    }
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let lines = diffLines
+        let stats = DiffEngine.stats(lines)
+        let lang = language
+
+        VStack(alignment: .leading, spacing: 0) {
+            // Stats bar
+            HStack(spacing: 12) {
+                if stats.added > 0 {
+                    Text("+\(stats.added)")
+                        .font(.caption.monospaced().bold())
+                        .foregroundStyle(theme.diff.addedAccent)
+                }
+                if stats.removed > 0 {
+                    Text("-\(stats.removed)")
+                        .font(.caption.monospaced().bold())
+                        .foregroundStyle(theme.diff.removedAccent)
+                }
+                Text("\(lines.count) lines")
+                    .font(.caption2)
+                    .foregroundStyle(theme.text.tertiary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(theme.bg.highlight)
+
+            // Diff rows — no height cap
+            ScrollView([.vertical, .horizontal]) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        diffRow(line, lang: lang)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func diffRow(_ line: DiffLine, lang: SyntaxLanguage) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Left accent bar
+            Rectangle()
+                .fill(accentColor(for: line.kind))
+                .frame(width: 3)
+
+            // Gutter prefix
+            Text(line.kind.prefix)
+                .font(.system(size: 12, design: .monospaced).bold())
+                .foregroundStyle(prefixColor(for: line.kind))
+                .frame(width: 18, alignment: .center)
+
+            // Code text
+            if lang != .unknown, line.kind == .context {
+                Text(SyntaxHighlighter.highlightLine(line.text, language: lang))
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                Text(line.text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(textColor(for: line.kind))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 1)
+        .background(rowBackground(for: line.kind))
+    }
+
+    private func accentColor(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: return theme.diff.addedAccent
+        case .removed: return theme.diff.removedAccent
+        case .context: return .clear
+        }
+    }
+
+    private func prefixColor(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: return theme.diff.addedAccent
+        case .removed: return theme.diff.removedAccent
+        case .context: return theme.text.tertiary
+        }
+    }
+
+    private func textColor(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added, .removed: return theme.text.primary
+        case .context: return theme.diff.contextFg
+        }
+    }
+
+    private func rowBackground(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: return theme.diff.addedBg
+        case .removed: return theme.diff.removedBg
+        case .context: return .clear
+        }
+    }
+}
+
+// MARK: - Copy Icon Button
+
+private struct CopyIconButton: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                copied = false
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .foregroundStyle(.tokyoFgDim)
+        }
+    }
+}
+
+

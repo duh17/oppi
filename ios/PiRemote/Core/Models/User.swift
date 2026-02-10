@@ -22,8 +22,13 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     }
 
     /// WebSocket URL for a specific session.
-    /// Returns `nil` for malformed host.
-    func webSocketURL(sessionId: String) -> URL? {
-        URL(string: "ws://\(host):\(port)/sessions/\(sessionId)/stream")
+    ///
+    /// Uses workspace-scoped v2 path when `workspaceId` is provided,
+    /// falls back to legacy v1 path otherwise.
+    func webSocketURL(sessionId: String, workspaceId: String? = nil) -> URL? {
+        if let workspaceId, !workspaceId.isEmpty {
+            return URL(string: "ws://\(host):\(port)/workspaces/\(workspaceId)/sessions/\(sessionId)/stream")
+        }
+        return URL(string: "ws://\(host):\(port)/sessions/\(sessionId)/stream")
     }
 }

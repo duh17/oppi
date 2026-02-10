@@ -5,7 +5,7 @@ import Foundation
 /// A workspace defines the agent environment: skills, permissions,
 /// mounted directories, and optional system prompt. Sessions are
 /// created from a workspace.
-struct Workspace: Identifiable, Sendable, Equatable {
+struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     let id: String
     let userId: String
     var name: String

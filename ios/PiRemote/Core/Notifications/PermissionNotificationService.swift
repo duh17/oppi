@@ -28,12 +28,22 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
     // MARK: - Setup
 
-    /// Register notification category and request authorization.
+    /// Category ID for high-risk permissions (deny-only from lock screen).
+    static let biometricCategoryId = "PERMISSION_BIOMETRIC"
+
+    /// Register notification categories and request authorization.
+    ///
+    /// Two categories:
+    /// - `PERMISSION_REQUEST`: Allow/Deny actions (low/medium risk)
+    /// - `PERMISSION_BIOMETRIC`: Deny-only + "Review" (high/critical risk)
+    ///
+    /// High-risk allows require Face ID, which isn't available from
+    /// the lock screen. Users must open the app to approve.
     func setup() async {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
-        // Register action category
+        // Standard: Allow + Deny (low/medium risk)
         let allow = UNNotificationAction(
             identifier: Self.allowActionId,
             title: "Allow",
@@ -44,12 +54,21 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             title: "Deny",
             options: [.destructive]
         )
-        let category = UNNotificationCategory(
+        let standardCategory = UNNotificationCategory(
             identifier: Self.categoryId,
             actions: [allow, deny],
             intentIdentifiers: []
         )
-        center.setNotificationCategories([category])
+
+        // Biometric-gated: Deny only (high/critical risk)
+        // User must open app for Allow (triggers Face ID)
+        let biometricCategory = UNNotificationCategory(
+            identifier: Self.biometricCategoryId,
+            actions: [deny],
+            intentIdentifiers: []
+        )
+
+        center.setNotificationCategories([standardCategory, biometricCategory])
 
         // Request permission (first launch only)
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
@@ -59,14 +78,22 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
     /// Schedule a local notification for a permission request.
     /// Only fires when app is not in the foreground.
+    ///
+    /// High/critical risk permissions use a biometric-gated category
+    /// (deny-only from lock screen). The user must open the app to
+    /// approve, which triggers Face ID.
     func notifyIfBackgrounded(_ request: PermissionRequest) {
         guard UIApplication.shared.applicationState != .active else { return }
 
+        let needsBiometric = BiometricService.shared.requiresBiometric(for: request.risk)
+
         let content = UNMutableNotificationContent()
-        content.title = "Permission Required"
+        content.title = needsBiometric ? "⚠ Permission Required" : "Permission Required"
         content.subtitle = request.tool
-        content.body = request.displaySummary
-        content.categoryIdentifier = Self.categoryId
+        content.body = needsBiometric
+            ? "\(request.displaySummary)\nOpen app to approve with \(BiometricService.shared.biometricName)"
+            : request.displaySummary
+        content.categoryIdentifier = needsBiometric ? Self.biometricCategoryId : Self.categoryId
         content.userInfo = [
             "permissionId": request.id,
             "sessionId": request.sessionId,

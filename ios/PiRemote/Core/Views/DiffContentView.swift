@@ -14,6 +14,7 @@ struct DiffContentView: View {
     private let diffLines: [DiffLine]
 
     @Environment(\.theme) private var theme
+    @State private var showFullScreen = false
 
     init(oldText: String, newText: String, filePath: String? = nil) {
         self.oldText = oldText
@@ -60,6 +61,11 @@ struct DiffContentView: View {
                 UIPasteboard.general.string = DiffEngine.formatUnified(diffLines)
             }
         }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenCodeView(content: .diff(
+                oldText: oldText, newText: newText, filePath: filePath
+            ))
+        }
     }
 
     // MARK: - Header
@@ -91,6 +97,13 @@ struct DiffContentView: View {
                     .font(.caption2.monospaced().bold())
                     .foregroundStyle(theme.diff.removedAccent)
             }
+
+            Button { showFullScreen = true } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption2)
+                    .foregroundStyle(theme.text.secondary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -117,14 +130,20 @@ struct DiffContentView: View {
 
             // Code text
             ScrollView(.horizontal, showsIndicators: false) {
-                if lang != .unknown, line.kind != .context {
+                // Keep changed lines high-contrast and deterministic.
+                // Syntax token colors can reduce readability on tinted add/remove
+                // backgrounds (especially comment-heavy edits), so only context
+                // lines use token-level highlighting.
+                if lang != .unknown, line.kind == .context {
                     Text(SyntaxHighlighter.highlightLine(line.text, language: lang))
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
+                        .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)
                 } else {
                     Text(line.text)
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
                         .foregroundStyle(textColor(for: line.kind))
+                        .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)
                 }
             }

@@ -35,6 +35,9 @@ struct Session: Identifiable, Sendable, Equatable {
 
     var lastMessage: String?
 
+    // Agent config state (synced from pi get_state)
+    var thinkingLevel: String?
+
     var isContainerRuntime: Bool { runtime == "container" }
 }
 
@@ -51,6 +54,7 @@ extension Session: Codable {
         case name, status, createdAt, lastActivity
         case model, runtime, messageCount, tokens, cost
         case contextTokens, contextWindow, lastMessage
+        case thinkingLevel
     }
 
     init(from decoder: Decoder) throws {
@@ -69,6 +73,7 @@ extension Session: Codable {
         contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
         contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
+        thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
 
         // Server sends Unix milliseconds
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
@@ -94,6 +99,7 @@ extension Session: Codable {
         try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
         try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
         try c.encodeIfPresent(lastMessage, forKey: .lastMessage)
+        try c.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)
     }

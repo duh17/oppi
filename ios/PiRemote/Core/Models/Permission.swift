@@ -54,8 +54,18 @@ extension PermissionRequest: Codable {
     }
 }
 
-/// User's response to a permission request.
+/// User's response to a permission request (wire type, sent to server).
 enum PermissionAction: String, Codable, Sendable {
     case allow
     case deny
+}
+
+/// Client-side resolved state for display. Richer than `PermissionAction`
+/// because it includes states the server communicates via separate events
+/// (expiry, cancellation) rather than as action values.
+enum PermissionOutcome: String, Sendable, Equatable {
+    case allowed
+    case denied
+    case expired
+    case cancelled
 }

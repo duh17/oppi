@@ -21,6 +21,9 @@ enum ServerMessage: Sendable, Equatable {
     case toolOutput(output: String, isError: Bool, toolCallId: String?)
     case toolEnd(tool: String, toolCallId: String?)
 
+    // Turn delivery acknowledgements
+    case turnAck(command: String, clientTurnId: String, stage: TurnAckStage, requestId: String?, duplicate: Bool)
+
     // RPC responses (from forwarded commands)
     case rpcResult(command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
 
@@ -42,7 +45,7 @@ enum ServerMessage: Sendable, Equatable {
     case extensionUINotification(method: String, message: String?, notifyType: String?, statusKey: String?, statusText: String?)
 
     // Errors
-    case error(message: String)
+    case error(message: String, code: String?, fatal: Bool)
 
     // Forward-compatibility: unknown server message types are skipped, not fatal.
     case unknown(type: String)
@@ -62,6 +65,20 @@ struct ExtensionUIRequest: Sendable, Equatable, Identifiable {
     var timeout: Int?
 }
 
+enum TurnAckStage: String, Codable, Sendable {
+    case accepted
+    case dispatched
+    case started
+
+    var rank: Int {
+        switch self {
+        case .accepted: return 1
+        case .dispatched: return 2
+        case .started: return 3
+        }
+    }
+}
+
 // MARK: - Manual Decodable
 
 extension ServerMessage: Decodable {
@@ -77,8 +94,10 @@ extension ServerMessage: Decodable {
         case tool, args, toolCallId
         // tool_output
         case output, isError
+        // turn_ack
+        case stage, clientTurnId, duplicate
         // error
-        case error
+        case error, code, fatal
         // permission_request
         case id, sessionId, input, displaySummary, risk, timeoutAt
         // extension_ui_request
@@ -141,6 +160,20 @@ extension ServerMessage: Decodable {
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
             self = .toolEnd(tool: tool, toolCallId: tcId)
 
+        case "turn_ack":
+            let command = try c.decode(String.self, forKey: .command)
+            let clientTurnId = try c.decode(String.self, forKey: .clientTurnId)
+            let stage = try c.decode(TurnAckStage.self, forKey: .stage)
+            let requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+            let duplicate = try c.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
+            self = .turnAck(
+                command: command,
+                clientTurnId: clientTurnId,
+                stage: stage,
+                requestId: requestId,
+                duplicate: duplicate
+            )
+
         case "rpc_result":
             let cmd = try c.decode(String.self, forKey: .command)
             let reqId = try c.decodeIfPresent(String.self, forKey: .requestId)
@@ -175,7 +208,9 @@ extension ServerMessage: Decodable {
 
         case "error":
             let msg = try c.decode(String.self, forKey: .error)
-            self = .error(message: msg)
+            let code = try c.decodeIfPresent(String.self, forKey: .code)
+            let fatal = try c.decodeIfPresent(Bool.self, forKey: .fatal) ?? false
+            self = .error(message: msg, code: code, fatal: fatal)
 
         case "permission_request":
             let perm = PermissionRequest(
@@ -230,6 +265,34 @@ extension ServerMessage: Decodable {
 // MARK: - Decode from raw WebSocket data
 
 extension ServerMessage {
+    var typeLabel: String {
+        switch self {
+        case .connected: "connected"
+        case .state: "state"
+        case .sessionEnded: "sessionEnded"
+        case .agentStart: "agentStart"
+        case .agentEnd: "agentEnd"
+        case .textDelta: "textDelta"
+        case .thinkingDelta: "thinkingDelta"
+        case .toolStart: "toolStart"
+        case .toolOutput: "toolOutput"
+        case .toolEnd: "toolEnd"
+        case .turnAck: "turnAck"
+        case .rpcResult: "rpcResult"
+        case .compactionStart: "compactionStart"
+        case .compactionEnd: "compactionEnd"
+        case .retryStart: "retryStart"
+        case .retryEnd: "retryEnd"
+        case .permissionRequest: "permissionRequest"
+        case .permissionExpired: "permissionExpired"
+        case .permissionCancelled: "permissionCancelled"
+        case .extensionUIRequest: "extensionUIRequest"
+        case .extensionUINotification: "extensionUINotification"
+        case .error: "error"
+        case .unknown(let type): "unknown(\(type))"
+        }
+    }
+
     /// Decode a `ServerMessage` from raw WebSocket text data.
     static func decode(from text: String) throws -> ServerMessage {
         guard let data = text.data(using: .utf8) else {

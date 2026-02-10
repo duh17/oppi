@@ -57,6 +57,7 @@ struct RestorationState: Codable {
 extension AppTab {
     var rawString: String {
         switch self {
+        case .workspaces: return "workspaces"
         case .sessions: return "sessions"
         case .settings: return "settings"
         }
@@ -64,8 +65,9 @@ extension AppTab {
 
     init(rawString: String) {
         switch rawString {
+        case "sessions": self = .sessions
         case "settings": self = .settings
-        default: self = .sessions
+        default: self = .workspaces
         }
     }
 }

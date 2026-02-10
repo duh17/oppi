@@ -60,12 +60,12 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
-    /// Get a session with its message history.
-    func getSession(id: String) async throws -> (session: Session, messages: [SessionMessage]) {
+    /// Get a session with its resolved context (compaction-aware, same view as pi TUI).
+    func getSession(id: String) async throws -> (session: Session, trace: [TraceEvent]) {
         let data = try await get("/sessions/\(id)")
-        struct Response: Decodable { let session: Session; let messages: [SessionMessage] }
+        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
-        return (response.session, response.messages)
+        return (response.session, response.trace)
     }
 
     /// Stop a running session.
@@ -73,17 +73,8 @@ actor APIClient {
         let data = try await post("/sessions/\(id)/stop", body: EmptyBody())
         struct Response: Decodable { let session: Session? }
         let response = try JSONDecoder().decode(Response.self, from: data)
-        // Fall back to fetching if stop response doesn't include session
         if let session = response.session { return session }
         return try await getSession(id: id).session
-    }
-
-    /// Get the full trace (tool calls, results, thinking) from pi's JSONL.
-    func getSessionTrace(id: String) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/sessions/\(id)/trace")
-        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        return (response.session, response.trace)
     }
 
     /// Delete a session permanently.
@@ -149,6 +140,68 @@ actor APIClient {
         let data = try await post("/skills/rescan", body: EmptyBody())
         struct Response: Decodable { let skills: [SkillInfo] }
         return try JSONDecoder().decode(Response.self, from: data).skills
+    }
+
+    /// Get full skill detail: metadata, SKILL.md content, and file tree.
+    func getSkillDetail(name: String) async throws -> SkillDetail {
+        let data = try await get("/skills/\(name)")
+        return try JSONDecoder().decode(SkillDetail.self, from: data)
+    }
+
+    /// Get a single file's content from a skill directory.
+    func getSkillFile(name: String, path: String) async throws -> String {
+        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw APIError.server(status: 400, message: "Invalid file path")
+        }
+        let data = try await get("/skills/\(name)/file?path=\(encoded)")
+        struct Response: Decodable { let content: String }
+        return try JSONDecoder().decode(Response.self, from: data).content
+    }
+
+    // MARK: - Workspace-scoped Sessions (v2 API)
+
+    /// List sessions for a specific workspace.
+    func listWorkspaceSessions(workspaceId: String) async throws -> [Session] {
+        let data = try await get("/workspaces/\(workspaceId)/sessions")
+        struct Response: Decodable { let sessions: [Session] }
+        return try JSONDecoder().decode(Response.self, from: data).sessions
+    }
+
+    /// Create a new session in a specific workspace.
+    func createWorkspaceSession(workspaceId: String, name: String? = nil, model: String? = nil) async throws -> Session {
+        struct Body: Encodable { let name: String?; let model: String? }
+        let data = try await post("/workspaces/\(workspaceId)/sessions", body: Body(name: name, model: model))
+        struct Response: Decodable { let session: Session }
+        return try JSONDecoder().decode(Response.self, from: data).session
+    }
+
+    /// Resume a stopped session in its workspace.
+    func resumeWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
+        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/resume", body: EmptyBody())
+        struct Response: Decodable { let session: Session }
+        return try JSONDecoder().decode(Response.self, from: data).session
+    }
+
+    /// Stop a session via its workspace.
+    func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
+        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/stop", body: EmptyBody())
+        struct Response: Decodable { let session: Session? }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        if let session = response.session { return session }
+        return try await getSession(id: sessionId).session
+    }
+
+    /// Get session detail via workspace path.
+    func getWorkspaceSession(workspaceId: String, sessionId: String) async throws -> (session: Session, trace: [TraceEvent]) {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)")
+        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return (response.session, response.trace)
+    }
+
+    /// Delete a session via workspace path.
+    func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
+        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
     }
 
     // MARK: - Tool Output & Files

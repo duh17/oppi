@@ -31,4 +31,25 @@ enum AgentEvent: Sendable {
     case permissionExpired(id: String)
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
+
+    var typeLabel: String {
+        switch self {
+        case .agentStart: "agentStart"
+        case .agentEnd: "agentEnd"
+        case .textDelta: "textDelta"
+        case .thinkingDelta: "thinkingDelta"
+        case .toolStart: "toolStart"
+        case .toolOutput: "toolOutput"
+        case .toolEnd: "toolEnd"
+        case .compactionStart: "compactionStart"
+        case .compactionEnd: "compactionEnd"
+        case .retryStart: "retryStart"
+        case .retryEnd: "retryEnd"
+        case .rpcResult: "rpcResult"
+        case .permissionRequest: "permissionRequest"
+        case .permissionExpired: "permissionExpired"
+        case .sessionEnded: "sessionEnded"
+        case .error: "error"
+        }
+    }
 }

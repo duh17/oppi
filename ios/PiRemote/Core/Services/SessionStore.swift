@@ -15,12 +15,19 @@ final class SessionStore {
     }
 
     /// Insert or update a session from server data.
-    func upsert(_ session: Session) {
+    ///
+    /// Returns true only when the backing array was actually mutated.
+    @discardableResult
+    func upsert(_ session: Session) -> Bool {
         if let idx = sessions.firstIndex(where: { $0.id == session.id }) {
+            // Avoid no-op writes — they still trigger Observation invalidation.
+            guard sessions[idx] != session else { return false }
             sessions[idx] = session
-        } else {
-            sessions.insert(session, at: 0) // Most recent first
+            return true
         }
+
+        sessions.insert(session, at: 0) // Most recent first
+        return true
     }
 
     /// Remove a session.
