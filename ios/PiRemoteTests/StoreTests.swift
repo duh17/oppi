@@ -46,10 +46,24 @@ struct SessionStoreTests {
         store.upsert(session1)
 
         let session2 = makeSession(id: "s1", status: .busy)
-        store.upsert(session2)
+        let didMutate = store.upsert(session2)
 
+        #expect(didMutate)
         #expect(store.sessions.count == 1)
         #expect(store.sessions[0].status == .busy)
+    }
+
+    @MainActor
+    @Test func upsertIdenticalSessionIsNoOp() {
+        let store = SessionStore()
+        let session = makeSession(id: "s1", status: .ready)
+
+        #expect(store.upsert(session))
+        let didMutate = store.upsert(session)
+
+        #expect(!didMutate)
+        #expect(store.sessions.count == 1)
+        #expect(store.sessions[0] == session)
     }
 
     @MainActor
@@ -185,21 +199,29 @@ struct PermissionStoreTests {
     }
 
     @MainActor
-    @Test func resolveRemovesFromPending() {
+    @Test func takeRemovesAndReturnsFromPending() {
         let store = PermissionStore()
         store.add(makePerm(id: "p1"))
 
-        store.resolve(id: "p1")
+        let taken = store.take(id: "p1")
 
+        #expect(taken?.id == "p1")
         #expect(store.count == 0)
     }
 
     @MainActor
-    @Test func expireRemovesFromPending() {
+    @Test func takeReturnsNilForMissing() {
+        let store = PermissionStore()
+        let taken = store.take(id: "nonexistent")
+        #expect(taken == nil)
+    }
+
+    @MainActor
+    @Test func removeRemovesFromPending() {
         let store = PermissionStore()
         store.add(makePerm(id: "p1"))
 
-        store.expire(id: "p1")
+        store.remove(id: "p1")
 
         #expect(store.count == 0)
     }

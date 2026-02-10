@@ -45,14 +45,15 @@ struct WorkspaceEditView: View {
                     ForEach(skills) { skill in
                         SkillToggleRow(
                             skill: skill,
-                            isSelected: selectedSkills.contains(skill.name)
-                        ) { selected in
-                            if selected {
-                                selectedSkills.insert(skill.name)
-                            } else {
-                                selectedSkills.remove(skill.name)
+                            isSelected: selectedSkills.contains(skill.name),
+                            onToggle: { selected in
+                                if selected {
+                                    selectedSkills.insert(skill.name)
+                                } else {
+                                    selectedSkills.remove(skill.name)
+                                }
                             }
-                        }
+                        )
                     }
                 }
             }
@@ -158,6 +159,12 @@ struct WorkspaceEditView: View {
                 .disabled(name.isEmpty || isSaving)
             }
         }
+        .navigationDestination(for: SkillDetailDestination.self) { dest in
+            SkillDetailView(skillName: dest.skillName)
+        }
+        .navigationDestination(for: SkillFileDestination.self) { dest in
+            SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
+        }
         .onAppear { loadFromWorkspace() }
         .task { await loadModels() }
     }
@@ -223,35 +230,42 @@ private struct SkillToggleRow: View {
     let onToggle: (Bool) -> Void
 
     var body: some View {
-        Button {
-            onToggle(!isSelected)
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(skill.name)
-                            .font(.body)
+        HStack {
+            Button {
+                onToggle(!isSelected)
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(skill.name)
+                                .font(.body)
 
-                        if !skill.containerSafe {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
+                            if !skill.containerSafe {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
                         }
+
+                        Text(skill.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
 
-                    Text(skill.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    Spacer()
+
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isSelected ? .tokyoBlue : .secondary)
+                        .imageScale(.large)
                 }
-
-                Spacer()
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? .tokyoBlue : .secondary)
-                    .imageScale(.large)
             }
+            .foregroundStyle(.primary)
+
+            NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
+                EmptyView()
+            }
+            .frame(width: 20)
         }
-        .foregroundStyle(.primary)
     }
 }

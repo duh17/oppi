@@ -74,11 +74,6 @@ struct SessionToolbar: View {
             }
             .buttonStyle(.plain)
 
-            if session?.runtime != nil {
-                RuntimeBadge(runtime: session?.runtime, compact: true)
-                    .padding(.horizontal, 6)
-            }
-
             toolbarSeparator
 
             // Thinking level cycle — 44pt min touch target
@@ -210,8 +205,17 @@ func inferContextWindow(from model: String) -> Int? {
         "openai/o3": 200_000,
         "openai/o4-mini": 200_000,
         "openai/gpt-4.1": 1_000_000,
+        "openai-codex/gpt-5.1": 272_000,
+        "openai-codex/gpt-5.2": 272_000,
+        "openai-codex/gpt-5.2-codex": 272_000,
+        "openai-codex/gpt-5.3-codex": 272_000,
         "google/gemini-2.5-pro": 1_000_000,
         "google/gemini-2.5-flash": 1_000_000,
+        "lmstudio/glm-4.7": 128_000,
+        "lmstudio/glm-4.7-flash-mlx": 128_000,
+        "lmstudio/magistral-small-2509-mlx": 32_000,
+        "lmstudio/minimax-m2.1": 196_608,
+        "lmstudio/qwen3-coder-next": 128_000,
         "lmstudio/qwen3-32b": 32_768,
         "lmstudio/deepseek-r1-0528-qwen3-8b": 32_768,
     ]

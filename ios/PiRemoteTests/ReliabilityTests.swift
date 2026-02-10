@@ -48,6 +48,64 @@ struct ReliabilityTests {
         }
     }
 
+    @MainActor
+    @Test func sendWhileConnectingHonorsConfiguredWaitTimeout() async {
+        let client = WebSocketClient(
+            credentials: makeCredentials(),
+            waitForConnectionTimeout: .milliseconds(150),
+            waitPollInterval: .milliseconds(25),
+            sendTimeout: .milliseconds(150)
+        )
+        client._setStatusForTesting(.connecting)
+
+        let start = ContinuousClock.now
+        do {
+            try await client.send(.getState())
+            Issue.record("Expected send failure while connecting")
+        } catch let error as WebSocketError {
+            switch error {
+            case .notConnected:
+                break
+            default:
+                Issue.record("Expected notConnected, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected WebSocketError, got \(error)")
+        }
+
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .seconds(1), "Send should fail fast while connecting")
+    }
+
+    @MainActor
+    @Test func sendWhileReconnectingHonorsConfiguredWaitTimeout() async {
+        let client = WebSocketClient(
+            credentials: makeCredentials(),
+            waitForConnectionTimeout: .milliseconds(150),
+            waitPollInterval: .milliseconds(25),
+            sendTimeout: .milliseconds(150)
+        )
+        client._setStatusForTesting(.reconnecting(attempt: 1))
+
+        let start = ContinuousClock.now
+        do {
+            try await client.send(.getState())
+            Issue.record("Expected send failure while reconnecting")
+        } catch let error as WebSocketError {
+            switch error {
+            case .notConnected:
+                break
+            default:
+                Issue.record("Expected notConnected, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected WebSocketError, got \(error)")
+        }
+
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .seconds(1), "Send should fail fast while reconnecting")
+    }
+
     // MARK: - Fix 2: Extension Dialog Timeout
 
     @MainActor
@@ -107,8 +165,9 @@ struct ReliabilityTests {
         conn.handleServerMessage(.extensionUIRequest(request), sessionId: "s1")
         #expect(conn.activeExtensionDialog != nil)
 
-        // Switch to a new session — disconnects the old one
-        _ = conn.streamSession("s2")
+        // Simulate streamSession switching from s1 -> s2 without opening a real socket.
+        conn.disconnectSession()
+        conn._setActiveSessionIdForTesting("s2")
 
         #expect(conn.activeExtensionDialog == nil,
             "Extension dialog should be cleared on session switch")
@@ -155,7 +214,7 @@ struct ReliabilityTests {
         #expect(reducer.items.count <= TimelineReducer.maxItems)
 
         // Most recent message should still be present
-        guard case .userMessage(_, let text, _) = reducer.items.last else {
+        guard case .userMessage(_, let text, _, _) = reducer.items.last else {
             Issue.record("Expected userMessage as last item")
             return
         }
@@ -171,7 +230,7 @@ struct ReliabilityTests {
         }
 
         // Oldest items should have been trimmed
-        guard case .userMessage(_, let firstText, _) = reducer.items.first else {
+        guard case .userMessage(_, let firstText, _, _) = reducer.items.first else {
             Issue.record("Expected userMessage as first item")
             return
         }
@@ -193,7 +252,7 @@ struct ReliabilityTests {
         }
 
         let remainingMessages = reducer.items.compactMap { item -> String? in
-            guard case .userMessage(_, let text, _) = item else {
+            guard case .userMessage(_, let text, _, _) = item else {
                 return nil
             }
             return text
@@ -205,7 +264,7 @@ struct ReliabilityTests {
     }
 
     @MainActor
-    @Test func loadFromTraceRespectsCap() {
+    @Test func loadSessionRespectsCap() {
         let reducer = TimelineReducer()
 
         var events: [TraceEvent] = []
@@ -213,25 +272,10 @@ struct ReliabilityTests {
             events.append(makeTraceEvent(id: "e\(i)", text: "msg \(i)"))
         }
 
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count <= TimelineReducer.maxItems,
-            "loadFromTrace should respect item cap, got \(reducer.items.count)")
-    }
-
-    @MainActor
-    @Test func loadFromRESTRespectsCap() {
-        let reducer = TimelineReducer()
-
-        var messages: [SessionMessage] = []
-        for i in 0..<600 {
-            messages.append(makeMessage(id: "m\(i)", text: "msg \(i)"))
-        }
-
-        reducer.loadFromREST(messages)
-
-        #expect(reducer.items.count <= TimelineReducer.maxItems,
-            "loadFromREST should respect item cap, got \(reducer.items.count)")
+            "loadSession should respect item cap, got \(reducer.items.count)")
     }
 
     @MainActor
@@ -277,13 +321,16 @@ struct ReliabilityTests {
 
     // MARK: - Helpers
 
+    private func makeCredentials() -> ServerCredentials {
+        .init(host: "localhost", port: 7749, token: "sk_test", name: "Test")
+    }
+
     @MainActor
     private func makeConnection(sessionId: String = "s1") -> ServerConnection {
         let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test", name: "Test"
-        ))
-        _ = conn.streamSession(sessionId)
+        conn.configure(credentials: makeCredentials())
+        // Avoid real WS dial in unit tests.
+        conn._setActiveSessionIdForTesting(sessionId)
         return conn
     }
 
@@ -294,10 +341,4 @@ struct ReliabilityTests {
         return try! JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
     }
 
-    private func makeMessage(id: String, text: String) -> SessionMessage {
-        let json = """
-        {"id":"\(id)","sessionId":"s1","role":"user","content":"\(text)","timestamp":1700000000000}
-        """
-        return try! JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
-    }
 }

@@ -138,7 +138,7 @@ struct APIClientTests {
         #expect(session.status == .starting)
     }
 
-    @Test func getSessionWithMessages() async throws {
+    @Test func getSessionWithTrace() async throws {
         let client = makeClient()
         defer { cleanup() }
 
@@ -146,17 +146,17 @@ struct APIClientTests {
             self.mockResponse(json: """
             {
                 "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
-                "messages":[
-                    {"id":"m1","sessionId":"s1","role":"user","content":"Hello","timestamp":0}
+                "trace":[
+                    {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
                 ]
             }
             """)
         }
 
-        let (session, messages) = try await client.getSession(id: "s1")
+        let (session, trace) = try await client.getSession(id: "s1")
         #expect(session.id == "s1")
-        #expect(messages.count == 1)
-        #expect(messages[0].content == "Hello")
+        #expect(trace.count == 1)
+        #expect(trace[0].type == .user)
     }
 
     @Test func stopSession() async throws {
@@ -185,26 +185,7 @@ struct APIClientTests {
         try await client.deleteSession(id: "s1")
     }
 
-    @Test func getSessionTrace() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
-            {
-                "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},
-                "trace":[
-                    {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"hello"}
-                ]
-            }
-            """)
-        }
-
-        let (session, trace) = try await client.getSessionTrace(id: "s1")
-        #expect(session.id == "s1")
-        #expect(trace.count == 1)
-        #expect(trace[0].type == .user)
-    }
+    // getSessionTrace removed — merged into getSession.
 
     // MARK: - Models
 

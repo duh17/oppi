@@ -89,7 +89,7 @@ struct ModelPickerSheet: View {
                             )
                     }
                 } header: {
-                    Text(group.provider.capitalized)
+                    Text(providerDisplayName(group.provider))
                         .font(.caption.bold())
                         .foregroundStyle(.tokyoFgDim)
                 }
@@ -102,6 +102,17 @@ struct ModelPickerSheet: View {
         guard let current = currentModel else { return false }
         let fullId = "\(model.provider)/\(model.id)"
         return current == fullId || current == model.id
+    }
+
+    private func providerDisplayName(_ provider: String) -> String {
+        switch provider {
+        case "anthropic": return "Anthropic"
+        case "openai-codex": return "OpenAI Codex"
+        case "openai": return "OpenAI"
+        case "google": return "Google"
+        case "lmstudio": return "LM Studio"
+        default: return provider.capitalized
+        }
     }
 
     private func loadModels() async {

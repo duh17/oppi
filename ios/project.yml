@@ -1,4 +1,8 @@
 name: PiRemote
+packages:
+  swift-markdown:
+    url: https://github.com/apple/swift-markdown
+    from: "0.7.0"
 options:
   bundleIdPrefix: dev.chenda
   deploymentTarget:
@@ -37,6 +41,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         INFOPLIST_KEY_NSSupportsLiveActivities: true
+        ENABLE_USER_SCRIPT_SANDBOXING: false
     entitlements:
       path: PiRemote/Resources/PiRemote.entitlements
     info:
@@ -48,8 +53,10 @@ targets:
         UIBackgroundModes:
           - remote-notification
         NSSupportsLiveActivities: true
-        NSCameraUsageDescription: "Pi Remote needs camera access to scan the server QR code."
+        NSCameraUsageDescription: "Pi Remote uses the camera to take photos for agent conversations."
+        NSPhotoLibraryUsageDescription: "Pi Remote accesses your photo library to attach images to agent conversations."
         NSLocalNetworkUsageDescription: "Pi Remote needs local network access to connect to your Mac server."
+        NSFaceIDUsageDescription: "Pi Remote uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -57,7 +64,20 @@ targets:
             ts.net:
               NSIncludesSubdomains: true
               NSExceptionAllowsInsecureHTTPLoads: true
+    preBuildScripts:
+      - script: |
+          if command -v swiftlint >/dev/null 2>&1; then
+            swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet
+          else
+            echo "warning: SwiftLint not installed — brew install swiftlint"
+          fi
+        name: SwiftLint
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        showEnvVars: false
     dependencies:
+      - package: swift-markdown
+        product: Markdown
       - target: PiRemoteActivityExtension
         embed: true
   PiRemoteActivityExtension:

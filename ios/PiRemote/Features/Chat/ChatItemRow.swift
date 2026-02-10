@@ -1,19 +1,53 @@
 import SwiftUI
 
+/// Identifies a file to open in a sheet. Uses `.sheet(item:)` pattern
+/// to avoid the stale-capture bug with `.sheet(isPresented:)`.
+struct FileToOpen: Identifiable {
+    let sessionId: String
+    let path: String
+    var id: String { "\(sessionId)/\(path)" }
+}
+
 /// Renders a single `ChatItem` in the chat timeline.
 ///
 /// Designed for `LazyVStack` — lightweight, stable ID, no expensive layout.
 struct ChatItemRow: View {
     let item: ChatItem
     var isStreaming: Bool = false
+    var onFork: ((String) -> Void)?
+
+    /// Server-backed user/assistant messages can be forked.
+    private var isForkable: Bool {
+        guard UUID(uuidString: item.id) == nil else { return false }
+        switch item {
+        case .userMessage, .assistantMessage: return true
+        default: return false
+        }
+    }
+
+    private var forkAction: (() -> Void)? {
+        guard isForkable, let onFork else { return nil }
+        let id = item.id
+        return { onFork(id) }
+    }
 
     var body: some View {
-        switch item {
-        case .userMessage(_, let text, _):
-            UserMessageBubble(text: text)
+        let _ = {
+            let count = MainThreadBreadcrumb.incrementRowCount()
+            if count % 20 == 0 {
+                MainThreadBreadcrumb.set("itemRow-body:#\(count)")
+            }
+        }()
 
-        case .assistantMessage(_, let text, _):
-            AssistantMessageBubble(text: text, isStreaming: isStreaming)
+        switch item {
+        case .userMessage(_, let text, let images, _):
+            UserMessageBubble(text: text, images: images, onFork: forkAction)
+
+        case .assistantMessage(let id, let text, _):
+            AssistantMessageBubble(id: id, text: text, isStreaming: isStreaming, onFork: forkAction)
+
+        case .audioClip(let id, let title, let fileURL, _):
+            AudioClipRow(id: id, title: title, fileURL: fileURL)
 
         case .thinking(let id, let preview, let hasMore, let isDone):
             ThinkingRow(id: id, preview: preview, hasMore: hasMore, isDone: isDone)
@@ -26,10 +60,14 @@ struct ChatItemRow: View {
             )
 
         case .permission(let request):
-            PermissionCardView(request: request)
+            PermissionResolvedRow(
+                outcome: .expired,
+                tool: request.tool,
+                summary: request.displaySummary
+            )
 
-        case .permissionResolved(_, let action):
-            PermissionResolvedBadge(action: action)
+        case .permissionResolved(_, let outcome, let tool, let summary):
+            PermissionResolvedRow(outcome: outcome, tool: tool, summary: summary)
 
         case .systemEvent(_, let message):
             SystemEventRow(message: message)
@@ -44,25 +82,86 @@ struct ChatItemRow: View {
 
 private struct UserMessageBubble: View {
     let text: String
+    let images: [ImageAttachment]
+    var onFork: (() -> Void)?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("❯")
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.tokyoBlue)
+        VStack(alignment: .leading, spacing: 6) {
+            if !images.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { _, attachment in
+                            AsyncImageThumbnail(attachment: attachment)
+                        }
+                    }
+                    .padding(.leading, 24)
+                }
+            }
 
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.tokyoFg)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if !text.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("❯")
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.tokyoBlue)
+
+                    Text(text)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.tokyoFg)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else if !images.isEmpty {
+                Text("❯")
+                    .font(.system(.body, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.tokyoBlue)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
         .contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = text
+            if !text.isEmpty {
+                Button("Copy", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = text
+                }
             }
+            if let onFork {
+                Button("Fork from here", systemImage: "arrow.triangle.branch") {
+                    onFork()
+                }
+            }
+        } preview: {
+            MessagePreviewCard(text: text, icon: "❯", iconColor: .blue)
+        }
+    }
+}
+
+/// Decodes a base64 image attachment off the main thread.
+private struct AsyncImageThumbnail: View {
+    let attachment: ImageAttachment
+
+    @State private var decoded: UIImage?
+
+    var body: some View {
+        Group {
+            if let decoded {
+                Image(uiImage: decoded)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color.tokyoBgHighlight
+            }
+        }
+        .frame(width: 80, height: 80)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.tokyoComment.opacity(0.3), lineWidth: 1)
+        )
+        .task(id: attachment.data.prefix(32)) {
+            decoded = await Task.detached(priority: .userInitiated) {
+                guard let data = Data(base64Encoded: attachment.data) else { return nil as UIImage? }
+                return UIImage(data: data)
+            }.value
         }
     }
 }
@@ -70,8 +169,10 @@ private struct UserMessageBubble: View {
 // MARK: - Assistant Message
 
 private struct AssistantMessageBubble: View {
+    let id: String
     let text: String
     var isStreaming: Bool = false
+    var onFork: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -79,9 +180,15 @@ private struct AssistantMessageBubble: View {
                 .font(.system(.body, design: .monospaced).weight(.semibold))
                 .foregroundStyle(.tokyoPurple)
 
-            MarkdownText(text, isStreaming: isStreaming)
-                .foregroundStyle(.tokyoFg)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                MarkdownText(text, isStreaming: isStreaming)
+                    .foregroundStyle(.tokyoFg)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isStreaming {
+                    StreamingCursor()
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
@@ -92,7 +199,111 @@ private struct AssistantMessageBubble: View {
             Button("Copy as Markdown", systemImage: "text.document") {
                 UIPasteboard.general.string = text
             }
+            if let onFork {
+                Button("Fork from here", systemImage: "arrow.triangle.branch") {
+                    onFork()
+                }
+            }
+        } preview: {
+            MessagePreviewCard(text: text, icon: "π", iconColor: .purple)
         }
+    }
+}
+
+// MARK: - Audio Play Button
+
+private enum AudioButtonState {
+    case idle, loading, playing
+}
+
+private struct AudioPlayButton: View {
+    let state: AudioButtonState
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                switch state {
+                case .idle:
+                    Image(systemName: "play.fill")
+                        .font(.caption)
+                        .foregroundStyle(.tokyoComment)
+                case .loading:
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.tokyoPurple)
+                case .playing:
+                    Image(systemName: "stop.fill")
+                        .font(.caption)
+                        .foregroundStyle(.tokyoPurple)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+    }
+}
+
+// MARK: - Audio Clip Row
+
+private struct AudioClipRow: View {
+    let id: String
+    let title: String
+    let fileURL: URL
+
+    @Environment(AudioPlayerService.self) private var audioPlayer
+
+    private var state: AudioButtonState {
+        if audioPlayer.loadingItemID == id { return .loading }
+        if audioPlayer.playingItemID == id { return .playing }
+        return .idle
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "waveform")
+                .font(.caption)
+                .foregroundStyle(.tokyoPurple)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.tokyoFg)
+                Text(fileURL.lastPathComponent)
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            AudioPlayButton(state: state) {
+                audioPlayer.toggleFilePlayback(fileURL: fileURL, itemID: id)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.tokyoBgDark)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Streaming Cursor
+
+/// Pulsing block cursor indicating the assistant is still generating.
+private struct StreamingCursor: View {
+    @State private var isVisible = true
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.tokyoPurple)
+            .frame(width: 8, height: 14)
+            .opacity(isVisible ? 0.8 : 0.2)
+            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isVisible)
+            .onAppear { isVisible = false }
     }
 }
 
@@ -114,9 +325,7 @@ private struct ThinkingRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                guard isDone else {
-                    return
-                }
+                guard isDone else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     if isExpanded {
                         reducer.expandedItemIDs.remove(id)
@@ -189,56 +398,42 @@ private struct ToolCallRow: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
 
-    /// File path to open in RemoteFileView when tapped.
-    @State private var filePathToOpen: String?
-    @State private var showFileSheet = false
-    /// Whether lazy output loading is in progress (evicted tool calls).
+    @State private var fileToOpen: FileToOpen?
     @State private var isLoadingOutput = false
 
-    private var isExpanded: Bool {
-        reducer.expandedItemIDs.contains(id)
-    }
-
-    /// Structured args (if available) for smart rendering.
-    private var args: [String: JSONValue]? {
-        toolArgsStore.args(for: id)
-    }
-
-    private var isReadTool: Bool { ToolCallFormatting.isReadTool(tool) }
-    private var isWriteTool: Bool { ToolCallFormatting.isWriteTool(tool) }
-    private var isEditTool: Bool { ToolCallFormatting.isEditTool(tool) }
+    private var isExpanded: Bool { reducer.expandedItemIDs.contains(id) }
+    private var args: [String: JSONValue]? { toolArgsStore.args(for: id) }
     private var toolFilePath: String? { ToolCallFormatting.filePath(from: args) }
     private var readStartLine: Int { ToolCallFormatting.readStartLine(from: args) }
-
-    /// Session ID for file/output API calls.
     private var sessionId: String? { sessionStore.activeSessionId }
+    private var normalizedTool: String { ToolCallFormatting.normalized(tool) }
+
+    /// Background + border colors based on tool execution state.
+    private var stateBackground: Color {
+        if !isDone { return Color.tokyoBgHighlight.opacity(0.75) }
+        return isError ? Color.tokyoRed.opacity(0.08) : Color.tokyoGreen.opacity(0.06)
+    }
+
+    private var stateBorder: Color {
+        if !isDone { return Color.tokyoBlue.opacity(0.25) }
+        return isError ? Color.tokyoRed.opacity(0.25) : Color.tokyoComment.opacity(0.2)
+    }
 
     var body: some View {
-        // Special-case pseudo tools
         if tool == "__compaction" {
             SystemEventRow(message: "Context compacted")
         } else {
             VStack(alignment: .leading, spacing: 4) {
-                // Header: tool-specific smart formatting
-                HStack(spacing: 0) {
-                    // Main header area — tap to expand/collapse
-                    Button {
-                        expandOrLazyLoad()
-                    } label: {
-                        toolHeader
-                    }
+                Button { expandOrLazyLoad() } label: { toolHeader }
                     .buttonStyle(.plain)
-                }
 
-                // Expanded output — tool-specific rendering
+                if !isExpanded && isDone { collapsedPreview }
+
                 if isExpanded {
                     if isLoadingOutput {
                         HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Loading output…")
-                                .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                            ProgressView().controlSize(.small)
+                            Text("Loading output…").font(.caption).foregroundStyle(.tokyoComment)
                         }
                         .padding(8)
                     } else {
@@ -247,16 +442,14 @@ private struct ToolCallRow: View {
                 }
             }
             .padding(8)
-            .background(Color.tokyoBgHighlight.opacity(0.75))
-            .sheet(isPresented: $showFileSheet) {
-                if let sessionId, let filePathToOpen {
-                    RemoteFileView(sessionId: sessionId, path: filePathToOpen)
-                }
+            .background(stateBackground)
+            .sheet(item: $fileToOpen) { file in
+                RemoteFileView(sessionId: file.sessionId, path: file.path)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+                    .stroke(stateBorder, lineWidth: 1)
             )
             .contextMenu {
                 if !outputPreview.isEmpty {
@@ -268,9 +461,7 @@ private struct ToolCallRow: View {
                     UIPasteboard.general.string = "\(tool): \(argsSummary)"
                 }
                 if toolFilePath != nil, sessionId != nil {
-                    Button("Open File", systemImage: "doc.text.magnifyingglass") {
-                        openFile()
-                    }
+                    Button("Open File", systemImage: "doc.text.magnifyingglass") { openFile() }
                 }
             }
         }
@@ -278,8 +469,6 @@ private struct ToolCallRow: View {
 
     // MARK: - Expand & Lazy Load
 
-    /// Expand the tool call row. If output was evicted, lazy-load it from the
-    /// server's JSONL trace before expanding.
     private func expandOrLazyLoad() {
         withAnimation(.easeInOut(duration: 0.2)) {
             if isExpanded {
@@ -289,153 +478,117 @@ private struct ToolCallRow: View {
             reducer.expandedItemIDs.insert(id)
         }
 
-        // If output was evicted (store is empty but we know there was output),
-        // lazy-load from the server trace.
-        let hasOutput = toolOutputStore.fullOutput(for: id).isEmpty == false
-        let hadOutput = outputByteCount > 0
-        if !hasOutput && hadOutput && !isLoadingOutput {
+        let hasOutput = !toolOutputStore.fullOutput(for: id).isEmpty
+        if !hasOutput && outputByteCount > 0 && !isLoadingOutput {
             lazyLoadOutput()
         }
     }
 
-    /// Fetch full tool output from the server's JSONL trace for evicted items.
     private func lazyLoadOutput() {
         guard let sessionId, let api = connection.apiClient else { return }
-
         isLoadingOutput = true
         Task { @MainActor in
             defer { isLoadingOutput = false }
-            do {
-                let (output, _) = try await api.getToolOutput(sessionId: sessionId, toolCallId: id)
-                if !output.isEmpty {
-                    toolOutputStore.append(output, to: id)
-                }
-            } catch {
-                // Non-fatal — user just sees empty expanded output
+            if let (output, _) = try? await api.getToolOutput(sessionId: sessionId, toolCallId: id),
+               !output.isEmpty {
+                toolOutputStore.append(output, to: id)
             }
         }
     }
 
-    /// Open the tool's file path in RemoteFileView.
     private func openFile() {
-        guard let path = toolFilePath else { return }
-        filePathToOpen = path
-        showFileSheet = true
+        guard let path = toolFilePath, let sid = sessionId else { return }
+        fileToOpen = FileToOpen(sessionId: sid, path: path)
     }
 
-    // MARK: - Expanded Content
+    // MARK: - Tool Header
 
-    @ViewBuilder
-    private var expandedContent: some View {
-        let fullOutput = toolOutputStore.fullOutput(for: id)
-
-        if isEditTool, !isError,
-           let oldText = args?["oldText"]?.stringValue,
-           let newText = args?["newText"]?.stringValue {
-            // Edit tool: show diff
-            DiffContentView(oldText: oldText, newText: newText, filePath: toolFilePath)
-        } else if isWriteTool, !isError, let content = args?["content"]?.stringValue {
-            // Write tool: show written content
-            FileContentView(content: content, filePath: toolFilePath)
-        } else if isReadTool, !isError, !fullOutput.isEmpty {
-            // Read tool: show file content or image
-            if !ImageExtractor.extract(from: fullOutput).isEmpty {
-                // Image file — render via ToolOutputContent (handles data URIs)
-                ToolOutputContent(output: fullOutput, isError: false)
-            } else {
-                FileContentView(
-                    content: fullOutput,
-                    filePath: toolFilePath,
-                    startLine: readStartLine
-                )
-            }
-        } else if !fullOutput.isEmpty {
-            // Everything else: plain output
-            ToolOutputContent(output: fullOutput, isError: isError)
-        }
-    }
-
-    // MARK: - Smart Tool Header
-
+    /// Composable tool header — all headers follow the same shell:
+    /// `statusIcon | [tool-specific content] | Spacer | trailingInfo`
     @ViewBuilder
     private var toolHeader: some View {
-        switch tool {
-        case "Bash", "bash":
-            bashHeader
-        case "Read", "read":
-            fileToolHeader(verb: "read", icon: "doc.text")
-        case "Write", "write":
-            fileToolHeader(verb: "write", icon: "square.and.pencil")
-        case "Edit", "edit":
-            fileToolHeader(verb: "edit", icon: "pencil")
+        HStack(spacing: 6) {
+            statusIcon
+            toolHeaderContent
+            Spacer()
+            trailingInfo
+        }
+    }
+
+    /// Tool-specific middle content for the header.
+    @ViewBuilder
+    private var toolHeaderContent: some View {
+        switch normalizedTool {
+        case "bash":
+            Text("$").font(.caption.monospaced().bold()).foregroundStyle(.tokyoGreen)
+            Text(bashCommand).font(.caption.monospaced()).foregroundStyle(.tokyoFg)
+                .lineLimit(3).multilineTextAlignment(.leading)
+
+        case "read", "write", "edit":
+            let (icon, verb) = fileToolInfo
+            Image(systemName: icon).font(.caption).foregroundStyle(.tokyoCyan)
+            Text(verb).font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
+            filePathLabel
+
+        case "grep":
+            Text("grep").font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
+            if let p = args?["pattern"]?.stringValue {
+                Text("/\(p)/").font(.caption.monospaced()).foregroundStyle(.tokyoPurple).lineLimit(1)
+            }
+            if let p = args?["path"]?.stringValue {
+                Text(p.shortenedPath).font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+            }
+            if let g = args?["glob"]?.stringValue {
+                Text("(\(g))").font(.caption2.monospaced()).foregroundStyle(.tokyoComment).lineLimit(1)
+            }
+
+        case "find":
+            Text("find").font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
+            if let p = args?["pattern"]?.stringValue {
+                Text(p).font(.caption.monospaced()).foregroundStyle(.tokyoPurple).lineLimit(1)
+            }
+            if let p = args?["path"]?.stringValue {
+                Text("in \(p.shortenedPath)").font(.caption2.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+            }
+
+        case "ls":
+            Text("ls").font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
+            Text((args?["path"]?.stringValue ?? ".").shortenedPath)
+                .font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+
         default:
-            genericHeader
-        }
-    }
-
-    private var bashHeader: some View {
-        HStack(spacing: 6) {
-            statusIcon
-            Text("$")
-                .font(.caption.monospaced().bold())
-                .foregroundStyle(.tokyoGreen)
-            Text(bashCommand)
-                .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFg)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-            Spacer()
-            trailingInfo
-        }
-    }
-
-    private func fileToolHeader(verb: String, icon: String) -> some View {
-        HStack(spacing: 6) {
-            statusIcon
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(.tokyoCyan)
-            Text(verb)
-                .font(.caption.monospaced().bold())
-                .foregroundStyle(.tokyoCyan)
-
-            // File path — tappable to open in RemoteFileView
-            if isDone, toolFilePath != nil, sessionId != nil {
-                Button {
-                    openFile()
-                } label: {
-                    Text(filePath)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoBlue)
-                        .underline(color: .tokyoBlue.opacity(0.5))
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Text(filePath)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.tokyoFgDim)
-                    .lineLimit(1)
-            }
-            Spacer()
-            trailingInfo
-        }
-    }
-
-    private var genericHeader: some View {
-        HStack(spacing: 6) {
-            statusIcon
-            Text(tool)
-                .font(.caption.monospaced().bold())
-                .foregroundStyle(.tokyoCyan)
+            Text(tool).font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
             if !argsSummary.isEmpty {
-                Text(argsSummary)
+                Text(argsSummary).font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+            }
+        }
+    }
+
+    /// File tool icon + verb for read/write/edit.
+    private var fileToolInfo: (icon: String, verb: String) {
+        switch normalizedTool {
+        case "read": return ("doc.text", "read")
+        case "write": return ("square.and.pencil", "write")
+        case "edit": return ("pencil", "edit")
+        default: return ("doc", tool)
+        }
+    }
+
+    /// Tappable file path (when done + available) or plain text.
+    @ViewBuilder
+    private var filePathLabel: some View {
+        let display = ToolCallFormatting.displayFilePath(tool: tool, args: args, argsSummary: argsSummary)
+        if isDone, toolFilePath != nil, sessionId != nil {
+            Button { openFile() } label: {
+                Text(display)
                     .font(.caption.monospaced())
-                    .foregroundStyle(.tokyoFgDim)
+                    .foregroundStyle(.tokyoBlue)
+                    .underline(color: .tokyoBlue.opacity(0.5))
                     .lineLimit(1)
             }
-            Spacer()
-            trailingInfo
+            .buttonStyle(.plain)
+        } else {
+            Text(display).font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
         }
     }
 
@@ -449,112 +602,172 @@ private struct ToolCallRow: View {
         HStack(spacing: 4) {
             if outputByteCount > 0 {
                 Text(ToolCallFormatting.formatBytes(outputByteCount))
-                    .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .font(.caption2).foregroundStyle(.tokyoComment)
             }
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tokyoComment)
+                .font(.caption2).foregroundStyle(.tokyoComment)
         }
     }
-
-    // MARK: - Arg Extraction (delegates to ToolCallFormatting)
 
     private var bashCommand: String {
         ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
     }
 
-    private var filePath: String {
-        ToolCallFormatting.displayFilePath(tool: tool, args: args, argsSummary: argsSummary)
-    }
-}
+    // MARK: - Collapsed Preview
 
-// MARK: - Tool Output Content
+    @ViewBuilder
+    private var collapsedPreview: some View {
+        switch normalizedTool {
+        case "bash":
+            previewLines(ToolCallFormatting.tailLines(outputPreview))
 
-/// Renders tool output with inline image detection and ANSI color support.
-///
-/// When image data URIs are detected, they are stripped from the text display
-/// and rendered as inline images below the text. If the output is purely
-/// image data (no remaining text), the text portion is suppressed entirely.
-private struct ToolOutputContent: View {
-    let output: String
-    let isError: Bool
+        case "read":
+            if !isError { previewLines(ToolCallFormatting.headLines(outputPreview)) }
 
-    var body: some View {
-        let images = ImageExtractor.extract(from: output)
+        case "edit":
+            if !isError { editStats }
 
-        // Strip data URIs from text display to avoid showing raw base64
-        let strippedText: String = {
-            guard !images.isEmpty else { return output }
-            var text = output
-            // Remove in reverse order to preserve range validity
-            for image in images.reversed() {
-                text.removeSubrange(image.range)
-            }
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }()
-
-        VStack(alignment: .leading, spacing: 8) {
-            // Text output (only if there's non-image content)
-            if !strippedText.isEmpty {
-                let displayText = String(strippedText.prefix(2000))
-                if isError {
-                    Text(ANSIParser.strip(displayText))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoRed)
-                        .textSelection(.enabled)
-                } else {
-                    Text(ANSIParser.attributedString(from: displayText))
-                        .textSelection(.enabled)
-                }
-            }
-
-            // Inline images
-            ForEach(images) { image in
-                ImageBlobView(base64: image.base64, mimeType: image.mimeType)
+        default:
+            if isError, !outputPreview.isEmpty {
+                Text(String(outputPreview.prefix(120)))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tokyoRed)
+                    .lineLimit(2)
+                    .padding(.horizontal, 4)
             }
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgDark)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contextMenu {
-            if !strippedText.isEmpty {
-                Button("Copy Output", systemImage: "doc.on.doc") {
-                    UIPasteboard.general.string = strippedText
+    }
+
+    /// Shared preview text for bash (tail) and read (head) collapsed previews.
+    @ViewBuilder
+    private func previewLines(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            Text(text)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tokyoFgDim)
+                .lineLimit(3)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    /// +N/-N change stats for edit tool.
+    @ViewBuilder
+    private var editStats: some View {
+        if let stats = ToolCallFormatting.editDiffStats(from: args) {
+            HStack(spacing: 8) {
+                if stats.added > 0 {
+                    Text("+\(stats.added)").font(.caption2.monospaced().bold()).foregroundStyle(.tokyoGreen)
+                }
+                if stats.removed > 0 {
+                    Text("-\(stats.removed)").font(.caption2.monospaced().bold()).foregroundStyle(.tokyoRed)
+                }
+                if stats.added == 0 && stats.removed == 0 {
+                    Text("modified").font(.caption2.monospaced()).foregroundStyle(.tokyoComment)
                 }
             }
-            if !images.isEmpty {
-                Button("Copy Image", systemImage: "photo") {
-                    if let first = images.first,
-                       let data = Data(base64Encoded: first.base64, options: .ignoreUnknownCharacters),
-                       let uiImage = UIImage(data: data) {
-                        UIPasteboard.general.image = uiImage
-                    }
-                }
-            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: - Expanded Content
+
+    /// Full bash command shown when tool call is expanded.
+    @ViewBuilder
+    private var expandedBashCommand: some View {
+        if normalizedTool == "bash", let cmd = args?["command"]?.stringValue, cmd.count > 120 {
+            Text(cmd)
+                .font(.caption.monospaced())
+                .foregroundStyle(.tokyoFg)
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.tokyoBgDark.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        let fullOutput = toolOutputStore.fullOutput(for: id)
+
+        expandedBashCommand
+
+        if ToolCallFormatting.isEditTool(tool), !isError,
+           let oldText = args?["oldText"]?.stringValue,
+           let newText = args?["newText"]?.stringValue {
+            AsyncDiffView(oldText: oldText, newText: newText, filePath: toolFilePath)
+        } else if ToolCallFormatting.isWriteTool(tool), !isError, let content = args?["content"]?.stringValue {
+            FileContentView(content: content, filePath: toolFilePath)
+        } else if ToolCallFormatting.isReadTool(tool), !isError, !fullOutput.isEmpty {
+            AsyncToolOutput(output: fullOutput, isError: false, filePath: toolFilePath, startLine: readStartLine)
+        } else if !fullOutput.isEmpty {
+            AsyncToolOutput(output: fullOutput, isError: isError)
         }
     }
 }
 
 // MARK: - Permission Resolved
 
-private struct PermissionResolvedBadge: View {
-    let action: PermissionAction
+struct PermissionResolvedRow: View {
+    let outcome: PermissionOutcome
+    let tool: String
+    let summary: String
+
+    private var icon: String {
+        switch outcome {
+        case .allowed: return "checkmark.shield.fill"
+        case .denied: return "xmark.shield.fill"
+        case .expired: return "clock.badge.xmark"
+        case .cancelled: return "xmark.circle"
+        }
+    }
+
+    private var color: Color {
+        switch outcome {
+        case .allowed: return .tokyoGreen
+        case .denied, .cancelled: return .tokyoRed
+        case .expired: return .tokyoComment
+        }
+    }
+
+    private var label: String {
+        switch outcome {
+        case .allowed: return "Allowed"
+        case .denied: return "Denied"
+        case .expired: return "Expired"
+        case .cancelled: return "Cancelled"
+        }
+    }
 
     var body: some View {
-        HStack {
-            Image(systemName: action == .allow ? "checkmark.shield.fill" : "xmark.shield.fill")
-            Text(action == .allow ? "Allowed" : "Denied")
-                .font(.caption.bold())
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+            Text("\(label): \(tool)")
+                .font(.caption.monospaced().bold())
+                .foregroundStyle(color)
+            Text(truncatedSummary)
+                .font(.caption.monospaced())
+                .foregroundStyle(.tokyoFgDim)
+                .lineLimit(1)
         }
-        .foregroundStyle(action == .allow ? .tokyoGreen : .tokyoRed)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            (action == .allow ? Color.tokyoGreen : Color.tokyoRed).opacity(0.18)
-        )
-        .clipShape(Capsule())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contextMenu {
+            Button("Copy Command", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = "\(tool): \(summary)"
+            }
+        }
+    }
+
+    private var truncatedSummary: String {
+        let cleaned = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.count <= 60 { return cleaned }
+        return String(cleaned.prefix(59)) + "…"
     }
 }
 
@@ -599,5 +812,37 @@ private struct ErrorRow: View {
                 UIPasteboard.general.string = message
             }
         }
+    }
+}
+
+// MARK: - Context Menu Preview
+
+/// Clean preview card for context menu lift effect.
+/// Shows a compact, readable version of the message instead of the full row.
+private struct MessagePreviewCard: View {
+    let text: String
+    let icon: String
+    let iconColor: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(icon)
+                .font(.system(.body, design: .monospaced).weight(.semibold))
+                .foregroundStyle(iconColor)
+
+            Text(previewText)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(12)
+        }
+        .padding(16)
+        .frame(width: 320, alignment: .leading)
+    }
+
+    private var previewText: String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 500 { return trimmed }
+        return String(trimmed.prefix(497)) + "..."
     }
 }

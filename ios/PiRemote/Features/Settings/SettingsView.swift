@@ -3,6 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
+    @Environment(ThemeStore.self) private var themeStore
+
+    @State private var biometricEnabled = BiometricService.shared.isEnabled
+    @State private var biometricThreshold = BiometricService.shared.threshold
 
     var body: some View {
         List {
@@ -24,11 +28,34 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Appearance") {
+                Picker("Theme", selection: Binding(
+                    get: { themeStore.selectedThemeID },
+                    set: { themeStore.selectedThemeID = $0 }
+                )) {
+                    ForEach(ThemeID.allCases, id: \.self) { themeID in
+                        Text(themeID.displayName).tag(themeID)
+                    }
+                }
+
+                Text(themeStore.selectedThemeID.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Workspaces") {
                 NavigationLink {
                     WorkspaceListView()
                 } label: {
                     Label("Manage Workspaces", systemImage: "square.grid.2x2")
+                }
+            }
+
+            biometricSection
+
+            Section("Cache") {
+                Button("Clear Local Cache") {
+                    Task.detached { await TimelineCache.shared.clear() }
                 }
             }
 
@@ -46,9 +73,57 @@ struct SettingsView: View {
         .navigationTitle("Settings")
     }
 
+    // MARK: - Biometric Section
+
+    @ViewBuilder
+    private var biometricSection: some View {
+        let bio = BiometricService.shared
+
+        Section {
+            Toggle(isOn: $biometricEnabled) {
+                Label(
+                    "Require \(bio.biometricName)",
+                    systemImage: biometricIcon
+                )
+            }
+            .onChange(of: biometricEnabled) { _, newValue in
+                bio.isEnabled = newValue
+            }
+
+            if biometricEnabled {
+                Picker("Minimum Risk Level", selection: $biometricThreshold) {
+                    Text("High + Critical").tag(RiskLevel.high)
+                    Text("Critical Only").tag(RiskLevel.critical)
+                    Text("All Permissions").tag(RiskLevel.low)
+                }
+                .onChange(of: biometricThreshold) { _, newValue in
+                    bio.threshold = newValue
+                }
+            }
+        } header: {
+            Text("Biometric Approval")
+        } footer: {
+            if biometricEnabled {
+                Text("Permissions at or above \(biometricThreshold.label.lowercased()) risk require \(bio.biometricName) to approve. Deny is always one tap.")
+            } else {
+                Text("All permissions can be approved with a simple tap.")
+            }
+        }
+    }
+
+    private var biometricIcon: String {
+        switch BiometricService.shared.biometricName {
+        case "Face ID": return "faceid"
+        case "Touch ID": return "touchid"
+        case "Optic ID": return "opticid"
+        default: return "lock"
+        }
+    }
+
     private func signOut() {
         connection.disconnectSession()
         KeychainService.deleteCredentials()
+        Task.detached { await TimelineCache.shared.clear() }
         navigation.showOnboarding = true
     }
 }

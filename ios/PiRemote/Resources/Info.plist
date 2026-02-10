@@ -34,9 +34,13 @@
 		</dict>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Pi Remote needs camera access to scan the server QR code.</string>
+	<string>Pi Remote uses the camera to take photos for agent conversations.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Pi Remote uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pi Remote needs local network access to connect to your Mac server.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pi Remote accesses your photo library to attach images to agent conversations.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

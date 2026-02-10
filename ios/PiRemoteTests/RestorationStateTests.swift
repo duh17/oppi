@@ -154,12 +154,13 @@ struct AppTabTests {
     }
 
     @Test func initFromRawString() {
+        #expect(AppTab(rawString: "workspaces") == .workspaces)
         #expect(AppTab(rawString: "sessions") == .sessions)
         #expect(AppTab(rawString: "settings") == .settings)
     }
 
-    @Test func unknownRawStringDefaultsToSessions() {
-        #expect(AppTab(rawString: "unknown") == .sessions)
-        #expect(AppTab(rawString: "") == .sessions)
+    @Test func unknownRawStringDefaultsToWorkspaces() {
+        #expect(AppTab(rawString: "unknown") == .workspaces)
+        #expect(AppTab(rawString: "") == .workspaces)
     }
 }

@@ -45,6 +45,7 @@ struct TraceRenderingTests {
         switch item {
         case .userMessage: return "user"
         case .assistantMessage: return "assistant"
+        case .audioClip: return "audio"
         case .thinking: return "thinking"
         case .toolCall(_, let tool, _, _, _, _, _): return "tool(\(tool))"
         case .permission: return "permission"
@@ -66,7 +67,7 @@ struct TraceRenderingTests {
             traceEvent(id: "a1-think-1", type: .thinking, thinking: "Let me list the skills"),
             traceEvent(id: "a1-text-2", type: .assistant, text: "Here are my skills:\n\n1. **searxng**\n2. **fetch**"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         // Should be: user, thinking, assistant (no empty bubble for "\n\n")
         #expect(reducer.items.count == 3)
@@ -92,7 +93,7 @@ struct TraceRenderingTests {
             traceEvent(id: "a1", type: .assistant, text: ""),
             traceEvent(id: "a2", type: .assistant, text: "Real content"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 1)
         guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
@@ -109,7 +110,7 @@ struct TraceRenderingTests {
             traceEvent(id: "a1", type: .assistant, text: "   \n\t\n  "),
             traceEvent(id: "a2", type: .assistant, text: "Actual text"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 1)
     }
@@ -134,7 +135,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr2", type: .toolResult, toolCallId: "a2-tc-1",
                        toolName: "bash", output: "transcript content", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         #expect(types[0] == "user")
@@ -167,7 +168,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr3", type: .toolResult, toolCallId: "tc3",
                        output: "subtitles downloaded", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 3)
         for item in reducer.items {
@@ -196,7 +197,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
                        output: "line 1362 content...", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let args = reducer.toolArgsStore.args(for: "tc1")
         #expect(args?["path"]?.stringValue == "/tmp/transcript.txt")
@@ -218,7 +219,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
                        output: "Successfully wrote 38 bytes to /work/report.md", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let args = reducer.toolArgsStore.args(for: "tc1")
         #expect(args?["path"]?.stringValue == "/work/report.md")
@@ -240,7 +241,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
                        output: "Replaced text", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let args = reducer.toolArgsStore.args(for: "tc1")
         #expect(args?["oldText"]?.stringValue == "let x = 1")
@@ -259,7 +260,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
                        output: largeOutput, isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let stored = reducer.toolOutputStore.fullOutput(for: "tc1")
         #expect(stored.count < largeOutput.count, "Output should be truncated to perItemCap")
@@ -278,7 +279,7 @@ struct TraceRenderingTests {
                        output: "command not found\n\nCommand exited with code 127",
                        isError: true),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         guard case .toolCall(_, _, _, _, _, let isError, let isDone) = reducer.items[0] else {
             Issue.record("Expected toolCall")
@@ -333,7 +334,7 @@ struct TraceRenderingTests {
             traceEvent(id: "a7-text-0", type: .assistant,
                        text: "Done! Summary saved to **`/work/summary.md`**"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         let expected = [
@@ -385,7 +386,7 @@ struct TraceRenderingTests {
             traceEvent(id: "a1-text", type: .assistant,
                        text: "Here's **tomorrow's forecast**:\n\n| | |\n|---|---|\n| Temp | 48F |"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         #expect(types == [
@@ -427,7 +428,7 @@ struct TraceRenderingTests {
         events.append(traceEvent(id: "a-final", type: .assistant,
                                  text: "Done. Report saved to **`/work/report.md`**"))
 
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         #expect(types[0] == "user")
@@ -518,7 +519,7 @@ struct TraceRenderingTests {
             traceEvent(id: "u1", type: .user, text: "hi"),
             traceEvent(id: "a1", type: .assistant, text: "Hello"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 2)
         #expect(reducer.streamingAssistantID == nil)
@@ -536,7 +537,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
                        output: "Wrote 80 bytes", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let args = reducer.toolArgsStore.args(for: "tc1")
         #expect(args?["content"]?.stringValue == svg)
@@ -552,7 +553,7 @@ struct TraceRenderingTests {
             traceEvent(id: "tr1", type: .toolResult, toolCallId: "missing-tc",
                        output: "some output", isError: false),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.isEmpty)
         #expect(reducer.toolOutputStore.fullOutput(for: "missing-tc") == "some output")
@@ -570,7 +571,7 @@ struct TraceRenderingTests {
             traceEvent(id: "u2", type: .user, text: "second question"),
             traceEvent(id: "a2", type: .assistant, text: "second answer"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         #expect(types == ["user", "assistant", "system", "user", "assistant"])
@@ -598,12 +599,49 @@ struct TraceRenderingTests {
             traceEvent(id: "t2", type: .thinking, thinking: "Based on results..."),
             traceEvent(id: "a2", type: .assistant, text: "The answer is X."),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let types = reducer.items.map { itemType($0) }
         #expect(types == [
             "user", "thinking", "assistant", "tool(bash)", "thinking", "assistant",
         ])
+    }
+
+    // MARK: - Partial trace preferred over REST
+
+    @MainActor
+    @Test func partialTraceBetterThanREST() {
+        // Scenario: JSONL partially missing (server restart). Trace has
+        // some turns with tool calls. REST has ALL turns but as flat text.
+        // The trace path should always be preferred because it preserves
+        // tool call structure for the turns it has.
+
+        let reducer = TimelineReducer()
+
+        // Simulate what loadSession produces (partial trace — 2 of 5 turns)
+        let traceEvents = [
+            traceEvent(id: "u1", type: .user, text: "check weather"),
+            traceEvent(id: "t1", type: .thinking, thinking: "Let me look up the weather"),
+            traceEvent(id: "tc1", type: .toolCall, tool: "bash",
+                       args: ["command": .string("curl weather-api.com")]),
+            traceEvent(id: "tr1", type: .toolResult, toolCallId: "tc1",
+                       output: "{\"temp\": 48}", isError: false),
+            traceEvent(id: "a1", type: .assistant, text: "It's 48F today."),
+        ]
+        reducer.loadSession(traceEvents)
+
+        let traceTypes = reducer.items.map { itemType($0) }
+        #expect(traceTypes == ["user", "thinking", "tool(bash)", "assistant"])
+        // Tool output linked
+        #expect(reducer.toolOutputStore.fullOutput(for: "tc1") == "{\"temp\": 48}")
+        // Args stored for smart header rendering
+        let args = reducer.toolArgsStore.args(for: "tc1")
+        #expect(args?["command"]?.stringValue == "curl weather-api.com")
+
+        // Trace preserves structure that flat text-only messages would lose:
+        // thinking blocks, tool call rows with headers/output, structured args.
+        // This is why trace is the only history path — no REST fallback.
+        #expect(traceTypes.count == 4, "Trace has thinking + tool + assistant structure")
     }
 
     // MARK: - ToolCallFormatting

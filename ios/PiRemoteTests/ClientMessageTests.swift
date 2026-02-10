@@ -146,6 +146,13 @@ struct ClientMessageTests {
         #expect(json["requestId"] as? String == "req-42")
     }
 
+    @Test func encodesClientTurnId() throws {
+        let msg = ClientMessage.prompt(message: "hello", requestId: "req-1", clientTurnId: "turn-1")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "prompt")
+        #expect(json["clientTurnId"] as? String == "turn-1")
+    }
+
     @Test func encodesSetSessionName() throws {
         let msg = ClientMessage.setSessionName(name: "my-feature")
         let json = try decode(msg)

@@ -162,6 +162,20 @@ struct ServerMessageTests {
         #expect(toolCallId == "tc-42")
     }
 
+    @Test func decodesTurnAck() throws {
+        let json = #"{"type":"turn_ack","command":"prompt","clientTurnId":"turn-1","stage":"dispatched","requestId":"req-1","duplicate":false}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .turnAck(let command, let clientTurnId, let stage, let requestId, let duplicate) = msg else {
+            Issue.record("Expected .turnAck")
+            return
+        }
+        #expect(command == "prompt")
+        #expect(clientTurnId == "turn-1")
+        #expect(stage == .dispatched)
+        #expect(requestId == "req-1")
+        #expect(!duplicate)
+    }
+
     // MARK: - Permissions
 
     @Test func decodesPermissionRequest() throws {
@@ -196,11 +210,24 @@ struct ServerMessageTests {
 
     @Test func decodesError() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"error","error":"something broke"}"#)
-        guard case .error(let message) = msg else {
+        guard case .error(let message, let code, let fatal) = msg else {
             Issue.record("Expected .error")
             return
         }
         #expect(message == "something broke")
+        #expect(code == nil)
+        #expect(!fatal)
+    }
+
+    @Test func decodesFatalError() throws {
+        let msg = try ServerMessage.decode(from: #"{"type":"error","error":"Workspace session limit reached (3)","code":"SESSION_LIMIT_WORKSPACE","fatal":true}"#)
+        guard case .error(let message, let code, let fatal) = msg else {
+            Issue.record("Expected .error")
+            return
+        }
+        #expect(message == "Workspace session limit reached (3)")
+        #expect(code == "SESSION_LIMIT_WORKSPACE")
+        #expect(fatal)
     }
 
     // MARK: - Forward compatibility
@@ -447,7 +474,9 @@ struct ServerMessageTests {
 
     @Test func connectedWithFullSessionFields() throws {
         let json = """
-        {"type":"connected","session":{"id":"s1","userId":"u1","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":3,"tokens":{"input":50,"output":100},"cost":0.02,"model":"anthropic/claude-sonnet-4-0","contextTokens":150,"contextWindow":200000,"lastMessage":"working"}}
+        {"type":"connected","session":{"id":"s1","userId":"u1","status":"busy","createdAt":1700000000000,\
+        "lastActivity":1700000000000,"messageCount":3,"tokens":{"input":50,"output":100},"cost":0.02,\
+        "model":"anthropic/claude-sonnet-4-0","contextTokens":150,"contextWindow":200000,"lastMessage":"working"}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .connected(let session) = msg else {

@@ -5,6 +5,7 @@ DEVICE_QUERY=""
 LAST="15m"
 SUBSYSTEM="dev.chenda.PiRemote"
 PROCESS_NAME="PiRemote"
+PREDICATE_OVERRIDE=""
 OUTPUT_DIR="$HOME/Library/Logs/PiRemote/device"
 INCLUDE_DEBUG=0
 USE_SUDO=1
@@ -21,6 +22,7 @@ Options:
       --last <duration>        Lookback window for log collect (default: 15m)
       --subsystem <name>       Subsystem filter (default: dev.chenda.PiRemote)
       --process <name>         Process filter (default: PiRemote)
+      --predicate <expr>       Full NSPredicate override (takes precedence)
       --output-dir <path>      Output directory (default: ~/Library/Logs/PiRemote/device)
       --include-debug          Include debug-level entries in rendered text output
       --no-sudo                Do not use sudo for `log collect` (requires root)
@@ -29,6 +31,7 @@ Options:
 Examples:
   ios/scripts/collect-device-logs.sh --device DEVICE_UDID --last 30m
   ios/scripts/collect-device-logs.sh --include-debug --output-dir /tmp/piremote-device-logs
+  ios/scripts/collect-device-logs.sh --predicate 'process == "PiRemote" OR subsystem == "com.apple.runningboard"'
 EOF
 }
 
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --process)
       PROCESS_NAME="${2:-}"
+      shift 2
+      ;;
+    --predicate)
+      PREDICATE_OVERRIDE="${2:-}"
       shift 2
       ;;
     --output-dir)
@@ -108,12 +115,12 @@ resolve_device_udid() {
 if [[ -n "$DEVICE_QUERY" ]]; then
   DEVICE_UDID="$(resolve_device_udid "$DEVICE_QUERY")"
 else
+  # Auto-detect: find any paired iPhone. bootState may be null over
+  # network connections, so only require pairingState == "paired".
   DEVICE_UDID="$(jq -r '
     .result.devices[]
     | select(.hardwareProperties.deviceType == "iPhone")
     | select(.connectionProperties.pairingState == "paired")
-    | select(.deviceProperties.bootState == "booted")
-    | select((.connectionProperties.tunnelState // "") == "connected" or (.connectionProperties.transportType // "") == "usb")
     | .hardwareProperties.udid
   ' "$DEVICE_JSON" | head -n1)"
 fi
@@ -135,21 +142,25 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 ARCHIVE_PATH="$OUTPUT_DIR/piremote-device-${STAMP}.logarchive"
 TEXT_PATH="$OUTPUT_DIR/piremote-device-${STAMP}.txt"
 
-PREDICATE_PARTS=()
-if [[ -n "$SUBSYSTEM" ]]; then
-  PREDICATE_PARTS+=("subsystem == \"$SUBSYSTEM\"")
-fi
-if [[ -n "$PROCESS_NAME" ]]; then
-  PREDICATE_PARTS+=("process == \"$PROCESS_NAME\"")
-fi
-
-if [[ ${#PREDICATE_PARTS[@]} -eq 0 ]]; then
-  PREDICATE='process == "PiRemote"'
+if [[ -n "$PREDICATE_OVERRIDE" ]]; then
+  PREDICATE="$PREDICATE_OVERRIDE"
 else
-  PREDICATE="${PREDICATE_PARTS[0]}"
-  for ((i = 1; i < ${#PREDICATE_PARTS[@]}; i++)); do
-    PREDICATE+=" OR ${PREDICATE_PARTS[$i]}"
-  done
+  PREDICATE_PARTS=()
+  if [[ -n "$SUBSYSTEM" ]]; then
+    PREDICATE_PARTS+=("subsystem == \"$SUBSYSTEM\"")
+  fi
+  if [[ -n "$PROCESS_NAME" ]]; then
+    PREDICATE_PARTS+=("process == \"$PROCESS_NAME\"")
+  fi
+
+  if [[ ${#PREDICATE_PARTS[@]} -eq 0 ]]; then
+    PREDICATE='process == "PiRemote"'
+  else
+    PREDICATE="${PREDICATE_PARTS[0]}"
+    for ((i = 1; i < ${#PREDICATE_PARTS[@]}; i++)); do
+      PREDICATE+=" OR ${PREDICATE_PARTS[$i]}"
+    done
+  fi
 fi
 
 echo "==> Device: ${DEVICE_NAME:-unknown} ($DEVICE_UDID)"

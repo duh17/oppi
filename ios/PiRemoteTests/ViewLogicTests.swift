@@ -434,10 +434,16 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "LICENSE") == .plain)
     }
 
+    @Test func audioExtensionDetected() {
+        #expect(FileType.detect(from: "voice.wav") == .audio)
+        #expect(FileType.detect(from: "voice.mp3") == .audio)
+    }
+
     @Test func displayLabels() {
         #expect(FileType.markdown.displayLabel == "Markdown")
         #expect(FileType.json.displayLabel == "JSON")
         #expect(FileType.image.displayLabel == "Image")
+        #expect(FileType.audio.displayLabel == "Audio")
         #expect(FileType.plain.displayLabel == "Text")
         #expect(FileType.code(language: .swift).displayLabel == "Swift")
     }
@@ -484,6 +490,34 @@ struct ImageExtractorTests {
         #expect(images.count == 1)
         // Newlines stripped from base64
         #expect(!images[0].base64.contains("\n"))
+    }
+}
+
+// MARK: - AudioExtractor
+
+@Suite("AudioExtractor")
+struct AudioExtractorTests {
+
+    @Test func extractDataURI() {
+        let text = "Here is audio: data:audio/wav;base64,UklGRiQAAABXQVZF done."
+        let clips = AudioExtractor.extract(from: text)
+        #expect(clips.count == 1)
+        #expect(clips[0].mimeType == "audio/wav")
+        #expect(clips[0].base64 == "UklGRiQAAABXQVZF")
+    }
+
+    @Test func extractMultipleDataURIs() {
+        let text = "data:audio/mp3;base64,AAAA data:audio/m4a;base64,BBBB"
+        let clips = AudioExtractor.extract(from: text)
+        #expect(clips.count == 2)
+        #expect(clips[0].mimeType == "audio/mp3")
+        #expect(clips[1].mimeType == "audio/m4a")
+    }
+
+    @Test func malformedDataURIIgnored() {
+        let text = "data:text/plain;base64,SGVsbG8="
+        let clips = AudioExtractor.extract(from: text)
+        #expect(clips.isEmpty)
     }
 }
 
@@ -679,5 +713,99 @@ struct LineNumberInfoTests {
         #expect(numbers == "999\n1000")
         // End line 1000 → 4 digits → 4 * 7.5 = 30
         #expect(width == 30.0)
+    }
+}
+
+// MARK: - ComposerAutocomplete
+
+@Suite("ComposerAutocomplete")
+struct ComposerAutocompleteTests {
+
+    @Test func slashContextAtMessageStart() {
+        #expect(ComposerAutocomplete.context(for: "/co") == .slash(query: "co"))
+    }
+
+    @Test func slashContextNotTriggeredMidSentence() {
+        #expect(ComposerAutocomplete.context(for: "please /co") == .none)
+    }
+
+    @Test func slashContextEndsAfterWhitespace() {
+        #expect(ComposerAutocomplete.context(for: "/co ") == .none)
+    }
+
+    @Test func atFileContextDetectedForTrailingToken() {
+        #expect(ComposerAutocomplete.context(for: "open @src") == .atFile(query: "src"))
+    }
+
+    @Test func slashSuggestionsDedupedAndSorted() {
+        let commands = makeSlashCommands([
+            ("copy", "Copy message", "prompt"),
+            ("compact", "Compact context", "prompt"),
+            ("copy", "Copy duplicate", "extension"),
+        ])
+
+        let suggestions = ComposerAutocomplete.slashSuggestions(query: "co", commands: commands)
+        #expect(suggestions.map(\.name) == ["compact", "copy"])
+    }
+
+    @Test func insertSlashCommandReplacesCurrentToken() {
+        let updated = ComposerAutocomplete.insertSlashCommand(named: "compact", into: "/co")
+        #expect(updated == "/compact ")
+    }
+
+    @Test func insertSlashCommandNoOpOutsideSlashContext() {
+        let unchanged = ComposerAutocomplete.insertSlashCommand(named: "compact", into: "hello /co")
+        #expect(unchanged == "hello /co")
+    }
+
+    @Test func slashSuggestionsIncludeBuiltIns() {
+        let suggestions = ComposerAutocomplete.slashSuggestions(query: "comp", commands: [])
+        #expect(suggestions.map(\.name).contains("compact"))
+    }
+
+    private func makeSlashCommands(
+        _ commands: [(name: String, description: String, source: String)]
+    ) -> [SlashCommand] {
+        commands.compactMap { command in
+            SlashCommand(.object([
+                "name": .string(command.name),
+                "description": .string(command.description),
+                "source": .string(command.source),
+            ]))
+        }
+    }
+}
+
+// MARK: - SlashBuiltinCommand
+
+@Suite("SlashBuiltinCommand")
+struct SlashBuiltinCommandTests {
+
+    @Test func parseCompactWithInstructions() {
+        #expect(SlashBuiltinCommand.parse("/compact summarize this") == .compact(customInstructions: "summarize this"))
+    }
+
+    @Test func parseCompactWithoutInstructions() {
+        #expect(SlashBuiltinCommand.parse("/compact") == .compact(customInstructions: nil))
+    }
+
+    @Test func parseNew() {
+        #expect(SlashBuiltinCommand.parse("/new") == .newSession)
+    }
+
+    @Test func parseNameWithArgument() {
+        #expect(SlashBuiltinCommand.parse("/name sprint-42") == .setSessionName(name: "sprint-42"))
+    }
+
+    @Test func parseNameWithoutArgument() {
+        #expect(SlashBuiltinCommand.parse("/name") == .setSessionName(name: nil))
+    }
+
+    @Test func parseModel() {
+        #expect(SlashBuiltinCommand.parse("/model") == .modelPicker)
+    }
+
+    @Test func parseUnknownReturnsNil() {
+        #expect(SlashBuiltinCommand.parse("/skill:foo") == nil)
     }
 }

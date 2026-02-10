@@ -224,7 +224,6 @@ else
     | select(.hardwareProperties.deviceType == "iPhone")
     | select(.connectionProperties.pairingState == "paired")
     | select(.deviceProperties.bootState == "booted")
-    | select((.connectionProperties.tunnelState // "") == "connected" or (.connectionProperties.transportType // "") == "usb")
     | .hardwareProperties.udid
   ' "$DEVICE_JSON" | head -n1)"
 fi

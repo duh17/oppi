@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Grid of workspace cards shown when creating a new session.
 ///
@@ -98,7 +99,7 @@ struct WorkspacePickerView: View {
         error = nil
 
         do {
-            let session = try await api.createSession(workspaceId: workspace.id)
+            let session = try await api.createWorkspaceSession(workspaceId: workspace.id)
             sessionStore.upsert(session)
             dismiss()
         } catch {
@@ -208,19 +209,25 @@ struct RuntimeBadge: View {
         }
     }
 
-    private var label: String {
+    private var icon: String {
         switch normalizedRuntime {
-        case "container": return "CONTAINER"
-        case "host": return "HOST"
-        default: return "UNKNOWN"
+        case "container":
+            return "shippingbox.fill"
+        case "host":
+            if UIImage(systemName: "macstudio.fill") != nil {
+                return "macstudio.fill"
+            }
+            return "desktopcomputer"
+        default:
+            return "questionmark.circle.fill"
         }
     }
 
-    private var icon: String {
+    private var accessibilityLabel: String {
         switch normalizedRuntime {
-        case "container": return "shippingbox.fill"
-        case "host": return "macwindow"
-        default: return "questionmark.circle"
+        case "container": return "Container runtime"
+        case "host": return "Host runtime"
+        default: return "Unknown runtime"
         }
     }
 
@@ -242,20 +249,68 @@ struct RuntimeBadge: View {
 
     private var border: Color {
         switch normalizedRuntime {
-        case "container": return .tokyoGreen.opacity(0.7)
-        case "host": return .tokyoOrange.opacity(0.75)
+        case "container": return .tokyoGreen.opacity(0.72)
+        case "host": return .tokyoOrange.opacity(0.78)
         default: return .tokyoComment.opacity(0.5)
         }
     }
 
+    private var badgeSize: CGFloat {
+        compact ? 20 : 24
+    }
+
+    private var symbolSize: CGFloat {
+        compact ? 10 : 12
+    }
+
     var body: some View {
-        Label(label, systemImage: icon)
-            .font((compact ? Font.caption2 : Font.caption).monospaced().bold())
-            .foregroundStyle(fg)
-            .padding(.horizontal, compact ? 6 : 8)
-            .padding(.vertical, compact ? 2 : 3)
-            .background(bg, in: Capsule())
-            .overlay(Capsule().stroke(border, lineWidth: 1))
+        ZStack {
+            Circle()
+                .fill(bg)
+
+            Circle()
+                .stroke(border, lineWidth: 1)
+
+            if normalizedRuntime == "container" {
+                Circle()
+                    .stroke(Color.tokyoGreen.opacity(0.35), lineWidth: 1)
+                    .padding(2)
+            }
+
+            Image(systemName: icon)
+                .font(.system(size: symbolSize, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(fg)
+        }
+        .frame(width: badgeSize, height: badgeSize)
+        .shadow(
+            color: normalizedRuntime == "container" ? Color.tokyoGreen.opacity(0.35) : .clear,
+            radius: normalizedRuntime == "container" ? 4 : 0
+        )
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Runtime icon with a small status dot overlay in the bottom-trailing corner.
+/// Used in the ChatView navigation bar to show both runtime type and session status.
+struct RuntimeStatusBadge: View {
+    let runtime: String?
+    let statusColor: Color
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RuntimeBadge(runtime: runtime, compact: true)
+
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+                .overlay(
+                    Circle()
+                        .stroke(Color.tokyoBg, lineWidth: 1.5)
+                )
+                .offset(x: 2, y: 2)
+        }
+        .frame(width: 24, height: 24)
     }
 }
 

@@ -32,7 +32,7 @@ struct SessionOutlineView: View {
                 }
             case .messages:
                 switch item {
-                case .userMessage, .assistantMessage: return true
+                case .userMessage, .assistantMessage, .audioClip: return true
                 default: return false
                 }
             case .tools:
@@ -137,12 +137,15 @@ struct SessionOutlineView: View {
 
     private func outlineSummary(for item: ChatItem) -> String {
         switch item {
-        case .userMessage(_, let text, _):
+        case .userMessage(_, let text, _, _):
             return String(text.prefix(120))
 
         case .assistantMessage(_, let text, _):
             let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
             return String(clean.prefix(120))
+
+        case .audioClip(_, let title, let fileURL, _):
+            return "\(title): \(fileURL.lastPathComponent)"
 
         case .thinking(_, let preview, _, _):
             let clean = preview.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
@@ -154,8 +157,14 @@ struct SessionOutlineView: View {
         case .permission(let req):
             return req.displaySummary
 
-        case .permissionResolved(_, let action):
-            return action == .allow ? "Allowed" : "Denied"
+        case .permissionResolved(_, let outcome, let tool, _):
+            let label = switch outcome {
+            case .allowed: "Allowed"
+            case .denied: "Denied"
+            case .expired: "Expired"
+            case .cancelled: "Cancelled"
+            }
+            return "\(label): \(tool)"
 
         case .systemEvent(_, let msg):
             return msg
@@ -237,6 +246,7 @@ private struct OutlineRow: View {
         switch item {
         case .userMessage: return "person.fill"
         case .assistantMessage: return "cpu"
+        case .audioClip: return "waveform"
         case .thinking: return "brain"
         case .toolCall(_, let tool, _, _, _, _, _):
             switch tool {
@@ -257,6 +267,7 @@ private struct OutlineRow: View {
         switch item {
         case .userMessage: return .tokyoBlue
         case .assistantMessage: return .tokyoPurple
+        case .audioClip: return .tokyoPurple
         case .thinking: return .tokyoPurple
         case .toolCall(_, _, _, _, _, let isError, _):
             return isError ? .tokyoRed : .tokyoCyan
@@ -271,6 +282,7 @@ private struct OutlineRow: View {
         switch item {
         case .userMessage: return .tokyoFg
         case .assistantMessage: return .tokyoFgDim
+        case .audioClip: return .tokyoFgDim
         case .thinking: return .tokyoComment
         case .toolCall: return .tokyoFgDim
         default: return .tokyoComment

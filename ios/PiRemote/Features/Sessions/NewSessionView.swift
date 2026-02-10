@@ -15,11 +15,24 @@ struct NewSessionView: View {
     /// Group models by provider for sectioned display.
     private var groupedModels: [(provider: String, models: [ModelInfo])] {
         let grouped = Dictionary(grouping: availableModels) { $0.provider }
-        let order = ["anthropic", "openai", "google", "lmstudio"]
-        return order.compactMap { provider in
-            guard let models = grouped[provider], !models.isEmpty else { return nil }
-            return (provider: provider, models: models)
+        let preferredOrder = ["anthropic", "openai-codex", "openai", "google", "lmstudio"]
+
+        var result: [(provider: String, models: [ModelInfo])] = []
+        for provider in preferredOrder {
+            guard let models = grouped[provider], !models.isEmpty else { continue }
+            result.append((provider: provider, models: models))
         }
+
+        let extraProviders = grouped.keys
+            .filter { !preferredOrder.contains($0) }
+            .sorted()
+
+        for provider in extraProviders {
+            guard let models = grouped[provider], !models.isEmpty else { continue }
+            result.append((provider: provider, models: models))
+        }
+
+        return result
     }
 
     var body: some View {
@@ -93,6 +106,7 @@ struct NewSessionView: View {
     private func providerDisplayName(_ provider: String) -> String {
         switch provider {
         case "anthropic": return "Anthropic"
+        case "openai-codex": return "OpenAI Codex"
         case "openai": return "OpenAI"
         case "google": return "Google"
         case "lmstudio": return "LM Studio"

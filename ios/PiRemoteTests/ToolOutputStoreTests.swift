@@ -37,13 +37,24 @@ struct ToolOutputStoreTests {
         #expect(store.byteCount(for: "t1") == sizeAfterFill)
     }
 
+    @Test func mediaSizedDataUriFitsWithoutTruncation() {
+        let store = ToolOutputStore()
+        let base64 = String(repeating: "A", count: 700_000)
+        let output = "Read image file [image/png]\ndata:image/png;base64,\(base64)"
+
+        store.append(output, to: "img")
+
+        #expect(!store.fullOutput(for: "img").hasSuffix(ToolOutputStore.truncationMarker))
+        #expect(store.fullOutput(for: "img") == output)
+    }
+
     @Test func totalCapEvictsOldest() {
         let store = ToolOutputStore()
-        // Each chunk is ~256KB, total cap is 2MB = ~8 chunks fit
+        // Each chunk is per-item cap; inserting enough items should force FIFO eviction
         let chunkSize = ToolOutputStore.perItemCap
         let chunk = String(repeating: "x", count: chunkSize)
 
-        // Insert 12 items — should evict oldest to stay under 2MB
+        // Insert many items — should evict oldest to stay under totalCap
         for i in 0..<12 {
             store.append(chunk, to: "t\(i)")
         }

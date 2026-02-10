@@ -1,3 +1,4 @@
+// swiftlint:disable file_length type_body_length
 import Testing
 import Foundation
 @testable import PiRemote
@@ -101,7 +102,34 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func permissionInTimeline() {
+    @Test func whitespaceOnlyTextBeforeToolDiscarded() {
+        let reducer = TimelineReducer()
+
+        // Pattern: API emits "\n\n" text delta before a tool call.
+        // The finalizeAssistantMessage (triggered by toolStart) should
+        // discard the whitespace-only buffer instead of creating an empty bubble.
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "\n\n"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Done!"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // Should be: toolCall, assistant("Done!") — no empty bubble for "\n\n"
+        #expect(reducer.items.count == 2)
+        guard case .toolCall = reducer.items[0] else {
+            Issue.record("Expected toolCall at [0], got \(reducer.items[0])")
+            return
+        }
+        guard case .assistantMessage(_, let text, _) = reducer.items[1] else {
+            Issue.record("Expected assistantMessage at [1], got \(reducer.items[1])")
+            return
+        }
+        #expect(text == "Done!")
+    }
+
+    @MainActor
+    @Test func permissionRequestSkipsTimeline() {
         let reducer = TimelineReducer()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
@@ -111,21 +139,19 @@ struct TimelineReducerTests {
             timeoutAt: Date().addingTimeInterval(120)
         )
 
+        // New flow: permissionRequest does NOT add to timeline
         reducer.process(.permissionRequest(perm))
-        #expect(reducer.items.count == 1)
-        guard case .permission(let req) = reducer.items[0] else {
-            Issue.record("Expected permission")
-            return
-        }
-        #expect(req.id == "p1")
+        #expect(reducer.items.count == 0, "Pending permissions should not appear in timeline")
 
-        // Resolve
-        reducer.resolvePermission(id: "p1", action: .deny)
-        guard case .permissionResolved(_, let action) = reducer.items[0] else {
+        // Resolve appends a marker since the permission was never inline
+        reducer.resolvePermission(id: "p1", outcome: .denied, tool: "bash", summary: "bash: rm -rf /")
+        #expect(reducer.items.count == 1)
+        guard case .permissionResolved(_, let outcome, let tool, _) = reducer.items[0] else {
             Issue.record("Expected permissionResolved")
             return
         }
-        #expect(action == .deny)
+        #expect(outcome == .denied)
+        #expect(tool == "bash")
     }
 
     @MainActor
@@ -154,28 +180,7 @@ struct TimelineReducerTests {
         #expect(msg == "Something went wrong")
     }
 
-    @MainActor
-    @Test func loadFromREST() {
-        let reducer = TimelineReducer()
-        let messages = [
-            SessionMessage.stub(
-                id: "m1", sessionId: "s1", role: .user,
-                content: "Hello", timestamp: Date()
-            ),
-            SessionMessage.stub(
-                id: "m2", sessionId: "s1", role: .assistant,
-                content: "Hi there!", timestamp: Date()
-            ),
-        ]
-
-        reducer.loadFromREST(messages)
-        #expect(reducer.items.count == 2)
-        guard case .userMessage(_, let text, _) = reducer.items[0] else {
-            Issue.record("Expected userMessage")
-            return
-        }
-        #expect(text == "Hello")
-    }
+    // loadFromREST removed — trace is the only history path.
 
     // MARK: - Edge Cases
 
@@ -312,6 +317,62 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func memoryWarningClearsTransientStores() {
+        let reducer = TimelineReducer()
+        let toolID = "tool-1"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "bash", args: ["command": "ls"]))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolID))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        reducer.expandedItemIDs.insert(toolID)
+        let versionBefore = reducer.renderVersion
+
+        let stats = reducer.handleMemoryWarning()
+
+        #expect(stats.toolOutputBytesCleared > 0)
+        #expect(stats.expandedItemsCollapsed == 1)
+        #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.expandedItemIDs.isEmpty)
+        #expect(reducer.renderVersion > versionBefore)
+        #expect(!reducer.items.isEmpty)
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheSkipsOversizedEntries() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let oversized = String(repeating: "x", count: 50_000)
+        cache.set(oversized, segments: [.text(AttributedString("oversized"))])
+
+        #expect(cache.get(oversized) == nil)
+        let stats = cache.snapshot()
+        #expect(stats.entries == 0)
+        #expect(stats.totalSourceBytes == 0)
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheEvictsToBudget() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let segment = FlatSegment.text(AttributedString("cached"))
+        for idx in 0..<300 {
+            let text = "entry-\(idx)-" + String(repeating: "y", count: 2_000)
+            cache.set(text, segments: [segment])
+        }
+
+        let stats = cache.snapshot()
+        #expect(stats.entries <= 128)
+        #expect(stats.totalSourceBytes <= 1024 * 1024)
+    }
+
+    @MainActor
     @Test func processBatchMixedEvents() {
         let reducer = TimelineReducer()
 
@@ -418,7 +479,10 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func permissionExpiredRendersAsDenied() {
+    @Test func permissionExpiredIsNoOpInReducer() {
+        // In new flow, permissionExpired is handled by ServerConnection
+        // (via PermissionStore.take + resolvePermission), not by the reducer's
+        // process() method. The reducer ignores both permission events.
         let reducer = TimelineReducer()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
@@ -430,17 +494,14 @@ struct TimelineReducerTests {
         reducer.process(.permissionRequest(perm))
         reducer.process(.permissionExpired(id: "p1"))
 
-        guard case .permissionResolved(_, let action) = reducer.items[0] else {
-            Issue.record("Expected permissionResolved after expiry")
-            return
-        }
-        #expect(action == .deny)
+        // Neither event should add to the timeline
+        #expect(reducer.items.count == 0, "Reducer should ignore permission events (handled by ServerConnection)")
     }
 
-    // MARK: - loadFromTrace
+    // MARK: - loadSession
 
     @MainActor
-    @Test func loadFromTraceUserAndAssistant() {
+    @Test func loadSessionUserAndAssistant() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
@@ -450,10 +511,10 @@ struct TimelineReducerTests {
                        text: "Hi there!", tool: nil, args: nil, output: nil,
                        toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 2)
-        guard case .userMessage(_, let userText, _) = reducer.items[0] else {
+        guard case .userMessage(_, let userText, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }
@@ -467,7 +528,97 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceToolCallAndResult() {
+    @Test func loadSessionUnchangedTraceUsesIncrementalNoOp() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi there!", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting)
+        let baselineVersion = reducer.renderVersion
+        let baselineItems = reducer.items
+
+        reducer.loadSession(events)
+
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.renderVersion == baselineVersion)
+        #expect(reducer.items == baselineItems)
+    }
+
+    @MainActor
+    @Test func loadSessionAppendedTraceUsesIncrementalAppend() {
+        let reducer = TimelineReducer()
+        let base = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi there!", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(base)
+        let baselineVersion = reducer.renderVersion
+
+        let extended = base + [
+            TraceEvent(id: "e3", type: .assistant, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Incremental tail", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(extended)
+
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.renderVersion == baselineVersion + 1)
+        #expect(reducer.items.count == 3)
+        guard case .assistantMessage(_, let tailText, _) = reducer.items[2] else {
+            Issue.record("Expected incremental assistant tail")
+            return
+        }
+        #expect(tailText == "Incremental tail")
+    }
+
+    @MainActor
+    @Test func loadSessionForcesFullRebuildAfterOutOfBandMutation() {
+        let reducer = TimelineReducer()
+        let base = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(base)
+        reducer.appendSystemEvent("Local marker")
+
+        let extended = base + [
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Server canonical", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+
+        reducer.loadSession(extended)
+
+        #expect(!reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.items.count == 2)
+        guard case .userMessage = reducer.items[0] else {
+            Issue.record("Expected canonical user message at index 0")
+            return
+        }
+        guard case .assistantMessage(_, let text, _) = reducer.items[1] else {
+            Issue.record("Expected canonical assistant message at index 1")
+            return
+        }
+        #expect(text == "Server canonical")
+    }
+
+    @MainActor
+    @Test func loadSessionToolCallAndResult() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
@@ -477,7 +628,7 @@ struct TimelineReducerTests {
                        text: nil, tool: nil, args: nil, output: "file1.txt\nfile2.txt",
                        toolCallId: "tc1", toolName: "bash", isError: false, thinking: nil),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 1)
         guard case .toolCall(_, let tool, _, let preview, let bytes, let isError, let isDone) = reducer.items[0] else {
@@ -494,7 +645,7 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceThinking() {
+    @Test func loadSessionThinking() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "t1", type: .thinking, timestamp: "2025-01-01T00:00:00.000Z",
@@ -502,7 +653,7 @@ struct TimelineReducerTests {
                        toolCallId: nil, toolName: nil, isError: nil,
                        thinking: "Let me think about this carefully"),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 1)
         guard case .thinking(_, let preview, let hasMore, let isDone) = reducer.items[0] else {
@@ -515,7 +666,7 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceLongThinkingStoresFullText() {
+    @Test func loadSessionLongThinkingStoresFullText() {
         let reducer = TimelineReducer()
         let longThinking = String(repeating: "x", count: 600) // > maxPreviewLength
         let events = [
@@ -524,7 +675,7 @@ struct TimelineReducerTests {
                        toolCallId: nil, toolName: nil, isError: nil,
                        thinking: longThinking),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         guard case .thinking(_, _, let hasMore, _) = reducer.items[0] else {
             Issue.record("Expected thinking")
@@ -535,7 +686,7 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceSystemAndCompaction() {
+    @Test func loadSessionSystemAndCompaction() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "s1", type: .system, timestamp: "2025-01-01T00:00:00.000Z",
@@ -545,7 +696,7 @@ struct TimelineReducerTests {
                        text: nil, tool: nil, args: nil, output: nil,
                        toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         #expect(reducer.items.count == 2)
         guard case .systemEvent(_, let msg1) = reducer.items[0] else {
@@ -562,7 +713,7 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceToolResultErrorFlag() {
+    @Test func loadSessionToolResultErrorFlag() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
@@ -572,7 +723,7 @@ struct TimelineReducerTests {
                        text: nil, tool: nil, args: nil, output: "error: command failed",
                        toolCallId: "tc1", toolName: "bash", isError: true, thinking: nil),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         guard case .toolCall(_, _, _, _, _, let isError, _) = reducer.items[0] else {
             Issue.record("Expected toolCall")
@@ -582,14 +733,14 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadFromTraceToolArgsStored() {
+    @Test func loadSessionToolArgsStored() {
         let reducer = TimelineReducer()
         let events = [
             TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:00.000Z",
                        text: nil, tool: "read", args: ["path": .string("/etc/hosts")],
                        output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
         ]
-        reducer.loadFromTrace(events)
+        reducer.loadSession(events)
 
         let args = reducer.toolArgsStore.args(for: "tc1")
         #expect(args?["path"] == .string("/etc/hosts"))
@@ -603,7 +754,7 @@ struct TimelineReducerTests {
         reducer.appendUserMessage("Hello from user")
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(_, let text, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }
@@ -669,6 +820,46 @@ struct TimelineReducerTests {
         #expect(reducer.toolOutputStore.fullOutput(for: id) == longThinking)
     }
 
+    @MainActor
+    @Test func thinkingOverflowSkipsNoOpRerenders() {
+        let reducer = TimelineReducer()
+
+        let firstChunk = String(repeating: "a", count: ChatItem.maxPreviewLength + 50)
+        let tailChunk = String(repeating: "b", count: 120)
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        let baseline = reducer.renderVersion
+
+        reducer.processBatch([
+            .thinkingDelta(sessionId: "s1", delta: firstChunk),
+        ])
+
+        guard let firstItem = reducer.items.first,
+              case .thinking(let id, let previewAfterFirst, let hasMore, _) = firstItem else {
+            Issue.record("Expected thinking row after first chunk")
+            return
+        }
+        #expect(hasMore)
+        let afterFirst = reducer.renderVersion
+        #expect(afterFirst > baseline)
+
+        reducer.processBatch([
+            .thinkingDelta(sessionId: "s1", delta: tailChunk),
+        ])
+
+        guard let secondItem = reducer.items.first,
+              case .thinking(_, let previewAfterSecond, let hasMoreAfterSecond, _) = secondItem else {
+            Issue.record("Expected thinking row after second chunk")
+            return
+        }
+        #expect(hasMoreAfterSecond)
+        #expect(previewAfterSecond == previewAfterFirst)
+        #expect(reducer.renderVersion == afterFirst)
+
+        let fullThinking = reducer.toolOutputStore.fullOutput(for: id)
+        #expect(fullThinking.count == firstChunk.count + tailChunk.count)
+    }
+
     // MARK: - Tool args stored on toolStart
 
     @MainActor
@@ -694,24 +885,7 @@ struct TimelineReducerTests {
         #expect(stored == nil, "Empty args should not be stored")
     }
 
-    // MARK: - loadFromREST system messages
-
-    @MainActor
-    @Test func loadFromRESTSystemMessages() {
-        let reducer = TimelineReducer()
-        let messages = [
-            SessionMessage.stub(id: "m1", sessionId: "s1", role: .system,
-                                content: "System initialized", timestamp: Date()),
-        ]
-        reducer.loadFromREST(messages)
-
-        #expect(reducer.items.count == 1)
-        guard case .systemEvent(_, let msg) = reducer.items[0] else {
-            Issue.record("Expected systemEvent for system role")
-            return
-        }
-        #expect(msg == "System initialized")
-    }
+    // loadFromREST system messages test removed — REST path eliminated.
 
     // MARK: - ChatItem preview truncation
 
@@ -755,7 +929,7 @@ struct TimelineReducerTests {
         ))
         #expect(perm.timestamp == nil)
 
-        let resolved = ChatItem.permissionResolved(id: "6", action: .allow)
+        let resolved = ChatItem.permissionResolved(id: "6", outcome: .allowed, tool: "bash", summary: "test")
         #expect(resolved.timestamp == nil)
 
         let system = ChatItem.systemEvent(id: "7", message: "x")
@@ -776,20 +950,279 @@ struct TimelineReducerTests {
         store.clearAll()
         #expect(store.args(for: "t1") == nil)
     }
-}
 
-// MARK: - SessionMessage factory for tests
+    // MARK: - Incremental loadSession: timelineMatchesTrace correctness
 
-extension SessionMessage {
-    static func stub(
-        id: String, sessionId: String, role: MessageRole,
-        content: String, timestamp: Date
-    ) -> SessionMessage {
-        // Encode → decode round-trip to satisfy the Codable init with let properties
-        let tsMs = timestamp.timeIntervalSince1970 * 1000
-        let json = """
-        {"id":"\(id)","sessionId":"\(sessionId)","role":"\(role.rawValue)","content":"\(content)","timestamp":\(tsMs)}
-        """
-        return try! JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
+    /// Every mutation path must set `timelineMatchesTrace = false` so the next
+    /// `loadSession` does a full canonical rebuild instead of an incremental
+    /// no-op/append. If any path forgets, stale or duplicate items appear.
+
+    @MainActor
+    @Test func processBatchBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        // Live event via processBatch
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "live"),
+            .agentEnd(sessionId: "s1"),
+        ])
+
+        // Next loadSession must do full rebuild (not incremental)
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "processBatch should break incremental mode")
+    }
+
+    @MainActor
+    @Test func processSingleEventBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        reducer.process(.error(sessionId: "s1", message: "oops"))
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "process() should break incremental mode")
+    }
+
+    @MainActor
+    @Test func appendUserMessageBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        reducer.appendUserMessage("optimistic send")
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "appendUserMessage should break incremental mode")
+    }
+
+    @MainActor
+    @Test func removeItemBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        // Append then remove (retract optimistic message)
+        let id = reducer.appendUserMessage("will retract")
+        reducer.removeItem(id: id)
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "removeItem should break incremental mode")
+    }
+
+    @MainActor
+    @Test func appendAudioClipBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        reducer.appendAudioClip(title: "test", fileURL: URL(filePath: "/tmp/test.wav"))
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "appendAudioClip should break incremental mode")
+    }
+
+    @MainActor
+    @Test func resolvePermissionBreaksIncrementalMode() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        reducer.resolvePermission(id: "p1", outcome: .allowed, tool: "bash", summary: "ls")
+
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "resolvePermission should break incremental mode")
+    }
+
+    // MARK: - Incremental loadSession: edge cases
+
+    @MainActor
+    @Test func resetClearsIncrementalTrackingState() {
+        let reducer = TimelineReducer()
+        let events = makeBaseTrace()
+        reducer.loadSession(events)
+
+        // Verify incremental works before reset
+        reducer.loadSession(events)
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+
+        reducer.reset()
+
+        // After reset, same events should trigger full rebuild
+        reducer.loadSession(events)
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "reset should clear incremental tracking state")
+    }
+
+    @MainActor
+    @Test func tracePrefixDivergenceForcesFullRebuild() {
+        let reducer = TimelineReducer()
+        let original = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(original)
+
+        // Compaction rewrote history — same count but different ID at position 1
+        let rewritten = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2-rewritten", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Compacted response", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(rewritten)
+
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "Divergent prefix should force full rebuild")
+        #expect(reducer.items.count == 2)
+        guard case .assistantMessage(_, let text, _) = reducer.items[1] else {
+            Issue.record("Expected rewritten assistant message")
+            return
+        }
+        #expect(text == "Compacted response")
+    }
+
+    @MainActor
+    @Test func shorterTraceForcesFullRebuild() {
+        let reducer = TimelineReducer()
+        let full = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(full)
+        #expect(reducer.items.count == 2)
+
+        // Server returns shorter trace (e.g., fork from earlier point)
+        let shorter = [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(shorter)
+
+        #expect(!reducer._lastLoadWasIncrementalForTesting,
+            "Shorter trace should force full rebuild")
+        #expect(reducer.items.count == 1)
+    }
+
+    @MainActor
+    @Test func incrementalAppendWithToolCallAndResult() {
+        let reducer = TimelineReducer()
+        let base = makeBaseTrace()
+        reducer.loadSession(base)
+        let baselineVersion = reducer.renderVersion
+
+        let extended = base + [
+            TraceEvent(id: "tc1", type: .toolCall, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: nil, tool: "bash", args: ["command": .string("echo hi")],
+                       output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "tr1", type: .toolResult, timestamp: "2025-01-01T00:00:03.000Z",
+                       text: nil, tool: nil, args: nil, output: "hi",
+                       toolCallId: "tc1", toolName: "bash", isError: false, thinking: nil),
+        ]
+        reducer.loadSession(extended)
+
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.renderVersion == baselineVersion + 1)
+        #expect(reducer.items.count == 3) // user + assistant + toolCall
+
+        guard case .toolCall(_, let tool, _, let preview, _, _, _) = reducer.items[2] else {
+            Issue.record("Expected incremental tool call at index 2")
+            return
+        }
+        #expect(tool == "bash")
+        #expect(preview.contains("hi"))
+        #expect(reducer.toolOutputStore.fullOutput(for: "tc1") == "hi")
+        #expect(reducer.toolArgsStore.args(for: "tc1")?["command"] == .string("echo hi"))
+    }
+
+    @MainActor
+    @Test func incrementalAppendWithThinkingEvent() {
+        let reducer = TimelineReducer()
+        let base = makeBaseTrace()
+        reducer.loadSession(base)
+
+        let longThinking = String(repeating: "z", count: 600)
+        let extended = base + [
+            TraceEvent(id: "th1", type: .thinking, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: nil, tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: longThinking),
+        ]
+        reducer.loadSession(extended)
+
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.items.count == 3)
+        guard case .thinking(_, _, let hasMore, let isDone) = reducer.items[2] else {
+            Issue.record("Expected incremental thinking at index 2")
+            return
+        }
+        #expect(hasMore)
+        #expect(isDone)
+        #expect(reducer.toolOutputStore.fullOutput(for: "th1") == longThinking)
+    }
+
+    @MainActor
+    @Test func consecutiveIncrementalAppendsAccumulate() {
+        let reducer = TimelineReducer()
+        let base = makeBaseTrace()
+        reducer.loadSession(base)
+
+        let ext1 = base + [
+            TraceEvent(id: "e3", type: .assistant, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Third", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(ext1)
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.items.count == 3)
+
+        let ext2 = ext1 + [
+            TraceEvent(id: "e4", type: .assistant, timestamp: "2025-01-01T00:00:03.000Z",
+                       text: "Fourth", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(ext2)
+        #expect(reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.items.count == 4)
+
+        guard case .assistantMessage(_, let text, _) = reducer.items[3] else {
+            Issue.record("Expected fourth assistant message")
+            return
+        }
+        #expect(text == "Fourth")
+    }
+
+    // MARK: - Helpers
+
+    private func makeBaseTrace() -> [TraceEvent] {
+        [
+            TraceEvent(id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+                       text: "Hello", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+            TraceEvent(id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Hi there!", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
     }
 }
+
+
