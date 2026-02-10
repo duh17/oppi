@@ -134,6 +134,12 @@ describe("host preset: external actions gated", () => {
   it("asks for scp", () => {
     expect(policy.evaluate(bash("scp file user@server:/tmp/")).action).toBe("ask");
   });
+  it("asks for chained git push", () => {
+    expect(policy.evaluate(bash("cd / && git push origin main")).action).toBe("ask");
+  });
+  it("asks for chained ssh", () => {
+    expect(policy.evaluate(bash("echo ok; ssh user@server.com")).action).toBe("ask");
+  });
 });
 
 // ─── Data egress heuristics ───

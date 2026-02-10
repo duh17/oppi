@@ -221,6 +221,87 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+/**
+ * Split a shell command chain into top-level segments.
+ *
+ * Handles separators outside of quotes:
+ *   - &&
+ *   - ||
+ *   - ;
+ *   - newlines
+ *
+ * Keeps quoted/escaped separators intact.
+ */
+export function splitBashCommandChain(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed) segments.push(trimmed);
+    current = "";
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    const next = command[i + 1];
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+
+    if (!inSingle && !inDouble) {
+      if (ch === "&" && next === "&") {
+        pushCurrent();
+        i += 1;
+        continue;
+      }
+
+      if (ch === "|" && next === "|") {
+        pushCurrent();
+        i += 1;
+        continue;
+      }
+
+      if (ch === ";" || ch === "\n") {
+        pushCurrent();
+        continue;
+      }
+    }
+
+    current += ch;
+  }
+
+  pushCurrent();
+
+  return segments.length > 0 ? segments : [command.trim()].filter(Boolean);
+}
+
+const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
+
 // ─── Data Egress Detection ───
 
 /**
@@ -981,33 +1062,37 @@ export class PolicyEngine {
     // These catch patterns that glob rules can't express reliably.
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
-      const parsed = parseBashCommand(command);
+      const segments = splitBashCommandChain(command);
 
-      // Pipe to shell — curl/wget piped to sh/bash is remote code execution
-      if (parsed.hasPipe && /\|\s*(ba)?sh\b/.test(command)) {
-        const downloader = parsed.executable;
-        if (downloader === "curl" || downloader === "wget") {
+      for (const segment of segments) {
+        const parsed = parseBashCommand(segment);
+
+        // Pipe to shell — curl/wget piped to sh/bash is remote code execution
+        if (parsed.hasPipe && /\|\s*(ba)?sh\b/.test(segment)) {
+          const downloader = parsed.executable;
+          if (downloader === "curl" || downloader === "wget") {
+            return {
+              action: "ask",
+              reason: "Pipe to shell (remote code execution)",
+              risk: "high",
+              layer: "rule",
+              ruleLabel: "Pipe to shell",
+            };
+          }
+        }
+
+        // Data egress — curl/wget with flags that send data externally.
+        // Catches: curl -d, curl --data, curl -F, curl --upload-file,
+        //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
+        if (isDataEgress(parsed)) {
           return {
             action: "ask",
-            reason: "Pipe to shell (remote code execution)",
-            risk: "high",
+            reason: "Outbound data transfer",
+            risk: "medium",
             layer: "rule",
-            ruleLabel: "Pipe to shell",
+            ruleLabel: "Data egress",
           };
         }
-      }
-
-      // Data egress — curl/wget with flags that send data externally.
-      // Catches: curl -d, curl --data, curl -F, curl --upload-file,
-      //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
-      if (isDataEgress(parsed)) {
-        return {
-          action: "ask",
-          reason: "Outbound data transfer",
-          risk: "medium",
-          layer: "rule",
-          ruleLabel: "Data egress",
-        };
       }
     }
 
@@ -1518,8 +1603,17 @@ export class PolicyEngine {
           executable: browser.script,
         };
       }
-      const parsed = parseBashCommand(command);
-      return { executable: parsed.executable };
+
+      const segments = splitBashCommandChain(command);
+      const parsedSegments = segments
+        .map((segment) => parseBashCommand(segment))
+        .filter((parsed) => parsed.executable.length > 0);
+
+      const primary =
+        parsedSegments.find((parsed) => !CHAIN_HELPER_EXECUTABLES.has(parsed.executable)) ||
+        parsedSegments[0];
+
+      return { executable: primary?.executable };
     }
 
     if (["read", "write", "edit", "find", "ls"].includes(tool)) {
@@ -1564,7 +1658,14 @@ export class PolicyEngine {
       if (rule.match.commandPattern) {
         const command = (input as { command?: string }).command || "";
         const re = new RegExp("^" + rule.match.commandPattern.replace(/\*/g, ".*") + "$");
-        if (!re.test(command)) return false;
+
+        if (tool === "bash") {
+          const segments = splitBashCommandChain(command);
+          const matched = segments.some((segment) => re.test(segment));
+          if (!matched) return false;
+        } else if (!re.test(command)) {
+          return false;
+        }
       }
     }
 
@@ -1590,20 +1691,21 @@ export class PolicyEngine {
       return false;
     }
 
-    // Check executable (bash only)
-    if (rule.exec && tool === "bash") {
+    if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
-      const parsed = parseBashCommand(command);
-      // Match both bare name ("sudo") and absolute path ("/usr/bin/sudo").
-      // Extract basename from absolute paths for comparison.
-      const execName = parsed.executable.includes("/")
-        ? parsed.executable.split("/").pop() || parsed.executable
-        : parsed.executable;
-      if (execName !== rule.exec) {
-        return false;
+      const segments = splitBashCommandChain(command);
+
+      for (const segment of segments) {
+        if (this.matchesBashRuleSegment(rule, segment)) {
+          return true;
+        }
       }
-    } else if (rule.exec && tool !== "bash") {
-      // exec field only applies to bash
+
+      return false;
+    }
+
+    // exec field only applies to bash
+    if (rule.exec) {
       return false;
     }
 
@@ -1611,18 +1713,9 @@ export class PolicyEngine {
     if (rule.pattern) {
       const target = this.getMatchTarget(tool, input);
 
-      if (tool === "bash") {
-        // Bash commands are strings, not file paths. minimatch treats '/' as
-        // a path separator so '*' won't cross it — 'rm *-*r*' fails to match
-        // 'rm -rf /tmp/foo'. Convert the glob to a simple regex instead.
-        if (!matchBashPattern(target, rule.pattern)) {
-          return false;
-        }
-      } else {
-        // For file-path tools (read, write, edit), minimatch is appropriate.
-        if (!minimatch(target, rule.pattern, { dot: true })) {
-          return false;
-        }
+      // For file-path tools (read, write, edit), minimatch is appropriate.
+      if (!minimatch(target, rule.pattern, { dot: true })) {
+        return false;
       }
     }
 
@@ -1633,6 +1726,31 @@ export class PolicyEngine {
       if (paths.length > 0) {
         const confined = paths.every((p) => p.startsWith(prefix));
         if (!confined) return false;
+      }
+    }
+
+    return true;
+  }
+
+  private matchesBashRuleSegment(rule: PolicyRule, segment: string): boolean {
+    if (rule.exec) {
+      const parsed = parseBashCommand(segment);
+      // Match both bare name ("sudo") and absolute path ("/usr/bin/sudo").
+      // Extract basename from absolute paths for comparison.
+      const execName = parsed.executable.includes("/")
+        ? parsed.executable.split("/").pop() || parsed.executable
+        : parsed.executable;
+      if (execName !== rule.exec) {
+        return false;
+      }
+    }
+
+    if (rule.pattern) {
+      // Bash commands are strings, not file paths. minimatch treats '/' as
+      // a path separator so '*' won't cross it — 'rm *-*r*' fails to match
+      // 'rm -rf /tmp/foo'. Use flat string glob matching.
+      if (!matchBashPattern(segment, rule.pattern)) {
+        return false;
       }
     }
 
