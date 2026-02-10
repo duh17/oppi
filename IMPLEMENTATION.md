@@ -40,14 +40,15 @@ is in `WORKSPACE-CONTAINERS.md`. Current shipped behavior is in `README.md`.
 
 ### Completed since initial plan
 - ✅ Step 1 (`TODO-5d327779`) — auth proxy landed in server/sandbox/session lifecycle.
+- ✅ Step 2/5 (`TODO-fb28452c`) — sequenced durable replay + reconnect catch-up shipped (server + iOS).
 - ✅ Step 6 (`TODO-aa0f8e35`) — snapshot semantics docs covered.
 - ✅ Step 7 (`TODO-78eba302`) — workspace-scoped runtime core complete.
 - ✅ Step 8 (`TODO-31efdce1`) — workspace-scoped API migration complete.
 - ✅ Step 9 (`TODO-1fe2951f`) — iOS workspace-first UX shipped.
 - ✅ Step 11a (`TODO-eabe2bf3`) — server-side user skill CRUD shipped.
+- ✅ Infra refactor (2026-02-10) — server orchestration split into `server.ts` + `routes.ts` + `stream.ts`.
 
 ### In progress / partially delivered
-- 🟡 Step 2/5 (`TODO-fb28452c`) — turn-idempotency and staged ACK reliability work shipped, sequence replay work still open.
 - 🟡 Step 3 (`TODO-362ce018`) — file content endpoint shipped; directory listing API remains.
 - 🟡 Step 4c (`TODO-bd36f35a`) — tappable file access in chat shipped via ToolCall rows (different UX than planned chips).
 
@@ -92,7 +93,7 @@ reconnect catch-up without losing tool call history.
 | Durable/ephemeral broadcast split | `src/sessions.ts` |
 | `message_end` broadcast (new durable event) | `src/sessions.ts` |
 | `currentSeq` in connected message | `src/sessions.ts` |
-| `GET /sessions/:id/events?since=` | `src/server.ts` |
+| `GET /sessions/:id/events?since=` | `src/routes.ts` |
 | Type updates (seq, message_end) | `src/types.ts` |
 | EventRing unit tests | `tests/event-ring.test.ts` — NEW |
 
@@ -105,9 +106,9 @@ Expose workspace files over REST so the iOS app can browse agent output.
 
 | Deliverable | File |
 |-------------|------|
-| Path resolution + listing + content-type | `src/files.ts` — NEW |
-| `GET /sessions/:id/files?path=` (list) | `src/server.ts` |
-| `GET /sessions/:id/files/*path` (content) | `src/server.ts` |
+| Workspace path guard + MIME handling | `src/routes.ts` (shipped) |
+| `GET /sessions/:id/files?path=` (file content) | `src/routes.ts` (shipped) |
+| Directory listing API (`/sessions/:id/files?path=<dir>`) | ⏳ pending |
 
 ---
 
@@ -174,8 +175,8 @@ stopping one doesn't affect the other.
 
 | Deliverable | File |
 |-------------|------|
-| Workspace-scoped session APIs | `src/server.ts` |
-| Legacy route compat + deprecation warnings | `src/server.ts` |
+| Workspace-scoped session APIs | `src/routes.ts` |
+| Legacy route compat + deprecation warnings | `src/routes.ts` |
 | Protocol version signal | `src/types.ts` |
 | Background reconciliation job | `src/workspace-runtime.ts` |
 | API contract tests | `tests/api-compat.test.ts` — NEW |

@@ -229,12 +229,14 @@ LOAD_TOKEN=<token> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
 GET    /health                     # Health check (no auth)
 GET    /me                         # Current user info
 
-# Sessions
+# Sessions (workspace-scoped aliases also exist under /workspaces/:wid/sessions/:sid/*)
 GET    /sessions                   # List user's sessions
 POST   /sessions                   # Create new session (optional workspaceId)
 GET    /sessions/:id               # Get session + messages
 POST   /sessions/:id/stop          # Stop session process
 GET    /sessions/:id/trace         # Parse pi JSONL trace
+GET    /sessions/:id/events?since=<seq>   # Durable event catch-up replay
+GET    /sessions/:id/files?path=<path>    # Read single workspace file
 DELETE /sessions/:id               # Stop + delete session metadata
 
 # Workspaces
@@ -244,15 +246,26 @@ GET    /workspaces/:id             # Get workspace
 PUT    /workspaces/:id             # Update workspace
 DELETE /workspaces/:id             # Delete workspace
 
-# Skills
-GET    /skills                     # List available skills
-POST   /skills/rescan              # Rescan host skill directories
+# Built-in skills (host-discovered)
+GET    /skills
+GET    /skills/:name
+GET    /skills/:name/file?path=<relativePath>
+POST   /skills/rescan
+
+# User skills
+GET    /me/skills
+GET    /me/skills/:name
+GET    /me/skills/:name/files?path=<relativePath>
+POST   /me/skills                  # body: { name, sessionId, path? }
+DELETE /me/skills/:name
 ```
 
 ### WebSocket
 
 ```
-Connect: ws://host:7749/sessions/:id/stream
+Session stream (preferred): ws://host:7749/workspaces/:wid/sessions/:sid/stream
+Session stream (legacy):    ws://host:7749/sessions/:id/stream
+User stream mux:            ws://host:7749/stream
 Authorization: Bearer <token>
 
 # Client → Server
@@ -298,27 +311,30 @@ Authorization: Bearer <token>
 
 ```
 pios/
-├── pi-remote/              # Server (TypeScript)
+├── pi-remote/               # Server (TypeScript)
 │   ├── src/
-│   │   ├── index.ts       # CLI
-│   │   ├── server.ts      # HTTP + WebSocket + REST routes
-│   │   ├── sessions.ts    # Pi process manager + RPC translation
-│   │   ├── gate.ts        # Permission gate TCP server
-│   │   ├── policy.ts      # Layered policy engine
-│   │   ├── sandbox.ts     # Apple container orchestration
-│   │   ├── storage.ts     # Persistent state
-│   │   ├── skills.ts      # Skill registry/discovery
-│   │   └── types.ts       # Shared protocol types
+│   │   ├── index.ts         # CLI
+│   │   ├── server.ts        # HTTP shell + WS upgrades + orchestrator
+│   │   ├── routes.ts        # REST route handlers
+│   │   ├── stream.ts        # /stream mux (ring replay + subscriptions)
+│   │   ├── sessions.ts      # Pi process manager + RPC translation
+│   │   ├── workspace-runtime.ts # Workspace lifecycle + concurrency limits
+│   │   ├── gate.ts          # Permission gate TCP server
+│   │   ├── policy.ts        # Layered policy engine
+│   │   ├── sandbox.ts       # Apple container orchestration
+│   │   ├── storage.ts       # Persistent state
+│   │   ├── skills.ts        # Skill registry/discovery
+│   │   └── types.ts         # Shared protocol types
 │   ├── extensions/
 │   │   └── permission-gate/
 │   └── package.json
 │
-├── ios/                    # iOS app (SwiftUI)
+├── ios/                     # iOS app (SwiftUI)
 │   ├── PiRemote/
 │   └── PiRemoteTests/
 │
-├── WORKSPACE-CONTAINERS.md # Workspace=container architecture spike
-└── IMPLEMENTATION.md       # Execution checklist
+├── WORKSPACE-CONTAINERS.md  # Workspace=container architecture target
+└── IMPLEMENTATION.md        # Execution checklist
 ```
 
 ## Data Storage
@@ -334,12 +350,14 @@ pios/
     └── <userId>/
         └── <workspaceId>.json       # Workspace configs
 
-~/.pi-remote/sandboxes/              # Session sandboxes (current runtime)
+~/.pi-remote/sandboxes/              # Workspace-scoped sandbox runtime
 └── <userId>/
-    └── <sessionId>/
-        ├── agent/                   # Pi home: auth/models/extensions/skills/sessions
-        ├── workspace/               # Working directory (/work in container)
-        └── system-prompt.md         # Generated prompt with workspace context
+    └── <workspaceId>/
+        ├── workspace/               # Shared /work for all sessions in this workspace
+        └── sessions/
+            └── <sessionId>/
+                ├── agent/           # Per-session Pi home (auth/models/extensions/sessions)
+                └── system-prompt.md # Generated prompt for that session
 
 ~/.pi-remote/memory/                 # Optional memory namespaces
 └── <namespace>/
@@ -347,7 +365,8 @@ pios/
 
 Isolation model (current):
 - Per-user metadata separation in config store
-- Per-session sandbox directories (process + filesystem isolation)
+- Per-workspace sandbox container + shared workspace filesystem
+- Per-session Pi home/state under workspace `sessions/<sessionId>/`
 - Permission-gate decisions enforced per tool call
 
 ## Status
@@ -358,15 +377,18 @@ Isolation model (current):
 - [x] Multi-user auth + invite flow
 - [x] Session lifecycle + persistence
 - [x] Permission gate (extension + TCP gate + policy engine)
-- [x] Workspace CRUD + skill discovery APIs
+- [x] Workspace-scoped runtime + multi-session concurrency in one workspace
+- [x] Sequenced durable event replay (`seq` + catch-up endpoint + iOS dedupe)
+- [x] User skill CRUD API (`/me/skills`)
 - [x] iOS app core flows (onboarding, sessions, chat, workspace management)
 - [x] Tool event correlation (`toolCallId`) end-to-end
 
 ### 🚧 In Progress
 
-- [ ] Workspace-scoped runtime (workspace owns container lifecycle)
-- [ ] Multi-session concurrency inside one workspace container
+- [ ] Session file API directory listing + full iOS file browser/preview flow
 - [ ] Fork workflow (API + UI)
+- [ ] User-skill session loading + promotion safety gate
+- [ ] iOS skills UI + skill creation workflow
 - [ ] Skill import + security scanning pipeline
 - [ ] Push notifications / background approval UX hardening
 
