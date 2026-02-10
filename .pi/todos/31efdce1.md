@@ -8,7 +8,7 @@
     "api",
     "phase-1"
   ],
-  "status": "backlog",
+  "status": "done",
   "created_at": "2026-02-08T01:25:36.848Z"
 }
 
@@ -63,3 +63,13 @@ Depends on: Phase 0 (workspace runtime)
 ## Implementation Order: Step 8
 
 Follows directly from Step 7 (workspace runtime). ~1-2 days.
+
+## Progress
+
+- 2026-02-09: Added workspace-scoped session routes: `GET/POST /workspaces/:wid/sessions`, `POST .../stop`, `POST .../resume`, `GET .../tool-output/:tid`, `GET .../files`, `GET/DELETE .../sessions/:sid`, `WS .../stream`.
+- 2026-02-09: Added `handleListWorkspaceSessions`, `handleCreateWorkspaceSession`, `handleResumeWorkspaceSession` handlers. Existing handlers (`handleStopSession`, `handleGetToolOutput`, `handleGetSessionFile`, `handleGetSession`, `handleDeleteSession`) reused by both v1 and v2 routes.
+- 2026-02-09: Legacy `/sessions*` routes kept with deprecation headers (`Deprecation: true`, `Sunset: 2026-06-01`, `Link` to successor). Server logs deprecation warnings.
+- 2026-02-09: Protocol version signal: `X-PiRemote-Protocol: 2` header on all responses. Health endpoint returns `{ ok: true, protocol: 2 }`.
+- 2026-02-09: WebSocket upgrade handles both `/workspaces/:wid/sessions/:sid/stream` (v2) and `/sessions/:sid/stream` (v1 with deprecation log).
+- 2026-02-09: Added `tests/api-routes.test.ts` (18 tests): v2 route matching, v1 compat matching, route priority (workspace paths don't false-match legacy patterns).
+- 2026-02-09: **Phase 1 complete.** 16 test files, 188 tests passing.

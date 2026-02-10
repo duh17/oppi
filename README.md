@@ -124,6 +124,16 @@ Collect device OSLog entries for PiRemote:
 ./ios/scripts/collect-device-logs.sh --device <iphone-udid> --last 30m --include-debug
 ```
 
+Capture a focused per-session bundle (minimal noise, app logs only):
+
+```bash
+# Tip: copy session ID from chat title, then run
+./scripts/capture-session.sh --session <session-id> --last 20m
+
+# Optional: include perf categories when debugging render/reducer behavior
+./scripts/capture-session.sh --session <session-id> --include-perf --include-debug
+```
+
 If `pi-remote invite` should use LAN instead of Tailscale:
 
 ```bash
@@ -167,6 +177,23 @@ pi-remote invite <name> --host ... # Force LAN/tailnet host in QR payload
 pi-remote users                    # List users
 pi-remote users remove <n>         # Remove a user
 pi-remote status                   # Show server status
+```
+
+## Performance & Reliability Harnesses
+
+```bash
+cd pi-remote
+
+# Existing full-stack E2E (real server + container + pi + LLM)
+npx tsx test-e2e.ts
+
+# New lightweight load harness
+# - HTTP /health throughput + latency
+# - WS connect + get_state RTT under forced-drop churn
+npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
+
+# WS churn mode (requires auth + session)
+LOAD_TOKEN=<token> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
 ```
 
 ## API

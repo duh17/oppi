@@ -1,5 +1,18 @@
 # Pi Remote — Agent Instructions
 
+## Security First
+
+Security is the #1 priority in Pi Remote. The permission gate is the only protection layer for host-mode sessions (no container boundary). When in doubt:
+
+- **Fail closed.** If the gate extension isn't connected, deny all tool calls.
+- **Default to ask.** Host sessions use the `host` policy preset — anything not explicitly allowed requires phone approval.
+- **Never weaken the gate.** Don't add `allow` rules to reduce friction. If something needs approval, it needs approval.
+- **Hard denies are immutable.** No rule or allowlist can override a hard deny (sudo, credential exfil, system config tools).
+- **Path access is workspace-bounded.** File tools only auto-allow within configured workspace directories and `~/.pi` (read-only).
+- **Bash is read-only by default on host.** Only commands from the read-only executable allowlist pass without approval. Everything else requires the phone.
+
+The container preset is more permissive because the Apple container IS the security boundary. But host sessions have no such protection — the policy engine is all there is.
+
 ## Overview
 
 Pi Remote is a mobile-first agent supervision platform. An iPhone app controls pi coding agents running on a home server (mac-studio), with permission gating from the phone.
@@ -40,8 +53,9 @@ Phone (WebSocket) → server.ts → sessions.ts → pi (RPC over stdin/stdout)
                                     ↓
               gate.ts ← TCP ← permission-gate extension (inside container)
                 ↓
-           policy.ts (layered rules → allow/ask/deny)
-                ↓
+           policy.ts (per-session layered rules → allow/ask/deny)
+                ↓           host preset: fail-closed, read-only bash, workspace-bounded
+                ↓           container preset: permissive (container = boundary)
            push.ts (APNs → phone notification)
 ```
 
