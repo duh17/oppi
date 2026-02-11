@@ -335,12 +335,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         var textsToCache: [String] = []
         textsToCache.reserveCapacity(min(Self.markdownPrewarmMaxMessages, assistantTexts.count))
 
+        let themeID = ThemeRuntimeState.currentThemeID()
+
         // Prefer newest assistant messages first, with conservative size limits.
         for text in assistantTexts.reversed() {
             guard seen.insert(text).inserted else { continue }
             guard text.count <= Self.markdownPrewarmMaxCharsPerMessage else { continue }
             guard MarkdownSegmentCache.shared.shouldCache(text) else { continue }
-            guard MarkdownSegmentCache.shared.get(text) == nil else { continue }
+            guard MarkdownSegmentCache.shared.get(text, themeID: themeID) == nil else { continue }
 
             if totalChars + text.count > Self.markdownPrewarmMaxTotalChars {
                 continue
@@ -360,13 +362,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         markdownPrewarmTask = Task.detached(priority: .utility) {
             for text in textsToCache {
                 if Task.isCancelled { return }
-                if MarkdownSegmentCache.shared.get(text) != nil { continue }
+                if MarkdownSegmentCache.shared.get(text, themeID: themeID) != nil { continue }
 
                 let blocks = parseCommonMark(text)
                 if Task.isCancelled { return }
 
-                let segments = FlatSegment.build(from: blocks)
-                MarkdownSegmentCache.shared.set(text, segments: segments)
+                let segments = FlatSegment.build(from: blocks, themeID: themeID)
+                MarkdownSegmentCache.shared.set(text, themeID: themeID, segments: segments)
             }
         }
     }
@@ -709,6 +711,35 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentThinkingID = nil
         turnInProgress = false
         lastAssistantIDThisTurn = nil
+    }
+
+    private func handleMessageEnd(_ content: String) {
+        guard !content.isEmpty else {
+            finalizeAssistantMessage()
+            return
+        }
+
+        // Reconnect/history-reload race: trace may already include this
+        // finalized assistant text, while in-flight message_end still arrives.
+        // If no turn is in progress and no streaming assistant is active,
+        // suppress duplicate append.
+        if shouldSuppressDuplicateMessageEnd(content) {
+            finalizeAssistantMessage()
+            return
+        }
+
+        assistantBuffer = content
+        upsertAssistantMessage()
+        finalizeAssistantMessage()
+    }
+
+    private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
+        guard !turnInProgress, currentAssistantID == nil else { return false }
+        guard let lastAssistant = items.last else { return false }
+        guard case .assistantMessage(_, let existingText, _) = lastAssistant else { return false }
+
+        return existingText.trimmingCharacters(in: .whitespacesAndNewlines)
+            == content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func upsertAssistantMessage() {
