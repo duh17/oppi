@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CryptoKit
 @testable import PiRemote
 
 // MARK: - Session Codable
@@ -360,6 +361,153 @@ struct ServerCredentialsTests {
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ServerCredentials.self, from: encoded)
         #expect(original == decoded)
+    }
+}
+
+private struct InvitePayloadFixture: Codable {
+    var host: String
+    var port: Int
+    var token: String
+    var name: String
+    var fingerprint: String
+    var securityProfile: String
+}
+
+private struct InviteEnvelopeFixture: Codable {
+    var v: Int
+    var alg: String
+    var kid: String
+    var iat: Int
+    var exp: Int
+    var nonce: String
+    var publicKey: String
+    var payload: InvitePayloadFixture
+    var sig: String
+}
+
+private extension Data {
+    var base64URLEncodedString: String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+@Suite("ServerCredentials Invite Security")
+struct ServerCredentialsInviteSecurityTests {
+    private func defaultPayload() -> InvitePayloadFixture {
+        InvitePayloadFixture(
+            host: "my-server.tail00000.ts.net",
+            port: 7749,
+            token: "sk_test_invite",
+            name: "mac-studio",
+            fingerprint: "sha256:test-fingerprint",
+            securityProfile: "tailscale-permissive"
+        )
+    }
+
+    private func buildSigningInput(_ envelope: InviteEnvelopeFixture) -> String {
+        let p = envelope.payload
+        return [
+            "v=\(envelope.v)",
+            "alg=\(envelope.alg)",
+            "kid=\(envelope.kid)",
+            "iat=\(envelope.iat)",
+            "exp=\(envelope.exp)",
+            "nonce=\(envelope.nonce)",
+            "publicKey=\(envelope.publicKey)",
+            "host=\(p.host)",
+            "port=\(p.port)",
+            "token=\(p.token)",
+            "name=\(p.name)",
+            "fingerprint=\(p.fingerprint)",
+            "securityProfile=\(p.securityProfile)",
+        ].joined(separator: "\n")
+    }
+
+    private func makeSignedEnvelope(
+        iat: Int,
+        exp: Int,
+        payload: InvitePayloadFixture? = nil
+    ) throws -> InviteEnvelopeFixture {
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let publicKey = Data(signingKey.publicKey.rawRepresentation).base64URLEncodedString
+
+        var envelope = InviteEnvelopeFixture(
+            v: 2,
+            alg: "Ed25519",
+            kid: "srv-test",
+            iat: iat,
+            exp: exp,
+            nonce: "nonce-123",
+            publicKey: publicKey,
+            payload: payload ?? defaultPayload(),
+            sig: ""
+        )
+
+        let signingInput = buildSigningInput(envelope)
+        let signature = try signingKey.signature(for: Data(signingInput.utf8))
+        envelope.sig = signature.base64URLEncodedString
+        return envelope
+    }
+
+    private func encodeEnvelope(_ envelope: InviteEnvelopeFixture) throws -> String {
+        let data = try JSONEncoder().encode(envelope)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "ServerCredentialsInviteSecurityTests", code: -1)
+        }
+        return json
+    }
+
+    @Test func decodeInvitePayloadAcceptsSignedV2Envelope() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
+
+        let json = try encodeEnvelope(envelope)
+        let creds = ServerCredentials.decodeInvitePayload(json)
+
+        #expect(creds != nil)
+        #expect(creds?.host == envelope.payload.host)
+        #expect(creds?.port == envelope.payload.port)
+        #expect(creds?.token == envelope.payload.token)
+        #expect(creds?.inviteVersion == 2)
+        #expect(creds?.inviteKeyId == envelope.kid)
+        #expect(creds?.securityProfile == envelope.payload.securityProfile)
+        #expect(creds?.normalizedServerFingerprint == envelope.payload.fingerprint)
+    }
+
+    @Test func decodeInvitePayloadRejectsTamperedSignedEnvelope() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        var envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
+
+        // Adversary mutates payload after signature is produced.
+        envelope.payload.host = "evil.example.com"
+
+        let json = try encodeEnvelope(envelope)
+        let creds = ServerCredentials.decodeInvitePayload(json)
+
+        #expect(creds == nil)
+    }
+
+    @Test func decodeInvitePayloadRejectsExpiredSignedEnvelope() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let envelope = try makeSignedEnvelope(iat: now - 600, exp: now - 1)
+
+        let json = try encodeEnvelope(envelope)
+        let creds = ServerCredentials.decodeInvitePayload(json)
+
+        #expect(creds == nil)
+    }
+
+    @Test func decodeInvitePayloadRejectsFutureIssuedAtBeyondClockSkew() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let envelope = try makeSignedEnvelope(iat: now + 301, exp: now + 900)
+
+        let json = try encodeEnvelope(envelope)
+        let creds = ServerCredentials.decodeInvitePayload(json)
+
+        #expect(creds == nil)
     }
 }
 

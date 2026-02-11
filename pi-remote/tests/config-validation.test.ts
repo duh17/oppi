@@ -111,6 +111,29 @@ describe("Storage config validation", () => {
     expect(rewritten.invite?.format).toBe("v2-signed");
   });
 
+  it("warns when strict profile still allows legacy unsigned invites", () => {
+    const raw = Storage.getDefaultConfig(dir);
+    raw.security = {
+      ...raw.security!,
+      profile: "strict",
+    };
+    raw.invite = {
+      ...raw.invite!,
+      format: "v2-signed",
+      allowLegacyV1Unsigned: true,
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(
+      result.warnings.some((warning) =>
+        warning.includes("allowLegacyV1Unsigned=true weakens strict bootstrap posture"),
+      ),
+    ).toBe(true);
+  });
+
   it("validateConfigFile reports parse errors with file path", () => {
     const configPath = join(dir, "bad-config.json");
     writeFileSync(configPath, "{ invalid json }");
