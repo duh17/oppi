@@ -980,23 +980,27 @@ export class Server {
       return;
     }
 
-    // Match workspace-scoped WS path first, then legacy path.
     const wsMatch = url.pathname.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/);
-    const legacyMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
-
-    const sessionId = wsMatch ? wsMatch[2] : legacyMatch?.[1];
-    if (!sessionId) {
+    if (!wsMatch) {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
     }
 
-    // Both WS paths are supported — workspace-scoped is preferred for
-    // new clients, but the global path remains valid permanently.
-
+    const workspaceId = wsMatch[1];
+    const sessionId = wsMatch[2];
     const session = this.storage.getSession(user.id, sessionId);
     if (!session) {
       console.log(`${ts()} [ws] 404 session not found: ${sessionId} (user=${user.name})`);
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (session.workspaceId !== workspaceId) {
+      console.log(
+        `${ts()} [ws] 404 session/workspace mismatch: session=${sessionId} requested=${workspaceId} actual=${session.workspaceId ?? "none"} (user=${user.name})`,
+      );
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;

@@ -50,7 +50,6 @@ import type {
   User,
   Session,
   Workspace,
-  CreateSessionRequest,
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
   RegisterDeviceTokenRequest,
@@ -252,41 +251,6 @@ export class RouteHandler {
     if (wsSessionMatch) {
       if (method === "GET") return this.handleGetSession(user, wsSessionMatch[2], url, res);
       if (method === "DELETE") return this.handleDeleteSession(user, wsSessionMatch[2], res);
-    }
-
-    // ── Global session routes (permanent — workspace-agnostic) ──
-
-    if (path === "/sessions" && method === "GET") return this.handleListSessions(user, res);
-    if (path === "/sessions" && method === "POST") return this.handleCreateSession(user, req, res);
-
-    const stopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
-    if (stopMatch && method === "POST") return this.handleStopSession(user, stopMatch[1], res);
-
-    const toolOutputMatch = path.match(/^\/sessions\/([^/]+)\/tool-output\/([^/]+)$/);
-    if (toolOutputMatch && method === "GET") {
-      return this.handleGetToolOutput(user, toolOutputMatch[1], toolOutputMatch[2], res);
-    }
-
-    const filesMatch = path.match(/^\/sessions\/([^/]+)\/files$/);
-    if (filesMatch && method === "GET") {
-      return this.handleGetSessionFile(user, filesMatch[1], url, res);
-    }
-
-
-    const eventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
-    if (eventsMatch && method === "GET") {
-      return this.handleGetSessionEvents(user, eventsMatch[1], url, res);
-    }
-
-    const clientLogsMatch = path.match(/^\/sessions\/([^/]+)\/client-logs$/);
-    if (clientLogsMatch && method === "POST") {
-      return this.handleUploadClientLogs(user, clientLogsMatch[1], req, res);
-    }
-
-    const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
-    if (sessionMatch) {
-      if (method === "GET") return this.handleGetSession(user, sessionMatch[1], url, res);
-      if (method === "DELETE") return this.handleDeleteSession(user, sessionMatch[1], res);
     }
 
     this.error(res, 404, "Not found");
@@ -799,47 +763,6 @@ export class RouteHandler {
       `${ts()} [diagnostics] client logs uploaded: user=${user.name} session=${sessionId} entries=${entries.length}`,
     );
     this.json(res, { ok: true, accepted: entries.length });
-  }
-
-  private handleListSessions(user: User, res: ServerResponse): void {
-    const sessions = this.ctx.storage
-      .listUserSessions(user.id)
-      .map((session) => this.ctx.ensureSessionContextWindow(session));
-    this.json(res, { sessions });
-  }
-
-  private async handleCreateSession(
-    user: User,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const body = await this.parseBody<CreateSessionRequest>(req);
-
-    this.ctx.storage.ensureDefaultWorkspaces(user.id);
-    let workspace: Workspace | undefined;
-
-    if (body.workspaceId) {
-      workspace = this.ctx.storage.getWorkspace(user.id, body.workspaceId);
-      if (!workspace) {
-        this.error(res, 404, "Workspace not found");
-        return;
-      }
-    } else {
-      workspace = this.ctx.storage.listWorkspaces(user.id)[0];
-    }
-
-    const model = body.model || workspace?.defaultModel;
-    const session = this.ctx.storage.createSession(user.id, body.name, model);
-
-    if (workspace) {
-      session.workspaceId = workspace.id;
-      session.workspaceName = workspace.name;
-      session.runtime = workspace.runtime;
-      this.ctx.storage.saveSession(session);
-    }
-
-    const hydrated = this.ctx.ensureSessionContextWindow(session);
-    this.json(res, { session: hydrated }, 201);
   }
 
   // ─── Workspace-scoped session handlers (v2 API) ───
