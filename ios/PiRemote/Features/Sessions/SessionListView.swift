@@ -58,6 +58,14 @@ struct SessionListView: View {
         || session.status == .error
     }
 
+    private var freshnessState: FreshnessState {
+        sessionStore.freshnessState(staleAfter: 300)
+    }
+
+    private var freshnessLabel: String {
+        sessionStore.freshnessLabel()
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -125,6 +133,11 @@ struct SessionListView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Sessions")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                FreshnessChip(state: freshnessState, label: freshnessLabel)
+            }
+        }
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId)
         }
@@ -175,11 +188,14 @@ struct SessionListView: View {
 
     private func refreshSessions() async {
         guard let api = connection.apiClient else { return }
+        sessionStore.markSyncStarted()
         do {
             let sessions = try await api.listSessions()
             sessionStore.applyServerSnapshot(sessions)
+            sessionStore.markSyncSucceeded()
             Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
         } catch {
+            sessionStore.markSyncFailed()
             // Keep cached list on error
         }
     }

@@ -4,7 +4,8 @@
  * Philosophy: allow by default. Only gate:
  * 1. Credential exfiltration (auth.json, printenv secrets) → deny
  * 2. External actions (git push, npm publish, ssh/scp) → ask
- * 3. Data egress heuristics (curl -d, pipe to shell) → ask
+ * 3. High-impact host-control flows (app reinstall / server restart) → ask
+ * 4. Data egress heuristics (curl -d, pipe to shell) → ask
  * Everything else → allow (user trusts the agent like they trust pi).
  *
  * Migrated from test-policy-host.ts, updated for simplified host preset.
@@ -139,6 +140,34 @@ describe("host preset: external actions gated", () => {
   });
   it("asks for chained ssh", () => {
     expect(policy.evaluate(bash("echo ok; ssh user@server.com")).action).toBe("ask");
+  });
+});
+
+// ─── Host-control flows → ask ───
+
+describe("host preset: host-control flows gated", () => {
+  it("asks for ios build-install script", () => {
+    expect(policy.evaluate(bash("./ios/scripts/build-install.sh --launch")).action).toBe("ask");
+  });
+
+  it("asks for direct device install via devicectl", () => {
+    expect(
+      policy.evaluate(
+        bash("xcrun devicectl device install app --device 0000 /tmp/PiRemote.app"),
+      ).action,
+    ).toBe("ask");
+  });
+
+  it("asks for ios-dev-up script (restart + deploy)", () => {
+    expect(policy.evaluate(bash("./scripts/ios-dev-up.sh -- --device ABC")).action).toBe("ask");
+  });
+
+  it("asks for pi-remote serve command", () => {
+    expect(policy.evaluate(bash("npx tsx src/index.ts serve")).action).toBe("ask");
+  });
+
+  it("asks for chained ios-dev-up script", () => {
+    expect(policy.evaluate(bash("cd /repo && ./scripts/ios-dev-up.sh")).action).toBe("ask");
   });
 });
 

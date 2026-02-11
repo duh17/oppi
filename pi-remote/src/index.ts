@@ -9,6 +9,7 @@
  *   users           List users
  *   users remove    Remove a user
  *   status          Show server status
+ *   config          Show/validate server config
  */
 
 import chalk from "chalk";
@@ -20,6 +21,12 @@ import { join } from "node:path";
 import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
+import {
+  createSignedInviteV2,
+  ensureIdentityMaterial,
+  type InviteV2Envelope,
+  type InviteV2Payload,
+} from "./security.js";
 import type { APNsConfig } from "./push.js";
 import type { InviteData } from "./types.js";
 
@@ -256,7 +263,7 @@ async function cmdInvite(
     console.log(chalk.dim(`  (showing QR for existing user "${name}")`));
   }
 
-  // Build invite data
+  // Build invite payload (v1 legacy or v2 signed)
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
@@ -264,14 +271,53 @@ async function cmdInvite(
     name: shortHostLabel(inviteHost),
   };
 
-  // QR payload is JSON (matches iOS app's JSONDecoder expectation)
-  const inviteJson = JSON.stringify(inviteData);
-  const inviteUrl = `pi://connect?${new URLSearchParams({
-    host: inviteData.host,
-    port: inviteData.port.toString(),
-    token: inviteData.token,
-    name: inviteData.name,
-  }).toString()}`;
+  const inviteFormat = config.invite?.format || "v1-unsigned";
+  let inviteJson: string;
+  let inviteUrl: string;
+
+  if (inviteFormat === "v2-signed") {
+    const identityConfig = config.identity;
+    if (!identityConfig) {
+      console.log(chalk.red("  Error: config.identity is missing; cannot issue signed invite."));
+      console.log(chalk.dim("  Run 'pi-remote config validate' to repair config."));
+      console.log("");
+      process.exit(1);
+    }
+
+    const identity = ensureIdentityMaterial(identityConfig);
+    if (identityConfig.fingerprint !== identity.fingerprint) {
+      storage.updateConfig({ identity: { ...identityConfig, fingerprint: identity.fingerprint } });
+    }
+
+    const payload: InviteV2Payload = {
+      host: inviteData.host,
+      port: inviteData.port,
+      token: inviteData.token,
+      name: inviteData.name,
+      fingerprint: identity.fingerprint,
+      securityProfile: config.security?.profile || "legacy",
+    };
+
+    const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
+    const envelope: InviteV2Envelope = createSignedInviteV2(identity, payload, maxAgeSeconds);
+    inviteJson = JSON.stringify(envelope);
+    inviteUrl = `pi://connect?${new URLSearchParams({
+      v: "2",
+      invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
+    }).toString()}`;
+
+    console.log(chalk.dim(`  (invite format: v2-signed, expires in ${maxAgeSeconds}s)`));
+  } else {
+    // v1 legacy payload
+    inviteJson = JSON.stringify(inviteData);
+    inviteUrl = `pi://connect?${new URLSearchParams({
+      host: inviteData.host,
+      port: inviteData.port.toString(),
+      token: inviteData.token,
+      name: inviteData.name,
+    }).toString()}`;
+    console.log(chalk.dim("  (invite format: v1-unsigned, legacy compatibility)"));
+  }
 
   // Display
   console.log(`  📱 Invite for ${chalk.bold(name)}`);
@@ -420,6 +466,59 @@ function cmdStatus(storage: Storage): void {
   console.log("");
 }
 
+function cmdConfig(storage: Storage, action: string | undefined, flags: Record<string, string>): void {
+  printHeader();
+
+  const mode = action || "show";
+
+  if (mode === "show") {
+    const showDefault = flags.default === "true";
+    const config = showDefault
+      ? Storage.getDefaultConfig(storage.getDataDir())
+      : storage.getConfig();
+
+    console.log(`  ${chalk.bold(showDefault ? "Default config" : "Current config")}`);
+    console.log("");
+    const pretty = JSON.stringify(config, null, 2)
+      .split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n");
+    console.log(pretty);
+    console.log("");
+    return;
+  }
+
+  if (mode === "validate") {
+    const target = flags["config-file"] || storage.getConfigPath();
+    const result = Storage.validateConfigFile(target);
+
+    if (!result.valid) {
+      console.log(chalk.red(`  ✗ Config validation failed: ${target}`));
+      console.log("");
+      for (const err of result.errors) {
+        console.log(chalk.red(`  - ${err}`));
+      }
+      console.log("");
+      process.exit(1);
+    }
+
+    console.log(chalk.green(`  ✓ Config valid: ${target}`));
+    if (result.warnings.length > 0) {
+      console.log("");
+      for (const warning of result.warnings) {
+        console.log(chalk.yellow(`  ! ${warning}`));
+      }
+    }
+    console.log("");
+    return;
+  }
+
+  console.log(chalk.red(`  Unknown config action: ${mode}`));
+  console.log(chalk.dim("  Usage: pi-remote config [show|validate] [--config-file <path>]"));
+  console.log("");
+  process.exit(1);
+}
+
 function cmdHelp(): void {
   printHeader();
 
@@ -431,6 +530,8 @@ function cmdHelp(): void {
   console.log(`    ${chalk.cyan("users remove")} <n>   Remove a user`);
   console.log(`    ${chalk.cyan("users regenerate")} <n>  New token for user`);
   console.log(`    ${chalk.cyan("status")}             Show server status`);
+  console.log(`    ${chalk.cyan("config show")}        Show current server config`);
+  console.log(`    ${chalk.cyan("config validate")}    Validate server config`);
   console.log(`    ${chalk.cyan("help")}               Show this help`);
   console.log("");
   console.log("  " + chalk.bold("Options:"));
@@ -438,6 +539,7 @@ function cmdHelp(): void {
   console.log(`    ${chalk.dim("--save <file>")}      Save invite QR as PNG`);
   console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in invite QR`);
   console.log(`    ${chalk.dim("--port <n>")}         Override port (default: 7749)`);
+  console.log(`    ${chalk.dim("--config-file <p>")}  Config path for 'config validate'`);
   console.log("");
   console.log("  " + chalk.bold("Examples:"));
   console.log("");
@@ -445,6 +547,8 @@ function cmdHelp(): void {
   console.log(`    ${chalk.dim('pi-remote invite "Wife" --save wife-invite.png')}`);
   console.log(`    ${chalk.dim('pi-remote invite "Wife" --host mac-studio.local')}`);
   console.log(`    ${chalk.dim("pi-remote users remove Wife")}`);
+  console.log(`    ${chalk.dim("pi-remote config show")}`);
+  console.log(`    ${chalk.dim("pi-remote config validate")}`);
   console.log("");
 }
 
@@ -491,6 +595,10 @@ async function main(): Promise<void> {
 
     case "status":
       cmdStatus(storage);
+      break;
+
+    case "config":
+      cmdConfig(storage, positional[0], flags);
       break;
 
     case "help":

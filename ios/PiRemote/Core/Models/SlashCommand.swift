@@ -3,23 +3,20 @@ import Foundation
 /// Slash command metadata returned by pi RPC `get_commands`.
 struct SlashCommand: Identifiable, Sendable, Equatable {
     enum Source: String, Sendable, Equatable {
-        case builtIn = "builtin"
         case `extension`
         case prompt
         case skill
 
         var sortRank: Int {
             switch self {
-            case .builtIn: return 0
-            case .extension: return 1
-            case .prompt: return 2
-            case .skill: return 3
+            case .extension: return 0
+            case .prompt: return 1
+            case .skill: return 2
             }
         }
 
         var label: String {
             switch self {
-            case .builtIn: return "Built-in"
             case .extension: return "Extension"
             case .prompt: return "Prompt"
             case .skill: return "Skill"

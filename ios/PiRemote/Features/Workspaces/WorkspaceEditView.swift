@@ -202,8 +202,20 @@ struct WorkspaceEditView: View {
 
             Section("System Prompt") {
                 TextEditor(text: $systemPrompt)
-                    .frame(minHeight: 100)
+                    .frame(minHeight: 120)
                     .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.tokyoFg)
+                    .tint(.tokyoBlue)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.tokyoBgDark)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.tokyoComment.opacity(0.25), lineWidth: 1)
+                    )
 
                 Text("Appended to the base agent prompt")
                     .font(.caption)

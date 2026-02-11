@@ -21,6 +21,12 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+export type TraceViewMode = "context" | "full";
+
+export interface TraceReadOptions {
+  view?: TraceViewMode;
+}
+
 // ─── Trace Event Types ───
 
 export interface TraceEvent {
@@ -94,8 +100,13 @@ interface SessionEntry {
  *
  * This produces the same view the user sees in pi TUI.
  */
-export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
+export function buildSessionContext(
+  entries: SessionEntry[],
+  options: TraceReadOptions = {},
+): TraceEvent[] {
   if (entries.length === 0) return [];
+
+  const view = options.view ?? "context";
 
   // Build id → entry index
   const byId = new Map<string, SessionEntry>();
@@ -133,11 +144,13 @@ export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
     }
   }
 
-  // Build the visible entries list (matching pi TUI logic)
+  // Build the visible entries list.
   let visibleEntries: SessionEntry[];
 
-  if (compaction) {
-    const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction!.id);
+  if (view === "full") {
+    visibleEntries = path;
+  } else if (compaction) {
+    const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
 
     visibleEntries = [];
 
@@ -167,18 +180,9 @@ export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
   const events: TraceEvent[] = [];
   let eventCounter = 0;
 
-  // Emit compaction summary first (if compacted)
-  if (compaction) {
-    const summaryText = compaction.summary || "Previous context was compacted";
-    const tokenInfo = compaction.tokensBefore
-      ? ` (${compaction.tokensBefore.toLocaleString()} tokens)`
-      : "";
-    events.push({
-      id: compaction.id,
-      type: "compaction",
-      timestamp: compaction.timestamp || new Date().toISOString(),
-      text: `Context compacted${tokenInfo}: ${summaryText}`,
-    });
+  // Context view preserves existing behavior: synthetic compaction summary first.
+  if (view === "context" && compaction) {
+    events.push(formatCompactionEvent(compaction));
   }
 
   for (const entry of visibleEntries) {
@@ -188,6 +192,10 @@ export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
       case "message":
         emitMessageEvents(entry, timestamp, events, eventCounter);
         eventCounter += 10; // Reserve IDs for sub-events
+        break;
+
+      case "compaction":
+        events.push(formatCompactionEvent(entry));
         break;
 
       case "thinking_level_change":
@@ -237,13 +245,27 @@ export function buildSessionContext(entries: SessionEntry[]): TraceEvent[] {
         }
         break;
 
-      // Skip non-renderable types (session, label, compaction handled above, etc.)
+      // Skip non-renderable types (session, label, etc.)
       default:
         break;
     }
   }
 
   return events;
+}
+
+function formatCompactionEvent(entry: SessionEntry): TraceEvent {
+  const summaryText = entry.summary || "Previous context was compacted";
+  const tokenInfo = entry.tokensBefore
+    ? ` (${entry.tokensBefore.toLocaleString()} tokens)`
+    : "";
+
+  return {
+    id: entry.id,
+    type: "compaction",
+    timestamp: entry.timestamp || new Date().toISOString(),
+    text: `Context compacted${tokenInfo}: ${summaryText}`,
+  };
 }
 
 /**
@@ -347,9 +369,9 @@ function parseEntries(content: string): SessionEntry[] {
  * This is the main entry point — equivalent to pi TUI's
  * `loadEntriesFromFile()` + `buildSessionContext()`.
  */
-export function parseJsonl(content: string): TraceEvent[] {
+export function parseJsonl(content: string, options: TraceReadOptions = {}): TraceEvent[] {
   const entries = parseEntries(content);
-  return buildSessionContext(entries);
+  return buildSessionContext(entries, options);
 }
 
 // ─── JSONL File Readers ───
@@ -368,6 +390,7 @@ export function readSessionTrace(
   userId: string,
   sessionId: string,
   workspaceId?: string,
+  options: TraceReadOptions = {},
 ): TraceEvent[] | null {
   const candidateDirs: string[] = [];
 
@@ -389,7 +412,7 @@ export function readSessionTrace(
   candidateDirs.push(join(sandboxBaseDir, userId, sessionId, "agent", "sessions", "--work--"));
 
   for (const dir of candidateDirs) {
-    const trace = readTraceFromDir(dir);
+    const trace = readTraceFromDir(dir, options);
     if (trace && trace.length > 0) {
       return trace;
     }
@@ -406,6 +429,7 @@ export function readSessionTraceByUuid(
   userId: string,
   piSessionUuid: string,
   workspaceId?: string,
+  options: TraceReadOptions = {},
 ): TraceEvent[] | null {
   const candidateDirs: string[] = [];
 
@@ -429,7 +453,7 @@ export function readSessionTraceByUuid(
     if (!existsSync(sessionsDir)) continue;
     const file = readdirSync(sessionsDir).find((f) => f.includes(piSessionUuid));
     if (file) {
-      return readSessionTraceFromFile(join(sessionsDir, file));
+      return readSessionTraceFromFile(join(sessionsDir, file), options);
     }
   }
 
@@ -439,12 +463,15 @@ export function readSessionTraceByUuid(
 /**
  * Read and parse a session context from an absolute JSONL file path.
  */
-export function readSessionTraceFromFile(jsonlPath: string): TraceEvent[] | null {
+export function readSessionTraceFromFile(
+  jsonlPath: string,
+  options: TraceReadOptions = {},
+): TraceEvent[] | null {
   if (!existsSync(jsonlPath)) return null;
 
   try {
     const content = readFileSync(jsonlPath, "utf-8");
-    return parseJsonl(content);
+    return parseJsonl(content, options);
   } catch {
     return null;
   }
@@ -454,10 +481,12 @@ export function readSessionTraceFromFile(jsonlPath: string): TraceEvent[] | null
  * Read and merge session context from multiple JSONL file paths.
  *
  * For multi-file sessions, we concatenate all entries (sorted by file name
- * which is chronological) then build context once — so compaction in any
- * file correctly hides earlier entries across files.
+ * which is chronological) then build context once.
  */
-export function readSessionTraceFromFiles(jsonlPaths: string[]): TraceEvent[] | null {
+export function readSessionTraceFromFiles(
+  jsonlPaths: string[],
+  options: TraceReadOptions = {},
+): TraceEvent[] | null {
   const uniqueSorted = Array.from(new Set(jsonlPaths)).sort();
   const allEntries: SessionEntry[] = [];
 
@@ -473,11 +502,14 @@ export function readSessionTraceFromFiles(jsonlPaths: string[]): TraceEvent[] | 
   }
 
   if (allEntries.length === 0) return null;
-  const events = buildSessionContext(allEntries);
+  const events = buildSessionContext(allEntries, options);
   return events.length > 0 ? events : null;
 }
 
-function readTraceFromDir(sessionsDir: string): TraceEvent[] | null {
+function readTraceFromDir(
+  sessionsDir: string,
+  options: TraceReadOptions = {},
+): TraceEvent[] | null {
   if (!existsSync(sessionsDir)) return null;
 
   const files = readdirSync(sessionsDir)
@@ -499,7 +531,7 @@ function readTraceFromDir(sessionsDir: string): TraceEvent[] | null {
   }
 
   if (allEntries.length === 0) return null;
-  const events = buildSessionContext(allEntries);
+  const events = buildSessionContext(allEntries, options);
   return events.length > 0 ? events : null;
 }
 

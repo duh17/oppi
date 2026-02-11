@@ -652,6 +652,92 @@ struct ChatSessionManagerTests {
         manager.cancelReconciliation() // idempotent
     }
 
+    @MainActor
+    @Test func flushSnapshotPersistsTraceWhenAvailable() async {
+        let manager = ChatSessionManager(sessionId: "flush-\(UUID().uuidString)")
+
+        var fetchCalls = 0
+        var saved: [[TraceEvent]] = []
+        let trace = [makeTraceEvent(id: "evt-1"), makeTraceEvent(id: "evt-2")]
+
+        manager._fetchTraceSnapshotForTesting = {
+            fetchCalls += 1
+            return trace
+        }
+        manager._saveTraceSnapshotForTesting = { events in
+            saved.append(events)
+        }
+
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection(), force: true)
+
+        #expect(fetchCalls == 1)
+        #expect(saved.count == 1)
+        #expect(saved.first?.count == 2)
+    }
+
+    @MainActor
+    @Test func flushSnapshotDebouncesBackToBackCalls() async {
+        let manager = ChatSessionManager(sessionId: "flush-\(UUID().uuidString)")
+
+        var fetchCalls = 0
+        var saveCalls = 0
+        let trace = [makeTraceEvent(id: "evt-1")]
+
+        manager._fetchTraceSnapshotForTesting = {
+            fetchCalls += 1
+            return trace
+        }
+        manager._saveTraceSnapshotForTesting = { _ in
+            saveCalls += 1
+        }
+
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection())
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection())
+
+        #expect(fetchCalls == 1)
+        #expect(saveCalls == 1)
+    }
+
+    @MainActor
+    @Test func flushSnapshotForceBypassesDebounceWindow() async {
+        let manager = ChatSessionManager(sessionId: "flush-\(UUID().uuidString)")
+
+        var fetchCalls = 0
+        var saveCalls = 0
+        let trace = [makeTraceEvent(id: "evt-1")]
+
+        manager._fetchTraceSnapshotForTesting = {
+            fetchCalls += 1
+            return trace
+        }
+        manager._saveTraceSnapshotForTesting = { _ in
+            saveCalls += 1
+        }
+
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection())
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection(), force: true)
+
+        #expect(fetchCalls == 2)
+        #expect(saveCalls == 2)
+    }
+
+    @MainActor
+    @Test func flushSnapshotSkipsSaveWhenTraceMissing() async {
+        let manager = ChatSessionManager(sessionId: "flush-\(UUID().uuidString)")
+
+        var saveCalls = 0
+        manager._fetchTraceSnapshotForTesting = {
+            nil
+        }
+        manager._saveTraceSnapshotForTesting = { _ in
+            saveCalls += 1
+        }
+
+        await manager.flushSnapshotIfNeeded(connection: ServerConnection(), force: true)
+
+        #expect(saveCalls == 0)
+    }
+
     // MARK: - Helpers
 
     private func makeCredentials() -> ServerCredentials {
@@ -678,6 +764,22 @@ struct ChatSessionManagerTests {
             contextWindow: nil,
             lastMessage: nil,
             thinkingLevel: nil
+        )
+    }
+
+    private func makeTraceEvent(id: String) -> TraceEvent {
+        TraceEvent(
+            id: id,
+            type: .assistant,
+            timestamp: "2026-02-11T00:00:00Z",
+            text: "offline snapshot",
+            tool: nil,
+            args: nil,
+            output: nil,
+            toolCallId: nil,
+            toolName: nil,
+            isError: nil,
+            thinking: nil
         )
     }
 }

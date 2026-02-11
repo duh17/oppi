@@ -875,9 +875,9 @@ export const PRESET_CONTAINER: PolicyPreset = {
  * behalf or could exfiltrate credentials. Everything else flows through.
  *
  * This is NOT a sandbox — the user trusts the agent the same way they
- * trust pi in their terminal. The gate exists for external actions
- * (git push, ssh, npm publish) and credential protection, not to
- * restrict local development work.
+ * trust pi in their terminal. The gate exists for external actions,
+ * credential protection, and a few high-impact host-control flows
+ * (app reinstall / server restart) that should always require approval.
  */
 export const PRESET_HOST: PolicyPreset = {
   name: "host",
@@ -972,8 +972,48 @@ export const PRESET_HOST: PolicyPreset = {
     { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
     { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
     { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
+
+    // Local host-control flows (explicit approval required in host mode)
+    {
+      tool: "bash",
+      pattern: "*ios/scripts/build-install.sh*",
+      action: "ask",
+      label: "Reinstall iOS app",
+      risk: "high",
+    },
+    {
+      tool: "bash",
+      exec: "xcrun",
+      pattern: "xcrun devicectl device install app*",
+      action: "ask",
+      label: "Install app on physical device",
+      risk: "high",
+    },
+    {
+      tool: "bash",
+      pattern: "*scripts/ios-dev-up.sh*",
+      action: "ask",
+      label: "Restart pi-remote server and deploy app",
+      risk: "high",
+    },
+    {
+      tool: "bash",
+      exec: "npx",
+      pattern: "npx tsx src/index.ts serve*",
+      action: "ask",
+      label: "Start/restart pi-remote server",
+      risk: "high",
+    },
+    {
+      tool: "bash",
+      exec: "tsx",
+      pattern: "tsx src/index.ts serve*",
+      action: "ask",
+      label: "Start/restart pi-remote server",
+      risk: "high",
+    },
   ],
-  // Like the pi CLI — allow by default
+  // Like the pi CLI — allow by default, except explicitly gated high-impact actions.
   defaultAction: "allow",
 };
 
@@ -1011,8 +1051,8 @@ export interface PolicyConfig {
 
 // Note: READ_ONLY_EXECUTABLES, GIT_WRITE_SUBCOMMANDS, DANGEROUS_ENV_VARS
 // were removed when the host preset was simplified to default-allow (like pi CLI).
-// The gate only catches external actions (git push, ssh, npm publish) and
-// credential access. Everything else flows through.
+// The gate catches external actions, credential access, and a small set of
+// high-impact host-control flows (app reinstall / server restart).
 
 // ─── Policy Engine ───
 

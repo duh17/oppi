@@ -298,12 +298,14 @@ struct RuntimeStatusBadge: View {
         case live
         case syncing
         case offline
+        case stale
 
         var accessibilityText: String {
             switch self {
             case .live: return "Live"
             case .syncing: return "Syncing"
             case .offline: return "Offline"
+            case .stale: return "Stale"
             }
         }
     }
@@ -321,6 +323,7 @@ struct RuntimeStatusBadge: View {
         case .live: return .tokyoBg
         case .syncing: return .tokyoBlue
         case .offline: return .tokyoRed
+        case .stale: return .tokyoOrange
         }
     }
 
@@ -339,6 +342,21 @@ struct RuntimeStatusBadge: View {
         }
         .frame(width: 24, height: 24)
         .accessibilityLabel("\(syncState.accessibilityText) runtime status")
+    }
+}
+
+extension RuntimeStatusBadge.SyncState {
+    init(_ freshness: FreshnessState) {
+        switch freshness {
+        case .live:
+            self = .live
+        case .syncing:
+            self = .syncing
+        case .offline:
+            self = .offline
+        case .stale:
+            self = .stale
+        }
     }
 }
 

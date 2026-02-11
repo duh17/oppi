@@ -16,13 +16,36 @@ private func applyStabilityInputTraits(to textView: UITextView) {
     assistant.trailingBarButtonGroups = []
 }
 
+/// Clamp raw inline composer content height to min/max line bounds.
+///
+/// - Parameters:
+///   - rawContentHeight: Measured text content height including vertical insets.
+///   - lineHeight: Single-line font height.
+///   - verticalInsets: Sum of top + bottom text container inset.
+///   - maxLines: Maximum inline lines before internal scrolling.
+func inlineComposerHeight(
+    rawContentHeight: CGFloat,
+    lineHeight: CGFloat,
+    verticalInsets: CGFloat,
+    maxLines: Int
+) -> CGFloat {
+    let safeLineHeight = max(lineHeight, 1)
+    let safeInsets = max(verticalInsets, 0)
+    let safeMaxLines = max(maxLines, 1)
+
+    let minHeight = ceil(safeLineHeight + safeInsets)
+    let maxHeight = ceil((safeLineHeight * CGFloat(safeMaxLines)) + safeInsets)
+    return min(max(ceil(rawContentHeight), minHeight), maxHeight)
+}
+
 /// A UITextView wrapper that supports pasting images from the clipboard.
 ///
 /// SwiftUI's `TextField` ignores image paste events. This UIViewRepresentable
 /// intercepts `paste:` to check `UIPasteboard.general` for images, forwarding
 /// them via `onPasteImages`. Text paste still works normally.
 ///
-/// Uses a fixed inline height and internal scrolling to avoid layout loops.
+/// Inline mode auto-expands with content up to `maxLines`, then keeps
+/// scrolling internally for overflow.
 struct PastableTextView: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -31,6 +54,12 @@ struct PastableTextView: UIViewRepresentable {
     let tintColor: UIColor
     let maxLines: Int
     let onPasteImages: ([UIImage]) -> Void
+    let onOverflowChange: ((Bool) -> Void)?
+    let onLineCountChange: ((Int) -> Void)?
+    let onFocusChange: ((Bool) -> Void)?
+    let onDictationStateChange: ((Bool) -> Void)?
+    let focusRequestID: Int
+    let blurRequestID: Int
     let accessibilityIdentifier: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
@@ -41,11 +70,12 @@ struct PastableTextView: UIViewRepresentable {
         textView.textColor = textColor
         textView.tintColor = tintColor
         textView.backgroundColor = .clear
-        textView.textContainerInset = .zero
+        textView.textContainerInset = UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
         textView.textContainer.lineFragmentPadding = 0
+
         // Keep scrolling enabled at all times.
-        // Dynamic toggling (based on frame/height) creates a UIKit↔SwiftUI
-        // layout feedback loop during send + timeline relayout.
+        // Dynamic toggling (based on frame/height) creates UIKit↔SwiftUI
+        // layout loops under chat timeline pressure.
         textView.isScrollEnabled = true
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         textView.setContentHuggingPriority(.required, for: .vertical)
@@ -70,40 +100,155 @@ struct PastableTextView: UIViewRepresentable {
             textView.text = text
         }
         textView.onPasteImages = onPasteImages
+        textView.font = font
+        textView.textColor = textColor
         textView.tintColor = tintColor
         textView.accessibilityIdentifier = accessibilityIdentifier
 
-        // Keep update path side-effect free: no layout invalidation, no dynamic
-        // scroll toggling, no text-container mutation.
+        if focusRequestID != context.coordinator.lastFocusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                if !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
+            }
+        }
+
+        if blurRequestID != context.coordinator.lastBlurRequestID {
+            context.coordinator.lastBlurRequestID = blurRequestID
+            DispatchQueue.main.async {
+                if textView.isFirstResponder {
+                    textView.resignFirstResponder()
+                }
+            }
+        }
+
+        // Keep update path side-effect light: no intrinsic invalidation,
+        // no dynamic scroll toggling, no text-container mutation.
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: PastableUITextView, context: Context) -> CGSize? {
-        // Emergency hardening:
-        // Use a fixed inline height and internal scrolling, instead of
-        // dynamic text measurement. This removes the auto-resize feedback
-        // loop from the hot path during send/timeline relayout.
         let proposedWidth = proposal.width ?? textView.bounds.width
         let fallbackWidth = textView.window?.windowScene?.screen.bounds.width ?? 320
         let width = max(proposedWidth > 0 ? proposedWidth : fallbackWidth, 1)
 
         let lineHeight = textView.font?.lineHeight ?? font.lineHeight
-        let inlineHeight = ceil(lineHeight + 6)
+        let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
+        let horizontalInsets = textView.textContainerInset.left
+            + textView.textContainerInset.right
+            + (textView.textContainer.lineFragmentPadding * 2)
+
+        let containerWidth = max(width - horizontalInsets, 1)
+        textView.textContainer.size = CGSize(width: containerWidth, height: .greatestFiniteMagnitude)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+
+        let usedTextHeight = textView.layoutManager.usedRect(for: textView.textContainer).height + verticalInsets
+        let rawContentHeight = max(usedTextHeight, textView.contentSize.height)
+        let inlineHeight = inlineComposerHeight(
+            rawContentHeight: rawContentHeight,
+            lineHeight: lineHeight,
+            verticalInsets: verticalInsets,
+            maxLines: maxLines
+        )
+
         return CGSize(width: width, height: inlineHeight)
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(
+            text: $text,
+            maxLines: maxLines,
+            onOverflowChange: onOverflowChange,
+            onLineCountChange: onLineCountChange,
+            onFocusChange: onFocusChange,
+            onDictationStateChange: onDictationStateChange
+        )
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding var text: String
+        let maxLines: Int
+        let onOverflowChange: ((Bool) -> Void)?
+        let onLineCountChange: ((Int) -> Void)?
+        let onFocusChange: ((Bool) -> Void)?
+        let onDictationStateChange: ((Bool) -> Void)?
 
-        init(text: Binding<String>) {
+        var lastFocusRequestID = 0
+        var lastBlurRequestID = 0
+        private var lastOverflowState = false
+        private var lastDictationState = false
+        private var lastReportedLineCount = 1
+
+        init(
+            text: Binding<String>,
+            maxLines: Int,
+            onOverflowChange: ((Bool) -> Void)?,
+            onLineCountChange: ((Int) -> Void)?,
+            onFocusChange: ((Bool) -> Void)?,
+            onDictationStateChange: ((Bool) -> Void)?
+        ) {
             _text = text
+            self.maxLines = maxLines
+            self.onOverflowChange = onOverflowChange
+            self.onLineCountChange = onLineCountChange
+            self.onFocusChange = onFocusChange
+            self.onDictationStateChange = onDictationStateChange
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            onFocusChange?(true)
+            notifyLineCountIfNeeded(textView)
+            notifyDictationStateIfNeeded(textView)
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            onFocusChange?(false)
+            if lastDictationState {
+                lastDictationState = false
+                onDictationStateChange?(false)
+            }
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            notifyDictationStateIfNeeded(textView)
         }
 
         func textViewDidChange(_ textView: UITextView) {
             text = textView.text
+
+            let lineHeight = textView.font?.lineHeight ?? 17
+            let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
+            let maxHeight = ceil((lineHeight * CGFloat(max(maxLines, 1))) + verticalInsets)
+            let isOverflowing = textView.contentSize.height > (maxHeight + 0.5)
+
+            if isOverflowing != lastOverflowState {
+                lastOverflowState = isOverflowing
+                onOverflowChange?(isOverflowing)
+            }
+
+            notifyLineCountIfNeeded(textView)
+            notifyDictationStateIfNeeded(textView)
+        }
+
+        private func notifyLineCountIfNeeded(_ textView: UITextView) {
+            let lineHeight = max(textView.font?.lineHeight ?? 17, 1)
+            let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
+            let textHeight = max(textView.contentSize.height - verticalInsets, lineHeight)
+            let lineCount = max(1, Int(ceil(textHeight / lineHeight)))
+
+            if lineCount != lastReportedLineCount {
+                lastReportedLineCount = lineCount
+                onLineCountChange?(lineCount)
+            }
+        }
+
+        private func notifyDictationStateIfNeeded(_ textView: UITextView) {
+            let isDictating = textView.textInputMode?.primaryLanguage == "dictation"
+            if isDictating != lastDictationState {
+                lastDictationState = isDictating
+                onDictationStateChange?(isDictating)
+            }
         }
     }
 }
@@ -112,15 +257,16 @@ struct PastableTextView: UIViewRepresentable {
 
 /// A pastable text view that fills all available space. Used in the expanded composer.
 ///
-/// Unlike `PastableTextView` (fixed inline height), this variant always scrolls
-/// and fills its container. Keyboard dismiss is interactive
-/// (drag to dismiss). Auto-focuses on appear after a brief delay for sheet animation.
+/// Unlike inline `PastableTextView` (auto-expands up to max lines), this variant
+/// always scrolls and fills its container. Keyboard dismiss is interactive
+/// (drag to dismiss). Can optionally auto-focus on appear.
 struct FullSizeTextView: UIViewRepresentable {
     @Binding var text: String
     let font: UIFont
     let textColor: UIColor
     let tintColor: UIColor
     let onPasteImages: ([UIImage]) -> Void
+    let autoFocusOnAppear: Bool
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
@@ -138,15 +284,17 @@ struct FullSizeTextView: UIViewRepresentable {
 
         applyStabilityInputTraits(to: textView)
 
-        // Auto-focus after sheet animation settles
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            textView.becomeFirstResponder()
-            // Place cursor at end
-            if let end = textView.textRange(
-                from: textView.endOfDocument,
-                to: textView.endOfDocument
-            ) {
-                textView.selectedTextRange = end
+        if autoFocusOnAppear {
+            // Auto-focus after sheet animation settles
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                textView.becomeFirstResponder()
+                // Place cursor at end
+                if let end = textView.textRange(
+                    from: textView.endOfDocument,
+                    to: textView.endOfDocument
+                ) {
+                    textView.selectedTextRange = end
+                }
             }
         }
 

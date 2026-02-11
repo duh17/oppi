@@ -122,19 +122,74 @@ struct OnboardingView: View {
                 return
             }
 
-            let user = try await api.me()
-            _ = user // We could show the name
+            let profile: ServerSecurityProfile?
+            do {
+                profile = try await api.securityProfile()
+            } catch {
+                if credentials.inviteVersion == 2 {
+                    connectionTest = .failed("Server is missing security profile endpoint required for signed invite trust")
+                    return
+                }
+                profile = nil
+            }
+
+            if let profile {
+                if let violation = ConnectionSecurityPolicy.evaluate(host: credentials.host, profile: profile) {
+                    connectionTest = .failed(violation.localizedDescription)
+                    return
+                }
+
+                if let inviteMismatch = inviteMismatchReason(credentials: credentials, profile: profile) {
+                    connectionTest = .failed(inviteMismatch)
+                    return
+                }
+            }
+
+            // Confirm bearer token is valid after trust checks.
+            _ = try await api.me()
+
+            let existing = KeychainService.loadCredentials()
+            let sameTarget = isSameServer(existing, credentials)
+            let existingFingerprint = existing?.normalizedServerFingerprint
+            let profileFingerprint = profile?.identity.normalizedFingerprint
+            let requiresTrustReset = sameTarget
+                && existingFingerprint != nil
+                && profileFingerprint != nil
+                && existingFingerprint != profileFingerprint
+
+            let requiresPinnedTrust = (profile?.requirePinnedServerIdentity ?? false) && profileFingerprint != nil
+            let requiresInviteTrust = credentials.inviteVersion == 2 && credentials.normalizedServerFingerprint != nil
+
+            if requiresTrustReset || requiresPinnedTrust || requiresInviteTrust {
+                let reason: String
+                if requiresTrustReset {
+                    reason = "Server identity changed for \(credentials.host). Confirm trust reset."
+                } else {
+                    let displayFingerprint = profileFingerprint ?? credentials.normalizedServerFingerprint ?? "unknown"
+                    reason = "Trust \(credentials.host) (\(shortFingerprint(displayFingerprint)))"
+                }
+
+                let trusted = await BiometricService.shared.authenticate(reason: reason)
+                guard trusted else {
+                    connectionTest = .failed("Trust confirmation cancelled")
+                    return
+                }
+            }
+
+            let effectiveCredentials = profile.map(credentials.applyingSecurityProfile) ?? credentials
 
             // Save credentials and transition
-            try KeychainService.saveCredentials(credentials)
-            guard connection.configure(credentials: credentials) else {
-                connectionTest = .failed("Invalid server address")
+            try KeychainService.saveCredentials(effectiveCredentials)
+            guard connection.configure(credentials: effectiveCredentials) else {
+                connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }
 
             // Load sessions
+            connection.sessionStore.markSyncStarted()
             let sessions = try await api.listSessions()
             connection.sessionStore.applyServerSnapshot(sessions)
+            connection.sessionStore.markSyncSucceeded()
 
             connectionTest = .success
 
@@ -142,8 +197,51 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .milliseconds(600))
             navigation.showOnboarding = false
         } catch {
+            connection.sessionStore.markSyncFailed()
             connectionTest = .failed(error.localizedDescription)
         }
+    }
+
+    private func inviteMismatchReason(
+        credentials: ServerCredentials,
+        profile: ServerSecurityProfile
+    ) -> String? {
+        guard credentials.inviteVersion == 2 else { return nil }
+
+        let inviteFingerprint = credentials.normalizedServerFingerprint
+        let profileFingerprint = profile.identity.normalizedFingerprint
+
+        if let inviteFingerprint,
+           let profileFingerprint,
+           inviteFingerprint != profileFingerprint {
+            return "Signed invite fingerprint mismatch. Refusing connection."
+        }
+
+        if let inviteKeyId = credentials.inviteKeyId,
+           !inviteKeyId.isEmpty,
+           inviteKeyId != profile.identity.keyId {
+            return "Signed invite key mismatch (kid changed). Refusing connection."
+        }
+
+        if let inviteProfile = credentials.securityProfile,
+           !inviteProfile.isEmpty,
+           inviteProfile != profile.profile {
+            return "Signed invite profile mismatch. Refusing connection."
+        }
+
+        return nil
+    }
+
+    private func isSameServer(_ lhs: ServerCredentials?, _ rhs: ServerCredentials) -> Bool {
+        guard let lhs else { return false }
+        return lhs.port == rhs.port && lhs.host.caseInsensitiveCompare(rhs.host) == .orderedSame
+    }
+
+    private func shortFingerprint(_ fingerprint: String) -> String {
+        if fingerprint.count > 24 {
+            return String(fingerprint.prefix(24)) + "…"
+        }
+        return fingerprint
     }
 }
 

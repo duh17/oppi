@@ -32,6 +32,7 @@ struct TimelineCacheMetrics: Sendable {
 actor TimelineCache {
     static let shared = TimelineCache()
 
+    private let fileManager: FileManager
     private let root: URL
     private let tracesDir: URL
     private let encoder: JSONEncoder
@@ -45,24 +46,27 @@ actor TimelineCache {
     private var totalLoadMs = 0
     private var loadSamples = 0
 
-    private init() {
-        let fileManager = FileManager.default
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let appRoot = appSupport.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+    init(
+        rootURL: URL? = nil,
+        legacyRootURL: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
+        self.fileManager = fileManager
 
-        root = appRoot.appending(path: "cache", directoryHint: .isDirectory)
-        tracesDir = root.appending(path: "traces", directoryHint: .isDirectory)
+        let resolvedRoot = rootURL ?? Self.defaultRootURL(fileManager: fileManager)
+        root = resolvedRoot
+        tracesDir = resolvedRoot.appending(path: "traces", directoryHint: .isDirectory)
 
-        let legacyCaches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let legacyRoot = legacyCaches.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+        let resolvedLegacyRoot = legacyRootURL ?? Self.defaultLegacyRootURL(fileManager: fileManager)
 
         // One-time migration from old evictable cache location if durable
         // storage doesn't exist yet.
         if !fileManager.fileExists(atPath: root.path),
-           fileManager.fileExists(atPath: legacyRoot.path) {
+           fileManager.fileExists(atPath: resolvedLegacyRoot.path) {
             do {
-                try fileManager.createDirectory(at: appRoot, withIntermediateDirectories: true)
-                try fileManager.copyItem(at: legacyRoot, to: root)
+                let parent = root.deletingLastPathComponent()
+                try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+                try fileManager.copyItem(at: resolvedLegacyRoot, to: root)
                 logger.notice("Cache migrated from Caches to Application Support")
             } catch {
                 logger.warning("Cache migration failed: \(error.localizedDescription)")
@@ -95,7 +99,7 @@ actor TimelineCache {
         } catch {
             decodeFailureCount += 1
             logger.warning("Cache decode failed for trace \(sessionId): \(error.localizedDescription)")
-            try? FileManager.default.removeItem(at: url)
+            try? fileManager.removeItem(at: url)
             return nil
         }
     }
@@ -119,7 +123,7 @@ actor TimelineCache {
     }
 
     func removeTrace(_ sessionId: String) {
-        try? FileManager.default.removeItem(at: traceURL(sessionId))
+        try? fileManager.removeItem(at: traceURL(sessionId))
         logger.debug("Cache removed: trace for \(sessionId)")
     }
 
@@ -161,7 +165,7 @@ actor TimelineCache {
 
     func saveSkillDetail(_ name: String, detail: SkillDetail) {
         let dir = root.appending(path: "skills")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         save(detail, to: "skills/\(name).json")
     }
 
@@ -183,7 +187,7 @@ actor TimelineCache {
 
     /// Remove trace caches for sessions that no longer exist.
     func evictStaleTraces(keepIds: Set<String>) {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
+        guard let contents = try? fileManager.contentsOfDirectory(
             at: tracesDir,
             includingPropertiesForKeys: nil
         ) else { return }
@@ -192,7 +196,7 @@ actor TimelineCache {
         for url in contents {
             let sessionId = url.deletingPathExtension().lastPathComponent
             if !keepIds.contains(sessionId) {
-                try? FileManager.default.removeItem(at: url)
+                try? fileManager.removeItem(at: url)
                 evicted += 1
             }
         }
@@ -203,8 +207,8 @@ actor TimelineCache {
 
     /// Clear all cached data.
     func clear() {
-        try? FileManager.default.removeItem(at: root)
-        try? FileManager.default.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+        try? fileManager.removeItem(at: root)
+        try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
 
         hitCount = 0
         missCount = 0
@@ -217,6 +221,17 @@ actor TimelineCache {
     }
 
     // MARK: - Private
+
+    private static func defaultRootURL(fileManager: FileManager) -> URL {
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let appRoot = appSupport.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+        return appRoot.appending(path: "cache", directoryHint: .isDirectory)
+    }
+
+    private static func defaultLegacyRootURL(fileManager: FileManager) -> URL {
+        let legacyCaches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return legacyCaches.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+    }
 
     private func traceURL(_ sessionId: String) -> URL {
         tracesDir.appending(path: "\(sessionId).json")
@@ -237,7 +252,7 @@ actor TimelineCache {
         } catch {
             decodeFailureCount += 1
             logger.warning("Cache decode failed for \(filename): \(error.localizedDescription)")
-            try? FileManager.default.removeItem(at: url)
+            try? fileManager.removeItem(at: url)
             return nil
         }
     }

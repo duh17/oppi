@@ -7,7 +7,7 @@ import UIKit
 ///
 /// Maps file extensions and markdown fence names to language-specific
 /// highlighting rules (keywords, comment patterns).
-enum SyntaxLanguage: Sendable {
+enum SyntaxLanguage: Sendable, Hashable {
     case swift
     case typescript
     case javascript
@@ -241,10 +241,11 @@ private let kotlinKeywords: Set<String> = [
 
 // MARK: - SyntaxHighlighter
 
-/// Left-to-right token scanner producing an `AttributedString` with Tokyo Night colors.
+/// Lightweight deterministic syntax highlighter used across chat, file viewer,
+/// and diff surfaces.
 ///
-/// Covers comments, strings, numbers, keywords, decorators, and type-like
-/// identifiers. Not compiler-grade but effective for a mobile file viewer.
+/// Uses a fast scanner (comments/strings/numbers/keywords) with predictable
+/// performance and no external parser dependencies.
 enum SyntaxHighlighter {
 
     /// Maximum lines to process (performance bound).
@@ -259,21 +260,31 @@ enum SyntaxHighlighter {
 
     /// Highlight source code.
     static func highlight(_ code: String, language: SyntaxLanguage) -> AttributedString {
+        let truncated = truncatedCode(code)
+
         if language == .json {
-            return highlightJSON(code)
+            return highlightJSON(truncated)
         }
 
         var result = AttributedString()
         var inBlockComment = false
-        let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = truncated.split(separator: "\n", omittingEmptySubsequences: false)
 
-        for (i, line) in lines.prefix(maxLines).enumerated() {
+        for (i, line) in lines.enumerated() {
             if i > 0 { result += AttributedString("\n") }
             result += highlightLine(
                 Array(line), language: language, inBlockComment: &inBlockComment
             )
         }
         return result
+    }
+
+    private static func truncatedCode(_ code: String) -> String {
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count <= maxLines {
+            return code
+        }
+        return lines.prefix(maxLines).joined(separator: "\n")
     }
 
     // MARK: - Line Scanner

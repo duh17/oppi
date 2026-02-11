@@ -38,6 +38,10 @@ struct ChatInputBar: View {
 
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showCamera = false
+    @State private var inlineVisualLineCount = 1
+
+    private let inlineMaxLines = 8
+    private let expandVisibilityLineThreshold = 5
 
     /// Whether the current input is a bash command (starts with "$ ").
     private var isBashMode: Bool {
@@ -81,6 +85,16 @@ struct ChatInputBar: View {
             return []
         }
         return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
+    }
+
+    /// Show manual expand only when input is getting long.
+    private var showsExpandButton: Bool {
+        inlineVisualLineCount >= expandVisibilityLineThreshold
+    }
+
+    /// Keep expand centered on the same trailing column as the send button.
+    private var expandButtonTrailingPadding: CGFloat {
+        12 + ((36 - 28) / 2)
     }
 
     /// Text binding for the input field.
@@ -141,7 +155,7 @@ struct ChatInputBar: View {
                 }
 
                 // Input row
-                HStack(spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     attachButton
 
                     if isBashMode {
@@ -156,6 +170,7 @@ struct ChatInputBar: View {
                             Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundStyle(.tokyoComment)
+                                .padding(.vertical, 4)
                                 .allowsHitTesting(false)
                         }
 
@@ -165,13 +180,17 @@ struct ChatInputBar: View {
                             font: .monospacedSystemFont(ofSize: 17, weight: .regular),
                             textColor: UIColor(Color.tokyoFg),
                             tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
-                            maxLines: 8,
+                            maxLines: inlineMaxLines,
                             onPasteImages: handlePastedImages,
+                            onOverflowChange: nil,
+                            onLineCountChange: handleInlineLineCountChange,
+                            onFocusChange: nil,
+                            onDictationStateChange: nil,
+                            focusRequestID: 0,
+                            blurRequestID: 0,
                             accessibilityIdentifier: "chat.input"
                         )
                     }
-
-                    expandButton
 
                     actionButtons
                 }
@@ -183,9 +202,21 @@ struct ChatInputBar: View {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(borderColor, lineWidth: 1)
             )
+            .overlay(alignment: .topTrailing) {
+                if showsExpandButton {
+                    expandButton
+                        .padding(.top, 6)
+                        .padding(.trailing, expandButtonTrailingPadding)
+                }
+            }
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
         .padding(.bottom, appliesOuterPadding ? 8 : 0)
+        .onChange(of: text) { _, newValue in
+            if newValue.isEmpty {
+                inlineVisualLineCount = 1
+            }
+        }
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
         }
@@ -225,6 +256,7 @@ struct ChatInputBar: View {
                 .font(.title2)
                 .foregroundStyle(isBashMode ? .tokyoComment : .tokyoBlue)
                 .symbolRenderingMode(.hierarchical)
+                .frame(width: 36, height: 36)
         }
         .disabled(isBashMode)
     }
@@ -263,11 +295,16 @@ struct ChatInputBar: View {
     }
 
     private var expandButton: some View {
-        Button(action: onExpand) {
+        Button(action: expandComposerManually) {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.footnote)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.tokyoComment)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle().fill(Color.tokyoBgDark.opacity(0.9))
+                )
         }
+        .accessibilityIdentifier("chat.expand")
     }
 
     @ViewBuilder
@@ -340,6 +377,14 @@ struct ChatInputBar: View {
     }
 
     // MARK: - Actions
+
+    private func expandComposerManually() {
+        onExpand()
+    }
+
+    private func handleInlineLineCountChange(_ lineCount: Int) {
+        inlineVisualLineCount = max(lineCount, 1)
+    }
 
     private func handleSend() {
         guard !isSending else { return }

@@ -9,9 +9,43 @@ final class SessionStore {
     var sessions: [Session] = []
     var activeSessionId: String?
 
+    /// Freshness metadata for session list refreshes.
+    var lastSuccessfulSyncAt: Date?
+    var isSyncing = false
+    var lastSyncFailed = false
+
     /// Current active session (convenience).
     var activeSession: Session? {
         sessions.first { $0.id == activeSessionId }
+    }
+
+    func markSyncStarted() {
+        isSyncing = true
+    }
+
+    func markSyncSucceeded(at date: Date = Date()) {
+        isSyncing = false
+        lastSyncFailed = false
+        lastSuccessfulSyncAt = date
+    }
+
+    func markSyncFailed() {
+        isSyncing = false
+        lastSyncFailed = true
+    }
+
+    func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
+        FreshnessState.derive(
+            lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+            isSyncing: isSyncing,
+            lastSyncFailed: lastSyncFailed,
+            staleAfter: staleAfter,
+            now: now
+        )
+    }
+
+    func freshnessLabel(now: Date = Date()) -> String {
+        FreshnessState.updatedLabel(lastSuccessfulSyncAt: lastSuccessfulSyncAt, now: now)
     }
 
     /// Insert or update a session from server data.

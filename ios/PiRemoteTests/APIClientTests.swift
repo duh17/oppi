@@ -99,6 +99,43 @@ struct APIClientTests {
         #expect(user.name == "Chen")
     }
 
+    @Test func securityProfileDecodesServerPolicy() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/security/profile")
+            return self.mockResponse(json: """
+            {
+              "configVersion": 2,
+              "profile": "tailscale-permissive",
+              "requireTlsOutsideTailnet": true,
+              "allowInsecureHttpInTailnet": true,
+              "requirePinnedServerIdentity": true,
+              "identity": {
+                "enabled": true,
+                "algorithm": "ed25519",
+                "keyId": "srv-default",
+                "fingerprint": "sha256:test"
+              },
+              "invite": {
+                "format": "v2-signed",
+                "allowLegacyV1Unsigned": true,
+                "maxAgeSeconds": 600
+              }
+            }
+            """)
+        }
+
+        let profile = try await client.securityProfile()
+        #expect(profile.configVersion == 2)
+        #expect(profile.profile == "tailscale-permissive")
+        #expect(profile.requireTlsOutsideTailnet == true)
+        #expect(profile.identity.keyId == "srv-default")
+        #expect(profile.identity.normalizedFingerprint == "sha256:test")
+        #expect(profile.invite.format == "v2-signed")
+    }
+
     // MARK: - Sessions
 
     @Test func listSessions() async throws {
@@ -142,8 +179,10 @@ struct APIClientTests {
         let client = makeClient()
         defer { cleanup() }
 
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions/s1")
+            #expect(request.url?.query == "view=context")
+            return self.mockResponse(json: """
             {
                 "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
@@ -157,6 +196,27 @@ struct APIClientTests {
         #expect(session.id == "s1")
         #expect(trace.count == 1)
         #expect(trace[0].type == .user)
+    }
+
+    @Test func getSessionWithFullTraceViewUsesQuery() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions/s1")
+            #expect(request.url?.query == "view=full")
+            return self.mockResponse(json: """
+            {
+                "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "trace":[
+                    {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
+                ]
+            }
+            """)
+        }
+
+        let (_, trace) = try await client.getSession(id: "s1", traceView: .full)
+        #expect(trace.count == 1)
     }
 
     @Test func getSessionEventsDecodesSequencedCatchUp() async throws {
@@ -282,6 +342,107 @@ struct APIClientTests {
 
         let ws = try await client.createWorkspace(CreateWorkspaceRequest(name: "New", skills: ["searxng"]))
         #expect(ws.id == "w2")
+    }
+
+    @Test func getPolicyProfileForWorkspace() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/policy/profile")
+            #expect(request.url?.query == "workspaceId=w1")
+            return self.mockResponse(json: """
+            {
+              "profile": {
+                "workspaceId": "w1",
+                "workspaceName": "Dev",
+                "runtime": "host",
+                "policyPreset": "host",
+                "supervisionLevel": "high",
+                "summary": "Runs directly on your Mac.",
+                "generatedAt": 1700000000000,
+                "alwaysBlocked": [
+                  {"id":"hard-1","title":"Protect API keys","risk":"critical"}
+                ],
+                "needsApproval": [
+                  {"id":"ask-1","title":"Git push","risk":"medium"}
+                ],
+                "usuallyAllowed": ["Build/test commands"]
+              }
+            }
+            """)
+        }
+
+        let profile = try await client.getPolicyProfile(workspaceId: "w1")
+        #expect(profile.workspaceId == "w1")
+        #expect(profile.runtime == "host")
+        #expect(profile.alwaysBlocked.count == 1)
+        #expect(profile.needsApproval.count == 1)
+    }
+
+    @Test func listPolicyRulesDecodesResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/policy/rules")
+            return self.mockResponse(json: """
+            {
+              "rules": [
+                {
+                  "id":"r1",
+                  "effect":"allow",
+                  "tool":"bash",
+                  "scope":"global",
+                  "source":"learned",
+                  "description":"Allow git operations",
+                  "risk":"medium",
+                  "createdAt":1700000000000,
+                  "match":{"executable":"git"}
+                }
+              ]
+            }
+            """)
+        }
+
+        let rules = try await client.listPolicyRules()
+        #expect(rules.count == 1)
+        #expect(rules[0].id == "r1")
+        #expect(rules[0].scope == "global")
+    }
+
+    @Test func listPolicyAuditDecodesResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/policy/audit")
+            #expect(request.url?.query?.contains("workspaceId=w1") == true)
+            return self.mockResponse(json: """
+            {
+              "entries": [
+                {
+                  "id":"a1",
+                  "timestamp":1700000000000,
+                  "sessionId":"s1",
+                  "workspaceId":"w1",
+                  "userId":"u1",
+                  "tool":"bash",
+                  "displaySummary":"git push",
+                  "risk":"medium",
+                  "decision":"allow",
+                  "resolvedBy":"user",
+                  "layer":"user_response"
+                }
+              ]
+            }
+            """)
+        }
+
+        let entries = try await client.listPolicyAudit(workspaceId: "w1", limit: 25)
+        #expect(entries.count == 1)
+        #expect(entries[0].id == "a1")
+        #expect(entries[0].workspaceId == "w1")
     }
 
     @Test func updateWorkspace() async throws {

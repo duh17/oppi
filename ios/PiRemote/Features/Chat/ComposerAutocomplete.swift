@@ -10,29 +10,6 @@ enum ComposerAutocompleteContext: Equatable {
 enum ComposerAutocomplete {
     static let maxSuggestions = 8
 
-    private static let builtinSlashCommands: [SlashCommand] = [
-        SlashCommand(
-            name: "compact",
-            description: "Manually compact context (optional custom instructions)",
-            source: .builtIn
-        ),
-        SlashCommand(
-            name: "new",
-            description: "Start a new session",
-            source: .builtIn
-        ),
-        SlashCommand(
-            name: "name",
-            description: "Set session name (usage: /name <name>)",
-            source: .builtIn
-        ),
-        SlashCommand(
-            name: "model",
-            description: "Open model picker",
-            source: .builtIn
-        ),
-    ]
-
     /// Parse autocomplete context from the trailing token in the composer text.
     ///
     /// Phase 1 slash contract:
@@ -63,13 +40,12 @@ enum ComposerAutocomplete {
         commands: [SlashCommand],
         limit: Int = maxSuggestions
     ) -> [SlashCommand] {
-        let allCommands = builtinSlashCommands + commands
-        guard !allCommands.isEmpty else { return [] }
+        guard !commands.isEmpty else { return [] }
 
         let normalized = query.lowercased()
         var deduped: [String: SlashCommand] = [:]
 
-        for command in allCommands {
+        for command in commands {
             let key = command.name.lowercased()
             if deduped[key] == nil {
                 deduped[key] = command

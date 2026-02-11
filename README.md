@@ -202,6 +202,8 @@ pi-remote invite <name> --host ... # Force LAN/tailnet host in QR payload
 pi-remote users                    # List users
 pi-remote users remove <n>         # Remove a user
 pi-remote status                   # Show server status
+pi-remote config show              # Show effective config JSON
+pi-remote config validate          # Validate config schema
 ```
 
 ## Performance & Reliability Harnesses
@@ -228,6 +230,7 @@ LOAD_TOKEN=<token> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
 ```
 GET    /health                     # Health check (no auth)
 GET    /me                         # Current user info
+GET    /security/profile           # Server security posture + trust metadata
 
 # Sessions (workspace-scoped aliases also exist under /workspaces/:wid/sessions/:sid/*)
 GET    /sessions                   # List user's sessions

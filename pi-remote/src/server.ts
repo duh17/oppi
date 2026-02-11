@@ -925,10 +925,8 @@ export class Server {
 
     const user = this.authenticate(req);
     if (!user) {
-      const auth = req.headers.authorization;
-      console.log(
-        `${ts()} [auth] 401 ${method} ${path} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`,
-      );
+      const authPresent = typeof req.headers.authorization === "string";
+      console.log(`${ts()} [auth] 401 ${method} ${path} — auth: ${authPresent ? "present" : "missing"}`);
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -966,9 +964,9 @@ export class Server {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const user = this.authenticate(req);
     if (!user) {
-      const auth = req.headers.authorization;
+      const authPresent = typeof req.headers.authorization === "string";
       console.log(
-        `${ts()} [auth] 401 WS upgrade ${url.pathname} — token: ${auth ? auth.slice(0, 15) + "…" : "(none)"}`,
+        `${ts()} [auth] 401 WS upgrade ${url.pathname} — auth: ${authPresent ? "present" : "missing"}`,
       );
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();

@@ -8,6 +8,11 @@ private let logger = Logger(subsystem: "dev.chenda.PiRemote", category: "APIClie
 /// Handles session CRUD, health checks, and authentication.
 /// All methods throw on network/server errors with descriptive messages.
 actor APIClient {
+    enum SessionTraceView: String, Sendable {
+        case context
+        case full
+    }
+
     let baseURL: URL
     let token: String
     private let session: URLSession
@@ -41,6 +46,12 @@ actor APIClient {
     func me() async throws -> User {
         let data = try await get("/me")
         return try JSONDecoder().decode(User.self, from: data)
+    }
+
+    /// Fetch server-authored security posture for trust + transport checks.
+    func securityProfile() async throws -> ServerSecurityProfile {
+        let data = try await get("/security/profile")
+        return try JSONDecoder().decode(ServerSecurityProfile.self, from: data)
     }
 
     // MARK: - Sessions
@@ -120,9 +131,12 @@ actor APIClient {
         }
     }
 
-    /// Get a session with its resolved context (compaction-aware, same view as pi TUI).
-    func getSession(id: String) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/sessions/\(id)")
+    /// Get a session with trace events for either context or full timeline view.
+    func getSession(
+        id: String,
+        traceView: SessionTraceView = .context
+    ) async throws -> (session: Session, trace: [TraceEvent]) {
+        let data = try await get("/sessions/\(id)?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
@@ -184,6 +198,55 @@ actor APIClient {
     /// Delete a workspace.
     func deleteWorkspace(id: String) async throws {
         _ = try await request("DELETE", path: "/workspaces/\(id)")
+    }
+
+    // MARK: - Safety Policy
+
+    /// Fetch a human-readable policy profile for a workspace.
+    func getPolicyProfile(workspaceId: String? = nil) async throws -> PolicyProfile {
+        var route = "/policy/profile"
+        if let workspaceId {
+            route += "?workspaceId=\(try encodeQueryPath(workspaceId))"
+        }
+        let data = try await get(route)
+        struct Response: Decodable { let profile: PolicyProfile }
+        return try JSONDecoder().decode(Response.self, from: data).profile
+    }
+
+    /// List effective learned/manual policy rules visible to the user.
+    func listPolicyRules(workspaceId: String? = nil) async throws -> [PolicyRuleRecord] {
+        var route = "/policy/rules"
+        if let workspaceId {
+            route += "?workspaceId=\(try encodeQueryPath(workspaceId))"
+        }
+        let data = try await get(route)
+        struct Response: Decodable { let rules: [PolicyRuleRecord] }
+        return try JSONDecoder().decode(Response.self, from: data).rules
+    }
+
+    /// Fetch recent policy audit decisions for the workspace/user.
+    func listPolicyAudit(
+        workspaceId: String? = nil,
+        sessionId: String? = nil,
+        limit: Int = 50,
+        before: Date? = nil
+    ) async throws -> [PolicyAuditEntry] {
+        var query: [String] = ["limit=\(limit)"]
+        if let workspaceId {
+            query.append("workspaceId=\(try encodeQueryPath(workspaceId))")
+        }
+        if let sessionId {
+            query.append("sessionId=\(try encodeQueryPath(sessionId))")
+        }
+        if let before {
+            let ms = Int(before.timeIntervalSince1970 * 1000)
+            query.append("before=\(ms)")
+        }
+
+        let route = "/policy/audit?\(query.joined(separator: "&"))"
+        let data = try await get(route)
+        struct Response: Decodable { let entries: [PolicyAuditEntry] }
+        return try JSONDecoder().decode(Response.self, from: data).entries
     }
 
     // MARK: - Skills
@@ -256,8 +319,14 @@ actor APIClient {
     }
 
     /// Get session detail via workspace path.
-    func getWorkspaceSession(workspaceId: String, sessionId: String) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)")
+    func getWorkspaceSession(
+        workspaceId: String,
+        sessionId: String,
+        traceView: SessionTraceView = .context
+    ) async throws -> (session: Session, trace: [TraceEvent]) {
+        let data = try await get(
+            "/workspaces/\(workspaceId)/sessions/\(sessionId)?view=\(traceView.rawValue)"
+        )
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
@@ -485,6 +554,146 @@ struct UpdateWorkspaceRequest: Encodable {
     var extensionMode: String?
     var extensions: [String]?
     var defaultModel: String?
+}
+
+// MARK: - Policy Models
+
+struct PolicyProfile: Decodable, Sendable {
+    let workspaceId: String?
+    let workspaceName: String?
+    let runtime: String
+    let policyPreset: String
+    let supervisionLevel: String
+    let summary: String
+    let generatedAt: Date
+    let alwaysBlocked: [PolicyProfileItem]
+    let needsApproval: [PolicyProfileItem]
+    let usuallyAllowed: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceId, workspaceName, runtime, policyPreset, supervisionLevel
+        case summary, generatedAt, alwaysBlocked, needsApproval, usuallyAllowed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
+        runtime = try c.decode(String.self, forKey: .runtime)
+        policyPreset = try c.decode(String.self, forKey: .policyPreset)
+        supervisionLevel = try c.decode(String.self, forKey: .supervisionLevel)
+        summary = try c.decode(String.self, forKey: .summary)
+        let generatedAtMs = try c.decode(Double.self, forKey: .generatedAt)
+        generatedAt = Date(timeIntervalSince1970: generatedAtMs / 1000)
+        alwaysBlocked = try c.decode([PolicyProfileItem].self, forKey: .alwaysBlocked)
+        needsApproval = try c.decode([PolicyProfileItem].self, forKey: .needsApproval)
+        usuallyAllowed = try c.decode([String].self, forKey: .usuallyAllowed)
+    }
+}
+
+struct PolicyProfileItem: Decodable, Identifiable, Sendable {
+    let id: String
+    let title: String
+    let description: String?
+    let risk: RiskLevel
+    let example: String?
+}
+
+struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
+    struct Match: Decodable, Sendable {
+        let executable: String?
+        let domain: String?
+        let pathPattern: String?
+        let commandPattern: String?
+    }
+
+    let id: String
+    let effect: String
+    let tool: String?
+    let match: Match?
+    let scope: String
+    let workspaceId: String?
+    let sessionId: String?
+    let source: String
+    let description: String
+    let risk: RiskLevel
+    let createdAt: Date
+    let createdBy: String?
+    let expiresAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, effect, tool, match, scope, workspaceId, sessionId, source
+        case description, risk, createdAt, createdBy, expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        effect = try c.decode(String.self, forKey: .effect)
+        tool = try c.decodeIfPresent(String.self, forKey: .tool)
+        match = try c.decodeIfPresent(Match.self, forKey: .match)
+        scope = try c.decode(String.self, forKey: .scope)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        source = try c.decode(String.self, forKey: .source)
+        description = try c.decode(String.self, forKey: .description)
+        risk = try c.decode(RiskLevel.self, forKey: .risk)
+        let createdAtMs = try c.decode(Double.self, forKey: .createdAt)
+        createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
+        createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
+        if let expiresMs = try c.decodeIfPresent(Double.self, forKey: .expiresAt) {
+            expiresAt = Date(timeIntervalSince1970: expiresMs / 1000)
+        } else {
+            expiresAt = nil
+        }
+    }
+}
+
+struct PolicyAuditUserChoice: Decodable, Sendable {
+    let action: String
+    let scope: String
+    let learnedRuleId: String?
+}
+
+struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
+    let id: String
+    let timestamp: Date
+    let sessionId: String
+    let workspaceId: String
+    let userId: String
+    let tool: String
+    let displaySummary: String
+    let risk: RiskLevel
+    let decision: String
+    let resolvedBy: String
+    let layer: String
+    let ruleId: String?
+    let ruleSummary: String?
+    let userChoice: PolicyAuditUserChoice?
+
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, sessionId, workspaceId, userId, tool, displaySummary
+        case risk, decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        let timestampMs = try c.decode(Double.self, forKey: .timestamp)
+        timestamp = Date(timeIntervalSince1970: timestampMs / 1000)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        workspaceId = try c.decode(String.self, forKey: .workspaceId)
+        userId = try c.decode(String.self, forKey: .userId)
+        tool = try c.decode(String.self, forKey: .tool)
+        displaySummary = try c.decode(String.self, forKey: .displaySummary)
+        risk = try c.decode(RiskLevel.self, forKey: .risk)
+        decision = try c.decode(String.self, forKey: .decision)
+        resolvedBy = try c.decode(String.self, forKey: .resolvedBy)
+        layer = try c.decode(String.self, forKey: .layer)
+        ruleId = try c.decodeIfPresent(String.self, forKey: .ruleId)
+        ruleSummary = try c.decodeIfPresent(String.self, forKey: .ruleSummary)
+        userChoice = try c.decodeIfPresent(PolicyAuditUserChoice.self, forKey: .userChoice)
+    }
 }
 
 // MARK: - Errors

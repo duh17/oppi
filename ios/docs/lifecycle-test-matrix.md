@@ -99,3 +99,61 @@ Run through these scenarios after changes to `PiRemoteApp`, `ServerConnection`,
 `reconnectIfNeeded` does NOT call `reducer.loadSession()`. Timeline recovery is
 exclusively owned by `ChatSessionManager` (via auto-reconnect + sequenced catch-up).
 This prevents double-load races where both paths rebuild the timeline simultaneously.
+
+## Offline v0 Reliability Gate (T4)
+
+Current gate status: **IN PROGRESS** (simulator evidence complete, device matrix pending).
+
+### Automated evidence (simulator)
+
+Run on 2026-02-10:
+
+```bash
+xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test \
+  -only-testing:PiRemoteTests/TimelineCacheTests \
+  -only-testing:PiRemoteTests/WorkspaceStoreOfflineTests \
+  -only-testing:PiRemoteTests/FreshnessStateTests \
+  -only-testing:PiRemoteTests/ChatSessionManagerTests \
+  -only-testing:PiRemoteTests/TimelineReducerTests
+```
+
+Result: **pass (98 tests, 5 suites)**.
+
+### Offline matrix for v0 ship gate
+
+| ID | Scenario | Coverage | Status |
+|----|----------|----------|--------|
+| O1 | Cold launch in airplane mode with prior cache | `TimelineCacheTests`, `WorkspaceStoreOfflineTests`; manual device run required | ⏳ Device pending |
+| O2 | Foreground/background with network flap | `ChatSessionManagerTests` reconnect/catch-up tests; manual device run required | ⏳ Device pending |
+| O3 | Session switch while disconnected | `ChatSessionManagerTests` cleanup/ownership tests; manual device run required | ⏳ Device pending |
+| O4 | Reconnect catch-up without full reload flicker | `ChatSessionManagerTests` catch-up + `TimelineReducerTests` duplicate suppression | ⏳ Device pending |
+| O5 | Offline session/workspace list continuity | `WorkspaceStoreOfflineTests`, freshness metadata + chips; manual device run required | ⏳ Device pending |
+
+### Device execution checklist (required to close T4)
+
+Device target: **Duh Ifone** (iPhone 16 Pro, `00000000-0000-0000-0000-000000000000`)
+
+Current blocker: local `xcodebuild` destination resolution does not currently list the physical iPhone (only simulator + `Any iOS Device` placeholder). Resolve pairing/visibility before running D1–D5.
+
+| Step | Procedure | Expected |
+|------|-----------|----------|
+| D1 | Prime cache while online (launch app, open Sessions + Workspaces + one active Chat session) | Cached data present for all three surfaces |
+| D2 | Enable Airplane Mode and cold-launch app | Sessions/Workspaces render from cache; Chat opens with cached timeline |
+| D3 | Background app, toggle network on/off, foreground | No blank screen; state transitions show `syncing/offline/stale` correctly |
+| D4 | While offline, switch sessions and re-open previous session | No crashes; cached timeline continuity preserved |
+| D5 | Re-enable network and foreground | Sequenced catch-up resumes; no full-reload flicker or duplicate final assistant bubble |
+
+Log capture command after each run window:
+
+```bash
+ios/scripts/collect-device-logs.sh --last 10m --include-debug --no-sudo
+```
+
+### Ship decision rule
+
+- [x] Targeted offline/reconnect unit suites pass.
+- [ ] Device matrix O1–O5 all pass on physical device.
+- [ ] Device logs + short notes attached to this document or linked TODO.
+
+**Gate is fail-closed until device matrix is complete.**

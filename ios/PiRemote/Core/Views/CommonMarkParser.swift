@@ -74,6 +74,19 @@ private func extractCellPlainText(_ markup: any Markup) -> String {
     if let text = markup as? Text {
         return text.string
     }
+    if let code = markup as? InlineCode {
+        return code.code
+    }
+    if markup is SoftBreak || markup is LineBreak {
+        return "\n"
+    }
+    if let link = markup as? Link {
+        let label = link.children.map { extractCellPlainText($0) }.joined()
+        return label.isEmpty ? link.destination ?? "" : label
+    }
+    if let html = markup as? InlineHTML {
+        return html.rawHTML
+    }
     return markup.children.map { extractCellPlainText($0) }.joined()
 }
 

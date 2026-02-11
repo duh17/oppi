@@ -16,6 +16,9 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
+    @State private var quickReplySuggestions: [String] = []
+    @State private var quickReplySourceAssistantID: String?
+    @State private var isLoadingQuickReplies = false
 
     @State private var showOutline = false
     @State private var showModelPicker = false
@@ -26,6 +29,7 @@ struct ChatView: View {
 #if DEBUG
     @State private var showSessionActions = false
     @State private var uploadingClientLogs = false
+    @State private var benchmarkingLocalModel = false
 #endif
 
     init(sessionId: String) {
@@ -136,6 +140,10 @@ struct ChatView: View {
                         uploadClientLogs()
                     }
                     .disabled(uploadingClientLogs)
+                    Button(benchmarkingLocalModel ? "Running Model Benchmark…" : "Benchmark On-Device Model") {
+                        benchmarkOnDeviceModel()
+                    }
+                    .disabled(benchmarkingLocalModel)
                     Button("Cancel", role: .cancel) {}
                 }
 #else
@@ -169,7 +177,7 @@ struct ChatView: View {
         .sheet(isPresented: $showModelPicker) {
             modelPickerSheet
         }
-        .sheet(isPresented: $showComposer) {
+        .fullScreenCover(isPresented: $showComposer) {
             composerSheet
         }
         .alert("Rename Session", isPresented: $showRenameAlert) {
@@ -183,6 +191,9 @@ struct ChatView: View {
                 reducer: reducer,
                 sessionStore: sessionStore
             )
+        }
+        .task(id: quickReplyRequestKey) {
+            await refreshQuickReplySuggestions()
         }
         .onAppear {
             sessionManager.markAppeared()
@@ -230,34 +241,56 @@ struct ChatView: View {
         if isStopped {
             SessionEndedFooter(session: session)
         } else {
-            ChatInputBar(
-                text: $inputText,
-                pendingImages: $pendingImages,
-                isBusy: isBusy,
-                isSending: actionHandler.isSending,
-                sendProgressText: actionHandler.sendProgressText,
-                isStopping: isStopping,
-                showForceStop: actionHandler.showForceStop,
-                isForceStopInFlight: actionHandler.isForceStopInFlight,
-                slashCommands: connection.slashCommands,
-                onSend: sendPrompt,
-                onBash: sendBashCommand,
-                onStop: {
-                    actionHandler.stop(
-                        connection: connection, reducer: reducer,
-                        sessionStore: sessionStore, sessionManager: sessionManager,
-                        sessionId: sessionId
+            VStack(spacing: 8) {
+                if !quickReplySuggestions.isEmpty {
+                    QuickReplySuggestionList(
+                        suggestions: quickReplySuggestions,
+                        onSelect: sendQuickReply
                     )
-                },
-                onForceStop: {
-                    actionHandler.forceStop(
-                        connection: connection, reducer: reducer,
-                        sessionStore: sessionStore, sessionId: sessionId
+                    .padding(.horizontal, 16)
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity
+                        )
                     )
-                },
-                onExpand: { showComposer = true },
-                appliesOuterPadding: true
-            )
+                } else if isLoadingQuickReplies {
+                    QuickReplySuggestionLoadingRow()
+                        .padding(.horizontal, 16)
+                        .transition(.opacity)
+                }
+
+                ChatInputBar(
+                    text: $inputText,
+                    pendingImages: $pendingImages,
+                    isBusy: isBusy,
+                    isSending: actionHandler.isSending,
+                    sendProgressText: actionHandler.sendProgressText,
+                    isStopping: isStopping,
+                    showForceStop: actionHandler.showForceStop,
+                    isForceStopInFlight: actionHandler.isForceStopInFlight,
+                    slashCommands: connection.slashCommands,
+                    onSend: sendPrompt,
+                    onBash: sendBashCommand,
+                    onStop: {
+                        actionHandler.stop(
+                            connection: connection, reducer: reducer,
+                            sessionStore: sessionStore, sessionManager: sessionManager,
+                            sessionId: sessionId
+                        )
+                    },
+                    onForceStop: {
+                        actionHandler.forceStop(
+                            connection: connection, reducer: reducer,
+                            sessionStore: sessionStore, sessionId: sessionId
+                        )
+                    },
+                    onExpand: presentComposer,
+                    appliesOuterPadding: true
+                )
+            }
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: quickReplySuggestions)
+            .animation(.easeInOut(duration: 0.22), value: isLoadingQuickReplies)
         }
     }
 
@@ -280,13 +313,109 @@ struct ChatView: View {
 
     // MARK: - Actions
 
+    private func presentComposer() {
+        showComposer = true
+    }
+
+    private struct QuickReplyRequest: Equatable {
+        let assistantID: String
+        let assistantText: String
+        let cacheKey: String
+
+        var taskKey: String {
+            cacheKey
+        }
+    }
+
+    private var quickReplyRequest: QuickReplyRequest? {
+        guard !isBusy else { return nil }
+        guard !actionHandler.isSending else { return nil }
+        guard pendingImages.isEmpty else { return nil }
+        guard inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard let assistant = latestAssistantMessage else { return nil }
+
+        return QuickReplyRequest(
+            assistantID: assistant.id,
+            assistantText: assistant.text,
+            cacheKey: "\(sessionId)|\(assistant.id)"
+        )
+    }
+
+    private var quickReplyRequestKey: String {
+        quickReplyRequest?.taskKey ?? "quick-replies:inactive"
+    }
+
+    private var latestAssistantMessage: (id: String, text: String)? {
+        for item in reducer.items.reversed() {
+            guard case .assistantMessage(let id, let text, _) = item else { continue }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return (id, trimmed)
+            }
+        }
+        return nil
+    }
+
+    private func refreshQuickReplySuggestions() async {
+        guard let request = quickReplyRequest else {
+            quickReplySourceAssistantID = nil
+            isLoadingQuickReplies = false
+            if !quickReplySuggestions.isEmpty {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    quickReplySuggestions = []
+                }
+            }
+            return
+        }
+
+        if quickReplySourceAssistantID != request.assistantID && !quickReplySuggestions.isEmpty {
+            withAnimation(.easeOut(duration: 0.12)) {
+                quickReplySuggestions = []
+            }
+        }
+
+        if let cached = await actionHandler.cachedQuickReplySuggestions(cacheKey: request.cacheKey) {
+            isLoadingQuickReplies = false
+            quickReplySourceAssistantID = request.assistantID
+            if quickReplySuggestions != cached {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    quickReplySuggestions = cached
+                }
+            }
+            return
+        }
+
+        let requestKey = request.taskKey
+        isLoadingQuickReplies = true
+
+        let suggestions = await actionHandler.generateQuickReplySuggestions(
+            assistantText: request.assistantText,
+            recentUserReplies: [],
+            limit: QuickReplySuggester.maxSuggestions,
+            cacheKey: request.cacheKey
+        )
+
+        guard requestKey == quickReplyRequestKey else { return }
+
+        isLoadingQuickReplies = false
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            quickReplySuggestions = suggestions
+        }
+        quickReplySourceAssistantID = request.assistantID
+    }
+
+    private func sendQuickReply(_ text: String) {
+        guard !isBusy else { return }
+        guard !actionHandler.isSending else { return }
+        guard pendingImages.isEmpty else { return }
+
+        inputText = text
+        sendPrompt()
+    }
+
     private func sendPrompt() {
         let text = inputText
         let images = pendingImages
-
-        if handleBuiltinSlashCommand(text: text, images: images) {
-            return
-        }
 
         let reducerRef = reducer
         let sessionManagerRef = sessionManager
@@ -317,68 +446,6 @@ struct ChatView: View {
         }
     }
 
-    private func handleBuiltinSlashCommand(text: String, images: [PendingImage]) -> Bool {
-        guard !isBusy else {
-            return false
-        }
-
-        guard let command = SlashBuiltinCommand.parse(text) else {
-            return false
-        }
-
-        if !images.isEmpty {
-            reducer.process(.error(sessionId: sessionId, message: "Slash commands do not support image attachments."))
-            return true
-        }
-
-        switch command {
-        case .compact(let customInstructions):
-            inputText = ""
-            pendingImages = []
-            if let customInstructions {
-                Task {
-                    do {
-                        try await connection.compact(instructions: customInstructions)
-                        try? await connection.requestState()
-                    } catch {
-                        reducer.process(.error(sessionId: sessionId, message: "Compact failed: \(error.localizedDescription)"))
-                    }
-                }
-            } else {
-                actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-            }
-            return true
-
-        case .newSession:
-            inputText = ""
-            pendingImages = []
-            actionHandler.newSession(connection: connection, reducer: reducer, sessionId: sessionId)
-            return true
-
-        case .setSessionName(let maybeName):
-            guard let name = maybeName else {
-                reducer.process(.error(sessionId: sessionId, message: "Usage: /name <session name>"))
-                return true
-            }
-            inputText = ""
-            pendingImages = []
-            actionHandler.rename(
-                name,
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore,
-                sessionId: sessionId
-            )
-            return true
-
-        case .modelPicker:
-            inputText = ""
-            pendingImages = []
-            showModelPicker = true
-            return true
-        }
-    }
-
     private func sendBashCommand(_ command: String) {
         inputText = ""
         actionHandler.sendBash(
@@ -405,6 +472,27 @@ struct ChatView: View {
     }
 
 #if DEBUG
+    private func benchmarkOnDeviceModel() {
+        guard !benchmarkingLocalModel else { return }
+
+        benchmarkingLocalModel = true
+        reducer.appendSystemEvent("Running on-device quick-reply benchmark…")
+        ClientLog.info("ChatView", "On-device model benchmark requested", metadata: [
+            "sessionId": sessionId,
+        ])
+
+        Task { @MainActor in
+            defer { benchmarkingLocalModel = false }
+
+            let summary = await actionHandler.benchmarkOnDeviceQuickReplyModel(iterations: 5)
+            reducer.appendSystemEvent(summary)
+            ClientLog.info("ChatView", "On-device model benchmark finished", metadata: [
+                "sessionId": sessionId,
+                "summary": summary,
+            ])
+        }
+    }
+
     private func uploadClientLogs() {
         guard !uploadingClientLogs else { return }
         guard let api = connection.apiClient else {
@@ -500,9 +588,6 @@ struct ChatView: View {
             onSend: sendPrompt,
             onBash: sendBashCommand
         )
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .interactiveDismissDisabled(false)
     }
 
     @ViewBuilder

@@ -3,7 +3,7 @@ import VisionKit
 
 /// QR code scanner using DataScannerViewController (VisionKit, iOS 16+).
 ///
-/// Scans for JSON payload: {"host":"...","port":7749,"token":"sk_...","name":"..."}
+/// Supports both legacy v1 invite JSON and signed v2 invite envelope JSON.
 struct QRScannerView: UIViewControllerRepresentable {
     let onScan: (ServerCredentials) -> Void
 
@@ -60,8 +60,7 @@ struct QRScannerView: UIViewControllerRepresentable {
 
             guard case .barcode(let barcode) = item,
                   let payload = barcode.payloadStringValue,
-                  let data = payload.data(using: .utf8),
-                  let credentials = try? JSONDecoder().decode(ServerCredentials.self, from: data)
+                  let credentials = ServerCredentials.decodeInvitePayload(payload)
             else { return }
 
             didScan = true

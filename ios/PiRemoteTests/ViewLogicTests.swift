@@ -355,6 +355,16 @@ struct SyntaxHighlighterTests {
         #expect(String(result.characters) == code)
     }
 
+    @MainActor
+    @Test func shellBlockHighlightingOnMainThreadUsesHeuristicScanner() {
+        let command = "xcodebuild -scheme PiRemote"
+        let result = SyntaxHighlighter.highlight(command, language: .shell)
+
+        #expect(String(result.characters) == command)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "-scheme", in: result) == .tokyoYellow)
+    }
+
     @Test func shellHighlightingUsesShellHeuristics() {
         let line = "xcodebuild -scheme PiRemoteUIReliability 2>&1 | grep -E '(passed|skipped)'"
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
@@ -792,6 +802,52 @@ struct LineNumberInfoTests {
     }
 }
 
+// MARK: - inlineComposerHeight
+
+@Suite("inlineComposerHeight")
+struct InlineComposerHeightTests {
+
+    @Test func clampsToMinimumSingleLineHeight() {
+        let height = inlineComposerHeight(
+            rawContentHeight: 2,
+            lineHeight: 20,
+            verticalInsets: 8,
+            maxLines: 10
+        )
+        #expect(height == 28)
+    }
+
+    @Test func preservesInRangeHeight() {
+        let height = inlineComposerHeight(
+            rawContentHeight: 64,
+            lineHeight: 20,
+            verticalInsets: 8,
+            maxLines: 10
+        )
+        #expect(height == 64)
+    }
+
+    @Test func clampsToConfiguredMaxLines() {
+        let height = inlineComposerHeight(
+            rawContentHeight: 400,
+            lineHeight: 20,
+            verticalInsets: 8,
+            maxLines: 3
+        )
+        #expect(height == 68) // (20 * 3) + 8
+    }
+
+    @Test func guardsInvalidMaxLinesAndInsets() {
+        let height = inlineComposerHeight(
+            rawContentHeight: 0,
+            lineHeight: 20,
+            verticalInsets: -100,
+            maxLines: 0
+        )
+        #expect(height == 20) // falls back to 1 line, no negative inset
+    }
+}
+
 // MARK: - ComposerAutocomplete
 
 @Suite("ComposerAutocomplete")
@@ -834,9 +890,9 @@ struct ComposerAutocompleteTests {
         #expect(unchanged == "hello /co")
     }
 
-    @Test func slashSuggestionsIncludeBuiltIns() {
+    @Test func slashSuggestionsRequireServerCommands() {
         let suggestions = ComposerAutocomplete.slashSuggestions(query: "comp", commands: [])
-        #expect(suggestions.map(\.name).contains("compact"))
+        #expect(suggestions.isEmpty)
     }
 
     private func makeSlashCommands(
@@ -852,36 +908,54 @@ struct ComposerAutocompleteTests {
     }
 }
 
-// MARK: - SlashBuiltinCommand
+// MARK: - QuickReplySuggester
 
-@Suite("SlashBuiltinCommand")
-struct SlashBuiltinCommandTests {
+@Suite("QuickReplySuggester")
+struct QuickReplySuggesterTests {
 
-    @Test func parseCompactWithInstructions() {
-        #expect(SlashBuiltinCommand.parse("/compact summarize this") == .compact(customInstructions: "summarize this"))
+    @Test func extractsTodoFromChecklistSection() {
+        let assistant = """
+        Plan complete.
+        TODO:
+        - [ ] Backfill missing indexes
+        - [ ] Add migration smoke test
+        """
+
+        let suggestions = QuickReplySuggester.suggestions(forAssistantText: assistant, recentUserReplies: [])
+
+        #expect(suggestions.contains("Backfill missing indexes"))
+        #expect(suggestions.contains("Add migration smoke test"))
     }
 
-    @Test func parseCompactWithoutInstructions() {
-        #expect(SlashBuiltinCommand.parse("/compact") == .compact(customInstructions: nil))
+    @Test func extractsInlineTodo() {
+        let assistant = "Before we deploy: TODO: rotate API keys"
+        let suggestions = QuickReplySuggester.suggestions(forAssistantText: assistant, recentUserReplies: [])
+
+        #expect(suggestions.contains("rotate API keys"))
     }
 
-    @Test func parseNew() {
-        #expect(SlashBuiltinCommand.parse("/new") == .newSession)
+    @Test func ignoresTodoMarkerInMetaText() {
+        let assistant = "2. TODO-only extraction\n- Supports:\n  - checklist items (- [ ] ...)\n- inline TODO: / `Action item:` / `Next step:`"
+        let suggestions = QuickReplySuggester.suggestions(forAssistantText: assistant, recentUserReplies: [])
+
+        #expect(suggestions.isEmpty)
     }
 
-    @Test func parseNameWithArgument() {
-        #expect(SlashBuiltinCommand.parse("/name sprint-42") == .setSessionName(name: "sprint-42"))
+    @Test func parseModelOutputTreatsNoneAsEmpty() {
+        #expect(QuickReplySuggester.parseModelOutput("NONE").isEmpty)
     }
 
-    @Test func parseNameWithoutArgument() {
-        #expect(SlashBuiltinCommand.parse("/name") == .setSessionName(name: nil))
-    }
+    @Test func dedupesSuggestionsCaseInsensitively() {
+        let assistant = """
+        TODO:
+        - [ ] Backfill missing indexes
+        - [ ] backfill   missing   indexes
+        """
 
-    @Test func parseModel() {
-        #expect(SlashBuiltinCommand.parse("/model") == .modelPicker)
-    }
+        let suggestions = QuickReplySuggester.suggestions(forAssistantText: assistant, recentUserReplies: [], limit: 8)
+        let normalized = suggestions.map { $0.lowercased().replacingOccurrences(of: "  ", with: " ") }
+        let backfillCount = normalized.filter { $0.contains("backfill missing indexes") }.count
 
-    @Test func parseUnknownReturnsNil() {
-        #expect(SlashBuiltinCommand.parse("/skill:foo") == nil)
+        #expect(backfillCount == 1)
     }
 }

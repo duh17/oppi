@@ -54,11 +54,10 @@ struct RemoteFileView: View {
                             .padding()
                     }
                 } else if let content {
-                    ScrollView {
-                        FileContentView(content: content, filePath: path)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                    }
+                    FileContentView(content: content, filePath: path)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
             .background(Color.tokyoBg)

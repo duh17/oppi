@@ -61,6 +61,42 @@ describe("parseJsonl: compaction", () => {
   });
 });
 
+describe("parseJsonl: full view preserves pre-compaction timeline", () => {
+  const syntheticJsonl = [
+    '{"type":"session","version":3,"id":"test-session","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}',
+    '{"type":"message","id":"m1","parentId":null,"timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":"old question"}}',
+    '{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-01-01T00:02:00Z","message":{"role":"assistant","content":[{"type":"text","text":"old answer"}]}}',
+    '{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-01-01T00:03:00Z","message":{"role":"user","content":"another old question"}}',
+    '{"type":"message","id":"m4","parentId":"m3","timestamp":"2026-01-01T00:04:00Z","message":{"role":"assistant","content":[{"type":"text","text":"another old answer"}]}}',
+    '{"type":"compaction","id":"c1","parentId":"m4","timestamp":"2026-01-01T00:05:00Z","summary":"User asked two questions about testing","firstKeptEntryId":"m3","tokensBefore":50000}',
+    '{"type":"message","id":"m5","parentId":"c1","timestamp":"2026-01-01T00:06:00Z","message":{"role":"user","content":"new question"}}',
+    '{"type":"message","id":"m6","parentId":"m5","timestamp":"2026-01-01T00:07:00Z","message":{"role":"assistant","content":[{"type":"text","text":"new answer"}]}}',
+  ].join("\n");
+
+  const events = parseJsonl(syntheticJsonl, { view: "full" });
+
+  it("keeps pre-compaction messages", () => {
+    const allTexts = events.map((e) => e.text || "");
+    expect(allTexts).toContain("old question");
+    expect(allTexts).toContain("old answer");
+  });
+
+  it("keeps compaction marker in chronological position", () => {
+    expect(events).toHaveLength(7);
+    expect(events[0].id).toBe("m1");
+    expect(events[1].id).toBe("m2-text-0");
+    expect(events[2].id).toBe("m3");
+    expect(events[3].id).toBe("m4-text-0");
+    expect(events[4].type).toBe("compaction");
+    expect(events[5].id).toBe("m5");
+    expect(events[6].id).toBe("m6-text-0");
+  });
+
+  it("compaction marker includes summary text", () => {
+    expect(events[4].text).toContain("User asked two questions about testing");
+  });
+});
+
 describe("parseJsonl: tool call matching", () => {
   const toolJsonl = [
     '{"type":"session","version":3,"id":"test-tools","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}',

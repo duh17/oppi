@@ -11,20 +11,468 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { nanoid } from "nanoid";
 import type {
   User,
   Session,
   SessionMessage,
+  SecurityProfile,
   ServerConfig,
+  ServerSecurityConfig,
+  ServerIdentityConfig,
+  ServerInviteConfig,
   Workspace,
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
 } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
+const CONFIG_VERSION = 2;
+const SECURITY_PROFILES: ReadonlySet<SecurityProfile> = new Set([
+  "legacy",
+  "tailscale-permissive",
+  "strict",
+]);
+const INVITE_FORMATS: ReadonlySet<ServerInviteConfig["format"]> = new Set([
+  "v1-unsigned",
+  "v2-signed",
+]);
+
+export interface ConfigValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  config?: ServerConfig;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function defaultSecurityConfig(): ServerSecurityConfig {
+  return {
+    profile: "tailscale-permissive",
+    requireTlsOutsideTailnet: true,
+    allowInsecureHttpInTailnet: true,
+    requirePinnedServerIdentity: true,
+  };
+}
+
+function defaultIdentityConfig(dataDir: string): ServerIdentityConfig {
+  return {
+    enabled: true,
+    algorithm: "ed25519",
+    keyId: "srv-default",
+    privateKeyPath: join(dataDir, "identity_ed25519"),
+    publicKeyPath: join(dataDir, "identity_ed25519.pub"),
+    fingerprint: "",
+  };
+}
+
+function defaultInviteConfig(): ServerInviteConfig {
+  return {
+    format: "v2-signed",
+    maxAgeSeconds: 600,
+    singleUse: false,
+    allowLegacyV1Unsigned: true,
+  };
+}
+
+function createDefaultConfig(dataDir: string): ServerConfig {
+  return {
+    configVersion: CONFIG_VERSION,
+    port: 7749,
+    host: "0.0.0.0",
+    dataDir,
+    defaultModel: "anthropic/claude-sonnet-4-0",
+    sessionTimeout: 10 * 60 * 1000,
+    sessionIdleTimeoutMs: 10 * 60 * 1000,
+    workspaceIdleTimeoutMs: 30 * 60 * 1000,
+    maxSessionsPerWorkspace: 3,
+    maxSessionsGlobal: 5,
+    legacyExtensionsEnabled: true,
+    security: defaultSecurityConfig(),
+    identity: defaultIdentityConfig(dataDir),
+    invite: defaultInviteConfig(),
+  };
+}
+
+function normalizeConfig(
+  raw: unknown,
+  dataDir: string,
+  strictUnknown: boolean,
+): ConfigValidationResult & { config: ServerConfig; changed: boolean } {
+  const defaults = createDefaultConfig(dataDir);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  let changed = false;
+
+  const config: ServerConfig = {
+    ...defaults,
+    security: defaultSecurityConfig(),
+    identity: defaultIdentityConfig(defaults.dataDir),
+    invite: defaultInviteConfig(),
+  };
+
+  if (!isRecord(raw)) {
+    errors.push("config: expected top-level JSON object");
+    return { valid: false, errors, warnings, config, changed: true };
+  }
+
+  const obj = raw;
+
+  const topLevelKeys = new Set([
+    "configVersion",
+    "port",
+    "host",
+    "dataDir",
+    "defaultModel",
+    "sessionTimeout",
+    "sessionIdleTimeoutMs",
+    "workspaceIdleTimeoutMs",
+    "maxSessionsPerWorkspace",
+    "maxSessionsGlobal",
+    "legacyExtensionsEnabled",
+    "security",
+    "identity",
+    "invite",
+  ]);
+
+  if (strictUnknown) {
+    for (const key of Object.keys(obj)) {
+      if (!topLevelKeys.has(key)) {
+        errors.push(`config.${key}: unknown key`);
+      }
+    }
+  }
+
+  const readNumber = (key: string, opts?: { min?: number; integer?: boolean }): number | undefined => {
+    if (!(key in obj)) {
+      changed = true;
+      return undefined;
+    }
+    const value = obj[key];
+    const integer = opts?.integer ?? true;
+    if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value)) {
+      errors.push(`config.${key}: expected number`);
+      changed = true;
+      return undefined;
+    }
+    if (integer && !Number.isInteger(value)) {
+      errors.push(`config.${key}: expected integer`);
+      changed = true;
+      return undefined;
+    }
+    if (opts?.min !== undefined && value < opts.min) {
+      errors.push(`config.${key}: expected >= ${opts.min}`);
+      changed = true;
+      return undefined;
+    }
+    return value;
+  };
+
+  const readString = (key: string): string | undefined => {
+    if (!(key in obj)) {
+      changed = true;
+      return undefined;
+    }
+    const value = obj[key];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      errors.push(`config.${key}: expected non-empty string`);
+      changed = true;
+      return undefined;
+    }
+    return value;
+  };
+
+  const readBoolean = (key: string): boolean | undefined => {
+    if (!(key in obj)) {
+      changed = true;
+      return undefined;
+    }
+    const value = obj[key];
+    if (typeof value !== "boolean") {
+      errors.push(`config.${key}: expected boolean`);
+      changed = true;
+      return undefined;
+    }
+    return value;
+  };
+
+  const configVersion = readNumber("configVersion", { min: 1 });
+  if (configVersion !== undefined) {
+    config.configVersion = configVersion;
+  }
+
+  const port = readNumber("port", { min: 1 });
+  if (port !== undefined && port <= 65_535) {
+    config.port = port;
+  } else if (port !== undefined) {
+    errors.push("config.port: expected <= 65535");
+    changed = true;
+  }
+
+  const host = readString("host");
+  if (host !== undefined) {
+    config.host = host;
+  }
+
+  const configuredDataDir = readString("dataDir");
+  if (configuredDataDir !== undefined) {
+    config.dataDir = configuredDataDir;
+  }
+
+  const model = readString("defaultModel");
+  if (model !== undefined) {
+    config.defaultModel = model;
+  }
+
+  const sessionTimeout = readNumber("sessionTimeout", { min: 1 });
+  const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 });
+
+  if (sessionTimeout !== undefined && sessionIdleTimeoutMs === undefined) {
+    config.sessionTimeout = sessionTimeout;
+    config.sessionIdleTimeoutMs = sessionTimeout;
+    changed = true;
+  } else if (sessionTimeout === undefined && sessionIdleTimeoutMs !== undefined) {
+    config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
+    config.sessionTimeout = sessionIdleTimeoutMs;
+    changed = true;
+  } else {
+    if (sessionTimeout !== undefined) {
+      config.sessionTimeout = sessionTimeout;
+    }
+    if (sessionIdleTimeoutMs !== undefined) {
+      config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
+    }
+  }
+
+  const workspaceIdleTimeoutMs = readNumber("workspaceIdleTimeoutMs", { min: 1 });
+  if (workspaceIdleTimeoutMs !== undefined) {
+    config.workspaceIdleTimeoutMs = workspaceIdleTimeoutMs;
+  }
+
+  const maxSessionsPerWorkspace = readNumber("maxSessionsPerWorkspace", { min: 1 });
+  if (maxSessionsPerWorkspace !== undefined) {
+    config.maxSessionsPerWorkspace = maxSessionsPerWorkspace;
+  }
+
+  const maxSessionsGlobal = readNumber("maxSessionsGlobal", { min: 1 });
+  if (maxSessionsGlobal !== undefined) {
+    config.maxSessionsGlobal = maxSessionsGlobal;
+  }
+
+  const legacyExtensionsEnabled = readBoolean("legacyExtensionsEnabled");
+  if (legacyExtensionsEnabled !== undefined) {
+    config.legacyExtensionsEnabled = legacyExtensionsEnabled;
+  }
+
+  const securityDefaults = defaultSecurityConfig();
+  if (!("security" in obj)) {
+    changed = true;
+    config.security = securityDefaults;
+  } else {
+    const rawSecurity = obj.security;
+    if (!isRecord(rawSecurity)) {
+      errors.push("config.security: expected object");
+      changed = true;
+      config.security = securityDefaults;
+    } else {
+      const allowed = new Set([
+        "profile",
+        "requireTlsOutsideTailnet",
+        "allowInsecureHttpInTailnet",
+        "requirePinnedServerIdentity",
+      ]);
+      if (strictUnknown) {
+        for (const key of Object.keys(rawSecurity)) {
+          if (!allowed.has(key)) {
+            errors.push(`config.security.${key}: unknown key`);
+          }
+        }
+      }
+
+      const security: ServerSecurityConfig = { ...securityDefaults };
+
+      if (!("profile" in rawSecurity)) {
+        changed = true;
+      } else if (typeof rawSecurity.profile !== "string" || !SECURITY_PROFILES.has(rawSecurity.profile as SecurityProfile)) {
+        errors.push(`config.security.profile: expected one of ${Array.from(SECURITY_PROFILES).join(", ")}`);
+        changed = true;
+      } else {
+        security.profile = rawSecurity.profile as SecurityProfile;
+      }
+
+      const securityBool = (key: keyof Omit<ServerSecurityConfig, "profile">): void => {
+        if (!(key in rawSecurity)) {
+          changed = true;
+          return;
+        }
+        const value = rawSecurity[key];
+        if (typeof value !== "boolean") {
+          errors.push(`config.security.${key}: expected boolean`);
+          changed = true;
+          return;
+        }
+        security[key] = value;
+      };
+
+      securityBool("requireTlsOutsideTailnet");
+      securityBool("allowInsecureHttpInTailnet");
+      securityBool("requirePinnedServerIdentity");
+
+      config.security = security;
+    }
+  }
+
+  const identityDefaults = defaultIdentityConfig(config.dataDir);
+  if (!("identity" in obj)) {
+    changed = true;
+    config.identity = identityDefaults;
+  } else {
+    const rawIdentity = obj.identity;
+    if (!isRecord(rawIdentity)) {
+      errors.push("config.identity: expected object");
+      changed = true;
+      config.identity = identityDefaults;
+    } else {
+      const allowed = new Set([
+        "enabled",
+        "algorithm",
+        "keyId",
+        "privateKeyPath",
+        "publicKeyPath",
+        "fingerprint",
+      ]);
+      if (strictUnknown) {
+        for (const key of Object.keys(rawIdentity)) {
+          if (!allowed.has(key)) {
+            errors.push(`config.identity.${key}: unknown key`);
+          }
+        }
+      }
+
+      const identity: ServerIdentityConfig = { ...identityDefaults };
+
+      if (!("enabled" in rawIdentity)) {
+        changed = true;
+      } else if (typeof rawIdentity.enabled !== "boolean") {
+        errors.push("config.identity.enabled: expected boolean");
+        changed = true;
+      } else {
+        identity.enabled = rawIdentity.enabled;
+      }
+
+      if (!("algorithm" in rawIdentity)) {
+        changed = true;
+      } else if (rawIdentity.algorithm !== "ed25519") {
+        errors.push("config.identity.algorithm: expected \"ed25519\"");
+        changed = true;
+      }
+
+      const identityString = (key: keyof Pick<ServerIdentityConfig, "keyId" | "privateKeyPath" | "publicKeyPath" | "fingerprint">): void => {
+        if (!(key in rawIdentity)) {
+          changed = true;
+          return;
+        }
+        const value = rawIdentity[key];
+        if (typeof value !== "string") {
+          errors.push(`config.identity.${key}: expected string`);
+          changed = true;
+          return;
+        }
+        if (key !== "fingerprint" && value.trim().length === 0) {
+          errors.push(`config.identity.${key}: expected non-empty string`);
+          changed = true;
+          return;
+        }
+        identity[key] = value;
+      };
+
+      identityString("keyId");
+      identityString("privateKeyPath");
+      identityString("publicKeyPath");
+      identityString("fingerprint");
+
+      config.identity = identity;
+    }
+  }
+
+  const inviteDefaults = defaultInviteConfig();
+  if (!("invite" in obj)) {
+    changed = true;
+    config.invite = inviteDefaults;
+  } else {
+    const rawInvite = obj.invite;
+    if (!isRecord(rawInvite)) {
+      errors.push("config.invite: expected object");
+      changed = true;
+      config.invite = inviteDefaults;
+    } else {
+      const allowed = new Set(["format", "maxAgeSeconds", "singleUse", "allowLegacyV1Unsigned"]);
+      if (strictUnknown) {
+        for (const key of Object.keys(rawInvite)) {
+          if (!allowed.has(key)) {
+            errors.push(`config.invite.${key}: unknown key`);
+          }
+        }
+      }
+
+      const invite: ServerInviteConfig = { ...inviteDefaults };
+
+      if (!("format" in rawInvite)) {
+        changed = true;
+      } else if (typeof rawInvite.format !== "string" || !INVITE_FORMATS.has(rawInvite.format as ServerInviteConfig["format"])) {
+        errors.push(`config.invite.format: expected one of ${Array.from(INVITE_FORMATS).join(", ")}`);
+        changed = true;
+      } else {
+        invite.format = rawInvite.format as ServerInviteConfig["format"];
+      }
+
+      if (!("maxAgeSeconds" in rawInvite)) {
+        changed = true;
+      } else if (
+        typeof rawInvite.maxAgeSeconds !== "number" ||
+        !Number.isInteger(rawInvite.maxAgeSeconds) ||
+        rawInvite.maxAgeSeconds < 1
+      ) {
+        errors.push("config.invite.maxAgeSeconds: expected integer >= 1");
+        changed = true;
+      } else {
+        invite.maxAgeSeconds = rawInvite.maxAgeSeconds;
+      }
+
+      const inviteBool = (key: keyof Pick<ServerInviteConfig, "singleUse" | "allowLegacyV1Unsigned">): void => {
+        if (!(key in rawInvite)) {
+          changed = true;
+          return;
+        }
+        const value = rawInvite[key];
+        if (typeof value !== "boolean") {
+          errors.push(`config.invite.${key}: expected boolean`);
+          changed = true;
+          return;
+        }
+        invite[key] = value;
+      };
+
+      inviteBool("singleUse");
+      inviteBool("allowLegacyV1Unsigned");
+
+      config.invite = invite;
+    }
+  }
+
+  if (config.security?.profile === "strict" && config.invite?.allowLegacyV1Unsigned) {
+    warnings.push(
+      "config.invite.allowLegacyV1Unsigned=true weakens strict bootstrap posture; set to false when all clients support v2 invites",
+    );
+  }
+
+  return { valid: errors.length === 0, errors, warnings, config, changed };
+}
 
 function normalizeExtensionList(extensions: string[] | undefined): string[] | undefined {
   if (!extensions) return undefined;
@@ -84,59 +532,84 @@ export class Storage {
 
   // ─── Config ───
 
-  private loadConfig(): ServerConfig {
-    const defaults: ServerConfig = {
-      port: 7749,
-      host: "0.0.0.0",
-      dataDir: this.dataDir,
-      defaultModel: "anthropic/claude-sonnet-4-0",
-      sessionTimeout: 10 * 60 * 1000,
-      sessionIdleTimeoutMs: 10 * 60 * 1000,
-      workspaceIdleTimeoutMs: 30 * 60 * 1000,
-      maxSessionsPerWorkspace: 3,
-      maxSessionsGlobal: 5,
-      legacyExtensionsEnabled: true,
+  static getDefaultConfig(dataDir: string = DEFAULT_DATA_DIR): ServerConfig {
+    return createDefaultConfig(dataDir);
+  }
+
+  static validateConfig(
+    raw: unknown,
+    dataDir: string = DEFAULT_DATA_DIR,
+    strictUnknown: boolean = true,
+  ): ConfigValidationResult {
+    const result = normalizeConfig(raw, dataDir, strictUnknown);
+    return {
+      valid: result.valid,
+      errors: result.errors,
+      warnings: result.warnings,
+      config: result.config,
     };
+  }
+
+  static validateConfigFile(
+    configPath: string,
+    dataDir: string = dirname(configPath),
+    strictUnknown: boolean = true,
+  ): ConfigValidationResult {
+    if (!existsSync(configPath)) {
+      return {
+        valid: false,
+        errors: [`${configPath}: file not found`],
+        warnings: [],
+      };
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(configPath, "utf-8"));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        valid: false,
+        errors: [`${configPath}: invalid JSON (${message})`],
+        warnings: [],
+      };
+    }
+
+    const result = Storage.validateConfig(raw, dataDir, strictUnknown);
+    if (result.errors.length > 0) {
+      result.errors = result.errors.map((err) => `${configPath}: ${err}`);
+      result.valid = false;
+    }
+    return result;
+  }
+
+  private loadConfig(): ServerConfig {
+    const defaults = Storage.getDefaultConfig(this.dataDir);
 
     if (existsSync(this.configPath)) {
       try {
-        const loaded = JSON.parse(readFileSync(this.configPath, "utf-8")) as Partial<ServerConfig>;
+        const loadedRaw = JSON.parse(readFileSync(this.configPath, "utf-8")) as unknown;
+        const normalized = normalizeConfig(loadedRaw, this.dataDir, false);
 
-        // Backward-compat migration:
-        // - Legacy configs used `sessionTimeout`
-        // - Runtime now uses `sessionIdleTimeoutMs` but we keep both in sync
-        const sessionIdleTimeoutMs =
-          typeof loaded.sessionIdleTimeoutMs === "number"
-            ? loaded.sessionIdleTimeoutMs
-            : typeof loaded.sessionTimeout === "number"
-              ? loaded.sessionTimeout
-              : defaults.sessionIdleTimeoutMs;
-
-        const config: ServerConfig = {
-          ...defaults,
-          ...loaded,
-          sessionIdleTimeoutMs,
-          sessionTimeout:
-            typeof loaded.sessionTimeout === "number"
-              ? loaded.sessionTimeout
-              : sessionIdleTimeoutMs,
-        };
-
-        const needsRewrite =
-          loaded.sessionTimeout !== config.sessionTimeout ||
-          loaded.sessionIdleTimeoutMs !== config.sessionIdleTimeoutMs ||
-          loaded.workspaceIdleTimeoutMs !== config.workspaceIdleTimeoutMs ||
-          loaded.maxSessionsPerWorkspace !== config.maxSessionsPerWorkspace ||
-          loaded.maxSessionsGlobal !== config.maxSessionsGlobal ||
-          loaded.legacyExtensionsEnabled !== config.legacyExtensionsEnabled;
-
-        if (needsRewrite) {
-          this.saveConfig(config);
+        for (const err of normalized.errors) {
+          console.warn(`[config] ${err} (using default for invalid field)`);
+        }
+        for (const warning of normalized.warnings) {
+          console.warn(`[config] ${warning}`);
         }
 
-        return config;
-      } catch {
-        // Fall through to defaults
+        // Safe rewrite only when the normalized config is fully valid.
+        // This backfills new defaults (v2 security schema) without
+        // accidentally masking invalid user-provided values.
+        if (normalized.changed && normalized.errors.length === 0) {
+          this.saveConfig(normalized.config);
+        }
+
+        return normalized.config;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[config] Failed to parse ${this.configPath}: ${message}`);
+        console.warn("[config] Falling back to defaults.");
       }
     }
 
@@ -152,16 +625,28 @@ export class Storage {
     return this.config;
   }
 
+  getConfigPath(): string {
+    return this.configPath;
+  }
+
   updateConfig(updates: Partial<ServerConfig>): void {
-    this.config = { ...this.config, ...updates };
+    const merged: ServerConfig = {
+      ...this.config,
+      ...updates,
+      security: updates.security ? { ...this.config.security, ...updates.security } : this.config.security,
+      identity: updates.identity ? { ...this.config.identity, ...updates.identity } : this.config.identity,
+      invite: updates.invite ? { ...this.config.invite, ...updates.invite } : this.config.invite,
+    };
 
     // Keep legacy + new idle timeout fields aligned.
     if (updates.sessionIdleTimeoutMs !== undefined && updates.sessionTimeout === undefined) {
-      this.config.sessionTimeout = updates.sessionIdleTimeoutMs;
+      merged.sessionTimeout = updates.sessionIdleTimeoutMs;
     } else if (updates.sessionTimeout !== undefined && updates.sessionIdleTimeoutMs === undefined) {
-      this.config.sessionIdleTimeoutMs = updates.sessionTimeout;
+      merged.sessionIdleTimeoutMs = updates.sessionTimeout;
     }
 
+    const normalized = normalizeConfig(merged, this.dataDir, false);
+    this.config = normalized.config;
     this.saveConfig(this.config);
   }
 

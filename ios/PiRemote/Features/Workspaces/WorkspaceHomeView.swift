@@ -33,6 +33,14 @@ struct WorkspaceHomeView: View {
         }
     }
 
+    private var freshnessState: FreshnessState {
+        connection.workspaceStore.freshnessState(staleAfter: 300)
+    }
+
+    private var freshnessLabel: String {
+        connection.workspaceStore.freshnessLabel()
+    }
+
     var body: some View {
         List {
             ForEach(sortedWorkspaces) { workspace in
@@ -52,6 +60,10 @@ struct WorkspaceHomeView: View {
             WorkspaceDetailView(workspace: workspace)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                FreshnessChip(state: freshnessState, label: freshnessLabel)
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showNewWorkspace = true
@@ -108,10 +120,13 @@ struct WorkspaceHomeView: View {
     private func refresh() async {
         guard let api = connection.apiClient else { return }
         await connection.workspaceStore.load(api: api)
+        sessionStore.markSyncStarted()
         do {
             let sessions = try await api.listSessions()
             sessionStore.applyServerSnapshot(sessions)
+            sessionStore.markSyncSucceeded()
         } catch {
+            sessionStore.markSyncFailed()
             // Keep cached data
         }
     }

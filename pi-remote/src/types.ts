@@ -123,7 +123,33 @@ export interface SessionMessage {
 
 // ─── Server Config ───
 
+export type SecurityProfile = "legacy" | "tailscale-permissive" | "strict";
+
+export interface ServerSecurityConfig {
+  profile: SecurityProfile;
+  requireTlsOutsideTailnet: boolean;
+  allowInsecureHttpInTailnet: boolean;
+  requirePinnedServerIdentity: boolean;
+}
+
+export interface ServerIdentityConfig {
+  enabled: boolean;
+  algorithm: "ed25519";
+  keyId: string;
+  privateKeyPath: string;
+  publicKeyPath: string;
+  fingerprint: string;
+}
+
+export interface ServerInviteConfig {
+  format: "v1-unsigned" | "v2-signed";
+  maxAgeSeconds: number;
+  singleUse: boolean;
+  allowLegacyV1Unsigned: boolean;
+}
+
 export interface ServerConfig {
+  configVersion?: number;
   port: number;
   host: string;
   dataDir: string;
@@ -136,6 +162,11 @@ export interface ServerConfig {
   maxSessionsGlobal: number;
   /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
   legacyExtensionsEnabled?: boolean;
+
+  // v2 security contract
+  security?: ServerSecurityConfig;
+  identity?: ServerIdentityConfig;
+  invite?: ServerInviteConfig;
 }
 
 // ─── API Types ───

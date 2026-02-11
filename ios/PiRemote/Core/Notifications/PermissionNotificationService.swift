@@ -91,7 +91,7 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
         content.title = needsBiometric ? "⚠ Permission Required" : "Permission Required"
         content.subtitle = request.tool
         content.body = needsBiometric
-            ? "\(request.displaySummary)\nOpen app to approve with \(BiometricService.shared.biometricName)"
+            ? "High-risk action details are hidden on lock screen.\nOpen app to approve with \(BiometricService.shared.biometricName)"
             : request.displaySummary
         content.categoryIdentifier = needsBiometric ? Self.biometricCategoryId : Self.categoryId
         content.userInfo = [

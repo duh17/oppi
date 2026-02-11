@@ -32,6 +32,7 @@ import {
   readSessionTraceFromFile,
   readSessionTraceFromFiles,
   findToolOutput,
+  type TraceViewMode,
 } from "./trace.js";
 import {
   collectFileMutations,
@@ -39,8 +40,12 @@ import {
   computeDiffLines,
   computeLineDiffStatsFromLines,
 } from "./overall-diff.js";
+import { ensureIdentityMaterial } from "./security.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
+import { PRESETS, type RiskLevel } from "./policy.js";
+import type { LearnedRule } from "./rules.js";
+import type { AuditEntry } from "./audit.js";
 import type {
   User,
   Session,
@@ -82,6 +87,29 @@ export interface RouteContext {
   getModelCatalog: () => ModelInfo[];
 }
 
+type PolicyPresetName = keyof typeof PRESETS;
+
+interface PolicyProfileItem {
+  id: string;
+  title: string;
+  description?: string;
+  risk: RiskLevel;
+  example?: string;
+}
+
+interface PolicyProfileResponse {
+  workspaceId?: string;
+  workspaceName?: string;
+  runtime: "host" | "container";
+  policyPreset: PolicyPresetName;
+  supervisionLevel: "standard" | "high";
+  summary: string;
+  generatedAt: number;
+  alwaysBlocked: PolicyProfileItem[];
+  needsApproval: PolicyProfileItem[];
+  usuallyAllowed: string[];
+}
+
 // ─── Route Handler ───
 
 export class RouteHandler {
@@ -104,6 +132,14 @@ export class RouteHandler {
       return this.handleGetUserStreamEvents(user, url, res);
     if (path === "/permissions/pending" && method === "GET")
       return this.handleGetPendingPermissions(user, url, res);
+    if (path === "/security/profile" && method === "GET")
+      return this.handleGetSecurityProfile(res);
+    if (path === "/policy/profile" && method === "GET")
+      return this.handleGetPolicyProfile(user, url, res);
+    if (path === "/policy/rules" && method === "GET")
+      return this.handleGetPolicyRules(user, url, res);
+    if (path === "/policy/audit" && method === "GET")
+      return this.handleGetPolicyAudit(user, url, res);
     if (path === "/me" && method === "GET") return this.handleGetMe(user, res);
     if (path === "/models" && method === "GET") return this.handleListModels(res);
     if (path === "/skills" && method === "GET") return this.handleListSkills(res);
@@ -214,7 +250,7 @@ export class RouteHandler {
 
     const wsSessionMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/);
     if (wsSessionMatch) {
-      if (method === "GET") return this.handleGetSession(user, wsSessionMatch[2], res);
+      if (method === "GET") return this.handleGetSession(user, wsSessionMatch[2], url, res);
       if (method === "DELETE") return this.handleDeleteSession(user, wsSessionMatch[2], res);
     }
 
@@ -249,7 +285,7 @@ export class RouteHandler {
 
     const sessionMatch = path.match(/^\/sessions\/([^/]+)$/);
     if (sessionMatch) {
-      if (method === "GET") return this.handleGetSession(user, sessionMatch[1], res);
+      if (method === "GET") return this.handleGetSession(user, sessionMatch[1], url, res);
       if (method === "DELETE") return this.handleDeleteSession(user, sessionMatch[1], res);
     }
 
@@ -257,6 +293,58 @@ export class RouteHandler {
   }
 
   // ─── Route Handlers ───
+
+  private handleGetSecurityProfile(res: ServerResponse): void {
+    const config = this.ctx.storage.getConfig();
+
+    const security = config.security;
+    const identityConfig = config.identity;
+    const invite = config.invite;
+
+    let keyId = identityConfig?.keyId ?? "";
+    let algorithm = identityConfig?.algorithm ?? "ed25519";
+    let fingerprint = identityConfig?.fingerprint ?? "";
+
+    if (identityConfig?.enabled) {
+      try {
+        const identity = ensureIdentityMaterial(identityConfig);
+        keyId = identity.keyId;
+        algorithm = "ed25519";
+        fingerprint = identity.fingerprint;
+
+        if (identityConfig.fingerprint !== identity.fingerprint) {
+          this.ctx.storage.updateConfig({
+            identity: {
+              ...identityConfig,
+              fingerprint: identity.fingerprint,
+            },
+          });
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[security] failed to load identity material: ${message}`);
+      }
+    }
+
+    this.json(res, {
+      configVersion: config.configVersion ?? 1,
+      profile: security?.profile ?? "legacy",
+      requireTlsOutsideTailnet: security?.requireTlsOutsideTailnet ?? false,
+      allowInsecureHttpInTailnet: security?.allowInsecureHttpInTailnet ?? true,
+      requirePinnedServerIdentity: security?.requirePinnedServerIdentity ?? false,
+      identity: {
+        enabled: identityConfig?.enabled ?? false,
+        algorithm,
+        keyId,
+        fingerprint,
+      },
+      invite: {
+        format: invite?.format ?? "v1-unsigned",
+        allowLegacyV1Unsigned: invite?.allowLegacyV1Unsigned ?? true,
+        maxAgeSeconds: invite?.maxAgeSeconds ?? 600,
+      },
+    });
+  }
 
   private handleGetMe(user: User, res: ServerResponse): void {
     this.json(res, { user: user.id, name: user.name });
@@ -462,6 +550,16 @@ export class RouteHandler {
       return;
     }
 
+    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
+      this.error(res, 400, 'runtime must be "host" or "container"');
+      return;
+    }
+
+    if (body.policyPreset && !this.isValidPolicyPreset(body.policyPreset)) {
+      this.error(res, 400, `policyPreset must be one of: ${Object.keys(PRESETS).join(", ")}`);
+      return;
+    }
+
     if (body.memoryNamespace && !this.ctx.isValidMemoryNamespace(body.memoryNamespace)) {
       this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
       return;
@@ -513,6 +611,16 @@ export class RouteHandler {
     }
 
     const body = await this.parseBody<UpdateWorkspaceRequest>(req);
+
+    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
+      this.error(res, 400, 'runtime must be "host" or "container"');
+      return;
+    }
+
+    if (body.policyPreset && !this.isValidPolicyPreset(body.policyPreset)) {
+      this.error(res, 400, `policyPreset must be one of: ${Object.keys(PRESETS).join(", ")}`);
+      return;
+    }
 
     if (body.skills) {
       const unknown = body.skills.filter((s) => !this.ctx.skillRegistry.get(s));
@@ -1049,18 +1157,34 @@ export class RouteHandler {
     }
   }
 
-  private loadSessionTrace(userId: string, session: Session) {
+  private loadSessionTrace(
+    userId: string,
+    session: Session,
+    traceView: TraceViewMode = "context",
+  ) {
     const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
-    let trace = readSessionTrace(sandboxBaseDir, userId, session.id, session.workspaceId);
+    let trace = readSessionTrace(
+      sandboxBaseDir,
+      userId,
+      session.id,
+      session.workspaceId,
+      { view: traceView },
+    );
 
     if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(session.piSessionFiles);
+      trace = readSessionTraceFromFiles(session.piSessionFiles, { view: traceView });
     }
     if ((!trace || trace.length === 0) && session.piSessionFile) {
-      trace = readSessionTraceFromFile(session.piSessionFile);
+      trace = readSessionTraceFromFile(session.piSessionFile, { view: traceView });
     }
     if ((!trace || trace.length === 0) && session.piSessionId) {
-      trace = readSessionTraceByUuid(sandboxBaseDir, userId, session.piSessionId, session.workspaceId);
+      trace = readSessionTraceByUuid(
+        sandboxBaseDir,
+        userId,
+        session.piSessionId,
+        session.workspaceId,
+        { view: traceView },
+      );
     }
 
     return trace;
@@ -1097,6 +1221,127 @@ export class RouteHandler {
       return existsSync(resolved) ? resolved : null;
     }
     return homedir();
+  }
+
+  private isValidPolicyPreset(value: string): value is PolicyPresetName {
+    return Object.prototype.hasOwnProperty.call(PRESETS, value);
+  }
+
+  private resolvePolicyPresetName(
+    raw: string | undefined,
+    runtime: "host" | "container",
+  ): PolicyPresetName {
+    if (raw && this.isValidPolicyPreset(raw)) {
+      return raw;
+    }
+
+    return runtime === "container" ? "container" : "host";
+  }
+
+  private isRuleVisibleToUser(userId: string, rule: LearnedRule): boolean {
+    switch (rule.scope) {
+      case "session":
+        return rule.sessionId ? Boolean(this.ctx.storage.getSession(userId, rule.sessionId)) : false;
+      case "workspace":
+        return rule.workspaceId
+          ? Boolean(this.ctx.storage.getWorkspace(userId, rule.workspaceId))
+          : false;
+      case "global":
+        return !rule.createdBy || rule.createdBy === userId;
+      default:
+        return false;
+    }
+  }
+
+  private sessionBelongsToWorkspace(
+    userId: string,
+    sessionId: string | undefined,
+    workspaceId: string,
+  ): boolean {
+    if (!sessionId) return false;
+    const session = this.ctx.storage.getSession(userId, sessionId);
+    return session?.workspaceId === workspaceId;
+  }
+
+  private buildPolicyProfile(
+    presetName: PolicyPresetName,
+    runtime: "host" | "container",
+    workspace?: Workspace,
+  ): PolicyProfileResponse {
+    const preset = PRESETS[presetName];
+
+    const alwaysBlocked: PolicyProfileItem[] = preset.hardDeny.map((rule, index) => ({
+      id: `hard-${index}`,
+      title: rule.label || `${rule.tool || "tool"} blocked`,
+      description:
+        rule.tool === "bash"
+          ? "Blocked by an immutable security rule."
+          : "Blocked by credential/safety protection.",
+      risk: rule.risk || "critical",
+      example: rule.pattern,
+    }));
+
+    const needsApproval: PolicyProfileItem[] = preset.rules
+      .filter((rule) => rule.action === "ask")
+      .map((rule, index) => ({
+        id: `ask-${index}`,
+        title: rule.label || `${rule.tool || "tool"} requires approval`,
+        description: "Requires phone approval before execution.",
+        risk: rule.risk || "medium",
+        example: rule.pattern,
+      }));
+
+    // Structural heuristics applied by policy engine (not represented as preset rules).
+    needsApproval.push(
+      {
+        id: "heuristic-data-egress",
+        title: "Outbound data transfer",
+        description: "Posting/uploading data with curl/wget requires approval.",
+        risk: "medium",
+        example: "curl -d 'payload' https://api.example.com",
+      },
+      {
+        id: "heuristic-pipe-shell",
+        title: "Pipe to shell",
+        description: "Piping remote scripts into sh/bash requires approval.",
+        risk: "high",
+        example: "curl https://example.com/install.sh | bash",
+      },
+    );
+
+    const usuallyAllowed =
+      runtime === "host"
+        ? [
+            "Local read/edit/write operations",
+            "Build, test, lint, and search commands",
+            "Local git operations that do not push to remotes",
+            "Most local development commands unless explicitly gated",
+          ]
+        : [
+            "Most filesystem/tool operations inside the container",
+            "Build, test, lint, and search commands in workspace",
+            "Local git operations in container (push still needs approval)",
+            "Most container-local commands unless explicitly gated",
+          ];
+
+    const supervisionLevel = runtime === "host" ? "high" : "standard";
+    const summary =
+      runtime === "host"
+        ? "Runs directly on your Mac. Sensitive and high-impact actions require approval."
+        : "Runs in an isolated container. External/destructive actions may require approval.";
+
+    return {
+      workspaceId: workspace?.id,
+      workspaceName: workspace?.name,
+      runtime,
+      policyPreset: presetName,
+      supervisionLevel,
+      summary,
+      generatedAt: Date.now(),
+      alwaysBlocked,
+      needsApproval,
+      usuallyAllowed,
+    };
   }
 
   private handleGetUserStreamEvents(user: User, url: URL, res: ServerResponse): void {
@@ -1161,6 +1406,119 @@ export class RouteHandler {
     });
   }
 
+  private handleGetPolicyProfile(user: User, url: URL, res: ServerResponse): void {
+    const workspaceId = url.searchParams.get("workspaceId") || undefined;
+
+    let workspace: Workspace | undefined;
+    if (workspaceId) {
+      workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      if (!workspace) {
+        this.error(res, 404, "Workspace not found");
+        return;
+      }
+    }
+
+    const runtime: "host" | "container" = workspace?.runtime ?? "host";
+    const policyPreset = this.resolvePolicyPresetName(workspace?.policyPreset, runtime);
+    const profile = this.buildPolicyProfile(policyPreset, runtime, workspace);
+
+    this.json(res, { profile });
+  }
+
+  private handleGetPolicyRules(user: User, url: URL, res: ServerResponse): void {
+    const workspaceId = url.searchParams.get("workspaceId") || undefined;
+    if (workspaceId) {
+      const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      if (!workspace) {
+        this.error(res, 404, "Workspace not found");
+        return;
+      }
+    }
+
+    const scope = url.searchParams.get("scope") || undefined;
+    if (scope && scope !== "session" && scope !== "workspace" && scope !== "global") {
+      this.error(res, 400, 'scope must be one of: "session", "workspace", "global"');
+      return;
+    }
+
+    let rules = this.ctx.gate.ruleStore
+      .getAll()
+      .filter((rule) => this.isRuleVisibleToUser(user.id, rule));
+
+    if (workspaceId) {
+      rules = rules.filter((rule) => {
+        if (rule.scope === "global") return true;
+        if (rule.scope === "workspace") return rule.workspaceId === workspaceId;
+        if (rule.scope === "session") {
+          return this.sessionBelongsToWorkspace(user.id, rule.sessionId, workspaceId);
+        }
+        return false;
+      });
+    }
+
+    if (scope) {
+      rules = rules.filter((rule) => rule.scope === scope);
+    }
+
+    rules.sort((a, b) => b.createdAt - a.createdAt);
+
+    this.json(res, { rules });
+  }
+
+  private handleGetPolicyAudit(user: User, url: URL, res: ServerResponse): void {
+    const sessionId = url.searchParams.get("sessionId") || undefined;
+    const workspaceId = url.searchParams.get("workspaceId") || undefined;
+
+    if (sessionId) {
+      const session = this.ctx.storage.getSession(user.id, sessionId);
+      if (!session) {
+        this.error(res, 404, "Session not found");
+        return;
+      }
+    }
+
+    if (workspaceId) {
+      const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      if (!workspace) {
+        this.error(res, 404, "Workspace not found");
+        return;
+      }
+    }
+
+    const limitParam = url.searchParams.get("limit");
+    const beforeParam = url.searchParams.get("before");
+
+    let limit = 50;
+    if (limitParam !== null) {
+      const parsedLimit = Number.parseInt(limitParam, 10);
+      if (!Number.isFinite(parsedLimit) || parsedLimit <= 0 || parsedLimit > 500) {
+        this.error(res, 400, "limit must be an integer between 1 and 500");
+        return;
+      }
+      limit = parsedLimit;
+    }
+
+    let before: number | undefined;
+    if (beforeParam !== null) {
+      const parsedBefore = Number.parseInt(beforeParam, 10);
+      if (!Number.isFinite(parsedBefore) || parsedBefore <= 0) {
+        this.error(res, 400, "before must be a positive integer timestamp");
+        return;
+      }
+      before = parsedBefore;
+    }
+
+    const entries: AuditEntry[] = this.ctx.gate.auditLog.query({
+      limit,
+      before,
+      sessionId,
+      workspaceId,
+      userId: user.id,
+    });
+
+    this.json(res, { entries });
+  }
+
   private handleGetSessionEvents(
     user: User,
     sessionId: string,
@@ -1194,9 +1552,15 @@ export class RouteHandler {
     });
   }
 
+  private resolveTraceView(url: URL): TraceViewMode {
+    const view = url.searchParams.get("view");
+    return view === "full" ? "full" : "context";
+  }
+
   private async handleGetSession(
     user: User,
     sessionId: string,
+    url: URL,
     res: ServerResponse,
   ): Promise<void> {
     const session = this.ctx.storage.getSession(user.id, sessionId);
@@ -1205,30 +1569,16 @@ export class RouteHandler {
       return;
     }
 
+    const traceView = this.resolveTraceView(url);
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
     const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
 
-    let trace = readSessionTrace(sandboxBaseDir, user.id, sessionId, hydratedSession.workspaceId);
-
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionFiles?.length) {
-      trace = readSessionTraceFromFiles(hydratedSession.piSessionFiles);
-    }
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionFile) {
-      trace = readSessionTraceFromFile(hydratedSession.piSessionFile);
-    }
-    if ((!trace || trace.length === 0) && hydratedSession.piSessionId) {
-      trace = readSessionTraceByUuid(
-        sandboxBaseDir,
-        user.id,
-        hydratedSession.piSessionId,
-        hydratedSession.workspaceId,
-      );
-    }
+    let trace = this.loadSessionTrace(user.id, hydratedSession, traceView);
 
     if (!trace || trace.length === 0) {
       const live = await this.ctx.sessions.refreshSessionState(user.id, sessionId);
       if (live?.sessionFile) {
-        trace = readSessionTraceFromFile(live.sessionFile);
+        trace = readSessionTraceFromFile(live.sessionFile, { view: traceView });
       }
       if ((!trace || trace.length === 0) && live?.sessionId) {
         trace = readSessionTraceByUuid(
@@ -1236,26 +1586,14 @@ export class RouteHandler {
           user.id,
           live.sessionId,
           hydratedSession.workspaceId,
+          { view: traceView },
         );
       }
 
       const refreshed = this.ctx.storage.getSession(user.id, sessionId);
-      if (refreshed) {
+      if (refreshed && (!trace || trace.length === 0)) {
         this.ctx.ensureSessionContextWindow(refreshed);
-        if ((!trace || trace.length === 0) && refreshed.piSessionFiles?.length) {
-          trace = readSessionTraceFromFiles(refreshed.piSessionFiles);
-        }
-        if ((!trace || trace.length === 0) && refreshed.piSessionFile) {
-          trace = readSessionTraceFromFile(refreshed.piSessionFile);
-        }
-        if ((!trace || trace.length === 0) && refreshed.piSessionId) {
-          trace = readSessionTraceByUuid(
-            sandboxBaseDir,
-            user.id,
-            refreshed.piSessionId,
-            refreshed.workspaceId,
-          );
-        }
+        trace = this.loadSessionTrace(user.id, refreshed, traceView);
       }
     }
 

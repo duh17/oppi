@@ -80,12 +80,15 @@ export class APNsClient {
    * Time-sensitive, with Allow/Deny actions.
    */
   async sendPermissionPush(deviceToken: string, payload: PermissionPushPayload): Promise<boolean> {
+    const isHighRisk = payload.risk === "high" || payload.risk === "critical";
+    const redactedSummary = isHighRisk ? "Open app to review full command details" : payload.displaySummary;
+
     const apnsPayload = {
       aps: {
         alert: {
           title: "Permission Request",
           subtitle: payload.sessionName || payload.sessionId,
-          body: `${payload.tool}: ${payload.displaySummary}`,
+          body: `${payload.tool}: ${redactedSummary}`,
         },
         category: "PERMISSION_REQUEST",
         "interruption-level": riskToInterruptionLevel(payload.risk),
@@ -96,7 +99,7 @@ export class APNsClient {
       sessionId: payload.sessionId,
       risk: payload.risk,
       tool: payload.tool,
-      summary: payload.displaySummary,
+      summary: redactedSummary,
       timeoutAt: payload.timeoutAt,
     };
 

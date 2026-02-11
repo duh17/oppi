@@ -167,6 +167,12 @@ struct WorkspaceDetailView: View {
                     }
                 }
             }
+
+            NavigationLink {
+                WorkspacePolicyProfileView(workspace: workspace)
+            } label: {
+                Label("Safety Profile", systemImage: "shield.lefthalf.filled")
+            }
         }
     }
 
@@ -227,5 +233,261 @@ struct WorkspaceDetailView: View {
         } catch {
             // Keep cached data
         }
+    }
+}
+
+// MARK: - Safety Profile
+
+private struct WorkspacePolicyProfileView: View {
+    let workspace: Workspace
+
+    @Environment(ServerConnection.self) private var connection
+
+    @State private var profile: PolicyProfile?
+    @State private var rules: [PolicyRuleRecord] = []
+    @State private var auditEntries: [PolicyAuditEntry] = []
+    @State private var isLoading = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if let profile {
+                summarySection(profile)
+
+                Section("Always Blocked") {
+                    if profile.alwaysBlocked.isEmpty {
+                        Text("No hard blocks configured.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(profile.alwaysBlocked) { item in
+                            PolicyProfileItemRow(item: item)
+                        }
+                    }
+                }
+
+                Section("Needs Approval") {
+                    if profile.needsApproval.isEmpty {
+                        Text("No approval-required actions.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(profile.needsApproval) { item in
+                            PolicyProfileItemRow(item: item)
+                        }
+                    }
+                }
+
+                Section("Runs Automatically") {
+                    ForEach(profile.usuallyAllowed, id: \.self) { line in
+                        Label(line, systemImage: "checkmark.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if isLoading {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView("Loading policy profile…")
+                        Spacer()
+                    }
+                }
+            }
+
+            Section("Remembered Permissions") {
+                if rules.isEmpty {
+                    Text("No remembered rules for this workspace.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(rules.prefix(25)) { rule in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(rule.description)
+                                .font(.subheadline)
+                            HStack(spacing: 8) {
+                                policyChip(rule.effect.uppercased(), color: rule.effect == "deny" ? .tokyoRed : .tokyoGreen)
+                                policyChip(rule.scope.capitalized, color: .tokyoBlue)
+                                policyChip(rule.risk.label, color: Color.riskColor(rule.risk))
+                            }
+
+                            if let match = ruleMatchSummary(rule.match) {
+                                Text(match)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    if rules.count > 25 {
+                        Text("Showing 25 of \(rules.count) rules")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            Section("Recent Decisions") {
+                if auditEntries.isEmpty {
+                    Text("No recent policy decisions.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(auditEntries.prefix(30)) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.displaySummary)
+                                .font(.subheadline)
+                                .lineLimit(2)
+
+                            HStack(spacing: 8) {
+                                policyChip(
+                                    entry.decision.capitalized,
+                                    color: entry.decision == "deny" ? .tokyoRed : .tokyoGreen
+                                )
+                                policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .tokyoBlue)
+                                policyChip(entry.risk.label, color: Color.riskColor(entry.risk))
+                                Spacer()
+                                Text(entry.timestamp, style: .relative)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    if auditEntries.count > 30 {
+                        Text("Showing 30 of \(auditEntries.count) entries")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Safety Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await loadAll()
+        }
+        .task {
+            await loadAll()
+        }
+        .alert("Policy Error", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: {
+            Text(error ?? "Unknown error")
+        }
+    }
+
+    @ViewBuilder
+    private func summarySection(_ profile: PolicyProfile) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    RuntimeBadge(runtime: profile.runtime, compact: true)
+                    policyChip(
+                        profile.supervisionLevel == "high" ? "High Supervision" : "Standard Supervision",
+                        color: profile.supervisionLevel == "high" ? .tokyoOrange : .tokyoGreen
+                    )
+                    Spacer()
+                }
+
+                Text(profile.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Text("Preset: \(profile.policyPreset) • Updated \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text(workspace.name)
+        }
+    }
+
+    @ViewBuilder
+    private func policyChip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.18), in: Capsule())
+            .foregroundStyle(color)
+    }
+
+    private func ruleMatchSummary(_ match: PolicyRuleRecord.Match?) -> String? {
+        guard let match else { return nil }
+
+        var parts: [String] = []
+        if let executable = match.executable, !executable.isEmpty {
+            parts.append("exec: \(executable)")
+        }
+        if let domain = match.domain, !domain.isEmpty {
+            parts.append("domain: \(domain)")
+        }
+        if let pathPattern = match.pathPattern, !pathPattern.isEmpty {
+            parts.append("path: \(pathPattern)")
+        }
+        if let commandPattern = match.commandPattern, !commandPattern.isEmpty {
+            parts.append("command: \(commandPattern)")
+        }
+
+        if parts.isEmpty { return nil }
+        return parts.joined(separator: " • ")
+    }
+
+    private func loadAll() async {
+        guard let api = connection.apiClient else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            async let profileTask = api.getPolicyProfile(workspaceId: workspace.id)
+            async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
+            async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
+
+            profile = try await profileTask
+            rules = try await rulesTask
+            auditEntries = try await auditTask
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+private struct PolicyProfileItemRow: View {
+    let item: PolicyProfileItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: item.risk.systemImage)
+                    .font(.caption)
+                    .foregroundStyle(Color.riskColor(item.risk))
+                Text(item.title)
+                    .font(.subheadline)
+                Spacer()
+                Text(item.risk.label)
+                    .font(.caption2)
+                    .foregroundStyle(Color.riskColor(item.risk))
+            }
+
+            if let description = item.description, !description.isEmpty {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let example = item.example, !example.isEmpty {
+                Text(example)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

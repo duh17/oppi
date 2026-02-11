@@ -118,7 +118,8 @@ struct ExpandedComposerView: View {
                     font: .monospacedSystemFont(ofSize: 17, weight: .regular),
                     textColor: UIColor(Color.tokyoFg),
                     tintColor: UIColor(accentColor),
-                    onPasteImages: handlePastedImages
+                    onPasteImages: handlePastedImages,
+                    autoFocusOnAppear: false
                 )
 
                 if !slashSuggestions.isEmpty {

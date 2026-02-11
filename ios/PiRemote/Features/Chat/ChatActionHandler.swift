@@ -48,6 +48,52 @@ final class ChatActionHandler {
         No quotes, no markdown, no trailing punctuation.
         """
 
+    private static let quickReplySuggestionInstructions = """
+        You extract actionable TODO items from assistant responses.
+        Return only TODO items found in the provided text.
+        If there are no TODO items, return exactly: NONE
+        Keep each TODO concise and concrete.
+        """
+
+    private static let quickReplyBenchmarkInstructions = """
+        You generate short user replies to an assistant.
+        Prefer replies that encourage questioning, risk checks, and learning.
+        Keep each reply to one sentence.
+        Return only the reply text.
+        """
+
+    private static let quickReplyBenchmarkPrompt = """
+        Assistant reply:
+        Here is the migration plan. Step 1 updates schemas, step 2 backfills data,
+        step 3 flips reads to v2, and step 4 removes v1 tables.
+
+        Generate a single user reply that asks for risks and tradeoffs before approval.
+        """
+
+    private static let quickReplyGenerationOptions = GenerationOptions(
+        sampling: .greedy,
+        temperature: 0,
+        maximumResponseTokens: 96
+    )
+
+    /// Keep quick-reply extraction deterministic and instant by default.
+    /// Enable only if heuristic extraction misses too often.
+    private static let quickReplyModelFallbackEnabled = false
+
+    private actor QuickReplySuggestionCache {
+        private var suggestionsByKey: [String: [String]] = [:]
+
+        func value(for key: String) -> [String]? {
+            suggestionsByKey[key]
+        }
+
+        func set(_ suggestions: [String], for key: String) {
+            suggestionsByKey[key] = suggestions
+        }
+    }
+
+    private static let quickReplySuggestionCache = QuickReplySuggestionCache()
+
     var sendProgressText: String? {
         if let sendAckStage {
             switch sendAckStage {
@@ -463,6 +509,141 @@ final class ChatActionHandler {
             log.error("Auto title generation failed: \(error.localizedDescription, privacy: .public)")
             return fallback
         }
+    }
+
+    func cachedQuickReplySuggestions(cacheKey: String) async -> [String]? {
+        await Self.quickReplySuggestionCache.value(for: cacheKey)
+    }
+
+    func generateQuickReplySuggestions(
+        assistantText: String,
+        recentUserReplies: [String],
+        limit: Int = QuickReplySuggester.maxSuggestions,
+        cacheKey: String? = nil
+    ) async -> [String] {
+        if let cacheKey,
+           let cached = await Self.quickReplySuggestionCache.value(for: cacheKey) {
+            return cached
+        }
+
+        let generated = await Task.detached(priority: .utility) {
+            await Self.generateQuickReplySuggestionsOffMain(
+                assistantText: assistantText,
+                recentUserReplies: recentUserReplies,
+                limit: limit
+            )
+        }.value
+
+        if let cacheKey {
+            await Self.quickReplySuggestionCache.set(generated, for: cacheKey)
+        }
+
+        return generated
+    }
+
+    private static func generateQuickReplySuggestionsOffMain(
+        assistantText: String,
+        recentUserReplies: [String],
+        limit: Int
+    ) async -> [String] {
+        let extractedTodos = QuickReplySuggester.suggestions(
+            forAssistantText: assistantText,
+            recentUserReplies: recentUserReplies,
+            limit: limit
+        )
+
+        if !extractedTodos.isEmpty {
+            return extractedTodos
+        }
+
+        guard quickReplyModelFallbackEnabled else {
+            return extractedTodos
+        }
+
+        guard QuickReplySuggester.shouldAttemptModelTodoExtraction(forAssistantText: assistantText) else {
+            return extractedTodos
+        }
+
+        let model = SystemLanguageModel.default
+        guard case .available = model.availability else {
+            return extractedTodos
+        }
+
+        let prompt = QuickReplySuggester.makeModelPrompt(
+            forAssistantText: assistantText,
+            recentUserReplies: recentUserReplies,
+            limit: limit
+        )
+
+        do {
+            let session = LanguageModelSession(instructions: quickReplySuggestionInstructions)
+            let response = try await session.respond(to: prompt, options: quickReplyGenerationOptions)
+            let modelCandidates = QuickReplySuggester.parseModelOutput(response.content)
+
+            return QuickReplySuggester.suggestions(
+                forAssistantText: assistantText,
+                recentUserReplies: recentUserReplies,
+                modelCandidates: modelCandidates,
+                limit: limit
+            )
+        } catch {
+            log.error("Quick reply generation failed: \(error.localizedDescription, privacy: .public)")
+            return extractedTodos
+        }
+    }
+
+    func benchmarkOnDeviceQuickReplyModel(iterations: Int = 5) async -> String {
+        await Task.detached(priority: .utility) {
+            await Self.benchmarkOnDeviceQuickReplyModelOffMain(iterations: iterations)
+        }.value
+    }
+
+    private static func benchmarkOnDeviceQuickReplyModelOffMain(iterations: Int) async -> String {
+        let runCount = max(iterations, 1)
+        let model = SystemLanguageModel.default
+
+        guard case .available = model.availability else {
+            return "On-device model unavailable: \(String(describing: model.availability))"
+        }
+
+        let session = LanguageModelSession(instructions: quickReplyBenchmarkInstructions)
+        var latenciesMs: [Int] = []
+        latenciesMs.reserveCapacity(runCount)
+
+        for _ in 0..<runCount {
+            let startedAt = Date()
+
+            do {
+                _ = try await session.respond(to: quickReplyBenchmarkPrompt)
+            } catch {
+                return "On-device model benchmark failed: \(error.localizedDescription)"
+            }
+
+            let elapsedMs = Int((Date().timeIntervalSince(startedAt) * 1_000).rounded())
+            latenciesMs.append(max(elapsedMs, 0))
+        }
+
+        guard !latenciesMs.isEmpty else {
+            return "On-device model benchmark produced no samples"
+        }
+
+        let sorted = latenciesMs.sorted()
+        let minMs = sorted.first ?? 0
+        let maxMs = sorted.last ?? 0
+        let p50 = percentile(sorted, p: 0.50)
+        let p95 = percentile(sorted, p: 0.95)
+        let avg = Int((Double(latenciesMs.reduce(0, +)) / Double(latenciesMs.count)).rounded())
+
+        return "On-device quick-reply benchmark: runs=\(runCount) avg=\(avg)ms p50=\(p50)ms p95=\(p95)ms min=\(minMs)ms max=\(maxMs)ms"
+    }
+
+    private static func percentile(_ sorted: [Int], p: Double) -> Int {
+        guard let first = sorted.first else { return 0 }
+        guard sorted.count > 1 else { return first }
+
+        let clamped = min(max(p, 0), 1)
+        let index = Int((Double(sorted.count - 1) * clamped).rounded())
+        return sorted[index]
     }
 
     private static func heuristicTitle(from firstMessage: String) -> String? {

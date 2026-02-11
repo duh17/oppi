@@ -447,6 +447,20 @@ describe("AuditLog", () => {
     expect(s1[0].sessionId).toBe("s1");
   });
 
+  it("query with userId/workspaceId filters", () => {
+    const { log } = makeAudit();
+    log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+      tool: "bash", displaySummary: "u1-ws1", risk: "low",
+      decision: "allow", resolvedBy: "policy", layer: "default" });
+    log.record({ sessionId: "s2", workspaceId: "ws2", userId: "u2",
+      tool: "bash", displaySummary: "u2-ws2", risk: "low",
+      decision: "allow", resolvedBy: "policy", layer: "default" });
+
+    const filtered = log.query({ userId: "u1", workspaceId: "ws1" });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].displaySummary).toBe("u1-ws1");
+  });
+
   it("query with limit", () => {
     const { log } = makeAudit();
     for (let i = 0; i < 5; i++) {

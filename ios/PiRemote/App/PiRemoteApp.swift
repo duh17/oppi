@@ -258,19 +258,72 @@ struct PiRemoteApp: App {
         }
 
         // 1. Load credentials from Keychain
-        guard let creds = KeychainService.loadCredentials() else {
+        guard var creds = KeychainService.loadCredentials() else {
             launchOutcome = "no_credentials"
             navigation.showOnboarding = true
             return
         }
 
         guard connection.configure(credentials: creds) else {
-            // Corrupted credentials — wipe and show onboarding
             launchOutcome = "invalid_credentials"
-            KeychainService.deleteCredentials()
             navigation.showOnboarding = true
             return
         }
+
+        guard let api = connection.apiClient else {
+            launchOutcome = "no_api_client"
+            navigation.showOnboarding = true
+            return
+        }
+
+        // Enforce trust + transport contract as early as possible.
+        do {
+            let profile = try await api.securityProfile()
+
+            if let violation = ConnectionSecurityPolicy.evaluate(host: creds.host, profile: profile) {
+                launchOutcome = "blocked_transport_policy"
+                appLog.error("SECURITY transport policy blocked host=\(creds.host, privacy: .public): \(violation.localizedDescription, privacy: .public)")
+                navigation.showOnboarding = true
+                return
+            }
+
+            let serverFingerprint = profile.identity.normalizedFingerprint
+            let storedFingerprint = creds.normalizedServerFingerprint
+
+            if (profile.requirePinnedServerIdentity ?? false) {
+                if let serverFingerprint, let storedFingerprint, serverFingerprint != storedFingerprint {
+                    launchOutcome = "identity_mismatch"
+                    appLog.error(
+                        "SECURITY pinned identity mismatch host=\(creds.host, privacy: .public) stored=\(storedFingerprint, privacy: .public) server=\(serverFingerprint, privacy: .public)"
+                    )
+                    navigation.showOnboarding = true
+                    return
+                }
+
+                if serverFingerprint == nil {
+                    launchOutcome = "missing_server_fingerprint"
+                    appLog.error("SECURITY pinned identity required but server fingerprint missing")
+                    navigation.showOnboarding = true
+                    return
+                }
+            }
+
+            let upgraded = creds.applyingSecurityProfile(profile)
+            if upgraded != creds {
+                try? KeychainService.saveCredentials(upgraded)
+                creds = upgraded
+                guard connection.configure(credentials: upgraded) else {
+                    launchOutcome = "blocked_transport_policy"
+                    navigation.showOnboarding = true
+                    return
+                }
+            }
+        } catch {
+            // If profile check fails, continue with cached policy and rely on
+            // the refresh path below for online/offline handling.
+            appLog.error("SECURITY profile check failed on launch: \(error.localizedDescription, privacy: .public)")
+        }
+
         navigation.showOnboarding = false
 
         // 2. Restore UI state (tab, active session, draft, scroll position)
@@ -290,15 +343,13 @@ struct PiRemoteApp: App {
         }
 
         // 4. Refresh session list from server
-        guard let api = connection.apiClient else {
-            launchOutcome = "no_api_client"
-            return
-        }
+        connection.sessionStore.markSyncStarted()
         do {
             let sessions = try await api.listSessions()
             launchOutcome = "online_refresh_ok"
 
             connection.sessionStore.applyServerSnapshot(sessions)
+            connection.sessionStore.markSyncSucceeded()
             Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
 
             // 5. Evict trace caches for deleted sessions
@@ -311,6 +362,7 @@ struct PiRemoteApp: App {
             // 7. Register for push notifications (after successful server connection)
             await PushRegistration.shared.requestAndRegister()
         } catch {
+            connection.sessionStore.markSyncFailed()
             launchOutcome = "offline_cache_only"
             // Offline — cached data already shown above
         }

@@ -96,7 +96,7 @@ struct FileContentView: View {
     private func contentView(for fileType: FileType) -> some View {
         switch fileType {
         case .markdown:
-            MarkdownFileView(content: content)
+            MarkdownFileView(content: content, filePath: filePath)
         case .code(let language):
             CodeFileView(content: content, language: language, startLine: startLine)
         case .json:
@@ -155,6 +155,7 @@ private struct CodeFileView: View {
                 label: language.displayName,
                 lineCount: lines.count,
                 copyContent: content,
+                showCopy: false,
                 onExpand: { showFullScreen = true }
             )
 
@@ -168,12 +169,7 @@ private struct CodeFileView: View {
                 TruncationNotice(showing: lineCount, total: lines.count)
             }
         }
-        .codeBlockChrome()
-        .contextMenu {
-            Button("Copy File Content", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = content
-            }
-        }
+        .codeBlockChrome(showBorder: false)
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: content, language: language.displayName, filePath: nil, startLine: startLine
@@ -192,11 +188,17 @@ private struct CodeFileView: View {
 
 // MARK: - MarkdownFileView
 
-/// Rendered markdown with raw/rendered toggle.
+/// Rendered markdown with source toggle and full-screen reader mode.
 private struct MarkdownFileView: View {
     let content: String
+    let filePath: String?
 
     @State private var showRaw = false
+    @State private var showFullScreen = false
+
+    private var lineCount: Int {
+        content.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -208,15 +210,27 @@ private struct MarkdownFileView: View {
                 Text("Markdown")
                     .font(.caption2.bold())
                     .foregroundStyle(.tokyoFgDim)
+                Text("\(lineCount) lines")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
 
                 Spacer()
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { showRaw.toggle() }
                 } label: {
-                    Text(showRaw ? "Rendered" : "Source")
+                    Text(showRaw ? "Reader" : "Source")
                         .font(.caption2)
                         .foregroundStyle(.tokyoBlue)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    showFullScreen = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tokyoFgDim)
                 }
                 .buttonStyle(.plain)
 
@@ -245,9 +259,90 @@ private struct MarkdownFileView: View {
         }
         .codeBlockChrome()
         .contextMenu {
+            Button("Open Reader", systemImage: "book") {
+                showFullScreen = true
+            }
             Button("Copy Content", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
+        }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenMarkdownView(content: content, filePath: filePath, showSource: showRaw)
+        }
+    }
+}
+
+// MARK: - Full Screen Markdown View
+
+/// Full-screen markdown reader with source toggle.
+private struct FullScreenMarkdownView: View {
+    let content: String
+    let filePath: String?
+
+    @State private var showSource: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    init(content: String, filePath: String?, showSource: Bool = false) {
+        self.content = content
+        self.filePath = filePath
+        _showSource = State(initialValue: showSource)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(.vertical) {
+                Group {
+                    if showSource {
+                        Text(content)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tokyoFg)
+                    } else {
+                        MarkdownText(content)
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.tokyoBg)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(.tokyoCyan)
+                }
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        if let path = filePath {
+                            Text(path.shortenedPath)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.tokyoFg)
+                                .lineLimit(1)
+                        }
+                        Text("Markdown")
+                            .font(.caption2)
+                            .foregroundStyle(.tokyoComment)
+                    }
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button(showSource ? "Reader" : "Source") {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showSource.toggle()
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.tokyoBlue)
+
+                    Button {
+                        UIPasteboard.general.string = content
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .foregroundStyle(.tokyoFgDim)
+                    }
+                }
+            }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
         }
     }
 }
@@ -477,6 +572,7 @@ private struct FileHeader: View {
     let label: String
     let lineCount: Int
     let copyContent: String
+    var showCopy = true
     var onExpand: (() -> Void)?
 
     var body: some View {
@@ -502,7 +598,9 @@ private struct FileHeader: View {
                 .foregroundStyle(.tokyoFgDim)
             }
 
-            CopyButton(content: copyContent)
+            if showCopy {
+                CopyButton(content: copyContent)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -643,14 +741,17 @@ func lineNumberInfo(lineCount: Int, startLine: Int) -> (numbers: String, width: 
 // MARK: - View Modifiers
 
 private extension View {
-    /// Standard chrome for code block containers (dark bg, rounded corners, border).
-    func codeBlockChrome() -> some View {
+    /// Standard chrome for code block containers (dark bg, rounded corners).
+    /// Border is optional for cleaner reader-style presentation.
+    func codeBlockChrome(showBorder: Bool = true) -> some View {
         self
             .background(Color.tokyoBgDark)
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
-            )
+            .overlay {
+                if showBorder {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+                }
+            }
     }
 }

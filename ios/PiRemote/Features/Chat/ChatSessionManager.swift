@@ -46,6 +46,14 @@ final class ChatSessionManager {
     private var wantsAutoReconnect = true
     private var lastSeenSeq: Int
 
+    private var snapshotFlushInFlight = false
+    private var lastSnapshotFlushAt: Date?
+
+    /// Freshness metadata for chat timeline sync.
+    private(set) var lastSuccessfulSyncAt: Date?
+    private(set) var isSyncing = false
+    private(set) var lastSyncFailed = false
+
     /// Test seam: inject a scripted stream to exercise lifecycle races
     /// without opening a real WebSocket.
     var _streamSessionForTesting: ((String) -> AsyncStream<ServerMessage>?)?
@@ -60,6 +68,12 @@ final class ChatSessionManager {
     /// Test seam: inject inbound sequence metadata per streamed message.
     var _consumeInboundMetaForTesting: (() -> WebSocketClient.InboundMeta?)?
 
+    /// Test seam: override trace fetch for lifecycle snapshot flush.
+    var _fetchTraceSnapshotForTesting: (() async -> [TraceEvent]?)?
+
+    /// Test seam: override trace save destination for lifecycle snapshot flush.
+    var _saveTraceSnapshotForTesting: (([TraceEvent]) async -> Void)?
+
     init(sessionId: String) {
         self.sessionId = sessionId
         self.lastSeenSeq = Self.loadLastSeenSeq(sessionId: sessionId)
@@ -73,6 +87,8 @@ final class ChatSessionManager {
         default: (.seconds(4), 4_000)
         }
     }
+
+    private static let snapshotFlushMinInterval: TimeInterval = 10
 
     private static func seqDefaultsKey(sessionId: String) -> String {
         "chat.lastSeenSeq.\(sessionId)"
@@ -90,6 +106,21 @@ final class ChatSessionManager {
         guard seq > lastSeenSeq else { return }
         lastSeenSeq = seq
         persistLastSeenSeq()
+    }
+
+    private func markSyncStarted() {
+        isSyncing = true
+    }
+
+    private func markSyncSucceeded(at date: Date = Date()) {
+        isSyncing = false
+        lastSyncFailed = false
+        lastSuccessfulSyncAt = date
+    }
+
+    private func markSyncFailed() {
+        isSyncing = false
+        lastSyncFailed = true
     }
 
     // MARK: - Lifecycle
@@ -124,13 +155,13 @@ final class ChatSessionManager {
         connection.disconnectSession()
         connection.fatalSetupError = false
         cancelAutoReconnect()
-        cancelHistoryReload()
-        cancelStateSync()
+        cancelHistoryAndStateSync()
         if switchingSessions {
             reducer.reset()
         }
 
         sessionStore.activeSessionId = sessionId
+        markSyncStarted()
 
         let sessionName = sessionStore.sessions.first(where: { $0.id == sessionId })?.name ?? "Session"
         LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
@@ -210,6 +241,7 @@ final class ChatSessionManager {
                 break
             }
 
+            markSyncSucceeded()
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta()
 
             // Detect reconnection: a second `.connected` message means the WS
@@ -328,6 +360,57 @@ final class ChatSessionManager {
         reconcileTask = nil
     }
 
+    /// Flushes a fresh trace snapshot into the local cache.
+    ///
+    /// This narrows the stale-window for offline viewing by persisting
+    /// near-current timeline state when lifecycle boundaries occur
+    /// (background/disappear). Server remains source-of-truth.
+    func flushSnapshotIfNeeded(connection: ServerConnection, force: Bool = false) async {
+        if snapshotFlushInFlight {
+            return
+        }
+
+        if !force,
+           let lastSnapshotFlushAt,
+           Date().timeIntervalSince(lastSnapshotFlushAt) < Self.snapshotFlushMinInterval {
+            return
+        }
+
+        snapshotFlushInFlight = true
+        defer { snapshotFlushInFlight = false }
+
+        let trace: [TraceEvent]?
+        if let fetchHook = _fetchTraceSnapshotForTesting {
+            trace = await fetchHook()
+        } else if let api = connection.apiClient {
+            do {
+                let (_, fetchedTrace) = try await api.getSession(
+                    id: sessionId,
+                    traceView: .full
+                )
+                trace = fetchedTrace
+            } catch {
+                log.debug("Snapshot flush skipped for \(self.sessionId): \(error.localizedDescription)")
+                return
+            }
+        } else {
+            return
+        }
+
+        guard let trace, !trace.isEmpty else {
+            return
+        }
+
+        if let saveHook = _saveTraceSnapshotForTesting {
+            await saveHook(trace)
+        } else {
+            await TimelineCache.shared.saveTrace(sessionId, events: trace)
+        }
+
+        latestTraceSignature = TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
+        lastSnapshotFlushAt = Date()
+    }
+
     func cleanup() {
         wantsAutoReconnect = false
         reconcileTask?.cancel()
@@ -374,6 +457,7 @@ final class ChatSessionManager {
 
         guard generation == connectionGeneration else { return .noGap }
         guard let response else {
+            markSyncFailed()
             log.warning("Catch-up fetch failed for \(self.sessionId) since seq \(since)")
             scheduleHistoryReload(
                 generation: generation,
@@ -386,6 +470,7 @@ final class ChatSessionManager {
         }
 
         sessionStore.upsert(response.session)
+        markSyncSucceeded()
 
         if !response.catchUpComplete {
             log.warning("Catch-up ring miss for \(self.sessionId) since seq \(since) — forcing full history reload")
@@ -438,9 +523,13 @@ final class ChatSessionManager {
         cachedLastEventId: String?
     ) async -> TraceSignature? {
         do {
-            let (session, trace) = try await api.getSession(id: sessionId)
+            let (session, trace) = try await api.getSession(
+                id: sessionId,
+                traceView: .full
+            )
             guard !Task.isCancelled else { return nil }
             sessionStore.upsert(session)
+            markSyncSucceeded()
 
             let freshSignature = TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
 
@@ -465,6 +554,7 @@ final class ChatSessionManager {
             return freshSignature
         } catch {
             guard !Task.isCancelled else { return nil }
+            markSyncFailed()
             log.warning("Trace fetch failed for \(self.sessionId): \(error.localizedDescription)")
             return nil
         }
@@ -478,6 +568,7 @@ final class ChatSessionManager {
         cachedSignature: TraceSignature?
     ) {
         cancelHistoryReload()
+        markSyncStarted()
 
         let cachedEventCount = cachedSignature?.eventCount
         let cachedLastEventId = cachedSignature?.lastEventId
@@ -536,6 +627,11 @@ final class ChatSessionManager {
     private func cancelAutoReconnect() {
         autoReconnectTask?.cancel()
         autoReconnectTask = nil
+    }
+
+    private func cancelHistoryAndStateSync() {
+        cancelHistoryReload()
+        cancelStateSync()
     }
 
     private func cancelStateSync() {
