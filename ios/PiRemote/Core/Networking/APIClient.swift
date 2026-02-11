@@ -283,6 +283,13 @@ actor APIClient {
         return (response.output, response.isError)
     }
 
+    /// Fetch full tool output and return nil if it is empty/whitespace-only.
+    func getNonEmptyToolOutput(sessionId: String, toolCallId: String) async throws -> String? {
+        let (output, _) = try await getToolOutput(sessionId: sessionId, toolCallId: toolCallId)
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : output
+    }
+
     /// Fetch a file from the session's working directory.
     ///
     /// Returns the raw file content as a string. Used when the user taps a file path

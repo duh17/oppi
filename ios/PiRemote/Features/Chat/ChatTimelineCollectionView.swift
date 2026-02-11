@@ -105,8 +105,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var previousHiddenCount = 0
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
-        private var loadingToolOutputIDs: Set<String> = []
-        private var toolOutputLoadTasks: [String: Task<Void, Never>] = [:]
+        private var toolOutputLoadState = ToolOutputLoadState()
 
         var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)?
         private(set) var _toolOutputCanceledCountForTesting = 0
@@ -114,11 +113,11 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private(set) var _toolOutputAppliedCountForTesting = 0
 
         var _toolOutputLoadTaskCountForTesting: Int {
-            toolOutputLoadTasks.count
+            toolOutputLoadState.taskCount
         }
 
         var _loadingToolOutputIDsForTesting: Set<String> {
-            loadingToolOutputIDs
+            toolOutputLoadState.loadingIDs
         }
 
         func _triggerLoadFullToolOutputForTesting(
@@ -130,10 +129,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         }
 
         deinit {
-            let canceled = toolOutputLoadTasks.count
-            for task in toolOutputLoadTasks.values {
-                task.cancel()
-            }
+            let canceled = toolOutputLoadState.cancelAll()
             _toolOutputCanceledCountForTesting += canceled
         }
 
@@ -293,6 +289,39 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             case staleSession
             case missingItem
             case emptyOutput
+        }
+        private struct ToolOutputLoadState {
+            var loadingIDs: Set<String> = []
+            var tasks: [String: Task<Void, Never>] = [:]
+            var taskCount: Int { tasks.count }
+            func isLoading(_ itemID: String) -> Bool { loadingIDs.contains(itemID) || tasks[itemID] != nil }
+            mutating func start(itemID: String, task: Task<Void, Never>) {
+                loadingIDs.insert(itemID)
+                tasks[itemID] = task
+            }
+            mutating func finish(itemID: String) {
+                loadingIDs.remove(itemID)
+                tasks.removeValue(forKey: itemID)
+            }
+            mutating func cancel(for itemIDs: Set<String>) -> Int {
+                guard !itemIDs.isEmpty else { return 0 }
+                var canceled = 0
+                for itemID in itemIDs {
+                    if let task = tasks.removeValue(forKey: itemID) {
+                        task.cancel()
+                        canceled += 1
+                    }
+                    loadingIDs.remove(itemID)
+                }
+                return canceled
+            }
+            mutating func cancelAll() -> Int {
+                let canceled = tasks.count
+                for task in tasks.values { task.cancel() }
+                tasks.removeAll()
+                loadingIDs.removeAll()
+                return canceled
+            }
         }
 
         static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
@@ -493,7 +522,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     )
                 }
 
-                reconfigureItems([itemID], in: collectionView)
+                animateNativeToolExpansion(itemID: itemID, item: item, in: collectionView)
 
             case .thinking(_, _, _, let isDone):
                 guard isDone,
@@ -635,8 +664,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             var preview: String?
             var toolNamePrefix: String?
             var toolNameColor = UIColor(Color.tokyoCyan)
-            var editAdded: Int?
-            var editRemoved: Int?
 
             switch normalizedTool {
             case "bash":
@@ -662,10 +689,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
                 toolNamePrefix = tool
                 toolNameColor = UIColor(Color.tokyoCyan)
-                if normalizedTool == "edit", let stats = ToolCallFormatting.editDiffStats(from: args) {
-                    editAdded = stats.added
-                    editRemoved = stats.removed
-                }
                 if isError, !outputPreview.isEmpty {
                     preview = String(outputPreview.prefix(180))
                 }
@@ -702,8 +725,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
-            let hasEditStats = editAdded != nil && editRemoved != nil
-            let trailing = !hasEditStats && outputByteCount > 0
+            let trailing = outputByteCount > 0
                 ? ToolCallFormatting.formatBytes(outputByteCount)
                 : nil
 
@@ -720,8 +742,8 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 titleLineBreakMode: .byTruncatingTail,
                 toolNamePrefix: toolNamePrefix,
                 toolNameColor: toolNameColor,
-                editAdded: editAdded,
-                editRemoved: editRemoved,
+                editAdded: nil,
+                editRemoved: nil,
                 isExpanded: isExpanded,
                 isDone: isDone,
                 isError: isError
@@ -742,8 +764,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             guard outputByteCount > 0,
                   let toolOutputStore,
                   toolOutputStore.fullOutput(for: itemID).isEmpty,
-                  !loadingToolOutputIDs.contains(itemID),
-                  toolOutputLoadTasks[itemID] == nil else {
+                  !toolOutputLoadState.isLoading(itemID) else {
                 return
             }
 
@@ -757,15 +778,13 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
 
                 fetchToolOutput = { sessionId, toolCallId in
-                    let (output, _) = try await apiClient.getToolOutput(
+                    try await apiClient.getNonEmptyToolOutput(
                         sessionId: sessionId,
                         toolCallId: toolCallId
-                    )
-                    return output
+                    ) ?? ""
                 }
             }
 
-            loadingToolOutputIDs.insert(itemID)
             let activeSessionID = sessionId
 
             let task = Task { [weak self, weak collectionView, activeSessionID] in
@@ -775,8 +794,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 } catch {
                     await MainActor.run {
                         guard let self else { return }
-                        self.loadingToolOutputIDs.remove(itemID)
-                        self.toolOutputLoadTasks.removeValue(forKey: itemID)
+                        self.toolOutputLoadState.finish(itemID: itemID)
                     }
                     return
                 }
@@ -784,8 +802,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 await MainActor.run {
                     guard let self else { return }
                     defer {
-                        self.loadingToolOutputIDs.remove(itemID)
-                        self.toolOutputLoadTasks.removeValue(forKey: itemID)
+                        self.toolOutputLoadState.finish(itemID: itemID)
                     }
 
                     let disposition = Self.toolOutputCompletionDisposition(
@@ -815,32 +832,40 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
-            toolOutputLoadTasks[itemID] = task
+            toolOutputLoadState.start(itemID: itemID, task: task)
         }
 
         private func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
-            guard !itemIDs.isEmpty else { return }
-
-            for itemID in itemIDs {
-                if let task = toolOutputLoadTasks.removeValue(forKey: itemID) {
-                    task.cancel()
-                    _toolOutputCanceledCountForTesting += 1
-                }
-                loadingToolOutputIDs.remove(itemID)
-            }
+            let canceled = toolOutputLoadState.cancel(for: itemIDs)
+            _toolOutputCanceledCountForTesting += canceled
         }
 
         private func cancelAllToolOutputLoadTasks() {
-            guard !toolOutputLoadTasks.isEmpty || !loadingToolOutputIDs.isEmpty else { return }
-
-            let canceled = toolOutputLoadTasks.count
-            for task in toolOutputLoadTasks.values {
-                task.cancel()
-            }
-
+            let canceled = toolOutputLoadState.cancelAll()
             _toolOutputCanceledCountForTesting += canceled
-            toolOutputLoadTasks.removeAll()
-            loadingToolOutputIDs.removeAll()
+        }
+
+        private func animateNativeToolExpansion(
+            itemID: String,
+            item: ChatItem,
+            in collectionView: UICollectionView
+        ) {
+            guard let index = currentIDs.firstIndex(of: itemID),
+                  let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)),
+                  let configuration = nativeToolConfiguration(itemID: itemID, item: item)
+            else {
+                reconfigureItems([itemID], in: collectionView)
+                return
+            }
+            collectionView.layoutIfNeeded()
+            cell.contentConfiguration = configuration
+            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(ToolRowExpansionAnimation.duration)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+            CATransaction.setCompletionBlock { ChatTimelinePerf.endLayoutPass(layoutToken) }
+            collectionView.performBatchUpdates { collectionView.collectionViewLayout.invalidateLayout() }
+            CATransaction.commit()
         }
 
         private func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {

@@ -1,5 +1,14 @@
 import SwiftUI
 
+/// Shared expand/collapse motion profile for tool rows.
+///
+/// Used by both SwiftUI file-tool rows (read/write/edit) and UIKit-native
+/// bash rows so expansion feels consistent across render paths.
+enum ToolRowExpansionAnimation {
+    static let duration: TimeInterval = 0.22
+    static let swiftUI: Animation = .easeInOut(duration: duration)
+}
+
 /// Identifies a file to open in a sheet. Uses `.sheet(item:)` pattern
 /// to avoid the stale-capture bug with `.sheet(isPresented:)`.
 struct FileToOpen: Identifiable {
@@ -481,7 +490,10 @@ private struct ToolCallRow: View {
                 Button { expandOrLazyLoad() } label: { toolHeader }
                     .buttonStyle(.plain)
 
-                if !isExpanded && isDone { collapsedPreview }
+                if !isExpanded && isDone {
+                    collapsedPreview
+                        .transition(.opacity)
+                }
 
                 if isExpanded {
                     Group {
@@ -495,9 +507,16 @@ private struct ToolCallRow: View {
                             expandedContent
                         }
                     }
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.99, anchor: .top)),
+                            removal: .opacity
+                        )
+                    )
                 }
             }
             .padding(8)
+            .animation(ToolRowExpansionAnimation.swiftUI, value: isExpanded)
             .background(stateBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
@@ -523,18 +542,12 @@ private struct ToolCallRow: View {
     // MARK: - Expand & Lazy Load
 
     private func setExpanded(_ expanded: Bool) {
-        let mutation = {
+        withAnimation(ToolRowExpansionAnimation.swiftUI) {
             if expanded {
                 reducer.expandedItemIDs.insert(id)
             } else {
                 reducer.expandedItemIDs.remove(id)
             }
-        }
-
-        // Avoid height animations here. Mixed native/SwiftUI row switching can
-        // produce perceived flicker during expand/collapse when animated.
-        withTransaction(Transaction(animation: nil)) {
-            mutation()
         }
     }
 
@@ -555,11 +568,23 @@ private struct ToolCallRow: View {
     private func lazyLoadOutput() {
         guard let sessionId, let api = connection.apiClient else { return }
         isLoadingOutput = true
-        Task { @MainActor in
-            defer { isLoadingOutput = false }
-            if let (output, _) = try? await api.getToolOutput(sessionId: sessionId, toolCallId: id),
-               !output.isEmpty {
-                toolOutputStore.append(output, to: id)
+
+        Task {
+            let output: String?
+            do {
+                output = try await api.getNonEmptyToolOutput(
+                    sessionId: sessionId,
+                    toolCallId: id
+                )
+            } catch {
+                output = nil
+            }
+
+            await MainActor.run {
+                defer { isLoadingOutput = false }
+                if let output {
+                    toolOutputStore.append(output, to: id)
+                }
             }
         }
     }
