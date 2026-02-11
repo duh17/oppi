@@ -17,6 +17,11 @@ struct WorkspaceEditView: View {
     @State private var systemPrompt: String = ""
     @State private var memoryEnabled: Bool = false
     @State private var memoryNamespace: String = ""
+    @State private var extensionMode: String = "legacy"
+    @State private var extensionNames: String = ""
+    @State private var availableExtensions: [ExtensionInfo] = []
+    @State private var isLoadingExtensions = false
+    @State private var extensionsError: String?
     @State private var defaultModel: String = ""
     @State private var isSaving = false
     @State private var error: String?
@@ -109,6 +114,70 @@ struct WorkspaceEditView: View {
                 }
             }
 
+            Section("Extensions") {
+                Picker("Mode", selection: $extensionMode) {
+                    Text("Legacy").tag("legacy")
+                    Text("Explicit").tag("explicit")
+                }
+                .pickerStyle(.segmented)
+
+                Text(extensionMode == "legacy"
+                     ? "Legacy auto-loads memory/todos for backward compatibility."
+                     : "Explicit loads only named extensions from ~/.pi/agent/extensions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if extensionMode == "explicit" {
+                    if isLoadingExtensions && availableExtensions.isEmpty {
+                        Text("Loading available extensions…")
+                            .foregroundStyle(.secondary)
+                    } else if availableExtensions.isEmpty {
+                        Text("No discoverable extensions found.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(availableExtensions) { ext in
+                            Button {
+                                toggleExtension(ext.name)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(ext.name)
+                                            .font(.body)
+                                        Text(ext.kind)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .tokyoBlue : .secondary)
+                                        .imageScale(.large)
+                                }
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                    }
+
+                    if !manualExtensionNames.isEmpty {
+                        Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    TextField("Selected names (comma separated)", text: $extensionNames)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .font(.system(.body, design: .monospaced))
+
+                    if let extensionsError {
+                        Text("Extensions API: \(extensionsError)")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
             Section("Default Model") {
                 TextField("Model identifier", text: $defaultModel)
                     .autocorrectionDisabled()
@@ -166,7 +235,53 @@ struct WorkspaceEditView: View {
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
         .onAppear { loadFromWorkspace() }
-        .task { await loadModels() }
+        .task {
+            await loadModels()
+            await loadExtensions()
+        }
+    }
+
+    private func parseExtensionNames(_ raw: String) -> [String] {
+        var seen = Set<String>()
+        return raw
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { value in
+                if seen.contains(value) { return false }
+                seen.insert(value)
+                return true
+            }
+    }
+
+    private var selectedExtensionNames: [String] {
+        parseExtensionNames(extensionNames)
+    }
+
+    private var selectedExtensionSet: Set<String> {
+        Set(selectedExtensionNames)
+    }
+
+    private func setSelectedExtensionNames(_ names: [String]) {
+        extensionNames = names.joined(separator: ", ")
+    }
+
+    private func toggleExtension(_ name: String) {
+        var names = selectedExtensionNames
+        if let idx = names.firstIndex(of: name) {
+            names.remove(at: idx)
+        } else {
+            names.append(name)
+        }
+        setSelectedExtensionNames(names)
+    }
+
+    private var discoveredExtensionsSet: Set<String> {
+        Set(availableExtensions.map(\.name))
+    }
+
+    private var manualExtensionNames: [String] {
+        selectedExtensionNames.filter { !discoveredExtensionsSet.contains($0) }
     }
 
     private func loadFromWorkspace() {
@@ -180,6 +295,8 @@ struct WorkspaceEditView: View {
         systemPrompt = workspace.systemPrompt ?? ""
         memoryEnabled = workspace.memoryEnabled ?? false
         memoryNamespace = workspace.memoryNamespace ?? ""
+        extensionMode = workspace.extensionMode ?? (workspace.extensions == nil ? "legacy" : "explicit")
+        extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
         defaultModel = workspace.defaultModel ?? ""
     }
 
@@ -189,6 +306,20 @@ struct WorkspaceEditView: View {
             availableModels = try await api.listModels()
         } catch {
             // Fall back to manual entry
+        }
+    }
+
+    private func loadExtensions() async {
+        guard let api = connection.apiClient else { return }
+        isLoadingExtensions = true
+        extensionsError = nil
+
+        defer { isLoadingExtensions = false }
+
+        do {
+            availableExtensions = try await api.listExtensions()
+        } catch {
+            extensionsError = error.localizedDescription
         }
     }
 
@@ -208,6 +339,8 @@ struct WorkspaceEditView: View {
             hostMount: hostMount.isEmpty ? nil : hostMount,
             memoryEnabled: memoryEnabled,
             memoryNamespace: memoryNamespace.isEmpty ? nil : memoryNamespace,
+            extensionMode: extensionMode,
+            extensions: extensionMode == "explicit" ? parseExtensionNames(extensionNames) : nil,
             defaultModel: defaultModel.isEmpty ? nil : defaultModel
         )
 

@@ -33,6 +33,7 @@ import {
   findToolOutput,
 } from "./trace.js";
 import { discoverProjects, scanDirectories } from "./host.js";
+import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
 import type {
   User,
   Session,
@@ -100,6 +101,7 @@ export class RouteHandler {
     if (path === "/models" && method === "GET") return this.handleListModels(res);
     if (path === "/skills" && method === "GET") return this.handleListSkills(res);
     if (path === "/skills/rescan" && method === "POST") return this.handleRescanSkills(res);
+    if (path === "/extensions" && method === "GET") return this.handleListExtensions(res);
 
     // Skill detail + file access
     const skillFileMatch = path.match(/^\/skills\/([^/]+)\/file$/);
@@ -259,6 +261,10 @@ export class RouteHandler {
   private handleRescanSkills(res: ServerResponse): void {
     this.ctx.skillRegistry.scan();
     this.json(res, { skills: this.ctx.skillRegistry.list() });
+  }
+
+  private handleListExtensions(res: ServerResponse): void {
+    this.json(res, { extensions: listHostExtensions() });
   }
 
   private handleGetSkillDetail(name: string, res: ServerResponse): void {
@@ -448,6 +454,26 @@ export class RouteHandler {
       return;
     }
 
+    if (body.extensionMode && body.extensionMode !== "legacy" && body.extensionMode !== "explicit") {
+      this.error(res, 400, 'extensionMode must be "legacy" or "explicit"');
+      return;
+    }
+
+    if (body.extensions !== undefined) {
+      if (!Array.isArray(body.extensions)) {
+        this.error(res, 400, "extensions must be an array");
+        return;
+      }
+
+      const invalid = body.extensions.filter(
+        (name) => typeof name !== "string" || !isValidExtensionName(name),
+      );
+      if (invalid.length > 0) {
+        this.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
+        return;
+      }
+    }
+
     const workspace = this.ctx.storage.createWorkspace(user.id, body);
     this.json(res, { workspace }, 201);
   }
@@ -486,6 +512,26 @@ export class RouteHandler {
     if (body.memoryNamespace && !this.ctx.isValidMemoryNamespace(body.memoryNamespace)) {
       this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
       return;
+    }
+
+    if (body.extensionMode && body.extensionMode !== "legacy" && body.extensionMode !== "explicit") {
+      this.error(res, 400, 'extensionMode must be "legacy" or "explicit"');
+      return;
+    }
+
+    if (body.extensions !== undefined) {
+      if (!Array.isArray(body.extensions)) {
+        this.error(res, 400, "extensions must be an array");
+        return;
+      }
+
+      const invalid = body.extensions.filter(
+        (name) => typeof name !== "string" || !isValidExtensionName(name),
+      );
+      if (invalid.length > 0) {
+        this.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
+        return;
+      }
     }
 
     const updated = this.ctx.storage.updateWorkspace(user.id, wsId, body);

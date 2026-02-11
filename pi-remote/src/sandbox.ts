@@ -36,12 +36,16 @@ import {
   statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
-import { syncFile, syncOptionalFile, resolvePath as realpath } from "./sync.js";
+import { syncFile, resolvePath as realpath } from "./sync.js";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Workspace } from "./types.js";
 import type { SkillRegistry } from "./skills.js";
 import type { AuthProxy } from "./auth-proxy.js";
+import {
+  extensionInstallName,
+  resolveWorkspaceExtensions,
+} from "./extension-loader.js";
 
 // Extracted modules
 import {
@@ -78,8 +82,6 @@ const HOST_GATEWAY = "10.201.0.1"; // NAT network gateway → host
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOX_DIR = join(__dirname, "..", "sandbox");
 const EXTENSION_SRC = join(__dirname, "..", "extensions", "permission-gate");
-const MEMORY_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
-const TODOS_EXTENSION_SRC = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
 
 /** Fallback skills when no workspace is configured. */
 const DEFAULT_SKILLS = ["search", "fetch", "web-browser"];
@@ -97,6 +99,8 @@ export interface SandboxConfig {
   cpus: number;
   /** Memory per container (MB) */
   memoryMb: number;
+  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
+  legacyExtensionsEnabled: boolean;
 }
 
 export interface SpawnOptions {
@@ -119,6 +123,7 @@ const DEFAULTS: SandboxConfig = {
   image: IMAGE_NAME,
   cpus: 4,
   memoryMb: 2048,
+  legacyExtensionsEnabled: true,
 };
 
 // ─── SandboxManager ───
@@ -413,16 +418,26 @@ export class SandboxManager {
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    syncOptionalFile(
-      MEMORY_EXTENSION_SRC,
-      join(extensionsDir, "memory.ts"),
-      opts?.workspace?.memoryEnabled === true,
-    );
-    syncOptionalFile(
-      TODOS_EXTENSION_SRC,
-      join(extensionsDir, "todos.ts"),
-      existsSync(TODOS_EXTENSION_SRC),
-    );
+    const extensionSelection = resolveWorkspaceExtensions(opts?.workspace, {
+      legacyEnabled: this.config.legacyExtensionsEnabled,
+    });
+
+    for (const warning of extensionSelection.warnings) {
+      console.warn(`[sandbox] extension: ${warning}`);
+    }
+
+    for (const extension of extensionSelection.extensions) {
+      const dest = join(extensionsDir, extensionInstallName(extension));
+      if (existsSync(dest)) {
+        rmSync(dest, { recursive: true, force: true });
+      }
+
+      if (extension.kind === "directory") {
+        cpSync(extension.path, dest, { recursive: true });
+      } else {
+        syncFile(extension.path, dest);
+      }
+    }
 
     // Sync skills (workspace-level, shared across sessions)
     const requestedSkills = opts?.workspace?.skills ?? DEFAULT_SKILLS;

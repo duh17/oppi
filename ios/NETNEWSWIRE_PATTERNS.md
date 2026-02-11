@@ -76,15 +76,15 @@ Implementation steps:
 - [ ] Add hardware keyboard shortcuts for key actions (stop, approve/deny, focus input)
 
 ### 1.7 Lifecycle discipline (foreground/background)
-- [~] Foreground policy implemented in code (`PiRemoteApp.handleScenePhase`, `ServerConnection.reconnectIfNeeded`) but not fully documented in design docs
-- [~] Background policy implemented in code (`PiRemoteApp.handleScenePhase`, `ServerConnection.flushAndSuspend`, `RestorationState.save`) but not fully documented in design docs
-- [ ] Ensure all background->foreground resume paths are idempotent
+- [x] Foreground policy: `reconnectIfNeeded` refreshes metadata only, does NOT touch timeline. Reentrancy guard prevents concurrent calls from rapid cycling (`ServerConnection.swift`)
+- [x] Background policy: `flushAndSuspend` flushes coalescer without disconnecting. `RestorationState.save` persists tab, session, draft, scroll position (`PiRemoteApp.swift`, `RestorationState.swift`)
+- [x] Background→foreground idempotency: timeline recovery exclusively owned by `ChatSessionManager` (auto-reconnect + sequenced catch-up). `reconnectIfNeeded` cannot race with it. Manual test matrix in `docs/lifecycle-test-matrix.md`
 
 ### 1.8 State restoration (NetNewsWire-style)
-- [~] Create typed `RestorationState` (implemented: active session, tab, composer draft; pending: scroll anchor, pending permission IDs) (`Core/Services/RestorationState.swift`)
-- [~] Save on background and significant transitions (implemented on `.background`; additional transition hooks pending) (`App/PiRemoteApp.swift`)
-- [~] Restore on launch/foreground with migration strategy for schema changes (implemented: versioned schema + freshness window; foreground restoration still partial) (`Core/Services/RestorationState.swift`, `App/PiRemoteApp.swift`)
-- [ ] Add manual restoration matrix doc and QA checklist
+- [x] Create typed `RestorationState` (active session, tab, composer draft, scroll anchor, near-bottom flag) (`Core/Services/RestorationState.swift`)
+- [x] Save on background and significant transitions (`.background` via PiRemoteApp + ChatView scenePhase observer, `.onDisappear` via ChatView) (`App/PiRemoteApp.swift`, `Features/Chat/ChatView.swift`)
+- [x] Restore on launch with versioned schema + 1-hour freshness window. Scroll position restored via non-reactive `scrollPosition(id:)` binding (`Core/Services/RestorationState.swift`, `Features/Chat/ChatScrollController.swift`)
+- [x] Manual lifecycle + restoration test matrix (`docs/lifecycle-test-matrix.md`)
 
 ---
 

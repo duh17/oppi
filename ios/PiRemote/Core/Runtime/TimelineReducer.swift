@@ -525,17 +525,44 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
                 .joined(separator: ", ")
-            let toolItem = ChatItem.toolCall(
-                id: toolEventId,
-                tool: tool,
-                argsSummary: ChatItem.preview(argsSummary),
-                outputPreview: "",
-                outputByteCount: 0,
-                isError: false,
-                isDone: false
-            )
-            items.append(toolItem)
-            indexAppend(toolItem)
+            let fullOutput = toolOutputStore.fullOutput(for: toolEventId)
+            let outputPreview = ChatItem.preview(fullOutput)
+            let outputByteCount = fullOutput.utf8.count
+
+            if let idx = indexForID(toolEventId),
+               case .toolCall(_, _, _, _, _, let existingError, _) = items[idx] {
+                // Replay/reconnect can deliver duplicate tool_start for an
+                // existing tool call ID. Update in place instead of appending
+                // a second row with the same identifier.
+                items[idx] = .toolCall(
+                    id: toolEventId,
+                    tool: tool,
+                    argsSummary: ChatItem.preview(argsSummary),
+                    outputPreview: outputPreview,
+                    outputByteCount: outputByteCount,
+                    isError: existingError,
+                    isDone: false
+                )
+            } else {
+                let toolItem = ChatItem.toolCall(
+                    id: toolEventId,
+                    tool: tool,
+                    argsSummary: ChatItem.preview(argsSummary),
+                    outputPreview: outputPreview,
+                    outputByteCount: outputByteCount,
+                    isError: false,
+                    isDone: false
+                )
+                if let existingIndex = indexForID(toolEventId) {
+                    // ID collision with a non-tool row should replace in place
+                    // to preserve uniqueness guarantees for diffable snapshots.
+                    items[existingIndex] = toolItem
+                } else {
+                    items.append(toolItem)
+                    indexAppend(toolItem)
+                }
+            }
+
             // Store structured args for smart rendering
             if !args.isEmpty {
                 toolArgsStore.set(args, for: toolEventId)

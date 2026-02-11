@@ -42,4 +42,29 @@ final class SessionStore {
     func sort() {
         sessions.sort { $0.lastActivity > $1.lastActivity }
     }
+
+    /// Apply a full server snapshot while preserving likely in-flight locals.
+    ///
+    /// This avoids stale list responses (started before a local create) from
+    /// making newly-created sessions disappear when the user re-enters lists.
+    func applyServerSnapshot(_ snapshot: [Session], preserveRecentWindow: TimeInterval = 180) {
+        let now = Date()
+        let serverIds = Set(snapshot.map(\.id))
+
+        let preservedLocals = sessions.filter { local in
+            guard !serverIds.contains(local.id) else { return false }
+
+            // Keep non-stopped sessions and very recent sessions when a stale
+            // server response omits them.
+            if local.status != .stopped { return true }
+            return now.timeIntervalSince(local.createdAt) <= preserveRecentWindow
+        }
+
+        var merged = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
+        for local in preservedLocals {
+            merged[local.id] = local
+        }
+
+        sessions = merged.values.sorted { $0.lastActivity > $1.lastActivity }
+    }
 }

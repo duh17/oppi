@@ -129,6 +129,76 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.env.PI_REMOTE_GATE_PORT).toBe("45678");
   });
 
+  it("supports explicit extension mode without legacy auto-loading", async () => {
+    const session = makeSession();
+    const workspace = makeWorkspace({
+      extensionMode: "explicit",
+      extensions: ["memory"],
+      memoryEnabled: true,
+    });
+
+    const createSessionSocket = vi.fn(async () => 45679);
+    const setSessionPolicy = vi.fn();
+    const deps = makeDeps({
+      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      piExecutable: "/opt/homebrew/bin/pi",
+    });
+
+    const expectedCwd = join(homedir(), "workspace", "pios");
+    const existing = new Set<string>([
+      expectedCwd,
+      PI_REMOTE_GATE_EXTENSION,
+      HOST_MEMORY_EXTENSION,
+      HOST_TODOS_EXTENSION,
+    ]);
+    mockedExistsSync.mockImplementation((path) =>
+      typeof path === "string" && existing.has(path),
+    );
+
+    const proc = new StubProcess();
+    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+    const [, args] = mockedSpawn.mock.calls[0];
+    expect(args).toContain("--extension");
+    expect(args).toContain(HOST_MEMORY_EXTENSION);
+    expect(args).not.toContain(HOST_TODOS_EXTENSION);
+  });
+
+  it("disables legacy auto-extensions when legacyExtensionsEnabled=false", async () => {
+    const session = makeSession();
+    const workspace = makeWorkspace({ memoryEnabled: true });
+
+    const createSessionSocket = vi.fn(async () => 45680);
+    const setSessionPolicy = vi.fn();
+    const deps = makeDeps({
+      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      piExecutable: "/opt/homebrew/bin/pi",
+      legacyExtensionsEnabled: false,
+    });
+
+    const expectedCwd = join(homedir(), "workspace", "pios");
+    const existing = new Set<string>([
+      expectedCwd,
+      PI_REMOTE_GATE_EXTENSION,
+      HOST_MEMORY_EXTENSION,
+      HOST_TODOS_EXTENSION,
+    ]);
+    mockedExistsSync.mockImplementation((path) =>
+      typeof path === "string" && existing.has(path),
+    );
+
+    const proc = new StubProcess();
+    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+    const [, args] = mockedSpawn.mock.calls[0];
+    expect(args).not.toContain(HOST_MEMORY_EXTENSION);
+    expect(args).not.toContain(HOST_TODOS_EXTENSION);
+  });
+
   it("writes system prompt and appends --append-system-prompt", async () => {
     const session = makeSession();
     session.model = "gpt-5.3-codex";

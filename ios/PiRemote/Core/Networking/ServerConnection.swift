@@ -573,12 +573,12 @@ final class ServerConnection {
         // 1. Refresh session list (always, even without active session)
         if sessionStore.sessions.isEmpty,
            let cached = await TimelineCache.shared.loadSessionList() {
-            sessionStore.sessions = cached
+            sessionStore.applyServerSnapshot(cached)
         }
 
         do {
             let sessions = try await apiClient.listSessions()
-            sessionStore.sessions = sessions
+            sessionStore.applyServerSnapshot(sessions)
             Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
         } catch {
             logger.error("Failed to refresh sessions: \(error)")

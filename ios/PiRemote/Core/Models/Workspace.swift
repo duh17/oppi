@@ -29,6 +29,10 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var memoryEnabled: Bool?
     var memoryNamespace: String?
 
+    // Extensions
+    var extensionMode: String?   // "legacy" | "explicit"
+    var extensions: [String]?
+
     // Defaults
     var defaultModel: String?
 
@@ -48,6 +52,7 @@ extension Workspace: Codable {
         case skills, policyPreset
         case systemPrompt, hostMount
         case memoryEnabled, memoryNamespace
+        case extensionMode, extensions
         case defaultModel
         case createdAt, updatedAt
     }
@@ -67,6 +72,9 @@ extension Workspace: Codable {
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
+        extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
+        extensionMode = try c.decodeIfPresent(String.self, forKey: .extensionMode)
+            ?? (extensions == nil ? "legacy" : "explicit")
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
 
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
@@ -90,6 +98,8 @@ extension Workspace: Codable {
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
         try c.encodeIfPresent(memoryEnabled, forKey: .memoryEnabled)
         try c.encodeIfPresent(memoryNamespace, forKey: .memoryNamespace)
+        try c.encodeIfPresent(extensionMode, forKey: .extensionMode)
+        try c.encodeIfPresent(extensions, forKey: .extensions)
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)

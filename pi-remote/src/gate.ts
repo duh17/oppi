@@ -280,6 +280,14 @@ export class GateServer extends EventEmitter {
     pending.resolve({ action, reason: action === "deny" ? "Denied by user" : undefined });
     this.cleanupPending(requestId);
 
+    this.emit("approval_resolved", {
+      requestId,
+      sessionId: pending.sessionId,
+      userId: pending.userId,
+      action,
+      scope,
+    });
+
     console.log(`[gate] Decision resolved: ${requestId} → ${action} (scope=${scope})`);
     return true;
   }

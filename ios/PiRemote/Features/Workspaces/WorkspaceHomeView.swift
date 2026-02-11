@@ -110,7 +110,7 @@ struct WorkspaceHomeView: View {
         await connection.workspaceStore.load(api: api)
         do {
             let sessions = try await api.listSessions()
-            sessionStore.sessions = sessions
+            sessionStore.applyServerSnapshot(sessions)
         } catch {
             // Keep cached data
         }

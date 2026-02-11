@@ -268,6 +268,70 @@ struct ChatSessionManagerTests {
     }
 
     @MainActor
+    @Test func reconnectWithSequencedCatchUpSkipsFullHistoryReload() async {
+        let sessionId = "seq-catchup-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        let tracker = HistoryReloadTracker()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { cachedEventCount, cachedLastEventId in
+            _ = await tracker.recordCall(
+                cachedEventCount: cachedEventCount,
+                cachedLastEventId: cachedLastEventId
+            )
+            return (eventCount: 100, lastEventId: "evt-100")
+        }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 0),
+            .init(seq: nil, currentSeq: 2),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        var catchUpCalls = 0
+        manager._loadCatchUpForTesting = { _, _ in
+            catchUpCalls += 1
+            return APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 1, message: .state(session: makeSession(id: sessionId, status: .busy))),
+                    .init(seq: 2, message: .state(session: makeSession(id: sessionId, status: .ready))),
+                ],
+                currentSeq: 2,
+                session: makeSession(id: sessionId, status: .ready),
+                catchUpComplete: true
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        #expect(await tracker.waitForCalls(1))
+
+        let session = makeSession(id: sessionId)
+        streams.yield(index: 0, message: .connected(session: session))
+        streams.yield(index: 0, message: .connected(session: session))
+        try? await Task.sleep(for: .milliseconds(80))
+
+        let snapshot = await tracker.snapshot()
+        #expect(snapshot.calls.count == 1, "Sequenced catch-up should avoid full history reload")
+        #expect(catchUpCalls == 1)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 2)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
     @Test func reconnectReloadCancelsStaleInFlightTasks() async {
         let sessionId = "cancel-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)

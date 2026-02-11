@@ -134,7 +134,7 @@ struct OnboardingView: View {
 
             // Load sessions
             let sessions = try await api.listSessions()
-            connection.sessionStore.sessions = sessions
+            connection.sessionStore.applyServerSnapshot(sessions)
 
             connectionTest = .success
 

@@ -383,6 +383,8 @@ struct WorkspaceCodableTests {
             "hostMount": "/Users/me/workspace",
             "memoryEnabled": true,
             "memoryNamespace": "dev",
+            "extensionMode": "explicit",
+            "extensions": ["memory", "todos"],
             "defaultModel": "claude-sonnet-4-20250514",
             "createdAt": 1700000000000,
             "updatedAt": 1700001000000
@@ -401,6 +403,8 @@ struct WorkspaceCodableTests {
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.memoryEnabled == true)
         #expect(ws.memoryNamespace == "dev")
+        #expect(ws.extensionMode == "explicit")
+        #expect(ws.extensions == ["memory", "todos"])
         #expect(ws.defaultModel == "claude-sonnet-4-20250514")
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
         #expect(ws.updatedAt.timeIntervalSince1970 == 1700001000)
@@ -429,6 +433,8 @@ struct WorkspaceCodableTests {
         #expect(ws.hostMount == nil)
         #expect(ws.memoryEnabled == nil)
         #expect(ws.memoryNamespace == nil)
+        #expect(ws.extensionMode == "legacy")
+        #expect(ws.extensions == nil)
         #expect(ws.defaultModel == nil)
     }
 
@@ -440,6 +446,7 @@ struct WorkspaceCodableTests {
             "runtime": "host", "skills": ["fetch"], "policyPreset": "container",
             "systemPrompt": "prompt", "hostMount": "/work",
             "memoryEnabled": false, "memoryNamespace": "ns",
+            "extensionMode": "explicit", "extensions": ["custom-ext"],
             "defaultModel": "model-1",
             "createdAt": 1700000000000, "updatedAt": 1700001000000
         }

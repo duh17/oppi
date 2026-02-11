@@ -177,7 +177,7 @@ struct SessionListView: View {
         guard let api = connection.apiClient else { return }
         do {
             let sessions = try await api.listSessions()
-            sessionStore.sessions = sessions
+            sessionStore.applyServerSnapshot(sessions)
             Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
         } catch {
             // Keep cached list on error

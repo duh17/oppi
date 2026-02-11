@@ -416,6 +416,7 @@ export class SessionManager extends EventEmitter {
       sandbox: this.sandbox,
       authProxy: this.authProxy,
       piExecutable: this.piExecutable,
+      legacyExtensionsEnabled: this.config.legacyExtensionsEnabled !== false,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
     };

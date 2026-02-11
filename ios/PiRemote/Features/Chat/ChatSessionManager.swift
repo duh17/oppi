@@ -15,6 +15,12 @@ final class ChatSessionManager {
         let lastEventId: String?
     }
 
+    private enum CatchUpOutcome {
+        case noGap
+        case applied
+        case fullReloadScheduled
+    }
+
     let sessionId: String
 
     /// Bumped to restart the `.task(id:)` connection loop.
@@ -207,18 +213,21 @@ final class ChatSessionManager {
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta()
 
             // Detect reconnection: a second `.connected` message means the WS
-            // dropped and recovered. Reload history to catch events lost during
-            // the gap. Without this, agent responses sent while disconnected
-            // never appear in the UI.
+            // dropped and recovered. Prefer seq-based catch-up and only
+            // fallback to full history reload when catch-up cannot guarantee
+            // continuity.
             if case .connected = message {
+                let catchUpOutcome: CatchUpOutcome?
                 if let currentSeq = inboundMeta?.currentSeq {
-                    await performCatchUpIfNeeded(
+                    catchUpOutcome = await performCatchUpIfNeeded(
                         currentSeq: currentSeq,
                         generation: generation,
                         connection: connection,
                         reducer: reducer,
                         sessionStore: sessionStore
                     )
+                } else {
+                    catchUpOutcome = nil
                 }
 
                 // Request freshest server session state only once the stream is connected.
@@ -226,14 +235,23 @@ final class ChatSessionManager {
                 scheduleStateSync(generation: generation, connection: connection)
 
                 if hasReceivedConnected {
-                    log.info("WS reconnected — reloading history for \(self.sessionId)")
-                    scheduleHistoryReload(
-                        generation: generation,
-                        connection: connection,
-                        reducer: reducer,
-                        sessionStore: sessionStore,
-                        cachedSignature: latestTraceSignature
-                    )
+                    if let catchUpOutcome {
+                        switch catchUpOutcome {
+                        case .fullReloadScheduled:
+                            log.info("WS reconnected — scheduled full history reload for \(self.sessionId)")
+                        case .noGap, .applied:
+                            log.info("WS reconnected — catch-up complete for \(self.sessionId), skipping full history reload")
+                        }
+                    } else {
+                        log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
+                        scheduleHistoryReload(
+                            generation: generation,
+                            connection: connection,
+                            reducer: reducer,
+                            sessionStore: sessionStore,
+                            cachedSignature: latestTraceSignature
+                        )
+                    }
                 }
                 hasReceivedConnected = true
                 unexpectedStreamExitCount = 0
@@ -325,8 +343,8 @@ final class ChatSessionManager {
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionStore: SessionStore
-    ) async {
-        guard generation == connectionGeneration else { return }
+    ) async -> CatchUpOutcome {
+        guard generation == connectionGeneration else { return .noGap }
 
         if currentSeq < lastSeenSeq {
             log.warning("Connected currentSeq \(currentSeq) behind lastSeenSeq \(self.lastSeenSeq) — forcing full history reload")
@@ -339,10 +357,10 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
-            return
+            return .fullReloadScheduled
         }
 
-        guard currentSeq > lastSeenSeq else { return }
+        guard currentSeq > lastSeenSeq else { return .noGap }
 
         let since = lastSeenSeq
         let response: APIClient.SessionEventsResponse?
@@ -354,7 +372,7 @@ final class ChatSessionManager {
             response = nil
         }
 
-        guard generation == connectionGeneration else { return }
+        guard generation == connectionGeneration else { return .noGap }
         guard let response else {
             log.warning("Catch-up fetch failed for \(self.sessionId) since seq \(since)")
             scheduleHistoryReload(
@@ -364,7 +382,7 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
-            return
+            return .fullReloadScheduled
         }
 
         sessionStore.upsert(response.session)
@@ -380,18 +398,23 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
-            return
+            return .fullReloadScheduled
         }
 
+        var appliedCatchUp = false
         for event in response.events {
             guard event.seq > lastSeenSeq else { continue }
             connection.handleServerMessage(event.message, sessionId: sessionId)
             updateLastSeenSeq(event.seq)
+            appliedCatchUp = true
         }
 
         if response.currentSeq > lastSeenSeq {
             updateLastSeenSeq(response.currentSeq)
+            appliedCatchUp = true
         }
+
+        return appliedCatchUp ? .applied : .noGap
     }
 
     // MARK: - History Loading

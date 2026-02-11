@@ -292,25 +292,53 @@ struct RuntimeBadge: View {
 }
 
 /// Runtime icon with a small status dot overlay in the bottom-trailing corner.
-/// Used in the ChatView navigation bar to show both runtime type and session status.
+/// Used in the ChatView navigation bar to show runtime + session + sync state.
 struct RuntimeStatusBadge: View {
+    enum SyncState {
+        case live
+        case syncing
+        case offline
+
+        var accessibilityText: String {
+            switch self {
+            case .live: return "Live"
+            case .syncing: return "Syncing"
+            case .offline: return "Offline"
+            }
+        }
+    }
+
     let runtime: String?
     let statusColor: Color
+    var syncState: SyncState = .live
+
+    private var dotFillColor: Color {
+        syncState == .offline ? .tokyoComment : statusColor
+    }
+
+    private var dotRingColor: Color {
+        switch syncState {
+        case .live: return .tokyoBg
+        case .syncing: return .tokyoBlue
+        case .offline: return .tokyoRed
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             RuntimeBadge(runtime: runtime, compact: true)
 
             Circle()
-                .fill(statusColor)
+                .fill(dotFillColor)
                 .frame(width: 7, height: 7)
                 .overlay(
                     Circle()
-                        .stroke(Color.tokyoBg, lineWidth: 1.5)
+                        .stroke(dotRingColor, lineWidth: 1.5)
                 )
                 .offset(x: 2, y: 2)
         }
         .frame(width: 24, height: 24)
+        .accessibilityLabel("\(syncState.accessibilityText) runtime status")
     }
 }
 

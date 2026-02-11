@@ -146,6 +146,7 @@ export class APNsClient {
     pushToken: string,
     contentState: Record<string, unknown>,
     staleDate?: number,
+    priority: 5 | 10 = 5,
   ): Promise<boolean> {
     const apnsPayload = {
       aps: {
@@ -159,7 +160,7 @@ export class APNsClient {
 
     return this.send(pushToken, apnsPayload, {
       pushType: "liveactivity",
-      priority: 10,
+      priority,
       topic: `${this.config.bundleId}.push-type.liveactivity`,
     });
   }
@@ -171,6 +172,7 @@ export class APNsClient {
     pushToken: string,
     contentState: Record<string, unknown>,
     dismissalDate?: number,
+    priority: 5 | 10 = 10,
   ): Promise<boolean> {
     const apnsPayload = {
       aps: {
@@ -185,7 +187,7 @@ export class APNsClient {
 
     return this.send(pushToken, apnsPayload, {
       pushType: "liveactivity",
-      priority: 10,
+      priority,
       topic: `${this.config.bundleId}.push-type.liveactivity`,
     });
   }
@@ -338,16 +340,32 @@ export class APNsClient {
  * All sends are silent no-ops.
  */
 export class NoopAPNsClient {
-  async sendPermissionPush(): Promise<boolean> {
+  async sendPermissionPush(
+    _deviceToken: string,
+    _payload: PermissionPushPayload,
+  ): Promise<boolean> {
     return false;
   }
-  async sendSessionEventPush(): Promise<boolean> {
+  async sendSessionEventPush(
+    _deviceToken: string,
+    _payload: SessionEventPushPayload,
+  ): Promise<boolean> {
     return false;
   }
-  async sendLiveActivityUpdate(): Promise<boolean> {
+  async sendLiveActivityUpdate(
+    _pushToken: string,
+    _contentState: Record<string, unknown>,
+    _staleDate?: number,
+    _priority: 5 | 10 = 5,
+  ): Promise<boolean> {
     return false;
   }
-  async endLiveActivity(): Promise<boolean> {
+  async endLiveActivity(
+    _pushToken: string,
+    _contentState: Record<string, unknown>,
+    _dismissalDate?: number,
+    _priority: 5 | 10 = 10,
+  ): Promise<boolean> {
     return false;
   }
   shutdown(): void {}

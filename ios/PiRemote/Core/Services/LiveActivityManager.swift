@@ -17,6 +17,7 @@ final class LiveActivityManager {
     private(set) var activeActivity: Activity<PiSessionAttributes>?
     private var startTime: Date?
     private var elapsedTimer: Task<Void, Never>?
+    private var pushTokenTask: Task<Void, Never>?
 
     /// Current state snapshot (for the active activity).
     private var currentState = PiSessionAttributes.ContentState(
@@ -70,12 +71,13 @@ final class LiveActivityManager {
             let activity = try Activity.request(
                 attributes: attributes,
                 content: content,
-                pushType: nil  // Use nil initially; .token requires server APNs setup
+                pushType: .token
             )
 
             self.activeActivity = activity
             self.startTime = Date()
             startElapsedTimer()
+            observePushTokenUpdates(activity)
 
             logger.info("Live Activity started for session \(sessionId)")
         } catch {
@@ -92,6 +94,8 @@ final class LiveActivityManager {
 
         elapsedTimer?.cancel()
         elapsedTimer = nil
+        pushTokenTask?.cancel()
+        pushTokenTask = nil
         pushThrottleTask?.cancel()
         pushThrottleTask = nil
         hasPendingPush = false
@@ -207,6 +211,26 @@ final class LiveActivityManager {
         Task {
             await activity.update(.init(state: state, staleDate: nil))
         }
+    }
+
+    private func observePushTokenUpdates(_ activity: Activity<PiSessionAttributes>) {
+        pushTokenTask?.cancel()
+        pushTokenTask = Task { [weak self] in
+            if let initialToken = activity.pushToken {
+                await self?.registerLiveActivityToken(initialToken)
+            }
+
+            for await tokenData in activity.pushTokenUpdates {
+                guard !Task.isCancelled else { return }
+                await self?.registerLiveActivityToken(tokenData)
+            }
+        }
+    }
+
+    private func registerLiveActivityToken(_ tokenData: Data) async {
+        let token = tokenData.map { String(format: "%02x", $0) }.joined()
+        logger.info("Live Activity push token updated: \(String(token.prefix(16)))...")
+        await PushRegistration.shared.sendTokenToServer(token, tokenType: "liveactivity")
     }
 
     private func startElapsedTimer() {

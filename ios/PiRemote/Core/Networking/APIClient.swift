@@ -202,6 +202,13 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).skills
     }
 
+    /// List available host extensions from ~/.pi/agent/extensions.
+    func listExtensions() async throws -> [ExtensionInfo] {
+        let data = try await get("/extensions")
+        struct Response: Decodable { let extensions: [ExtensionInfo] }
+        return try JSONDecoder().decode(Response.self, from: data).extensions
+    }
+
     /// Get full skill detail: metadata, SKILL.md content, and file tree.
     func getSkillDetail(name: String) async throws -> SkillDetail {
         let data = try await get("/skills/\(name)")
@@ -421,6 +428,8 @@ struct CreateWorkspaceRequest: Encodable {
     var hostMount: String?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
+    var extensionMode: String?
+    var extensions: [String]?
     var defaultModel: String?
 }
 
@@ -435,6 +444,8 @@ struct UpdateWorkspaceRequest: Encodable {
     var hostMount: String?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
+    var extensionMode: String?
+    var extensions: [String]?
     var defaultModel: String?
 }
 

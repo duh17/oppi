@@ -342,6 +342,23 @@ struct APIClientTests {
         #expect(skills.isEmpty)
     }
 
+    @Test func listExtensions() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/extensions")
+            return self.mockResponse(json: """
+            {"extensions":[{"name":"memory","path":"/Users/me/.pi/agent/extensions/memory.ts","kind":"file"}]}
+            """)
+        }
+
+        let extensions = try await client.listExtensions()
+        #expect(extensions.count == 1)
+        #expect(extensions[0].name == "memory")
+        #expect(extensions[0].kind == "file")
+    }
+
     // MARK: - Files + Query Paths
 
     @Test func getSkillFileUsesQueryString() async throws {

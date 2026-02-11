@@ -26,6 +26,31 @@ import type {
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "pi-remote");
 
+function normalizeExtensionList(extensions: string[] | undefined): string[] | undefined {
+  if (!extensions) return undefined;
+
+  const unique = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of extensions) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    if (unique.has(trimmed)) continue;
+    unique.add(trimmed);
+    out.push(trimmed);
+  }
+
+  return out;
+}
+
+function resolveWorkspaceExtensionMode(
+  explicitExtensions: string[] | undefined,
+  mode: Workspace["extensionMode"] | undefined,
+): Workspace["extensionMode"] {
+  if (mode === "legacy" || mode === "explicit") return mode;
+  return explicitExtensions ? "explicit" : "legacy";
+}
+
 export class Storage {
   private dataDir: string;
   private configPath: string;
@@ -70,6 +95,7 @@ export class Storage {
       workspaceIdleTimeoutMs: 30 * 60 * 1000,
       maxSessionsPerWorkspace: 3,
       maxSessionsGlobal: 5,
+      legacyExtensionsEnabled: true,
     };
 
     if (existsSync(this.configPath)) {
@@ -101,7 +127,8 @@ export class Storage {
           loaded.sessionIdleTimeoutMs !== config.sessionIdleTimeoutMs ||
           loaded.workspaceIdleTimeoutMs !== config.workspaceIdleTimeoutMs ||
           loaded.maxSessionsPerWorkspace !== config.maxSessionsPerWorkspace ||
-          loaded.maxSessionsGlobal !== config.maxSessionsGlobal;
+          loaded.maxSessionsGlobal !== config.maxSessionsGlobal ||
+          loaded.legacyExtensionsEnabled !== config.legacyExtensionsEnabled;
 
         if (needsRewrite) {
           this.saveConfig(config);
@@ -442,6 +469,8 @@ export class Storage {
     const policyPreset = req.policyPreset || "container";
     const runtime =
       req.runtime || (!req.hostMount && policyPreset === "container" ? "container" : "host");
+    const extensions = normalizeExtensionList(req.extensions);
+    const extensionMode = resolveWorkspaceExtensionMode(extensions, req.extensionMode);
 
     const workspace: Workspace = {
       id,
@@ -456,6 +485,8 @@ export class Storage {
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
       memoryNamespace: req.memoryEnabled ? req.memoryNamespace || `ws-${id}` : req.memoryNamespace,
+      extensionMode,
+      extensions,
       defaultModel: req.defaultModel,
       createdAt: now,
       updatedAt: now,
@@ -501,6 +532,8 @@ export class Storage {
     try {
       const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
       ws.runtime = this.inferWorkspaceRuntime(ws);
+      ws.extensions = normalizeExtensionList(ws.extensions);
+      ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
       return ws;
     } catch {
       return undefined;
@@ -518,6 +551,8 @@ export class Storage {
       try {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
         ws.runtime = this.inferWorkspaceRuntime(ws);
+        ws.extensions = normalizeExtensionList(ws.extensions);
+        ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
         workspaces.push(ws);
       } catch (err) {
         console.error(`[storage] Corrupt workspace file ${join(dir, file)}, skipping:`, err);
@@ -545,12 +580,20 @@ export class Storage {
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
     if (updates.memoryNamespace !== undefined) workspace.memoryNamespace = updates.memoryNamespace;
+    if (updates.extensionMode !== undefined) workspace.extensionMode = updates.extensionMode;
+    if (updates.extensions !== undefined) {
+      workspace.extensions = normalizeExtensionList(updates.extensions);
+    }
     if (
       workspace.memoryEnabled &&
       (!workspace.memoryNamespace || workspace.memoryNamespace.trim().length === 0)
     ) {
       workspace.memoryNamespace = `ws-${workspace.id}`;
     }
+    workspace.extensionMode = resolveWorkspaceExtensionMode(
+      workspace.extensions,
+      workspace.extensionMode,
+    );
     if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
     workspace.updatedAt = Date.now();
 

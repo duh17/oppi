@@ -47,6 +47,9 @@ is in `WORKSPACE-CONTAINERS.md`. Current shipped behavior is in `README.md`.
 - ✅ Step 9 (`TODO-1fe2951f`) — iOS workspace-first UX shipped.
 - ✅ Step 11a (`TODO-eabe2bf3`) — server-side user skill CRUD shipped.
 - ✅ Infra refactor (2026-02-10) — server orchestration split into `server.ts` + `routes.ts` + `stream.ts`.
+- ✅ iOS chat durability lane (`TODO-f0126679`) — chat timeline no longer exhibits
+  reproducible freeze/hang behavior in current dogfood; native timeline migration
+  and validation complete for current scope.
 
 ### In progress / partially delivered
 - 🟡 Step 3 (`TODO-362ce018`) — file content endpoint shipped; directory listing API remains.

@@ -44,6 +44,25 @@ function ts(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
+type LiveActivityStatus = "busy" | "stopping" | "ready" | "stopped" | "error";
+
+interface LiveActivityContentState {
+  status: LiveActivityStatus;
+  activeTool: string | null;
+  pendingPermissions: number;
+  lastEvent: string | null;
+  elapsedSeconds: number;
+}
+
+interface PendingLiveActivityUpdate {
+  sessionId?: string;
+  status?: LiveActivityStatus;
+  activeTool?: string | null;
+  lastEvent?: string | null;
+  end?: boolean;
+  priority?: 5 | 10;
+}
+
 // ─── Available Models ───
 
 const FALLBACK_MODELS: ModelInfo[] = [
@@ -185,6 +204,11 @@ export class Server {
   // Track WebSocket connections per user for permission/UI forwarding
   private userConnections: Map<string, Set<WebSocket>> = new Map();
 
+  // Live Activity push coalescing (one pending update per user, flushed with debounce).
+  private liveActivityTimers: Map<string, NodeJS.Timeout> = new Map();
+  private liveActivityPending: Map<string, PendingLiveActivityUpdate> = new Map();
+  private readonly liveActivityDebounceMs = 750;
+
   // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
   private streamMux!: UserStreamMux;
   // REST route handler (dispatch + all HTTP handlers)
@@ -195,6 +219,7 @@ export class Server {
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
+    const config = storage.getConfig();
     this.policy = new PolicyEngine("host"); // Default: restrictive. Per-session overrides via gate.setSessionPolicy().
 
     // v2 policy infrastructure
@@ -203,7 +228,9 @@ export class Server {
 
     this.gate = new GateServer(this.policy, ruleStore, auditLog);
     this.authProxy = new AuthProxy();
-    this.sandbox = new SandboxManager();
+    this.sandbox = new SandboxManager({
+      legacyExtensionsEnabled: config.legacyExtensionsEnabled !== false,
+    });
     this.skillRegistry = new SkillRegistry();
     this.userSkillStore = new UserSkillStore();
     this.userSkillStore.init();
@@ -229,6 +256,8 @@ export class Server {
     });
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
+      this.handleLiveActivitySessionEvent(payload);
+
       if (!this.streamMux.isNotificationLevelMessage(payload.event)) {
         return;
       }
@@ -267,7 +296,7 @@ export class Server {
       this.handleUpgrade(req, socket, head);
     });
 
-    // Wire gate events → phone WebSocket
+    // Wire gate events → phone WebSocket + Live Activity updates
     this.gate.on("approval_needed", (pending: PendingDecision) => {
       this.forwardPermissionRequest(pending);
     });
@@ -283,7 +312,23 @@ export class Server {
             reason: "Approval timeout",
             sessionId,
           });
+          this.queueLiveActivityUpdate(session.userId, {
+            sessionId,
+            lastEvent: "Permission expired",
+            priority: 5,
+          });
         }
+      },
+    );
+
+    this.gate.on(
+      "approval_resolved",
+      ({ sessionId, userId, action }: { sessionId: string; userId: string; action: "allow" | "deny" }) => {
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
+          priority: action === "deny" ? 10 : 5,
+        });
       },
     );
   }
@@ -331,6 +376,11 @@ export class Server {
     await this.sandbox.cleanupOrphanedContainers();
     await this.gate.shutdown();
     await this.authProxy.stop();
+    for (const timer of this.liveActivityTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.liveActivityTimers.clear();
+    this.liveActivityPending.clear();
     this.push.shutdown();
     this.wss.close();
     this.httpServer.close();
@@ -353,6 +403,11 @@ export class Server {
     };
 
     this.broadcastToUser(pending.userId, msg);
+    this.queueLiveActivityUpdate(pending.userId, {
+      sessionId: pending.sessionId,
+      lastEvent: "Permission required",
+      priority: pending.risk === "low" ? 5 : 10,
+    });
     console.log(
       `${ts()} [gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`,
     );
@@ -441,6 +496,267 @@ export class Server {
           });
         }
       }
+    }
+  }
+
+  private handleLiveActivitySessionEvent(payload: SessionBroadcastEvent): void {
+    const { event, userId, sessionId } = payload;
+
+    switch (event.type) {
+      case "state":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: this.mapSessionStatusToLiveActivity(event.session.status),
+          lastEvent: this.sessionStatusLabel(event.session.status),
+          priority: 5,
+        });
+        return;
+      case "agent_start":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "busy",
+          lastEvent: "Agent started",
+          priority: 5,
+        });
+        return;
+      case "agent_end":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "ready",
+          activeTool: null,
+          lastEvent: "Agent finished",
+          priority: 5,
+        });
+        return;
+      case "tool_start":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "busy",
+          activeTool: event.tool,
+          lastEvent: event.tool,
+          priority: 5,
+        });
+        return;
+      case "tool_end":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          activeTool: null,
+          priority: 5,
+        });
+        return;
+      case "stop_requested":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "stopping",
+          lastEvent: "Stopping",
+          priority: 5,
+        });
+        return;
+      case "stop_confirmed":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "ready",
+          activeTool: null,
+          lastEvent: "Stop confirmed",
+          priority: 5,
+        });
+        return;
+      case "stop_failed":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "error",
+          lastEvent: "Stop failed",
+          priority: 10,
+        });
+        return;
+      case "permission_request":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          lastEvent: "Permission required",
+          priority: 10,
+        });
+        return;
+      case "permission_expired":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          lastEvent: "Permission expired",
+          priority: 5,
+        });
+        return;
+      case "permission_cancelled":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          lastEvent: "Permission resolved",
+          priority: 5,
+        });
+        return;
+      case "error":
+        if (!event.error.startsWith("Retrying (")) {
+          this.queueLiveActivityUpdate(userId, {
+            sessionId,
+            status: "error",
+            lastEvent: "Error",
+            priority: 10,
+          });
+        }
+        return;
+      case "session_ended":
+        this.queueLiveActivityUpdate(userId, {
+          sessionId,
+          status: "stopped",
+          activeTool: null,
+          lastEvent: event.reason,
+          end: true,
+          priority: 5,
+        });
+        return;
+      default:
+        return;
+    }
+  }
+
+  private queueLiveActivityUpdate(userId: string, update: PendingLiveActivityUpdate): void {
+    const current = this.liveActivityPending.get(userId) ?? {};
+    const merged: PendingLiveActivityUpdate = {
+      sessionId: update.sessionId ?? current.sessionId,
+      status: update.status ?? current.status,
+      activeTool: update.activeTool !== undefined ? update.activeTool : current.activeTool,
+      lastEvent: update.lastEvent !== undefined ? update.lastEvent : current.lastEvent,
+      end: Boolean(current.end || update.end),
+      priority: (Math.max(current.priority ?? 5, update.priority ?? 5) as 5 | 10),
+    };
+
+    this.liveActivityPending.set(userId, merged);
+
+    if (this.liveActivityTimers.has(userId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => this.flushLiveActivityUpdate(userId), this.liveActivityDebounceMs);
+    this.liveActivityTimers.set(userId, timer);
+  }
+
+  private flushLiveActivityUpdate(userId: string): void {
+    const timer = this.liveActivityTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.liveActivityTimers.delete(userId);
+    }
+
+    const pending = this.liveActivityPending.get(userId);
+    if (!pending) {
+      return;
+    }
+    this.liveActivityPending.delete(userId);
+
+    const token = this.storage.getLiveActivityToken(userId);
+    if (!token) {
+      return;
+    }
+
+    const contentState = this.buildLiveActivityContentState(userId, pending);
+    const liveActivityPayload: Record<string, unknown> = { ...contentState };
+
+    if (pending.end) {
+      void this.push
+        .endLiveActivity(token, liveActivityPayload, undefined, pending.priority ?? 10)
+        .then((ok) => {
+          if (ok) {
+            this.storage.setLiveActivityToken(userId, null);
+          }
+        });
+      return;
+    }
+
+    const staleDate = Date.now() + 2 * 60 * 1000;
+    void this.push.sendLiveActivityUpdate(token, liveActivityPayload, staleDate, pending.priority ?? 5);
+  }
+
+  private buildLiveActivityContentState(
+    userId: string,
+    pending: PendingLiveActivityUpdate,
+  ): LiveActivityContentState {
+    const session = pending.sessionId
+      ? this.findSessionById(pending.sessionId)
+      : this.findPrimarySessionForUser(userId);
+
+    const now = Date.now();
+    const elapsedSeconds = session ? Math.max(0, Math.floor((now - session.createdAt) / 1000)) : 0;
+
+    return {
+      status: pending.status ?? this.mapSessionStatusToLiveActivity(session?.status),
+      activeTool: pending.activeTool ?? null,
+      pendingPermissions: this.gate.getPendingForUser(userId).length,
+      lastEvent: pending.lastEvent ?? null,
+      elapsedSeconds,
+    };
+  }
+
+  private findPrimarySessionForUser(userId: string): Session | undefined {
+    const sessions = this.storage.listUserSessions(userId);
+    if (sessions.length === 0) {
+      return undefined;
+    }
+
+    const score = (status: Session["status"]): number => {
+      switch (status) {
+        case "busy":
+          return 5;
+        case "stopping":
+          return 4;
+        case "ready":
+          return 3;
+        case "starting":
+          return 2;
+        case "error":
+          return 1;
+        case "stopped":
+          return 0;
+      }
+    };
+
+    return sessions
+      .slice()
+      .sort((a, b) => {
+        const priority = score(b.status) - score(a.status);
+        if (priority !== 0) {
+          return priority;
+        }
+        return b.lastActivity - a.lastActivity;
+      })[0];
+  }
+
+  private mapSessionStatusToLiveActivity(status: Session["status"] | undefined): LiveActivityStatus {
+    switch (status) {
+      case "busy":
+        return "busy";
+      case "stopping":
+        return "stopping";
+      case "stopped":
+        return "stopped";
+      case "error":
+        return "error";
+      case "ready":
+      case "starting":
+      default:
+        return "ready";
+    }
+  }
+
+  private sessionStatusLabel(status: Session["status"]): string {
+    switch (status) {
+      case "busy":
+        return "Working";
+      case "stopping":
+        return "Stopping";
+      case "ready":
+        return "Ready";
+      case "starting":
+        return "Starting";
+      case "stopped":
+        return "Session ended";
+      case "error":
+        return "Error";
     }
   }
 
@@ -860,10 +1176,10 @@ export class Server {
       case "prompt": {
         const timestamp = Date.now();
         const requestId = msg.requestId;
-        const preview = msg.message.slice(0, 80);
+        const promptChars = msg.message.length;
         const imageCount = msg.images?.length ?? 0;
         console.log(
-          `${ts()} [ws] PROMPT ${session.id}: "${preview}"${imageCount > 0 ? ` (${imageCount} images)` : ""}`,
+          `${ts()} [ws] PROMPT ${session.id} (chars=${promptChars}${imageCount > 0 ? `, images=${imageCount}` : ""})`,
         );
 
         // RPC image format: { type: "image", data: "base64...", mimeType: "image/png" }
@@ -906,7 +1222,11 @@ export class Server {
 
       case "steer": {
         const requestId = msg.requestId;
-        console.log(`${ts()} [ws] STEER ${session.id}: "${msg.message.slice(0, 80)}"`);
+        const steerChars = msg.message.length;
+        const steerImageCount = msg.images?.length ?? 0;
+        console.log(
+          `${ts()} [ws] STEER ${session.id} (chars=${steerChars}${steerImageCount > 0 ? `, images=${steerImageCount}` : ""})`,
+        );
         const steerImages = msg.images?.map((img) => ({
           type: "image" as const,
           data: img.data,
@@ -941,7 +1261,11 @@ export class Server {
 
       case "follow_up": {
         const requestId = msg.requestId;
-        console.log(`${ts()} [ws] FOLLOW_UP ${session.id}: "${msg.message.slice(0, 80)}"`);
+        const followUpChars = msg.message.length;
+        const followUpImageCount = msg.images?.length ?? 0;
+        console.log(
+          `${ts()} [ws] FOLLOW_UP ${session.id} (chars=${followUpChars}${followUpImageCount > 0 ? `, images=${followUpImageCount}` : ""})`,
+        );
         const fuImages = msg.images?.map((img) => ({
           type: "image" as const,
           data: img.data,

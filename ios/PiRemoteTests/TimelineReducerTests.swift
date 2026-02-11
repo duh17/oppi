@@ -70,6 +70,60 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func duplicateToolStartDoesNotCreateDuplicateRows() {
+        let reducer = TimelineReducer()
+        let toolId = "call_1|fc_1"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
+
+        let toolItems = reducer.items.filter {
+            if case .toolCall = $0 { return true }
+            return false
+        }
+
+        #expect(toolItems.count == 1)
+        guard case .toolCall(let id, _, _, _, _, _, let isDone) = toolItems[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(id == toolId)
+        #expect(!isDone)
+    }
+
+    @MainActor
+    @Test func duplicateLiveToolStartUpdatesHistoryRowInPlace() {
+        let reducer = TimelineReducer()
+        let toolId = "call_2|fc_2"
+
+        reducer.loadSession([
+            TraceEvent(
+                id: toolId,
+                type: .toolCall,
+                timestamp: "2025-01-01T00:00:00.000Z",
+                text: nil,
+                tool: "bash",
+                args: ["command": .string("pwd")],
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "pwd"]))
+
+        #expect(reducer.items.count == 1)
+        guard case .toolCall(_, _, _, _, _, _, let isDone) = reducer.items[0] else {
+            Issue.record("Expected toolCall")
+            return
+        }
+        #expect(!isDone)
+    }
+
+    @MainActor
     @Test func assistantTextIsSplitAroundToolCall() {
         let reducer = TimelineReducer()
         let toolId = "tool-1"

@@ -1,4 +1,6 @@
 import Testing
+import SwiftUI
+import UIKit
 @testable import PiRemote
 
 @Suite("ANSIParser")
@@ -43,6 +45,28 @@ struct ANSIParserTests {
         let input = "\u{1B}[1mBold\u{1B}[0m Normal"
         let result = ANSIParser.attributedString(from: input)
         #expect(String(result.characters) == "Bold Normal")
+    }
+
+    @Test("attributedString bridges foreground colors for UIKit rendering")
+    func attrUIKitForegroundColors() {
+        let input = "\u{1B}[32mFresh\u{1B}[0m plain"
+        let attributed = ANSIParser.attributedString(from: input)
+        let bridged = NSAttributedString(attributed)
+        let text = bridged.string as NSString
+
+        let freshRange = text.range(of: "Fresh")
+        let plainRange = text.range(of: "plain")
+        guard freshRange.location != NSNotFound,
+              plainRange.location != NSNotFound else {
+            Issue.record("Expected token ranges in bridged ANSI attributed string")
+            return
+        }
+
+        let freshColor = bridged.attribute(.foregroundColor, at: freshRange.location, effectiveRange: nil) as? UIColor
+        let plainColor = bridged.attribute(.foregroundColor, at: plainRange.location, effectiveRange: nil) as? UIColor
+
+        #expect(freshColor == UIColor(Color.tokyoGreen))
+        #expect(plainColor == UIColor(Color.tokyoFg))
     }
 
     @Test("handles kypu status output")

@@ -12,11 +12,20 @@ struct CachedTrace: Codable, Sendable {
     let events: [TraceEvent]
 }
 
+/// Aggregate cache telemetry for diagnostics.
+struct TimelineCacheMetrics: Sendable {
+    let rootPath: String
+    let hits: Int
+    let misses: Int
+    let decodeFailures: Int
+    let writes: Int
+    let averageLoadMs: Int
+}
+
 /// Local disk cache for server responses.
 ///
-/// Stores session traces, session list, workspaces, and skills in
-/// `Library/Caches/`. iOS can evict under storage pressure (correct
-/// behavior — this is a cache, not persistent state).
+/// Stores session traces, session list, workspaces, and skills under
+/// `Library/Application Support/` for durable read continuity.
 ///
 /// All disk I/O runs on the actor's serial executor, off the main thread.
 /// Decode failures return nil (cache miss), never crash.
@@ -28,27 +37,63 @@ actor TimelineCache {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
+    // Telemetry (best-effort, process-local)
+    private var hitCount = 0
+    private var missCount = 0
+    private var decodeFailureCount = 0
+    private var writeCount = 0
+    private var totalLoadMs = 0
+    private var loadSamples = 0
+
     private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        root = caches.appending(path: "dev.chenda.PiRemote")
-        tracesDir = root.appending(path: "traces")
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let appRoot = appSupport.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+
+        root = appRoot.appending(path: "cache", directoryHint: .isDirectory)
+        tracesDir = root.appending(path: "traces", directoryHint: .isDirectory)
+
+        let legacyCaches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let legacyRoot = legacyCaches.appending(path: "dev.chenda.PiRemote", directoryHint: .isDirectory)
+
+        // One-time migration from old evictable cache location if durable
+        // storage doesn't exist yet.
+        if !fileManager.fileExists(atPath: root.path),
+           fileManager.fileExists(atPath: legacyRoot.path) {
+            do {
+                try fileManager.createDirectory(at: appRoot, withIntermediateDirectories: true)
+                try fileManager.copyItem(at: legacyRoot, to: root)
+                logger.notice("Cache migrated from Caches to Application Support")
+            } catch {
+                logger.warning("Cache migration failed: \(error.localizedDescription)")
+            }
+        }
+
+        // Ensure directories exist
+        try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+
         encoder = JSONEncoder()
         decoder = JSONDecoder()
 
-        // Ensure directories exist
-        try? FileManager.default.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+        logger.notice("Cache root initialized at \(self.root.path, privacy: .public)")
     }
 
     // MARK: - Trace (per session)
 
     func loadTrace(_ sessionId: String) -> CachedTrace? {
+        let startedAt = Date()
+        var hit = false
+        defer { recordLoad(startedAt: startedAt, hit: hit) }
+
         let url = traceURL(sessionId)
         guard let data = try? Data(contentsOf: url) else { return nil }
         do {
             let cached = try decoder.decode(CachedTrace.self, from: data)
+            hit = true
             logger.debug("Cache hit: trace for \(sessionId) (\(cached.eventCount) events)")
             return cached
         } catch {
+            decodeFailureCount += 1
             logger.warning("Cache decode failed for trace \(sessionId): \(error.localizedDescription)")
             try? FileManager.default.removeItem(at: url)
             return nil
@@ -66,6 +111,7 @@ actor TimelineCache {
         do {
             let data = try encoder.encode(cached)
             try data.write(to: traceURL(sessionId), options: .atomic)
+            writeCount += 1
             logger.debug("Cache saved: trace for \(sessionId) (\(events.count) events, \(data.count) bytes)")
         } catch {
             logger.warning("Cache write failed for trace \(sessionId): \(error.localizedDescription)")
@@ -119,6 +165,20 @@ actor TimelineCache {
         save(detail, to: "skills/\(name).json")
     }
 
+    // MARK: - Telemetry
+
+    func metrics() -> TimelineCacheMetrics {
+        let avgLoadMs = loadSamples > 0 ? (totalLoadMs / loadSamples) : 0
+        return TimelineCacheMetrics(
+            rootPath: root.path,
+            hits: hitCount,
+            misses: missCount,
+            decodeFailures: decodeFailureCount,
+            writes: writeCount,
+            averageLoadMs: avgLoadMs
+        )
+    }
+
     // MARK: - Cleanup
 
     /// Remove trace caches for sessions that no longer exist.
@@ -145,6 +205,14 @@ actor TimelineCache {
     func clear() {
         try? FileManager.default.removeItem(at: root)
         try? FileManager.default.createDirectory(at: tracesDir, withIntermediateDirectories: true)
+
+        hitCount = 0
+        missCount = 0
+        decodeFailureCount = 0
+        writeCount = 0
+        totalLoadMs = 0
+        loadSamples = 0
+
         logger.info("Cache cleared")
     }
 
@@ -155,13 +223,19 @@ actor TimelineCache {
     }
 
     private func load<T: Decodable>(_ type: T.Type, from filename: String) -> T? {
+        let startedAt = Date()
+        var hit = false
+        defer { recordLoad(startedAt: startedAt, hit: hit) }
+
         let url = root.appending(path: filename)
         guard let data = try? Data(contentsOf: url) else { return nil }
         do {
             let value = try decoder.decode(type, from: data)
+            hit = true
             logger.debug("Cache hit: \(filename)")
             return value
         } catch {
+            decodeFailureCount += 1
             logger.warning("Cache decode failed for \(filename): \(error.localizedDescription)")
             try? FileManager.default.removeItem(at: url)
             return nil
@@ -173,9 +247,21 @@ actor TimelineCache {
         do {
             let data = try encoder.encode(value)
             try data.write(to: url, options: .atomic)
+            writeCount += 1
             logger.debug("Cache saved: \(filename) (\(data.count) bytes)")
         } catch {
             logger.warning("Cache write failed for \(filename): \(error.localizedDescription)")
         }
+    }
+
+    private func recordLoad(startedAt: Date, hit: Bool) {
+        let elapsedMs = max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
+        if hit {
+            hitCount += 1
+        } else {
+            missCount += 1
+        }
+        totalLoadMs += elapsedMs
+        loadSamples += 1
     }
 }

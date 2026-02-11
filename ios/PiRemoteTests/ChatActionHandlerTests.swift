@@ -404,7 +404,6 @@ struct ChatActionHandlerTests {
         }
 
         var setSessionNameValue: String?
-        var getStateCalls = 0
 
         connection._sendMessageForTesting = { message in
             switch message {
@@ -422,8 +421,6 @@ struct ChatActionHandlerTests {
                 )
             case .setSessionName(let name, _):
                 setSessionNameValue = name
-            case .getState:
-                getStateCalls += 1
             default:
                 break
             }
@@ -440,7 +437,7 @@ struct ChatActionHandlerTests {
         )
 
         await waitForCondition(timeoutMs: 800) {
-            setSessionNameValue != nil && getStateCalls > 0
+            setSessionNameValue != nil
         }
 
         #expect(setSessionNameValue == "Fix websocket reconnect bug")
@@ -566,7 +563,7 @@ struct ChatActionHandlerTests {
     // MARK: - Rename
 
     @MainActor
-    @Test func renameTrimsInputAndRequestsState() async {
+    @Test func renameTrimsInputAndSendsSetSessionName() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -575,16 +572,10 @@ struct ChatActionHandlerTests {
         sessionStore.upsert(makeSession(id: "s1", name: "Old name", messageCount: 0))
 
         var sentName: String?
-        var getStateCalls = 0
 
         connection._sendMessageForTesting = { message in
-            switch message {
-            case .setSessionName(let name, _):
+            if case .setSessionName(let name, _) = message {
                 sentName = name
-            case .getState:
-                getStateCalls += 1
-            default:
-                break
             }
         }
 
@@ -599,11 +590,10 @@ struct ChatActionHandlerTests {
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Better session name")
 
         await waitForCondition(timeoutMs: 800) {
-            sentName != nil && getStateCalls > 0
+            sentName != nil
         }
 
         #expect(sentName == "Better session name")
-        #expect(getStateCalls == 1)
     }
 
     @MainActor

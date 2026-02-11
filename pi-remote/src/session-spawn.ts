@@ -16,6 +16,7 @@ import type { Session, Workspace } from "./types.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
 import type { AuthProxy } from "./auth-proxy.js";
+import { resolveWorkspaceExtensions } from "./extension-loader.js";
 import { PolicyEngine, type PathAccess } from "./policy.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
@@ -36,10 +37,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const PI_REMOTE_GATE_EXTENSION = join(__dirname, "..", "extensions", "permission-gate");
 
 /** Host memory extension (user's pi config). */
-export const HOST_MEMORY_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
+export { HOST_MEMORY_EXTENSION } from "./extension-loader.js";
 
 /** Host todo extension (user's pi config). */
-export const HOST_TODOS_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
+export { HOST_TODOS_EXTENSION } from "./extension-loader.js";
 
 // ─── Dependencies ───
 
@@ -49,6 +50,8 @@ export interface SpawnDeps {
   sandbox: SandboxManager;
   authProxy: AuthProxy | null;
   piExecutable: string;
+  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
+  legacyExtensionsEnabled?: boolean;
   /** Callback for each RPC line from pi stdout. */
   onRpcLine: (key: string, line: string) => void;
   /** Callback when pi process exits or errors. */
@@ -143,11 +146,9 @@ export async function spawnPiHost(
   // Build pi args.
   //
   // Host-mode uses --no-extensions to suppress auto-discovery of the user's
-  // local extensions (which include a different permission-gate that doesn't
-  // know about TCP gates). We then explicitly load:
-  //   1. The pi-remote TCP permission gate extension (always)
-  //   2. The memory extension (if workspace.memoryEnabled)
-  //   3. The todo extension (if installed)
+  // local extensions (which may include a different permission-gate impl).
+  // We always load the pi-remote TCP permission gate extension explicitly,
+  // then load workspace extensions resolved via legacy/explicit mode.
   const piArgs = ["--mode", "rpc", "--no-extensions"];
 
   // 1. Always load the pi-remote TCP permission gate extension
@@ -159,14 +160,17 @@ export async function spawnPiHost(
     );
   }
 
-  // 2. Optionally load memory extension
-  if (workspace?.memoryEnabled && existsSync(HOST_MEMORY_EXTENSION)) {
-    piArgs.push("--extension", HOST_MEMORY_EXTENSION);
+  // 2. Workspace extensions (legacy auto-load or explicit allowlist)
+  const extensionSelection = resolveWorkspaceExtensions(workspace, {
+    legacyEnabled: deps.legacyExtensionsEnabled ?? true,
+  });
+
+  for (const warning of extensionSelection.warnings) {
+    console.warn(`${ts()} [session:${session.id}] extension: ${warning}`);
   }
 
-  // 3. Optionally load todo extension
-  if (existsSync(HOST_TODOS_EXTENSION)) {
-    piArgs.push("--extension", HOST_TODOS_EXTENSION);
+  for (const extension of extensionSelection.extensions) {
+    piArgs.push("--extension", extension.path);
   }
 
   if (session.model) {

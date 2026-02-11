@@ -90,4 +90,98 @@ struct ChatScrollControllerTests {
         let readBack = controller.scrollPositionBinding.wrappedValue
         #expect(readBack == "msg-123")
     }
+
+    // MARK: - Collection-backed callbacks
+
+    @MainActor
+    @Test func collectionBackendUpdatesAnchorState() {
+        let controller = ChatScrollController()
+
+        controller.updateNearBottom(false)
+        #expect(!controller.isCurrentlyNearBottom)
+
+        controller.updateTopVisibleItemId("item-7")
+        #expect(controller.currentTopVisibleItemId == "item-7")
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeUsesStreamingTarget() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+
+        var targets: [String] = []
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { targetID in
+            targets.append(targetID)
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(targets == ["stream-1"])
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeUsesBottomTarget() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+
+        var targets: [String] = []
+        controller.handleRenderVersionChange(
+            streamingID: nil,
+            bottomItemID: "bottom-1"
+        ) { targetID in
+            targets.append(targetID)
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(targets == ["bottom-1"])
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeSkipsWhenNotNearBottom() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(false)
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 0)
+    }
+
+    @MainActor
+    @Test func handleInitialScrollInvokesCallback() async {
+        let controller = ChatScrollController()
+        controller.needsInitialScroll = true
+
+        var targets: [String] = []
+        controller.handleInitialScroll(bottomItemID: "bottom-1") { targetID in
+            targets.append(targetID)
+        }
+
+        try? await Task.sleep(for: .milliseconds(180))
+        #expect(targets == ["bottom-1"])
+        #expect(!controller.needsInitialScroll)
+    }
+
+    @MainActor
+    @Test func handleScrollTargetInvokesCallbackAndResetsTarget() async {
+        let controller = ChatScrollController()
+        controller.scrollTargetID = "target-1"
+
+        var targets: [String] = []
+        controller.handleScrollTarget { targetID in
+            targets.append(targetID)
+        }
+
+        try? await Task.sleep(for: .milliseconds(220))
+        #expect(targets == ["target-1"])
+        #expect(controller.scrollTargetID == nil)
+    }
 }

@@ -47,6 +47,11 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = context.coordinator
+
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTimelineTap(_:)))
+        tapGesture.cancelsTouchesInView = false
+        collectionView.addGestureRecognizer(tapGesture)
+
         context.coordinator.configureDataSource(collectionView: collectionView)
         return collectionView
     }
@@ -445,7 +450,13 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             updateScrollState(collectionView)
         }
 
+        @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            gesture.view?.window?.endEditing(true)
+        }
+
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+            collectionView.window?.endEditing(true)
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
 
             let itemID = currentIDs[indexPath.item]

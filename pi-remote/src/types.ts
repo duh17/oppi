@@ -44,6 +44,10 @@ export interface Workspace {
   memoryEnabled?: boolean; // Enable remember/recall memory extension
   memoryNamespace?: string; // Same namespace => shared memory across workspaces
 
+  // Extensions
+  extensionMode?: "legacy" | "explicit"; // legacy auto-loads memory/todos, explicit uses `extensions`
+  extensions?: string[]; // Extension names from ~/.pi/agent/extensions (explicit mode)
+
   // Defaults
   defaultModel?: string; // Override server default for this workspace
 
@@ -130,6 +134,8 @@ export interface ServerConfig {
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
+  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
+  legacyExtensionsEnabled?: boolean;
 }
 
 // ─── API Types ───
@@ -161,6 +167,8 @@ export interface CreateWorkspaceRequest {
   hostMount?: string;
   memoryEnabled?: boolean;
   memoryNamespace?: string;
+  extensionMode?: "legacy" | "explicit";
+  extensions?: string[];
   defaultModel?: string;
 }
 
@@ -175,6 +183,8 @@ export interface UpdateWorkspaceRequest {
   hostMount?: string;
   memoryEnabled?: boolean;
   memoryNamespace?: string;
+  extensionMode?: "legacy" | "explicit";
+  extensions?: string[];
   defaultModel?: string;
 }
 
