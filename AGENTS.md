@@ -114,6 +114,13 @@ pi-remote/
 - Never remove or downgrade code to fix type errors; upgrade the dependency instead
 - Always ask before removing functionality or code that appears intentional
 
+## Testing Expectations
+
+- For user-reported bugs, prefer adding a regression test with the fix.
+- This is a strong preference, not a hard blocker.
+- If a regression test is trivial and low-risk to add, include it in the same change.
+- If it is not practical, document why and include clear manual verification steps.
+
 ## Commands (pi-remote)
 
 ```bash

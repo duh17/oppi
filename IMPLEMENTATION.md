@@ -234,6 +234,10 @@ Can run in parallel with Step 10.
 ### Step 10: Fork workflow (IMPL Phase 3)
 **TODO-19cb0451** | Server + iOS | ~1-2 days | **Feature**
 
+Design spikes:
+- `ios/docs/fork-experience-spike.md`
+- `pi-remote/docs/fork-graph-server-design.md`
+
 | Deliverable | Side |
 |-------------|------|
 | `POST /workspaces/:wid/sessions/:sid/fork` | Server |
