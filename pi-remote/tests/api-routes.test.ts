@@ -20,6 +20,7 @@ const ROUTES = {
   wsSessionResume:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
   wsSessionFiles:      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
+  wsSessionOverallDiff:/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
   wsSessionEvents:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream:     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
@@ -74,6 +75,13 @@ describe("Workspace-scoped API routes (v2)", () => {
 
   it("matches GET /workspaces/:wid/sessions/:sid/files", () => {
     const m = "/workspaces/ws-1/sessions/s1/files".match(ROUTES.wsSessionFiles);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+    expect(m![2]).toBe("s1");
+  });
+
+  it("matches GET /workspaces/:wid/sessions/:sid/overall-diff", () => {
+    const m = "/workspaces/ws-1/sessions/s1/overall-diff".match(ROUTES.wsSessionOverallDiff);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("s1");

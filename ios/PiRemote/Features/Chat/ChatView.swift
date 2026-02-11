@@ -56,14 +56,31 @@ struct ChatView: View {
 
         let ownsSession = wsClient.connectedSessionId == sessionId
 
+        let isWsSyncing: Bool
+        let isWsDisconnected: Bool
         switch wsClient.status {
-        case .connected:
-            return ownsSession ? .live : .offline
         case .connecting, .reconnecting:
-            return ownsSession ? .syncing : .offline
+            isWsSyncing = true
+            isWsDisconnected = false
+        case .connected:
+            isWsSyncing = false
+            isWsDisconnected = false
         case .disconnected:
-            return .offline
+            isWsSyncing = false
+            isWsDisconnected = true
         }
+
+        let isSyncing = ownsSession && (isWsSyncing || sessionManager.isSyncing)
+        let lastSyncFailed = !ownsSession || isWsDisconnected || sessionManager.lastSyncFailed
+
+        let freshness = FreshnessState.derive(
+            lastSuccessfulSyncAt: sessionManager.lastSuccessfulSyncAt,
+            isSyncing: isSyncing,
+            lastSyncFailed: lastSyncFailed,
+            staleAfter: 120
+        )
+
+        return .init(freshness)
     }
 
     var body: some View {
@@ -183,6 +200,9 @@ struct ChatView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 saveScrollState()
+                Task {
+                    await sessionManager.flushSnapshotIfNeeded(connection: connection)
+                }
             }
         }
         .onDisappear {
@@ -193,6 +213,9 @@ struct ChatView: View {
             let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             connection.composerDraft = draft.isEmpty ? nil : draft
             saveScrollState()
+            Task {
+                await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
+            }
             // Only disconnect if WE are still the active session.
             // A new ChatView may have already taken over the WS.
             if connection.wsClient?.connectedSessionId == sessionId
@@ -430,6 +453,8 @@ struct ChatView: View {
 
     private var outlineSheet: some View {
         SessionOutlineView(
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId,
             items: reducer.items,
             onSelect: { targetID in
                 scrollController.scrollTargetID = targetID

@@ -481,7 +481,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         timelineMatchesTrace = false
     }
 
-    private func processInternal(_ event: AgentEvent) {
+    private func processInternal(_ event: AgentEvent) { // swiftlint:disable:this cyclomatic_complexity
         switch event {
         case .agentStart:
             // Finalize any leftover state from a previous turn that didn't
@@ -511,11 +511,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
 
         case .messageEnd(_, let content):
-            if !content.isEmpty {
-                assistantBuffer = content
-                upsertAssistantMessage()
-            }
-            finalizeAssistantMessage()
+            handleMessageEnd(content)
 
         case .toolStart(_, let toolEventId, let tool, let args):
             // Split assistant text around tool boundaries so chronology in the

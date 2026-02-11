@@ -12,6 +12,7 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   statSync,
@@ -32,6 +33,8 @@ import {
   readSessionTraceFromFiles,
   findToolOutput,
 } from "./trace.js";
+import { collectFileMutations } from "./overall-diff.js";
+import type { FileMutation } from "./overall-diff.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
 import type {
@@ -195,6 +198,11 @@ export class RouteHandler {
       return this.handleGetSessionFile(user, wsSessionFilesMatch[2], url, res);
     }
 
+    const wsSessionOverallDiffMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/);
+    if (wsSessionOverallDiffMatch && method === "GET") {
+      return this.handleGetSessionOverallDiff(user, wsSessionOverallDiffMatch[2], url, res);
+    }
+
     const wsSessionEventsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/);
     if (wsSessionEventsMatch && method === "GET") {
       return this.handleGetSessionEvents(user, wsSessionEventsMatch[2], url, res);
@@ -223,6 +231,7 @@ export class RouteHandler {
     if (filesMatch && method === "GET") {
       return this.handleGetSessionFile(user, filesMatch[1], url, res);
     }
+
 
     const eventsMatch = path.match(/^\/sessions\/([^/]+)\/events$/);
     if (eventsMatch && method === "GET") {
@@ -969,6 +978,88 @@ export class RouteHandler {
     createReadStream(resolved).pipe(res);
   }
 
+  private handleGetSessionOverallDiff(
+    user: User,
+    sessionId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    const session = this.ctx.storage.getSession(user.id, sessionId);
+    if (!session) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    const reqPath = url.searchParams.get("path")?.trim();
+    if (!reqPath) {
+      this.error(res, 400, "path parameter required");
+      return;
+    }
+
+    const trace = this.loadSessionTrace(user.id, session);
+    if (!trace || trace.length === 0) {
+      this.error(res, 404, "Session trace not found");
+      return;
+    }
+
+    const mutations = collectFileMutations(trace, reqPath);
+
+    if (mutations.length === 0) {
+      this.error(res, 404, "No file mutations found for path");
+      return;
+    }
+
+    const currentText = this.readCurrentFileText(session, user.id, reqPath);
+    const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
+    const stats = computeLineDiffStats(baselineText, currentText);
+
+    this.json(res, {
+      path: reqPath,
+      revisionCount: mutations.length,
+      baselineText,
+      currentText,
+      addedLines: stats.added,
+      removedLines: stats.removed,
+      cacheKey: `${sessionId}:${reqPath}:${mutations[mutations.length - 1]?.id ?? "none"}`,
+    });
+  }
+
+  private readCurrentFileText(session: Session, userId: string, reqPath: string): string {
+    const workRoot = this.resolveWorkRoot(session, userId);
+    if (!workRoot) return "";
+
+    const target = resolve(workRoot, reqPath);
+    try {
+      const resolved = realpathSync(target);
+      const realWorkRoot = realpathSync(workRoot);
+      if (!resolved.startsWith(realWorkRoot + "/") && resolved !== realWorkRoot) {
+        return "";
+      }
+      const stat = statSync(resolved);
+      if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return "";
+      return readFileSync(resolved, "utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  private loadSessionTrace(userId: string, session: Session) {
+    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
+    let trace = readSessionTrace(sandboxBaseDir, userId, session.id, session.workspaceId);
+
+    if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
+      trace = readSessionTraceFromFiles(session.piSessionFiles);
+    }
+    if ((!trace || trace.length === 0) && session.piSessionFile) {
+      trace = readSessionTraceFromFile(session.piSessionFile);
+    }
+    if ((!trace || trace.length === 0) && session.piSessionId) {
+      trace = readSessionTraceByUuid(sandboxBaseDir, userId, session.piSessionId, session.workspaceId);
+    }
+
+    return trace;
+  }
+
   private resolveWorkRoot(session: Session, userId: string): string | null {
     const workspace = session.workspaceId
       ? this.ctx.storage.getWorkspace(userId, session.workspaceId)
@@ -1212,6 +1303,64 @@ export class RouteHandler {
 }
 
 // ─── Helpers ───
+
+function reconstructBaselineFromCurrent(
+  currentText: string,
+  mutations: FileMutation[],
+): string {
+  let baseline = currentText;
+
+  for (let i = mutations.length - 1; i >= 0; i -= 1) {
+    const mutation = mutations[i];
+    if (mutation.kind === "write") {
+      // Full prior snapshot is unavailable; reset to empty baseline for writes.
+      baseline = "";
+      continue;
+    }
+
+    if (!mutation.newText) continue;
+
+    const idx = baseline.indexOf(mutation.newText);
+    if (idx < 0) continue;
+    baseline =
+      baseline.slice(0, idx) + mutation.oldText + baseline.slice(idx + mutation.newText.length);
+  }
+
+  return baseline;
+}
+
+function computeLineDiffStats(oldText: string, newText: string): { added: number; removed: number } {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  if (m === 0) return { added: n === 1 && newLines[0] === "" ? 0 : n, removed: 0 };
+  if (n === 0) return { added: 0, removed: m === 1 && oldLines[0] === "" ? 0 : m };
+
+  const maxCells = 2_000_000;
+  if (m * n > maxCells) {
+    return {
+      added: Math.max(0, n - m),
+      removed: Math.max(0, m - n),
+    };
+  }
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  const lcs = dp[m][n];
+  return { added: n - lcs, removed: m - lcs };
+}
 
 /** Minimal MIME type guesser for file serving. */
 function guessMime(filePath: string): string {

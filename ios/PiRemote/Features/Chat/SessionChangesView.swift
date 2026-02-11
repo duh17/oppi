@@ -5,6 +5,8 @@ import SwiftUI
 /// Groups edit/write tool calls by file and lets users drill into per-change
 /// diff/content using native list navigation.
 struct SessionChangesView: View {
+    let sessionId: String
+    let workspaceId: String?
     let items: [ChatItem]
     let searchText: String
 
@@ -148,7 +150,11 @@ struct SessionChangesView: View {
                 Section("Changed Files") {
                     ForEach(filteredChangeGroups) { group in
                         NavigationLink {
-                            FileChangeGroupView(group: group)
+                            FileChangeGroupView(
+                                sessionId: sessionId,
+                                workspaceId: workspaceId,
+                                group: group
+                            )
                         } label: {
                             FileChangeGroupRow(group: group)
                         }
@@ -223,6 +229,11 @@ private struct SessionFileChangeGroup: Identifiable, Sendable {
     }
 }
 
+private struct SessionOverallFileDiff: Sendable {
+    let oldText: String
+    let newText: String
+}
+
 // MARK: - File Change Views
 
 private struct FileChangeGroupRow: View {
@@ -269,8 +280,43 @@ private struct FileChangeGroupRow: View {
     }
 }
 
+private actor SessionOverallDiffCache {
+    static let shared = SessionOverallDiffCache()
+    private var values: [String: APIClient.SessionOverallDiffResponse] = [:]
+
+    func get(key: String) -> APIClient.SessionOverallDiffResponse? {
+        values[key]
+    }
+
+    func set(key: String, value: APIClient.SessionOverallDiffResponse) {
+        values[key] = value
+    }
+}
+
 private struct FileChangeGroupView: View {
+    let sessionId: String
+    let workspaceId: String?
     let group: SessionFileChangeGroup
+
+    @Environment(ServerConnection.self) private var connection
+
+    @State private var remoteDiff: APIClient.SessionOverallDiffResponse?
+    @State private var remoteError: String?
+    @State private var loadingRemoteDiff = false
+
+    private var cacheKey: String {
+        "\(workspaceId ?? "legacy")|\(sessionId)|\(group.path)"
+    }
+
+    private var overallDiff: SessionOverallFileDiff? {
+        guard let remoteDiff else { return nil }
+        return SessionOverallFileDiff(oldText: remoteDiff.baselineText, newText: remoteDiff.currentText)
+    }
+
+    private var overallDiffStats: (added: Int, removed: Int)? {
+        guard let remoteDiff else { return nil }
+        return (added: remoteDiff.addedLines, removed: remoteDiff.removedLines)
+    }
 
     var body: some View {
         List {
@@ -280,11 +326,30 @@ private struct FileChangeGroupView: View {
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoFg)
                 }
-                LabeledContent("Changes") {
+                LabeledContent("Revisions") {
                     Text("\(group.entries.count)")
                         .foregroundStyle(.tokyoFg)
                 }
-                if group.totalAddedLines > 0 || group.totalRemovedLines > 0 {
+
+                if let stats = overallDiffStats {
+                    HStack(spacing: 10) {
+                        if stats.added > 0 {
+                            Text("+\(stats.added)")
+                                .font(.caption.monospaced().bold())
+                                .foregroundStyle(.tokyoGreen)
+                        }
+                        if stats.removed > 0 {
+                            Text("-\(stats.removed)")
+                                .font(.caption.monospaced().bold())
+                                .foregroundStyle(.tokyoRed)
+                        }
+                        if stats.added == 0 && stats.removed == 0 {
+                            Text("no net change")
+                                .font(.caption)
+                                .foregroundStyle(.tokyoComment)
+                        }
+                    }
+                } else if group.totalAddedLines > 0 || group.totalRemovedLines > 0 {
                     HStack(spacing: 10) {
                         if group.totalAddedLines > 0 {
                             Text("+\(group.totalAddedLines)")
@@ -297,6 +362,48 @@ private struct FileChangeGroupView: View {
                                 .foregroundStyle(.tokyoRed)
                         }
                     }
+                }
+            }
+
+            if let overallDiff {
+                Section {
+                    NavigationLink {
+                        OverallFileDiffDetailView(
+                            filePath: group.path,
+                            overallDiff: overallDiff,
+                            revisionCount: remoteDiff?.revisionCount ?? group.entries.count
+                        )
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.caption)
+                                .foregroundStyle(.tokyoPurple)
+                                .frame(width: 16)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Overall Diff")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.tokyoFg)
+                                Text("Revision 1 → Revision \(remoteDiff?.revisionCount ?? group.entries.count)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tokyoComment)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                } header: {
+                    Text("Overview")
+                }
+            } else if loadingRemoteDiff {
+                Section("Overview") {
+                    ProgressView("Loading overall diff…")
+                        .tint(.tokyoPurple)
+                }
+            } else if let remoteError {
+                Section("Overview") {
+                    Text(remoteError)
+                        .font(.caption)
+                        .foregroundStyle(.tokyoComment)
                 }
             }
 
@@ -316,6 +423,43 @@ private struct FileChangeGroupView: View {
         .background(Color.tokyoBg)
         .navigationTitle(group.path.shortenedPath)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: cacheKey) {
+            await loadOverallDiffIfNeeded()
+        }
+    }
+
+    private func loadOverallDiffIfNeeded() async {
+        if remoteDiff != nil || loadingRemoteDiff { return }
+
+        if let cached = await SessionOverallDiffCache.shared.get(key: cacheKey) {
+            remoteDiff = cached
+            return
+        }
+
+        guard let apiClient = connection.apiClient else {
+            remoteError = "Overall diff unavailable (offline)."
+            return
+        }
+        guard let workspaceId, !workspaceId.isEmpty else {
+            remoteError = "Overall diff unavailable (missing workspace)."
+            return
+        }
+
+        loadingRemoteDiff = true
+        defer { loadingRemoteDiff = false }
+
+        do {
+            let diff = try await apiClient.getSessionOverallDiff(
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                path: group.path
+            )
+            remoteDiff = diff
+            remoteError = nil
+            await SessionOverallDiffCache.shared.set(key: cacheKey, value: diff)
+        } catch {
+            remoteError = "Overall diff unavailable."
+        }
     }
 }
 
@@ -355,6 +499,42 @@ private struct FileChangeEntryRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+private struct OverallFileDiffDetailView: View {
+    let filePath: String
+    let overallDiff: SessionOverallFileDiff
+    let revisionCount: Int
+
+    var body: some View {
+        List {
+            Section("Summary") {
+                LabeledContent("Path") {
+                    Text(filePath.shortenedPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoFg)
+                }
+                LabeledContent("Range") {
+                    Text("Revision 1 → Revision \(revisionCount)")
+                        .foregroundStyle(.tokyoFg)
+                }
+            }
+
+            Section("Overall Diff") {
+                AsyncDiffView(
+                    oldText: overallDiff.oldText,
+                    newText: overallDiff.newText,
+                    filePath: filePath,
+                    showHeader: true
+                )
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.tokyoBg)
+        .navigationTitle("Overall Diff")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

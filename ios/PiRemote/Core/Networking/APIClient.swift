@@ -217,10 +217,7 @@ actor APIClient {
 
     /// Get a single file's content from a skill directory.
     func getSkillFile(name: String, path: String) async throws -> String {
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw APIError.server(status: 400, message: "Invalid file path")
-        }
-        let data = try await get("/skills/\(name)/file?path=\(encoded)")
+        let data = try await get("/skills/\(name)/file?path=\(try encodeQueryPath(path))")
         struct Response: Decodable { let content: String }
         return try JSONDecoder().decode(Response.self, from: data).content
     }
@@ -273,6 +270,27 @@ actor APIClient {
 
     // MARK: - Tool Output & Files
 
+    struct SessionOverallDiffResponse: Decodable, Sendable, Equatable {
+        let path: String
+        let revisionCount: Int
+        let baselineText: String
+        let currentText: String
+        let addedLines: Int
+        let removedLines: Int
+        let cacheKey: String
+    }
+
+    func getSessionOverallDiff(
+        sessionId: String,
+        workspaceId: String,
+        path: String
+    ) async throws -> SessionOverallDiffResponse {
+        let encodedPath = try encodeQueryPath(path)
+        let route = "/workspaces/\(workspaceId)/sessions/\(sessionId)/overall-diff?path=\(encodedPath)"
+        let data = try await get(route)
+        return try JSONDecoder().decode(SessionOverallDiffResponse.self, from: data)
+    }
+
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
     ///
     /// Used to lazy-load evicted tool output when the user expands an old tool call row.
@@ -295,10 +313,7 @@ actor APIClient {
     /// Returns the raw file content as a string. Used when the user taps a file path
     /// in a tool call row to view the current file on disk.
     func getSessionFile(sessionId: String, path: String) async throws -> String {
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw APIError.server(status: 400, message: "Invalid file path")
-        }
-        let data = try await get("/sessions/\(sessionId)/files?path=\(encoded)")
+        let data = try await get("/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
         // File content is returned as raw bytes — decode as UTF-8 text
         guard let text = String(data: data, encoding: .utf8) else {
             throw APIError.server(status: 422, message: "File is not text (binary content)")
@@ -308,10 +323,7 @@ actor APIClient {
 
     /// Fetch raw file data from the session's working directory (for binary files like images).
     func getSessionFileData(sessionId: String, path: String) async throws -> Data {
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw APIError.server(status: 400, message: "Invalid file path")
-        }
-        return try await get("/sessions/\(sessionId)/files?path=\(encoded)")
+        return try await get("/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
     }
 
     // MARK: - Device Token
@@ -372,6 +384,13 @@ actor APIClient {
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path)")
         return try await session.data(for: req)
+    }
+
+    private func encodeQueryPath(_ path: String) throws -> String {
+        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw APIError.server(status: 400, message: "Invalid file path")
+        }
+        return encoded
     }
 
     /// Build a request URL from an API path that may include a query string.

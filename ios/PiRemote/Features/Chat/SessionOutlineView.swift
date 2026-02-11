@@ -6,6 +6,8 @@ import SwiftUI
 /// - Outline: scannable timeline entries, filterable by type
 /// - Changes: centralized file-change summary (edit/write) grouped by file
 struct SessionOutlineView: View {
+    let sessionId: String
+    let workspaceId: String?
     let items: [ChatItem]
     let onSelect: (String) -> Void
     var onFork: ((String) -> Void)?
@@ -71,7 +73,12 @@ struct SessionOutlineView: View {
                 case .outline:
                     outlinePane
                 case .changes:
-                    SessionChangesView(items: items, searchText: searchText)
+                    SessionChangesView(
+                        sessionId: sessionId,
+                        workspaceId: workspaceId,
+                        items: items,
+                        searchText: searchText
+                    )
                 }
             }
             .background(Color.tokyoBg)
