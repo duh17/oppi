@@ -56,16 +56,18 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         iconLabel.textColor = UIColor(Color.tokyoPurple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconLabel.isUserInteractionEnabled = true
 
         messageTextView.translatesAutoresizingMaskIntoConstraints = false
         messageTextView.isEditable = false
-        messageTextView.isSelectable = false
+        messageTextView.isSelectable = true
         messageTextView.isScrollEnabled = false
         messageTextView.backgroundColor = .clear
         messageTextView.textContainerInset = .zero
         messageTextView.textContainer.lineFragmentPadding = 0
         messageTextView.textColor = UIColor(Color.tokyoFg)
         messageTextView.font = .preferredFont(forTextStyle: .body)
+        messageTextView.adjustsFontForContentSizeCategory = true
 
         cursorView.translatesAutoresizingMaskIntoConstraints = false
         cursorView.backgroundColor = UIColor(Color.tokyoPurple)
@@ -74,7 +76,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         addSubview(iconLabel)
         addSubview(messageTextView)
         addSubview(cursorView)
-        addInteraction(UIContextMenuInteraction(delegate: self))
+        iconLabel.addInteraction(UIContextMenuInteraction(delegate: self))
 
         NSLayoutConstraint.activate([
             iconLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -100,7 +102,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         messageTextView.textColor = UIColor(palette.fg)
         cursorView.backgroundColor = UIColor(palette.purple)
 
-        renderMessageText(configuration, palette: palette)
+        messageTextView.text = configuration.text
 
         if configuration.isStreaming {
             cursorView.isHidden = false
@@ -109,12 +111,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
             cursorView.isHidden = true
             cursorView.layer.removeAnimation(forKey: "opacityPulse")
         }
-    }
-
-    private func renderMessageText(_ configuration: AssistantTimelineRowConfiguration, palette: ThemePalette) {
-        _ = palette
-        messageTextView.attributedText = nil
-        messageTextView.text = configuration.text
     }
 
     private func startCursorAnimationIfNeeded() {
@@ -129,6 +125,16 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         pulse.repeatCount = .infinity
         cursorView.layer.add(pulse, forKey: "opacityPulse")
     }
+
+    private func copyToPasteboard(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        UIPasteboard.general.string = trimmed
+        let feedback = UIImpactFeedbackGenerator(style: .light)
+        feedback.impactOccurred(intensity: 0.82)
+    }
+
 }
 
 extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
@@ -149,14 +155,14 @@ extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
 
             if hasCopyText {
                 actions.append(
-                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
-                        UIPasteboard.general.string = text
+                    UIAction(title: "Copy Full Response", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                        self?.copyToPasteboard(text)
                     }
                 )
 
                 actions.append(
-                    UIAction(title: "Copy as Markdown", image: UIImage(systemName: "text.document")) { _ in
-                        UIPasteboard.general.string = text
+                    UIAction(title: "Copy Full Response as Markdown", image: UIImage(systemName: "text.document")) { [weak self] _ in
+                        self?.copyToPasteboard(text)
                     }
                 )
             }
@@ -173,3 +179,4 @@ extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
         }
     }
 }
+

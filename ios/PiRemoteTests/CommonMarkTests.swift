@@ -408,6 +408,25 @@ struct CommonMarkTests {
         #expect(rows[1] == ["Cell C", "Cell D"])
     }
 
+    @Test func tableCellInlineCodeText() {
+        let md = """
+        | What | Path |
+        | --- | --- |
+        | Session state | `~/.config/pi-remote/sessions/<userId>/<sessionId>.json` |
+
+        """
+
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected table")
+            return
+        }
+
+        #expect(headers == ["What", "Path"])
+        #expect(rows == [["Session state", "~/.config/pi-remote/sessions/<userId>/<sessionId>.json"]])
+    }
+
     // MARK: - HTML Blocks
 
     @Test func htmlBlock() {
@@ -673,5 +692,100 @@ struct StreamingParserTests {
     @Test func emptyInput() {
         let blocks = parseCodeBlocks("")
         #expect(blocks.isEmpty)
+    }
+}
+
+@Suite("Flat Segment Text")
+struct FlatSegmentTextTests {
+    @Test func todoIDsRemainPlainTextInFlatSegments() {
+        let blocks = parseCommonMark("Track this: TODO-65cabfd5\n")
+        let segments = FlatSegment.build(from: blocks)
+
+        guard let first = segments.first,
+              case .text(let attributed) = first else {
+            Issue.record("Expected first segment to be .text")
+            return
+        }
+
+        let links = attributed.runs.compactMap(\.link)
+        #expect(links.isEmpty)
+    }
+
+    @Test func plainParagraphHasNoLinks() {
+        let blocks = parseCommonMark("No task IDs in this paragraph.\n")
+        let segments = FlatSegment.build(from: blocks)
+
+        guard let first = segments.first,
+              case .text(let attributed) = first else {
+            Issue.record("Expected first segment to be .text")
+            return
+        }
+
+        let links = attributed.runs.compactMap(\.link)
+        #expect(links.isEmpty)
+    }
+
+    @Test func adjacentTextBlocksMergeForCrossBlockSelection() {
+        let markdown = """
+        # Heading
+
+        Intro paragraph.
+
+        - One
+        - Two
+
+        Outro paragraph.
+        """
+
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks)
+
+        #expect(segments.count == 1)
+
+        guard let first = segments.first,
+              case .text(let attributed) = first else {
+            Issue.record("Expected merged .text segment")
+            return
+        }
+
+        let text = String(attributed.characters)
+        #expect(text.contains("Heading"))
+        #expect(text.contains("• One"))
+        #expect(text.contains("Outro paragraph."))
+    }
+
+    @Test func codeBlockStillSplitsTextSegments() {
+        let markdown = """
+        Before paragraph.
+
+        ```swift
+        let value = 1
+        ```
+
+        After paragraph.
+        """
+
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks)
+
+        #expect(segments.count == 3)
+
+        guard case .text(let before) = segments[0] else {
+            Issue.record("Expected first segment to be text")
+            return
+        }
+        guard case .codeBlock(let language, let code) = segments[1] else {
+            Issue.record("Expected second segment to be code block")
+            return
+        }
+        guard case .text(let after) = segments[2] else {
+            Issue.record("Expected third segment to be text")
+            return
+        }
+
+        #expect(String(before.characters).contains("Before paragraph."))
+        #expect(language == "swift")
+        #expect(code.contains("let value = 1"))
+        #expect(String(after.characters).contains("After paragraph."))
     }
 }

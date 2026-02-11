@@ -190,15 +190,21 @@ private struct AssistantMessageBubble: View {
             Text("π")
                 .font(.system(.body, design: .monospaced).weight(.semibold))
                 .foregroundStyle(.tokyoPurple)
-
+                .frame(width: 20, alignment: .leading)
+                .contentShape(Rectangle())
+                .contextMenu {
+                    Button("Copy Full Response", systemImage: "doc.on.doc") { copyFullResponse() }
+                    Button("Copy Full Response as Markdown", systemImage: "text.document") { copyFullResponse() }
+                    if let onFork {
+                        Button("Fork from here", systemImage: "arrow.triangle.branch") { onFork() }
+                    }
+                }
             VStack(alignment: .leading, spacing: 4) {
                 MarkdownText(text, isStreaming: isStreaming)
                     .foregroundStyle(.tokyoFg)
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                if showCursor {
-                    StreamingCursor()
-                }
+                if showCursor { StreamingCursor() }
             }
         }
         .task(id: isStreaming) {
@@ -214,19 +220,13 @@ private struct AssistantMessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
-        .contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = text
-            }
-            Button("Copy as Markdown", systemImage: "text.document") {
-                UIPasteboard.general.string = text
-            }
-            if let onFork {
-                Button("Fork from here", systemImage: "arrow.triangle.branch") {
-                    onFork()
-                }
-            }
-        }
+    }
+
+    private func copyFullResponse() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UIPasteboard.general.string = trimmed
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.82)
     }
 }
 

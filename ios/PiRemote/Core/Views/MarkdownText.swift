@@ -1,5 +1,6 @@
 // swiftlint:disable file_length
 import SwiftUI
+import UIKit
 
 // MARK: - Global Segment Cache
 
@@ -35,9 +36,9 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         content.utf8.count <= maxEntrySourceBytes
     }
 
-    func get(_ content: String) -> [FlatSegment]? {
+    func get(_ content: String, themeID: ThemeID = ThemeRuntimeState.currentThemeID()) -> [FlatSegment]? {
         guard shouldCache(content) else { return nil }
-        let key = stableKey(for: content)
+        let key = stableKey(for: content, themeID: themeID)
         lock.lock()
         defer { lock.unlock() }
         guard var entry = entries[key] else { return nil }
@@ -47,11 +48,15 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         return entry.segments
     }
 
-    func set(_ content: String, segments: [FlatSegment]) {
+    func set(
+        _ content: String,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        segments: [FlatSegment]
+    ) {
         let sourceBytes = content.utf8.count
         guard sourceBytes <= maxEntrySourceBytes else { return }
 
-        let key = stableKey(for: content)
+        let key = stableKey(for: content, themeID: themeID)
         lock.lock()
         defer { lock.unlock() }
 
@@ -89,9 +94,20 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         }
     }
 
-    private func stableKey(for content: String) -> UInt64 {
+    private func stableKey(for content: String, themeID: ThemeID) -> UInt64 {
         // FNV-1a 64-bit hash (stable across process launches).
         var hash: UInt64 = 14_695_981_039_346_656_037
+
+        for byte in themeID.rawValue.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+
+        // Separator to avoid accidental collisions between
+        // `(themeA + contentB)` and `(themeAB + content)` byte streams.
+        hash ^= 0xFF
+        hash &*= 1_099_511_628_211
+
         for byte in content.utf8 {
             hash ^= UInt64(byte)
             hash &*= 1_099_511_628_211
@@ -132,6 +148,7 @@ struct MarkdownText: View {
     /// Uses `FlatSegment` (AttributedString + code blocks) instead of raw
     /// MarkdownBlocks to avoid recomputing during layout passes.
     @State private var cachedSegments: [FlatSegment]?
+    @State private var cachedThemeID: ThemeID?
 
     /// Raw CommonMark blocks — intermediate, only used during parsing.
     @State private var commonMarkBlocks: [MarkdownBlock]?
@@ -151,42 +168,51 @@ struct MarkdownText: View {
 
     @ViewBuilder
     private var finalizedBody: some View {
+        let themeID = ThemeRuntimeState.currentThemeID()
+
         if content.count > Self.plainTextFallbackThreshold {
             Text(content)
                 .foregroundStyle(.tokyoFg)
-        } else if let segments = cachedSegments {
-            FlatMarkdownView(segments: segments)
-        } else if let cached = synchronousCacheLookup() {
+        } else if let segments = cachedSegments, cachedThemeID == themeID {
+            FlatMarkdownView(segments: segments, themeID: themeID)
+        } else if let cached = synchronousCacheLookup(themeID: themeID) {
             // Synchronous cache hit — render immediately without placeholder.
             // Critical for LazyVStack: avoids placeholder → content height
             // mismatch that triggers cascading re-layouts when recycled
             // views get their @State reset to nil on off-screen destruction.
-            FlatMarkdownView(segments: cached)
-                .onAppear { cachedSegments = cached }
+            FlatMarkdownView(segments: cached, themeID: themeID)
+                .onAppear {
+                    cachedSegments = cached
+                    cachedThemeID = themeID
+                }
         } else {
             // Cold start: no cache hit. Show placeholder and parse async.
             Color.clear
                 .frame(height: placeholderHeight)
-                .task {
+                .task(id: parseTaskID(themeID: themeID)) {
                     let text = content
                     let shouldUseCache = MarkdownSegmentCache.shared.shouldCache(text)
 
                     // Double-check cache (might have been warmed while waiting)
                     if shouldUseCache,
-                       let cached = MarkdownSegmentCache.shared.get(text) {
+                       let cached = MarkdownSegmentCache.shared.get(text, themeID: themeID) {
                         cachedSegments = cached
+                        cachedThemeID = themeID
                         return
                     }
 
                     let segments = await Task.detached {
                         let blocks = parseCommonMark(text)
-                        return FlatSegment.build(from: blocks)
+                        return FlatSegment.build(from: blocks, themeID: themeID)
                     }.value
 
+                    guard !Task.isCancelled else { return }
+
                     if shouldUseCache {
-                        MarkdownSegmentCache.shared.set(text, segments: segments)
+                        MarkdownSegmentCache.shared.set(text, themeID: themeID, segments: segments)
                     }
                     cachedSegments = segments
+                    cachedThemeID = themeID
                 }
         }
     }
@@ -199,9 +225,16 @@ struct MarkdownText: View {
     /// fixed-height placeholder, then async-update to the real content,
     /// causing a height mismatch that triggers cascading re-layouts across
     /// all items — freezing the main thread for 50+ seconds.
-    private func synchronousCacheLookup() -> [FlatSegment]? {
+    private func synchronousCacheLookup(themeID: ThemeID) -> [FlatSegment]? {
         guard MarkdownSegmentCache.shared.shouldCache(content) else { return nil }
-        return MarkdownSegmentCache.shared.get(content)
+        return MarkdownSegmentCache.shared.get(content, themeID: themeID)
+    }
+
+    private func parseTaskID(themeID: ThemeID) -> Int {
+        var hasher = Hasher()
+        hasher.combine(themeID.rawValue)
+        hasher.combine(content)
+        return hasher.finalize()
     }
 
     private var placeholderHeight: CGFloat {
@@ -248,20 +281,24 @@ struct MarkdownText: View {
 /// Renders CommonMark blocks as a flat list with minimal view nesting.
 ///
 /// **Key design**: inline content (paragraphs, headings, lists, block quotes)
-/// is rendered as `Text(AttributedString)` — a single view per text run.
+/// is rendered as selectable attributed UITextView-backed rows.
 /// Only code blocks and tables get dedicated sub-views.
 ///
 /// This avoids the deep VStack + AnyView tree of `CommonMarkView` that caused
 /// SwiftUI layout freezes (7-60s) during keyboard animation and scroll.
 private struct FlatMarkdownView: View {
     let segments: [FlatSegment]
+    let themeID: ThemeID
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let attributed):
-                    Text(attributed)
+                    SelectableAttributedText(attributed: attributed, themeID: themeID)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 1)
                 case .codeBlock(let language, let code):
                     CodeBlockView(language: language, code: code)
                 case .table(let headers, let rows):
@@ -277,6 +314,122 @@ private struct FlatMarkdownView: View {
     }
 }
 
+private struct SelectableAttributedText: UIViewRepresentable {
+    let attributed: AttributedString
+    let themeID: ThemeID
+
+    final class Coordinator {
+        var lastAttributed: AttributedString?
+        var lastThemeID: ThemeID?
+        var lastContentSizeCategory: UIContentSizeCategory?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textDragInteraction?.isEnabled = true
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        let contentSizeCategory = textView.traitCollection.preferredContentSizeCategory
+        if context.coordinator.lastThemeID == themeID,
+           context.coordinator.lastContentSizeCategory == contentSizeCategory,
+           context.coordinator.lastAttributed == attributed {
+            return
+        }
+
+        let baseFont = UIFont.preferredFont(forTextStyle: .body)
+        let palette = themeID.palette
+        let baseColor = UIColor(palette.fg)
+        let linkColor = UIColor(palette.blue)
+
+        textView.font = baseFont
+        textView.textColor = baseColor
+        textView.tintColor = linkColor
+        textView.linkTextAttributes = [
+            .foregroundColor: linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        textView.attributedText = Self.normalizedAttributedText(
+            from: attributed,
+            baseFont: baseFont,
+            baseColor: baseColor
+        )
+
+        context.coordinator.lastThemeID = themeID
+        context.coordinator.lastContentSizeCategory = contentSizeCategory
+        context.coordinator.lastAttributed = attributed
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let fitting = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: fitting.height)
+    }
+
+    private static func normalizedAttributedText(
+        from attributed: AttributedString,
+        baseFont: UIFont,
+        baseColor: UIColor
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: NSAttributedString(attributed))
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard fullRange.length > 0 else { return mutable }
+
+        let baseLuminance = perceivedLuminance(of: baseColor)
+        let shouldCorrectDarkFallbackText = baseLuminance > 0.55
+
+        mutable.enumerateAttributes(in: fullRange) { attributes, range, _ in
+            var updates: [NSAttributedString.Key: Any] = [:]
+
+            if attributes[.font] == nil {
+                updates[.font] = baseFont
+            }
+
+            if let color = attributes[.foregroundColor] as? UIColor {
+                if shouldCorrectDarkFallbackText && perceivedLuminance(of: color) < 0.2 {
+                    updates[.foregroundColor] = baseColor
+                }
+            } else {
+                updates[.foregroundColor] = baseColor
+            }
+
+            if !updates.isEmpty {
+                mutable.addAttributes(updates, range: range)
+            }
+        }
+
+        return mutable
+    }
+
+    private static func perceivedLuminance(of color: UIColor) -> CGFloat {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            var white: CGFloat = 0
+            guard color.getWhite(&white, alpha: &alpha) else { return 0 }
+            return white
+        }
+
+        return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
+    }
+}
+
 /// Segment types for the flat renderer.
 ///
 /// Built once from `[MarkdownBlock]` via `build(from:)`, then cached in `@State`.
@@ -288,47 +441,69 @@ enum FlatSegment: Sendable {
     case table(headers: [String], rows: [[String]])
     case thematicBreak
 
-    /// Collapse consecutive inline blocks into single AttributedString segments.
-    /// Code blocks, tables, and thematic breaks remain as separate segments.
-    static func build(from blocks: [MarkdownBlock]) -> [FlatSegment] {
+    /// Convert CommonMark blocks into renderable segments.
+    ///
+    /// Adjacent text-like blocks are merged into a single `.text` segment so
+    /// native selection can cross paragraph/list/heading boundaries.
+    /// Code blocks and tables remain standalone segments.
+    static func build(
+        from blocks: [MarkdownBlock],
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) -> [FlatSegment] {
         var result: [FlatSegment] = []
-        var pendingText = AttributedString()
+        result.reserveCapacity(blocks.count)
 
-        func flushText() {
-            guard !pendingText.characters.isEmpty else { return }
+        var pendingText = AttributedString()
+        var hasPendingText = false
+
+        func flushPendingText() {
+            guard hasPendingText, !pendingText.characters.isEmpty else { return }
             result.append(.text(pendingText))
             pendingText = AttributedString()
+            hasPendingText = false
+        }
+
+        func appendTextBlock(_ attributed: AttributedString) {
+            guard !attributed.characters.isEmpty else { return }
+            if hasPendingText {
+                pendingText.append(AttributedString("\n\n"))
+            }
+            pendingText.append(attributed)
+            hasPendingText = true
         }
 
         for block in blocks {
             switch block {
             case .codeBlock(let language, let code):
-                flushText()
+                flushPendingText()
                 result.append(.codeBlock(language: language, code: code))
+
             case .table(let headers, let rows):
-                flushText()
+                flushPendingText()
                 result.append(.table(headers: headers, rows: rows))
+
             case .thematicBreak:
-                flushText()
+                flushPendingText()
                 result.append(.thematicBreak)
+
             default:
-                if !pendingText.characters.isEmpty {
-                    pendingText.append(AttributedString("\n\n"))
-                }
-                pendingText.append(Self.attributedString(for: block))
+                let attributed = Self.attributedString(for: block, themeID: themeID)
+                appendTextBlock(attributed)
             }
         }
 
-        flushText()
+        flushPendingText()
         return result
     }
 
     // MARK: - Block → AttributedString
 
-    private static func attributedString(for block: MarkdownBlock) -> AttributedString {
+    private static func attributedString(for block: MarkdownBlock, themeID: ThemeID) -> AttributedString {
+        let palette = themeID.palette
+
         switch block {
         case .heading(let level, let inlines):
-            var result = renderInlines(inlines)
+            var result = renderInlines(inlines, themeID: themeID)
             let font: Font = switch level {
             case 1: .title.bold()
             case 2: .title2.bold()
@@ -338,22 +513,22 @@ enum FlatSegment: Sendable {
             default: .subheadline
             }
             result.font = font
-            result.foregroundColor = .tokyoFg
+            result.foregroundColor = palette.fg
             return result
 
         case .paragraph(let inlines):
-            var result = renderInlines(inlines)
-            result.foregroundColor = .tokyoFg
+            var result = renderInlines(inlines, themeID: themeID)
+            result.foregroundColor = palette.fg
             return result
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
-            result.foregroundColor = .tokyoPurple
+            result.foregroundColor = palette.purple
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
-                result.append(attributedString(for: child))
+                result.append(attributedString(for: child, themeID: themeID))
             }
-            result.foregroundColor = .tokyoFgDim
+            result.foregroundColor = palette.fgDim
             return result
 
         case .unorderedList(let items):
@@ -361,11 +536,11 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var bullet = AttributedString("  • ")
-                bullet.foregroundColor = .tokyoFgDim
+                bullet.foregroundColor = palette.fgDim
                 result.append(bullet)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n    ")) }
-                    result.append(attributedString(for: block))
+                    result.append(attributedString(for: block, themeID: themeID))
                 }
             }
             return result
@@ -375,11 +550,11 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
-                num.foregroundColor = .tokyoFgDim
+                num.foregroundColor = palette.fgDim
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
-                    result.append(attributedString(for: block))
+                    result.append(attributedString(for: block, themeID: themeID))
                 }
             }
             return result
@@ -387,7 +562,7 @@ enum FlatSegment: Sendable {
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
             result.font = .system(.caption, design: .monospaced)
-            result.foregroundColor = .tokyoComment
+            result.foregroundColor = palette.comment
             return result
 
         case .codeBlock, .table, .thematicBreak:
@@ -397,40 +572,42 @@ enum FlatSegment: Sendable {
 
     // MARK: - Inline → AttributedString
 
-    private static func renderInlines(_ inlines: [MarkdownInline]) -> AttributedString {
+    private static func renderInlines(_ inlines: [MarkdownInline], themeID: ThemeID) -> AttributedString {
         var result = AttributedString()
         for inline in inlines {
-            result.append(renderInline(inline))
+            result.append(renderInline(inline, themeID: themeID))
         }
         return result
     }
 
-    private static func renderInline(_ inline: MarkdownInline) -> AttributedString {
+    private static func renderInline(_ inline: MarkdownInline, themeID: ThemeID) -> AttributedString {
+        let palette = themeID.palette
+
         switch inline {
         case .text(let string):
             return AttributedString(string)
         case .emphasis(let children):
-            var result = renderInlines(children)
+            var result = renderInlines(children, themeID: themeID)
             result.inlinePresentationIntent = .emphasized
             return result
         case .strong(let children):
-            var result = renderInlines(children)
+            var result = renderInlines(children, themeID: themeID)
             result.inlinePresentationIntent = .stronglyEmphasized
             return result
         case .code(let code):
             var result = AttributedString(code)
             result.font = .system(.body, design: .monospaced)
-            result.foregroundColor = .tokyoCyan
+            result.foregroundColor = palette.cyan
             return result
         case .link(let children, _):
-            var result = renderInlines(children)
-            result.foregroundColor = .tokyoBlue
+            var result = renderInlines(children, themeID: themeID)
+            result.foregroundColor = palette.blue
             result.underlineStyle = .single
             return result
         case .image(let alt, _):
             if alt.isEmpty { return AttributedString() }
             var result = AttributedString("[\(alt)]")
-            result.foregroundColor = .tokyoComment
+            result.foregroundColor = palette.comment
             return result
         case .softBreak:
             return AttributedString("\n")
@@ -438,10 +615,10 @@ enum FlatSegment: Sendable {
             return AttributedString("\n")
         case .html(let raw):
             var result = AttributedString(raw)
-            result.foregroundColor = .tokyoComment
+            result.foregroundColor = palette.comment
             return result
         case .strikethrough(let children):
-            var result = renderInlines(children)
+            var result = renderInlines(children, themeID: themeID)
             result.strikethroughStyle = .single
             return result
         }

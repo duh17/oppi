@@ -93,6 +93,47 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantAfterReload() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        // Reconnect/history reload race can deliver message_end after trace already
+        // contains the final assistant message.
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
     @Test func duplicateLiveToolStartUpdatesHistoryRowInPlace() {
         let reducer = TimelineReducer()
         let toolId = "call_2|fc_2"
@@ -445,6 +486,23 @@ struct TimelineReducerTests {
         let stats = cache.snapshot()
         #expect(stats.entries <= 128)
         #expect(stats.totalSourceBytes <= 1024 * 1024)
+    }
+
+    @MainActor
+    @Test func markdownSegmentCacheSeparatesEntriesByTheme() {
+        let cache = MarkdownSegmentCache.shared
+        cache.clearAll()
+        defer { cache.clearAll() }
+
+        let content = "same-content"
+        cache.set(content, themeID: .tokyoNight, segments: [.text(AttributedString("night"))])
+        cache.set(content, themeID: .tokyoNightDay, segments: [.text(AttributedString("day"))])
+
+        #expect(cache.get(content, themeID: .tokyoNight) != nil)
+        #expect(cache.get(content, themeID: .tokyoNightDay) != nil)
+
+        let stats = cache.snapshot()
+        #expect(stats.entries == 2)
     }
 
     @MainActor

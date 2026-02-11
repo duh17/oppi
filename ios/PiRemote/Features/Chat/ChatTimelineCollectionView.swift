@@ -50,6 +50,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTimelineTap(_:)))
         tapGesture.cancelsTouchesInView = false
+        tapGesture.delegate = context.coordinator
         collectionView.addGestureRecognizer(tapGesture)
 
         context.coordinator.configureDataSource(collectionView: collectionView)
@@ -77,7 +78,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         return UICollectionViewCompositionalLayout(section: section)
     }
 
-    final class Coordinator: NSObject, UICollectionViewDelegate {
+    final class Coordinator: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
         private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
         private var hiddenCount = 0
@@ -470,24 +471,26 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                performScroll(scrollCommand, in: collectionView) {
                 lastHandledScrollCommandNonce = scrollCommand.nonce
             }
-
             updateScrollState(collectionView)
         }
-
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
             updateScrollState(collectionView)
         }
-
         @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended else { return }
             gesture.view?.window?.endEditing(true)
         }
-
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            var current = touch.view
+            while let candidate = current {
+                if let textView = candidate as? UITextView, textView.isSelectable { return false }
+                current = candidate.superview
+            }
+            return true
+        }
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-            collectionView.window?.endEditing(true)
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
-
             let itemID = currentIDs[indexPath.item]
             if itemID == ChatTimelineCollectionView.loadMoreID || itemID == ChatTimelineCollectionView.workingIndicatorID {
                 return
@@ -500,15 +503,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 return
             }
 
-            // Only handle taps for native cells. SwiftUI-hosted rows already
-            // manage their own tap gestures and expansion behavior.
             let cell = collectionView.cellForItem(at: indexPath)
             let isNativeToolCell = cell?.contentConfiguration is ToolTimelineRowConfiguration
             let isNativeThinkingCell = cell?.contentConfiguration is ThinkingTimelineRowConfiguration
             switch item {
             case .toolCall(_, _, _, _, let outputByteCount, _, _):
                 guard isNativeToolCell else { return }
-
                 let wasExpanded = reducer.expandedItemIDs.contains(itemID)
                 if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
@@ -527,7 +527,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                       !reducer.expandedItemIDs.contains(itemID) else {
                     return
                 }
-
                 reducer.expandedItemIDs.insert(itemID)
                 reconfigureItems([itemID], in: collectionView)
 
