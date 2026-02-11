@@ -150,9 +150,9 @@ async function cmdServe(storage: Storage): Promise<void> {
     console.log("");
   }
 
-  if (storage.hasMultipleUsers()) {
-    console.log(chalk.red("  Error: multi-user data detected but server is in single-user mode."));
-    console.log(chalk.dim("  Keep only one owner in users.json before starting the server."));
+  if (storage.hasInvalidOwnerData()) {
+    console.log(chalk.red("  Error: users.json has invalid owner data."));
+    console.log(chalk.dim("  Keep exactly one owner object in users.json before starting."));
     console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
     console.log("");
     process.exit(1);
@@ -238,9 +238,9 @@ async function cmdPair(
 ): Promise<void> {
   printHeader();
 
-  if (storage.hasMultipleUsers()) {
-    console.log(chalk.red("  Error: multi-user data detected but server is in single-user mode."));
-    console.log(chalk.dim("  Keep exactly one owner in users.json, then run pair again."));
+  if (storage.hasInvalidOwnerData()) {
+    console.log(chalk.red("  Error: users.json has invalid owner data."));
+    console.log(chalk.dim("  Keep exactly one owner object in users.json, then run pair again."));
     console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
     console.log("");
     process.exit(1);
@@ -357,13 +357,6 @@ async function cmdPair(
   console.log("");
 }
 
-function cmdUsers(): void {
-  printHeader();
-  console.log(chalk.yellow("  'users' command is disabled in single-user mode."));
-  console.log(chalk.dim("  Use 'pi-remote pair [name]' to inspect/reissue the owner pairing QR."));
-  console.log("");
-}
-
 function cmdStatus(storage: Storage): void {
   printHeader();
 
@@ -399,21 +392,20 @@ function cmdStatus(storage: Storage): void {
   }
   console.log("");
 
-  const users = storage.listUsers();
+  const owner = storage.getOwnerUser();
   console.log("  " + chalk.bold("Owner Pairing"));
   console.log("");
 
-  if (users.length === 0) {
+  if (storage.hasInvalidOwnerData()) {
+    console.log(chalk.red("  Invalid state: users.json has invalid owner data"));
+    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
+  } else if (!owner) {
     console.log(chalk.dim("  Not paired"));
     console.log(chalk.dim("  Run 'pi-remote pair [name]'"));
-  } else if (users.length === 1) {
-    const owner = users[0];
+  } else {
     const sessions = storage.listUserSessions(owner.id);
     console.log(`  Owner:    ${chalk.cyan(owner.name)}`);
     console.log(`  Sessions: ${sessions.length}`);
-  } else {
-    console.log(chalk.red(`  Invalid state: ${users.length} users found (single-user mode expects 1)`));
-    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
   }
   console.log("");
 }
@@ -535,15 +527,6 @@ async function main(): Promise<void> {
 
     case "pair":
       await cmdPair(storage, positional[0], flags.save, flags.host);
-      break;
-
-    case "invite":
-      console.log(chalk.yellow("'invite' is deprecated; use 'pair'"));
-      await cmdPair(storage, positional[0], flags.save, flags.host);
-      break;
-
-    case "users":
-      cmdUsers();
       break;
 
     case "status":

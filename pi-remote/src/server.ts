@@ -453,27 +453,14 @@ export class Server {
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
-    if (this.storage.hasMultipleUsers()) {
+    if (this.storage.hasInvalidOwnerData()) {
       throw new Error(
-        "Single-user mode violation: multiple users found in users.json. Keep exactly one owner.",
+        "Single-user mode violation: invalid owner data in users.json. Keep exactly one owner object.",
       );
     }
 
     // Best-effort cleanup from previous crashes before accepting connections.
     await this.sandbox.cleanupOrphanedContainers();
-
-    // Migrate legacy session-scoped sandboxes to workspace layout.
-    const migration = this.sandbox.migrateAllLegacySandboxes();
-    if (migration.migrated > 0) {
-      console.log(
-        `[startup] Migrated ${migration.migrated} legacy sandbox(es) to workspace layout`,
-      );
-    }
-    if (migration.errors.length > 0) {
-      for (const err of migration.errors) {
-        console.warn(`[startup] Migration warning: ${err}`);
-      }
-    }
 
     // Ensure container image and internal network exist
     await this.sandbox.ensureImage();
@@ -1032,7 +1019,7 @@ export class Server {
 
   private authenticate(req: IncomingMessage): User | null {
     // Fail closed on invalid single-user state.
-    if (this.storage.hasMultipleUsers()) {
+    if (this.storage.hasInvalidOwnerData()) {
       return null;
     }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
@@ -31,30 +31,16 @@ describe("storage file permissions", () => {
     const user = storage.createUser("Chen");
 
     const session = storage.createSession(user.id, "security-check", "anthropic/claude-sonnet-4-0");
-    const sessionUserDir = join(dir, "sessions", user.id);
-    const sessionLegacyPath = join(sessionUserDir, `${session.id}.json`);
-    const sessionFlatPath = join(dir, "sessions", `${session.id}.json`);
-    const sessionPath = existsSync(sessionFlatPath) ? sessionFlatPath : sessionLegacyPath;
+    const sessionPath = join(dir, "sessions", `${session.id}.json`);
 
     const workspace = storage.createWorkspace(user.id, {
       name: "default",
       skills: [],
     });
-    const workspaceUserDir = join(dir, "workspaces", user.id);
-    const workspaceLegacyPath = join(workspaceUserDir, `${workspace.id}.json`);
-    const workspaceFlatPath = join(dir, "workspaces", `${workspace.id}.json`);
-    const workspacePath = existsSync(workspaceFlatPath) ? workspaceFlatPath : workspaceLegacyPath;
+    const workspacePath = join(dir, "workspaces", `${workspace.id}.json`);
 
     expect(statSync(join(dir, "sessions")).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "workspaces")).mode & 0o777).toBe(0o700);
-
-    if (existsSync(sessionUserDir)) {
-      expect(statSync(sessionUserDir).mode & 0o777).toBe(0o700);
-    }
-    if (existsSync(workspaceUserDir)) {
-      expect(statSync(workspaceUserDir).mode & 0o777).toBe(0o700);
-    }
-
     expect(statSync(sessionPath).mode & 0o777).toBe(0o600);
     expect(statSync(workspacePath).mode & 0o777).toBe(0o600);
   });

@@ -25,16 +25,7 @@
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  cpSync,
-  readFileSync,
-  writeFileSync,
-  rmSync,
-  readdirSync,
-  statSync,
-} from "node:fs";
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncFile, resolvePath as realpath } from "./sync.js";
 import { homedir } from "node:os";
@@ -60,7 +51,6 @@ import { generateSystemPrompt } from "./sandbox-prompt.js";
 // ─── Constants ───
 
 const IMAGE_NAME = "pi-remote:local";
-const LEGACY_SESSION_CONTAINER_PREFIX = "pi-remote-";
 const WORKSPACE_CONTAINER_PREFIX = "pi-remote-ws-";
 const CONTAINER_WORK = "/work";
 const CONTAINER_UV_CACHE = "/uv-cache";
@@ -162,10 +152,6 @@ export class SandboxManager {
     return `${WORKSPACE_CONTAINER_PREFIX}${workspaceId}`;
   }
 
-  private legacyWorkspaceContainerId(userId: string, workspaceId: string): string {
-    return `${WORKSPACE_CONTAINER_PREFIX}${userId}-${workspaceId}`;
-  }
-
   // ─── Image Management ───
 
   imageExists(): boolean {
@@ -242,127 +228,6 @@ export class SandboxManager {
 
   getSessionRootDir(userId: string, workspaceId: string, sessionId: string): string {
     return join(this.getWorkspaceDir(userId, workspaceId), "sessions", sessionId);
-  }
-
-  // ─── Legacy Migration ───
-
-  /**
-   * Migrate a legacy session-scoped sandbox into workspace-scoped layout.
-   *
-   * Legacy: <sandboxBaseDir>/<userId>/<sessionId>/
-   * Target: <sandboxBaseDir>/<userId>/<workspaceId>/sessions/<sessionId>/
-   */
-  migrateLegacySessionLayout(userId: string, workspaceId: string, sessionId: string): void {
-    const legacyRoot = join(this.config.sandboxBaseDir, userId, sessionId);
-    if (!existsSync(legacyRoot)) return;
-
-    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
-    const sessionRoot = this.getSessionRootDir(userId, workspaceId, sessionId);
-
-    for (const dir of [workspaceRoot, sessionRoot]) {
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-    }
-
-    // Shared workspace data
-    const legacyWorkspace = join(legacyRoot, "workspace");
-    const targetWorkspace = join(workspaceRoot, "workspace");
-    if (existsSync(legacyWorkspace) && !existsSync(targetWorkspace)) {
-      cpSync(legacyWorkspace, targetWorkspace, { recursive: true });
-    }
-
-    // Session-local pi home + config
-    const copyPairs = [
-      { from: join(legacyRoot, "agent"), to: join(sessionRoot, "agent") },
-      { from: join(legacyRoot, "bin"), to: join(sessionRoot, "bin") },
-      { from: join(legacyRoot, ".config"), to: join(sessionRoot, ".config") },
-      { from: join(legacyRoot, "system-prompt.md"), to: join(sessionRoot, "system-prompt.md") },
-    ];
-
-    for (const pair of copyPairs) {
-      if (!existsSync(pair.from) || existsSync(pair.to)) continue;
-      cpSync(pair.from, pair.to, { recursive: true });
-    }
-
-    const markerDir = join(workspaceRoot, ".migration");
-    mkdirSync(markerDir, { recursive: true, mode: 0o700 });
-    const markerPath = join(markerDir, `${sessionId}.json`);
-    if (!existsSync(markerPath)) {
-      writeFileSync(
-        markerPath,
-        JSON.stringify(
-          {
-            migratedAt: new Date().toISOString(),
-            source: legacyRoot,
-            destination: sessionRoot,
-          },
-          null,
-          2,
-        ),
-      );
-    }
-  }
-
-  /**
-   * Scan all legacy session-scoped sandboxes and migrate to workspace layout.
-   * Called once on server startup.
-   */
-  migrateAllLegacySandboxes(): { migrated: number; skipped: number; errors: string[] } {
-    const baseDir = this.config.sandboxBaseDir;
-    if (!existsSync(baseDir)) {
-      return { migrated: 0, skipped: 0, errors: [] };
-    }
-
-    let migrated = 0;
-    let skipped = 0;
-    const errors: string[] = [];
-
-    let userDirs: string[];
-    try {
-      userDirs = readdirSync(baseDir).filter((entry) => {
-        if (entry.startsWith("_") || entry.startsWith(".")) return false;
-        return statSync(join(baseDir, entry)).isDirectory();
-      });
-    } catch {
-      return { migrated: 0, skipped: 0, errors: ["Failed to read sandbox base dir"] };
-    }
-
-    for (const userId of userDirs) {
-      const userDir = join(baseDir, userId);
-      let entries: string[];
-      try {
-        entries = readdirSync(userDir).filter((e) => {
-          if (e.startsWith(".")) return false;
-          return statSync(join(userDir, e)).isDirectory();
-        });
-      } catch {
-        errors.push(`Failed to read user dir: ${userId}`);
-        continue;
-      }
-
-      for (const entry of entries) {
-        const entryPath = join(userDir, entry);
-        const hasAgent = existsSync(join(entryPath, "agent"));
-        const hasSessions = existsSync(join(entryPath, "sessions"));
-
-        if (hasSessions || !hasAgent) {
-          skipped++;
-          continue;
-        }
-
-        const sessionId = entry;
-        const workspaceId = `session-${sessionId}`;
-
-        try {
-          this.migrateLegacySessionLayout(userId, workspaceId, sessionId);
-          migrated++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`Migration failed for ${userId}/${sessionId}: ${msg}`);
-        }
-      }
-    }
-
-    return { migrated, skipped, errors };
   }
 
   // ─── Session Init ───
@@ -590,15 +455,6 @@ export class SandboxManager {
       return containerId;
     }
 
-    // Backward compatibility: previous builds named workspace containers
-    // with `${userId}-${workspaceId}`. Reattach instead of double-spawning.
-    const legacyContainerId = this.legacyWorkspaceContainerId(userId, workspaceId);
-    if (this.isContainerRunning(legacyContainerId)) {
-      this.running.set(key, { containerId: legacyContainerId });
-      console.log(`[sandbox] Reusing legacy workspace container ${legacyContainerId}`);
-      return legacyContainerId;
-    }
-
     const memoryMount = this.resolveMemoryMount(userId, workspace);
 
     const args = [
@@ -665,14 +521,8 @@ export class SandboxManager {
       return;
     }
 
-    const canonicalContainerId = this.workspaceContainerId(userId, workspaceId);
-    const legacyContainerId = this.legacyWorkspaceContainerId(userId, workspaceId);
-
-    this.stopContainerById(canonicalContainerId);
-    if (legacyContainerId !== canonicalContainerId) {
-      this.stopContainerById(legacyContainerId);
-    }
-
+    const containerId = this.workspaceContainerId(userId, workspaceId);
+    this.stopContainerById(containerId);
     this.running.delete(key);
   }
 
@@ -714,10 +564,7 @@ export class SandboxManager {
         if (!trimmed) continue;
 
         const containerId = trimmed.split(/\s+/)[0];
-        if (
-          containerId.startsWith(WORKSPACE_CONTAINER_PREFIX) ||
-          containerId.startsWith(LEGACY_SESSION_CONTAINER_PREFIX)
-        ) {
+        if (containerId.startsWith(WORKSPACE_CONTAINER_PREFIX)) {
           ids.push(containerId);
         }
       }
@@ -757,9 +604,8 @@ export class SandboxManager {
 
   // ─── Convenience Getters ───
 
-  getWorkDir(userId: string, sessionId: string, workspaceId?: string): string {
-    const resolvedWorkspaceId = workspaceId || sessionId;
-    const workDir = join(this.config.sandboxBaseDir, userId, resolvedWorkspaceId, "workspace");
+  getWorkDir(userId: string, _sessionId: string, workspaceId: string): string {
+    const workDir = join(this.config.sandboxBaseDir, userId, workspaceId, "workspace");
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
     return workDir;
   }
@@ -773,7 +619,7 @@ export class SandboxManager {
   ): { errors: string[]; warnings: string[] } {
     const workspaceId = opts?.workspaceId || sessionId;
 
-    const workspaceAgentDir = join(
+    const agentDir = join(
       this.config.sandboxBaseDir,
       userId,
       workspaceId,
@@ -781,8 +627,6 @@ export class SandboxManager {
       sessionId,
       "agent",
     );
-    const legacyAgentDir = join(this.config.sandboxBaseDir, userId, sessionId, "agent");
-    const agentDir = existsSync(workspaceAgentDir) ? workspaceAgentDir : legacyAgentDir;
 
     const errors: string[] = [];
     const warnings: string[] = [];

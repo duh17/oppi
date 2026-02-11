@@ -4,23 +4,14 @@
  * Data directory structure:
  * ~/.config/pi-remote/
  * ├── config.json       # Server config
- * ├── users.json        # User accounts & tokens
+ * ├── users.json        # Owner identity & token (single-user)
  * ├── sessions/
  * │   └── <sessionId>.json      # Flat owner layout (single-user mode)
  * └── workspaces/
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { nanoid } from "nanoid";
@@ -56,6 +47,16 @@ export interface ConfigValidationResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUserRecord(value: unknown): value is User {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.token === "string" &&
+    typeof value.createdAt === "number"
+  );
 }
 
 function defaultSecurityConfig(): ServerSecurityConfig {
@@ -509,8 +510,9 @@ export class Storage {
   private workspacesDir: string;
 
   private config: ServerConfig;
-  private users: Map<string, User> = new Map();
-  private tokenToUser: Map<string, User> = new Map();
+  private owner: User | undefined;
+  /** Invalid users.json state (malformed owner record) blocks startup in strict single-owner mode. */
+  private invalidOwnerData = false;
 
   constructor(dataDir?: string) {
     this.dataDir = dataDir || DEFAULT_DATA_DIR;
@@ -522,7 +524,6 @@ export class Storage {
     this.ensureDirectories();
     this.config = this.loadConfig();
     this.loadUsers();
-    this.migrateOwnerLayoutToFlat();
   }
 
   private ensureDirectories(): void {
@@ -656,29 +657,39 @@ export class Storage {
   // ─── Users ───
 
   private loadUsers(): void {
+    this.owner = undefined;
+    this.invalidOwnerData = false;
+
     if (!existsSync(this.usersPath)) {
-      this.saveUsers();
       return;
     }
 
     try {
-      const data = JSON.parse(readFileSync(this.usersPath, "utf-8")) as User[];
-      for (const user of data) {
-        this.users.set(user.id, user);
-        this.tokenToUser.set(user.token, user);
+      const raw = JSON.parse(readFileSync(this.usersPath, "utf-8")) as unknown;
+      if (!isUserRecord(raw)) {
+        this.invalidOwnerData = true;
+        return;
       }
+
+      this.owner = raw;
     } catch {
-      // Start fresh
+      this.invalidOwnerData = true;
+      this.owner = undefined;
     }
   }
 
   private saveUsers(): void {
-    const data = Array.from(this.users.values());
-    writeFileSync(this.usersPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    if (!this.owner) {
+      if (existsSync(this.usersPath)) {
+        rmSync(this.usersPath);
+      }
+      return;
+    }
+
+    writeFileSync(this.usersPath, JSON.stringify(this.owner, null, 2), { mode: 0o600 });
   }
 
   createUser(name: string): User {
-    // Single-user pairing model: one owner identity per server.
     const existingOwner = this.getOwnerUser();
     if (existingOwner) {
       throw new Error(
@@ -696,31 +707,19 @@ export class Storage {
       createdAt: Date.now(),
     };
 
-    this.users.set(id, user);
-    this.tokenToUser.set(token, user);
+    this.owner = user;
+    this.invalidOwnerData = false;
     this.saveUsers();
 
     return user;
   }
 
-  getUserByToken(token: string): User | undefined {
-    return this.tokenToUser.get(token);
-  }
-
-  getUserById(id: string): User | undefined {
-    return this.users.get(id);
-  }
-
-  listUsers(): User[] {
-    return Array.from(this.users.values());
-  }
-
   getOwnerUser(): User | undefined {
-    return this.listUsers()[0];
+    return this.owner;
   }
 
-  hasMultipleUsers(): boolean {
-    return this.users.size > 1;
+  hasInvalidOwnerData(): boolean {
+    return this.invalidOwnerData;
   }
 
   /**
@@ -734,216 +733,68 @@ export class Storage {
     return owner?.id ?? userId;
   }
 
-  private useFlatOwnerLayout(): boolean {
-    return this.getOwnerUser() !== undefined && !this.hasMultipleUsers();
-  }
-
-  private scoreRecordFreshness(path: string, kind: "session" | "workspace"): number {
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-      if (kind === "session" && isRecord(raw) && isRecord(raw.session)) {
-        const lastActivity = raw.session.lastActivity;
-        if (typeof lastActivity === "number" && Number.isFinite(lastActivity)) {
-          return lastActivity;
-        }
-      }
-      if (kind === "workspace" && isRecord(raw)) {
-        const updatedAt = raw.updatedAt;
-        if (typeof updatedAt === "number" && Number.isFinite(updatedAt)) {
-          return updatedAt;
-        }
-      }
-    } catch {
-      // Fall through to fs metadata.
-    }
-
-    try {
-      return statSync(path).mtimeMs;
-    } catch {
-      return 0;
-    }
-  }
-
-  private moveOwnerScopedDirToFlat(
-    baseDir: string,
-    ownerId: string,
-    kind: "session" | "workspace",
-  ): number {
-    const legacyDir = join(baseDir, ownerId);
-    if (!existsSync(legacyDir)) {
-      return 0;
-    }
-
-    let migrated = 0;
-    for (const file of readdirSync(legacyDir)) {
-      if (!file.endsWith(".json")) continue;
-
-      const legacyPath = join(legacyDir, file);
-      const flatPath = join(baseDir, file);
-
-      if (!existsSync(flatPath)) {
-        renameSync(legacyPath, flatPath);
-        migrated += 1;
-        continue;
-      }
-
-      const legacyFreshness = this.scoreRecordFreshness(legacyPath, kind);
-      const flatFreshness = this.scoreRecordFreshness(flatPath, kind);
-      if (legacyFreshness > flatFreshness) {
-        const content = readFileSync(legacyPath, "utf-8");
-        writeFileSync(flatPath, content, { mode: 0o600 });
-        migrated += 1;
-      }
-
-      rmSync(legacyPath, { force: true });
-    }
-
-    if (existsSync(legacyDir) && readdirSync(legacyDir).length === 0) {
-      rmSync(legacyDir, { recursive: true, force: true });
-    }
-
-    return migrated;
-  }
-
-  private migrateOwnerLayoutToFlat(): void {
-    if (!this.useFlatOwnerLayout()) {
-      return;
-    }
-
-    const owner = this.getOwnerUser();
-    if (!owner) {
-      return;
-    }
-
-    const migratedSessions = this.moveOwnerScopedDirToFlat(this.sessionsDir, owner.id, "session");
-    const migratedWorkspaces = this.moveOwnerScopedDirToFlat(
-      this.workspacesDir,
-      owner.id,
-      "workspace",
-    );
-    const total = migratedSessions + migratedWorkspaces;
-    if (total > 0) {
-      console.log(
-        `[storage] Migrated ${total} owner record(s) to flat layout (${migratedSessions} sessions, ${migratedWorkspaces} workspaces)`,
-      );
-    }
-  }
-
-  removeUser(id: string): boolean {
-    const user = this.users.get(id);
-    if (!user) return false;
-
-    this.users.delete(id);
-    this.tokenToUser.delete(user.token);
-    this.saveUsers();
-
-    // Remove user's sessions/workspaces
-    const userSessionsDir = join(this.sessionsDir, id);
-    if (existsSync(userSessionsDir)) {
-      rmSync(userSessionsDir, { recursive: true });
-    }
-
-    const userWorkspacesDir = join(this.workspacesDir, id);
-    if (existsSync(userWorkspacesDir)) {
-      rmSync(userWorkspacesDir, { recursive: true });
-    }
-
-    return true;
-  }
-
-  regenerateToken(userId: string): User | undefined {
-    const user = this.users.get(userId);
-    if (!user) return undefined;
-
-    // Remove old token mapping
-    this.tokenToUser.delete(user.token);
-
-    // Generate new token
-    user.token = `sk_${nanoid(24)}`;
-    this.tokenToUser.set(user.token, user);
-    this.saveUsers();
-
-    return user;
-  }
-
   updateUserLastSeen(userId: string): void {
     const normalizedUserId = this.normalizeUserId(userId);
-    const user = this.users.get(normalizedUserId);
-    if (user) {
-      user.lastSeen = Date.now();
-      this.saveUsers();
-    }
+    if (!this.owner || this.owner.id !== normalizedUserId) return;
+
+    this.owner.lastSeen = Date.now();
+    this.saveUsers();
   }
 
   // ─── Device Tokens ───
 
   addDeviceToken(userId: string, token: string): void {
     const normalizedUserId = this.normalizeUserId(userId);
-    const user = this.users.get(normalizedUserId);
-    if (!user) return;
+    if (!this.owner || this.owner.id !== normalizedUserId) return;
 
-    if (!user.deviceTokens) user.deviceTokens = [];
+    if (!this.owner.deviceTokens) this.owner.deviceTokens = [];
     // Deduplicate (same device re-registers)
-    if (!user.deviceTokens.includes(token)) {
-      user.deviceTokens.push(token);
+    if (!this.owner.deviceTokens.includes(token)) {
+      this.owner.deviceTokens.push(token);
     }
     this.saveUsers();
   }
 
   removeDeviceToken(userId: string, token: string): void {
     const normalizedUserId = this.normalizeUserId(userId);
-    const user = this.users.get(normalizedUserId);
-    if (!user?.deviceTokens) return;
+    if (!this.owner || this.owner.id !== normalizedUserId || !this.owner.deviceTokens) return;
 
-    user.deviceTokens = user.deviceTokens.filter((t) => t !== token);
+    this.owner.deviceTokens = this.owner.deviceTokens.filter((t) => t !== token);
     this.saveUsers();
   }
 
-  /** Remove a token from ALL users (token recycled by APNs). */
+  /** Remove a token globally (APNs token recycled). */
   removeDeviceTokenGlobal(token: string): void {
-    for (const user of this.users.values()) {
-      if (user.deviceTokens?.includes(token)) {
-        user.deviceTokens = user.deviceTokens.filter((t) => t !== token);
-      }
-    }
+    if (!this.owner?.deviceTokens?.includes(token)) return;
+
+    this.owner.deviceTokens = this.owner.deviceTokens.filter((t) => t !== token);
     this.saveUsers();
   }
 
   getDeviceTokens(userId: string): string[] {
     const normalizedUserId = this.normalizeUserId(userId);
-    return this.users.get(normalizedUserId)?.deviceTokens || [];
+    if (!this.owner || this.owner.id !== normalizedUserId) return [];
+    return this.owner.deviceTokens || [];
   }
 
   setLiveActivityToken(userId: string, token: string | null): void {
     const normalizedUserId = this.normalizeUserId(userId);
-    const user = this.users.get(normalizedUserId);
-    if (!user) return;
+    if (!this.owner || this.owner.id !== normalizedUserId) return;
 
-    user.liveActivityToken = token || undefined;
+    this.owner.liveActivityToken = token || undefined;
     this.saveUsers();
   }
 
   getLiveActivityToken(userId: string): string | undefined {
     const normalizedUserId = this.normalizeUserId(userId);
-    return this.users.get(normalizedUserId)?.liveActivityToken;
+    if (!this.owner || this.owner.id !== normalizedUserId) return undefined;
+    return this.owner.liveActivityToken;
   }
 
   // ─── Sessions ───
 
-  private getFlatSessionPath(sessionId: string): string {
+  private getSessionPath(_userId: string, sessionId: string): string {
     return join(this.sessionsDir, `${sessionId}.json`);
-  }
-
-  private getLegacySessionPath(userId: string, sessionId: string): string {
-    return join(this.sessionsDir, userId, `${sessionId}.json`);
-  }
-
-  private getSessionPath(userId: string, sessionId: string): string {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (this.useFlatOwnerLayout()) {
-      return this.getFlatSessionPath(sessionId);
-    }
-    return this.getLegacySessionPath(normalizedUserId, sessionId);
   }
 
   createSession(userId: string, name?: string, model?: string): Session {
@@ -1010,9 +861,7 @@ export class Storage {
 
   listUserSessions(userId: string): Session[] {
     const normalizedUserId = this.normalizeUserId(userId);
-    const baseDir = this.useFlatOwnerLayout()
-      ? this.sessionsDir
-      : join(this.sessionsDir, normalizedUserId);
+    const baseDir = this.sessionsDir;
     if (!existsSync(baseDir)) return [];
 
     const sessions: Session[] = [];
@@ -1112,20 +961,8 @@ export class Storage {
 
   // ─── Workspaces ───
 
-  private getFlatWorkspacePath(workspaceId: string): string {
+  private getWorkspacePath(_userId: string, workspaceId: string): string {
     return join(this.workspacesDir, `${workspaceId}.json`);
-  }
-
-  private getLegacyWorkspacePath(userId: string, workspaceId: string): string {
-    return join(this.workspacesDir, userId, `${workspaceId}.json`);
-  }
-
-  private getWorkspacePath(userId: string, workspaceId: string): string {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (this.useFlatOwnerLayout()) {
-      return this.getFlatWorkspacePath(workspaceId);
-    }
-    return this.getLegacyWorkspacePath(normalizedUserId, workspaceId);
   }
 
   createWorkspace(userId: string, req: CreateWorkspaceRequest): Workspace {
@@ -1177,23 +1014,11 @@ export class Storage {
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
-  /**
-   * Runtime migration for legacy workspace records.
-   *
-   * Older records predate `runtime`. Those created with `policyPreset=container`
-   * were intended to run in containers, so prefer container unless a host mount
-   * explicitly indicates host runtime.
-   */
-  private inferWorkspaceRuntime(workspace: Workspace): "host" | "container" {
+  private validateWorkspaceRuntime(workspace: Workspace): "host" | "container" {
     if (workspace.runtime === "host" || workspace.runtime === "container") {
       return workspace.runtime;
     }
-
-    if (!workspace.hostMount && workspace.policyPreset === "container") {
-      return "container";
-    }
-
-    return "host";
+    throw new Error(`workspace ${workspace.id} missing runtime`);
   }
 
   getWorkspace(userId: string, workspaceId: string): Workspace | undefined {
@@ -1204,7 +1029,7 @@ export class Storage {
     try {
       const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
       ws.userId = normalizedUserId;
-      ws.runtime = this.inferWorkspaceRuntime(ws);
+      ws.runtime = this.validateWorkspaceRuntime(ws);
       ws.extensions = normalizeExtensionList(ws.extensions);
       ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
       return ws;
@@ -1215,9 +1040,7 @@ export class Storage {
 
   listWorkspaces(userId: string): Workspace[] {
     const normalizedUserId = this.normalizeUserId(userId);
-    const dir = this.useFlatOwnerLayout()
-      ? this.workspacesDir
-      : join(this.workspacesDir, normalizedUserId);
+    const dir = this.workspacesDir;
     if (!existsSync(dir)) return [];
 
     const workspaces: Workspace[] = [];
@@ -1227,7 +1050,7 @@ export class Storage {
       try {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
         ws.userId = normalizedUserId;
-        ws.runtime = this.inferWorkspaceRuntime(ws);
+        ws.runtime = this.validateWorkspaceRuntime(ws);
         ws.extensions = normalizeExtensionList(ws.extensions);
         ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
         workspaces.push(ws);

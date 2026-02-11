@@ -43,6 +43,7 @@ function makeSession(id: string): Session {
   return {
     id,
     userId: "u1",
+    workspaceId: "w1",
     status: "ready",
     createdAt: now,
     lastActivity: now,
@@ -53,6 +54,23 @@ function makeSession(id: string): Session {
   };
 }
 
+function workspaceTraceDir(baseDir: string, user: User, session: Session): string {
+  return join(
+    baseDir,
+    user.id,
+    session.workspaceId!,
+    "sessions",
+    session.id,
+    "agent",
+    "sessions",
+    "--work--",
+  );
+}
+
+function workspaceRootDir(baseDir: string, user: User, session: Session): string {
+  return join(baseDir, user.id, session.workspaceId!, "workspace");
+}
+
 describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
   it("returns baseline/current text and net stats for edit revisions", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "pi-remote-overall-diff-"));
@@ -60,10 +78,10 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
     const session = makeSession("s1");
 
     try {
-      const traceDir = join(baseDir, user.id, session.id, "agent", "sessions", "--work--");
+      const traceDir = workspaceTraceDir(baseDir, user, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = join(baseDir, user.id, session.id, "workspace");
+      const workspaceDir = workspaceRootDir(baseDir, user, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "B", "utf8");
 
@@ -156,7 +174,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
     const session = makeSession("s1");
 
     try {
-      const traceDir = join(baseDir, user.id, session.id, "agent", "sessions", "--work--");
+      const traceDir = workspaceTraceDir(baseDir, user, session);
       mkdirSync(traceDir, { recursive: true });
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), "", "utf8");
 
@@ -229,10 +247,10 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
     const session = makeSession("s1");
 
     try {
-      const traceDir = join(baseDir, user.id, session.id, "agent", "sessions", "--work--");
+      const traceDir = workspaceTraceDir(baseDir, user, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = join(baseDir, user.id, session.id, "workspace");
+      const workspaceDir = workspaceRootDir(baseDir, user, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "hello", "utf8");
 
@@ -318,10 +336,10 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
     const session = makeSession("s1");
 
     try {
-      const traceDir = join(baseDir, user.id, session.id, "agent", "sessions", "--work--");
+      const traceDir = workspaceTraceDir(baseDir, user, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = join(baseDir, user.id, session.id, "workspace");
+      const workspaceDir = workspaceRootDir(baseDir, user, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "B", "utf8");
 

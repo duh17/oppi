@@ -167,16 +167,14 @@ describe("session lifecycle", () => {
 });
 
 describe("Anthropic header injection", () => {
-  it("replaces x-api-key with Bearer auth and adds required headers", () => {
+  it("injects Bearer auth and adds required headers", () => {
     const route = ROUTES.find((r) => r.prefix === "/anthropic")!;
     const headers: Record<string, string> = {
-      "x-api-key": "proxy-sess-001",
       "anthropic-beta": "fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14",
       "content-type": "application/json",
     };
     route.injectAuth("sk-ant-oat01-real-token", headers);
 
-    expect(headers).not.toHaveProperty("x-api-key");
     expect(headers["authorization"]).toBe("Bearer sk-ant-oat01-real-token");
     expect(headers["anthropic-beta"]).toContain("claude-code-20250219");
     expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
@@ -191,10 +189,6 @@ describe("Anthropic session ID extraction", () => {
   it("extracts from OAuth-shaped Authorization token", () => {
     const route = ROUTES.find((r) => r.prefix === "/anthropic")!;
     expect(route.extractSessionId({ authorization: "Bearer sk-ant-oat01-proxy-sess-abc" })).toBe("sess-abc");
-  });
-  it("extracts from legacy x-api-key token", () => {
-    const route = ROUTES.find((r) => r.prefix === "/anthropic")!;
-    expect(route.extractSessionId({ "x-api-key": "proxy-sess-legacy" })).toBe("sess-legacy");
   });
   it("rejects non-proxy bearer", () => {
     const route = ROUTES.find((r) => r.prefix === "/anthropic")!;

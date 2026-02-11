@@ -120,12 +120,12 @@ describe("SandboxManager workspace container tracking", () => {
     expect(stopCalls.length).toBeGreaterThan(0);
   });
 
-  it("reattaches a running legacy workspace container after restart", () => {
+  it("reuses canonical workspace container after restart", () => {
     mockedExecSync.mockImplementation((cmd: string) => {
       if (typeof cmd === "string" && cmd === "container list") {
         return [
           "CONTAINER ID  IMAGE  COMMAND  CREATED  STATUS  PORTS  NAMES",
-          "pi-remote-ws-u1-w1 test-image:latest  sh  2m ago  Up  -  pi-remote-ws-u1-w1",
+          "pi-remote-ws-w1 test-image:latest  sh  2m ago  Up  -  pi-remote-ws-w1",
         ].join("\n");
       }
       return "";
@@ -149,11 +149,11 @@ describe("SandboxManager workspace container tracking", () => {
       "/tmp/work",
       "/tmp/workspace",
     );
-    expect(containerId).toBe("pi-remote-ws-u1-w1");
+    expect(containerId).toBe("pi-remote-ws-w1");
     expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(true);
   });
 
-  it("stopWorkspaceContainer tries canonical and legacy names when untracked", async () => {
+  it("stopWorkspaceContainer tries canonical name when untracked", async () => {
     await sandbox.stopWorkspaceContainer("u1", "w1");
 
     const commands = mockedExecSync.mock.calls
@@ -161,26 +161,6 @@ describe("SandboxManager workspace container tracking", () => {
       .join("\n");
 
     expect(commands).toContain("container stop pi-remote-ws-w1");
-    expect(commands).toContain("container stop pi-remote-ws-u1-w1");
-  });
-
-  it("cleanupOrphanedContainers also catches legacy session containers", async () => {
-    mockedExecSync.mockImplementation((cmd: string) => {
-      if (typeof cmd === "string" && cmd === "container list") {
-        return [
-          "CONTAINER ID  IMAGE  COMMAND  CREATED  STATUS  PORTS  NAMES",
-          "pi-remote-legacy-session test-image:latest  pi  2m ago  Up  -  pi-remote-legacy-session",
-        ].join("\n");
-      }
-      return "";
-    });
-
-    await sandbox.cleanupOrphanedContainers();
-
-    const stopCalls = mockedExecSync.mock.calls.filter(
-      (call) => typeof call[0] === "string" && (call[0] as string).includes("container stop pi-remote-legacy-session"),
-    );
-    expect(stopCalls.length).toBeGreaterThan(0);
   });
 });
 
@@ -200,8 +180,4 @@ describe("SandboxManager workspace path generation", () => {
     expect(workDir).toBe(join(tmp, "u1", "w1", "workspace"));
   });
 
-  it("getWorkDir with legacy session-scoped fallback (no workspaceId)", () => {
-    const workDir = sandbox.getWorkDir("u1", "s1");
-    expect(workDir).toBe(join(tmp, "u1", "s1", "workspace"));
-  });
 });

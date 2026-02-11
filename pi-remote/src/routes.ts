@@ -1002,7 +1002,6 @@ export class RouteHandler {
         ),
       );
     }
-    containerDirs.push(join(sandboxBaseDir, user.id, sessionId, "agent", "sessions", "--work--"));
 
     for (const containerDir of containerDirs) {
       if (!existsSync(containerDir)) continue;
@@ -1213,20 +1212,17 @@ export class RouteHandler {
         const resolved = workspace.hostMount.replace(/^~/, homedir());
         return existsSync(resolved) ? resolved : null;
       }
-      if (session.workspaceId) {
-        const workspaceSandbox = join(
-          this.ctx.sandbox.getBaseDir(),
-          userId,
-          session.workspaceId,
-          "workspace",
-        );
-        if (existsSync(workspaceSandbox)) {
-          return workspaceSandbox;
-        }
+      if (!session.workspaceId) {
+        return null;
       }
 
-      const sandboxWork = join(this.ctx.sandbox.getBaseDir(), userId, session.id, "workspace");
-      return existsSync(sandboxWork) ? sandboxWork : null;
+      const workspaceSandbox = join(
+        this.ctx.sandbox.getBaseDir(),
+        userId,
+        session.workspaceId,
+        "workspace",
+      );
+      return existsSync(workspaceSandbox) ? workspaceSandbox : null;
     }
 
     if (workspace?.hostMount) {

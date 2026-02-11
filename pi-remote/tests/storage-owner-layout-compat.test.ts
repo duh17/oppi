@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
 import type { Session, Workspace } from "../src/types.js";
 
-describe("storage owner-layout migration", () => {
+describe("storage strict owner layout", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -16,7 +16,7 @@ describe("storage owner-layout migration", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("migrates legacy owner-scoped records to flat layout without re-pairing", () => {
+  it("uses flat owner layout and ignores nested legacy records", () => {
     const owner = {
       id: "owner-1",
       name: "Chen",
@@ -24,12 +24,12 @@ describe("storage owner-layout migration", () => {
       createdAt: Date.now() - 10_000,
     };
 
+    writeFileSync(join(dir, "users.json"), JSON.stringify(owner, null, 2));
+
     const legacySessionsDir = join(dir, "sessions", owner.id);
     const legacyWorkspacesDir = join(dir, "workspaces", owner.id);
     mkdirSync(legacySessionsDir, { recursive: true });
     mkdirSync(legacyWorkspacesDir, { recursive: true });
-
-    writeFileSync(join(dir, "users.json"), JSON.stringify([owner], null, 2));
 
     const session: Session = {
       id: "sess-1",
@@ -46,22 +46,7 @@ describe("storage owner-layout migration", () => {
 
     writeFileSync(
       join(legacySessionsDir, `${session.id}.json`),
-      JSON.stringify(
-        {
-          session,
-          messages: [
-            {
-              id: "m1",
-              sessionId: session.id,
-              role: "user",
-              content: "hello",
-              timestamp: Date.now() - 4_000,
-            },
-          ],
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({ session, messages: [] }, null, 2),
     );
 
     const workspace: Workspace = {
@@ -82,27 +67,15 @@ describe("storage owner-layout migration", () => {
 
     const storage = new Storage(dir);
 
-    // Existing pairing token stays stable (no re-pair required).
-    const loadedOwner = storage.getOwnerUser();
-    expect(loadedOwner?.token).toBe(owner.token);
-
-    // Legacy records were migrated and remain readable.
-    const loadedSession = storage.getSession(owner.id, session.id);
-    expect(loadedSession?.id).toBe(session.id);
-    expect(storage.getSessionMessages(owner.id, session.id)).toHaveLength(1);
-
-    const loadedWorkspace = storage.getWorkspace(owner.id, workspace.id);
-    expect(loadedWorkspace?.id).toBe(workspace.id);
+    // Legacy nested records are not read.
+    expect(storage.getSession(owner.id, session.id)).toBeUndefined();
+    expect(storage.getWorkspace(owner.id, workspace.id)).toBeUndefined();
 
     // New writes go to flat owner layout.
-    storage.saveSession({ ...loadedSession!, status: "busy" });
-    storage.saveWorkspace({ ...loadedWorkspace!, name: "Upgraded Workspace" });
+    storage.saveSession({ ...session, userId: owner.id, status: "busy" });
+    storage.saveWorkspace({ ...workspace, userId: owner.id, name: "Flat Workspace" });
 
     expect(existsSync(join(dir, "sessions", `${session.id}.json`))).toBe(true);
     expect(existsSync(join(dir, "workspaces", `${workspace.id}.json`))).toBe(true);
-
-    // Legacy files are removed after migration.
-    expect(existsSync(join(legacySessionsDir, `${session.id}.json`))).toBe(false);
-    expect(existsSync(join(legacyWorkspacesDir, `${workspace.id}.json`))).toBe(false);
   });
 });

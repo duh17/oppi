@@ -35,13 +35,11 @@ dim()     { printf "${DIM}%s${NC}\n" "$1"; }
 
 # ─── Resolve auth token ─────────────────────────────────────────
 
-TOKEN=$(python3 -c "
+TOKEN=$(uv run python -c "
 import json
-users = json.load(open('$USERS_FILE'))
-for u in users:
-    if u['name'] == 'Chen':
-        print(u['token']); exit()
-print(users[0]['token'])
+owner = json.load(open('$USERS_FILE'))
+if isinstance(owner, dict) and isinstance(owner.get('token'), str):
+    print(owner['token'])
 " 2>/dev/null)
 
 if [[ -z "$TOKEN" ]]; then

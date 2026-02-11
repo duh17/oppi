@@ -23,19 +23,17 @@ describe("session-spawn spawnPiContainer", () => {
     const proc = new StubProcess();
     const createSessionSocket = vi.fn(async () => 51111);
     const setSessionPolicy = vi.fn();
-    const migrateLegacySessionLayout = vi.fn();
     const spawnPi = vi.fn(() => proc as unknown as ChildProcess);
     const registerSession = vi.fn();
 
     const deps = makeDeps({
       gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
-      sandbox: { migrateLegacySessionLayout, spawnPi } as unknown as SpawnDeps["sandbox"],
+      sandbox: { spawnPi } as unknown as SpawnDeps["sandbox"],
       authProxy: { registerSession } as unknown as NonNullable<SpawnDeps["authProxy"]>,
     });
 
     await awaitProcessReady(spawnPiContainer(session, "w-container", "Chen", workspace, deps), proc);
 
-    expect(migrateLegacySessionLayout).toHaveBeenCalledWith("u1", "w-container", "s1");
     expect(registerSession).toHaveBeenCalledWith("s1", "u1");
     expect(createSessionSocket).toHaveBeenCalledWith("s1", "u1", "w-container");
 
@@ -64,18 +62,16 @@ describe("session-spawn spawnPiContainer", () => {
 
     const createSessionSocket = vi.fn(async () => 52222);
     const setSessionPolicy = vi.fn();
-    const migrateLegacySessionLayout = vi.fn();
     const spawnPi = vi.fn(() => proc as unknown as ChildProcess);
 
     const deps = makeDeps({
       gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
-      sandbox: { migrateLegacySessionLayout, spawnPi } as unknown as SpawnDeps["sandbox"],
+      sandbox: { spawnPi } as unknown as SpawnDeps["sandbox"],
       authProxy: null,
     });
 
     await awaitProcessReady(spawnPiContainer(session, "w-no-auth", undefined, undefined, deps), proc);
 
-    expect(migrateLegacySessionLayout).toHaveBeenCalledWith("u1", "w-no-auth", "s1");
     expect(createSessionSocket).toHaveBeenCalledWith("s1", "u1", "w-no-auth");
 
     const containerPolicy = getSpawnPolicy(setSessionPolicy, "s1", "container");

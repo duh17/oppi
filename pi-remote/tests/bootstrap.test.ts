@@ -8,6 +8,7 @@ import { SandboxManager } from "../src/sandbox.js";
 
 let tmp: string;
 let sandbox: SandboxManager;
+const WORKSPACE_ID = "ws1";
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "pi-remote-bootstrap-test-"));
@@ -33,7 +34,7 @@ function setupSandboxDir(
     skipAuth?: boolean;
   },
 ): void {
-  const agentDir = join(tmp, userId, sessionId, "agent");
+  const agentDir = join(tmp, userId, WORKSPACE_ID, "sessions", sessionId, "agent");
   const extensionsDir = join(agentDir, "extensions");
 
   mkdirSync(extensionsDir, { recursive: true });
@@ -42,7 +43,7 @@ function setupSandboxDir(
     const gateDir = join(extensionsDir, "permission-gate");
     mkdirSync(gateDir, { recursive: true });
     if (!opts?.skipGateIndex) {
-      writeFileSync(join(gateDir, "index.ts"), 'export default function() {}');
+      writeFileSync(join(gateDir, "index.ts"), "export default function() {};");
     }
     if (!opts?.skipGatePackage) {
       writeFileSync(join(gateDir, "package.json"), '{"name":"permission-gate"}');
@@ -50,7 +51,7 @@ function setupSandboxDir(
   }
 
   if (opts?.includeMemory) {
-    writeFileSync(join(extensionsDir, "memory.ts"), 'export default function() {}');
+    writeFileSync(join(extensionsDir, "memory.ts"), "export default function() {};");
   }
 
   if (!opts?.skipAuth) {
@@ -58,26 +59,33 @@ function setupSandboxDir(
   }
 }
 
+function validate(sessionId: string, opts?: { memoryEnabled?: boolean }) {
+  return sandbox.validateSession("user1", sessionId, {
+    workspaceId: WORKSPACE_ID,
+    ...(opts ?? {}),
+  });
+}
+
 // ─── Healthy sessions ───
 
 describe("validateSession — healthy", () => {
   it("passes with all files present", () => {
     setupSandboxDir("user1", "sess1");
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1");
+    const { errors, warnings } = validate("sess1");
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(0);
   });
 
   it("passes with memory extension", () => {
     setupSandboxDir("user1", "sess1", { includeMemory: true });
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1", { memoryEnabled: true });
+    const { errors, warnings } = validate("sess1", { memoryEnabled: true });
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(0);
   });
 
   it("passes with memory present but not requested", () => {
     setupSandboxDir("user1", "sess1", { includeMemory: true });
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1");
+    const { errors, warnings } = validate("sess1");
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(0);
   });
@@ -88,28 +96,28 @@ describe("validateSession — healthy", () => {
 describe("validateSession — missing gate", () => {
   it("errors on missing gate directory", () => {
     setupSandboxDir("user1", "sess1", { skipGateDir: true });
-    const { errors } = sandbox.validateSession("user1", "sess1");
+    const { errors } = validate("sess1");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("directory missing");
   });
 
   it("errors on missing gate index.ts", () => {
     setupSandboxDir("user1", "sess1", { skipGateIndex: true });
-    const { errors } = sandbox.validateSession("user1", "sess1");
+    const { errors } = validate("sess1");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("index.ts");
   });
 
   it("errors on missing gate package.json", () => {
     setupSandboxDir("user1", "sess1", { skipGatePackage: true });
-    const { errors } = sandbox.validateSession("user1", "sess1");
+    const { errors } = validate("sess1");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("package.json");
   });
 
   it("errors on both index.ts and package.json missing", () => {
     setupSandboxDir("user1", "sess1", { skipGateIndex: true, skipGatePackage: true });
-    const { errors } = sandbox.validateSession("user1", "sess1");
+    const { errors } = validate("sess1");
     expect(errors).toHaveLength(2);
   });
 });
@@ -119,7 +127,7 @@ describe("validateSession — missing gate", () => {
 describe("validateSession — memory", () => {
   it("warns when memory enabled but extension missing", () => {
     setupSandboxDir("user1", "sess1");
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1", { memoryEnabled: true });
+    const { errors, warnings } = validate("sess1", { memoryEnabled: true });
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("Memory");
@@ -127,14 +135,14 @@ describe("validateSession — memory", () => {
 
   it("no warning when memory disabled", () => {
     setupSandboxDir("user1", "sess1");
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1", { memoryEnabled: false });
+    const { errors, warnings } = validate("sess1", { memoryEnabled: false });
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(0);
   });
 
   it("no warning when memory not specified (undefined)", () => {
     setupSandboxDir("user1", "sess1");
-    const { warnings } = sandbox.validateSession("user1", "sess1");
+    const { warnings } = validate("sess1");
     expect(warnings).toHaveLength(0);
   });
 });
@@ -144,7 +152,7 @@ describe("validateSession — memory", () => {
 describe("validateSession — auth", () => {
   it("warns on missing auth.json", () => {
     setupSandboxDir("user1", "sess1", { skipAuth: true });
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1");
+    const { errors, warnings } = validate("sess1");
     expect(errors).toHaveLength(0);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("auth.json");
@@ -156,15 +164,17 @@ describe("validateSession — auth", () => {
 describe("validateSession — combined", () => {
   it("reports gate error + memory warning + auth warning", () => {
     setupSandboxDir("user1", "sess1", { skipGateDir: true, skipAuth: true });
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1", { memoryEnabled: true });
+    const { errors, warnings } = validate("sess1", { memoryEnabled: true });
     expect(errors).toHaveLength(1);
     expect(warnings).toHaveLength(2);
   });
 
   it("reports errors for empty sandbox dir (nothing synced)", () => {
-    mkdirSync(join(tmp, "user1", "sess1", "agent", "extensions"), { recursive: true });
-    const { errors, warnings } = sandbox.validateSession("user1", "sess1");
+    mkdirSync(join(tmp, "user1", WORKSPACE_ID, "sessions", "sess1", "agent", "extensions"), {
+      recursive: true,
+    });
+    const { errors, warnings } = validate("sess1");
     expect(errors.length).toBeGreaterThan(0);
-    expect(warnings.some(w => w.includes("auth"))).toBe(true);
+    expect(warnings.some((w) => w.includes("auth"))).toBe(true);
   });
 });

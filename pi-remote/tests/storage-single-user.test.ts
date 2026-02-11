@@ -21,20 +21,19 @@ describe("Storage single-user mode", () => {
     const user = storage.createUser("Chen");
 
     expect(storage.getOwnerUser()?.id).toBe(user.id);
-    expect(storage.listUsers()).toHaveLength(1);
-    expect(storage.hasMultipleUsers()).toBe(false);
+    expect(storage.hasInvalidOwnerData()).toBe(false);
   });
 
   it("rejects creating a second user", () => {
     const storage = new Storage(dir);
 
-    storage.createUser("Chen");
+    const owner = storage.createUser("Chen");
 
     expect(() => storage.createUser("Other")).toThrowError(/Single-user mode/);
-    expect(storage.listUsers()).toHaveLength(1);
+    expect(storage.getOwnerUser()?.id).toBe(owner.id);
   });
 
-  it("detects legacy multi-user data", () => {
+  it("marks legacy users-array data as invalid", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "users.json"),
@@ -51,7 +50,7 @@ describe("Storage single-user mode", () => {
 
     const storage = new Storage(dir);
 
-    expect(storage.listUsers()).toHaveLength(2);
-    expect(storage.hasMultipleUsers()).toBe(true);
+    expect(storage.getOwnerUser()).toBeUndefined();
+    expect(storage.hasInvalidOwnerData()).toBe(true);
   });
 });

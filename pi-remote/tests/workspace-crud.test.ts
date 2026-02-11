@@ -8,7 +8,7 @@
  * - Storage: create, get, list, update, delete, ensureDefaultWorkspaces
  * - HTTP: GET/POST /workspaces, GET/PUT/DELETE /workspaces/:id
  * - Validation: name, skills, memoryNamespace, policyPreset
- * - Runtime inference for legacy records without explicit runtime
+ * - Strict runtime requirement (legacy no-runtime records are rejected)
  * - Edge cases: corrupt files, nonexistent workspaces, empty updates
  */
 
@@ -105,7 +105,7 @@ describe("Storage.createWorkspace", () => {
 
   it("persists to disk as JSON", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
     expect(existsSync(path)).toBe(true);
     const raw = JSON.parse(readFileSync(path, "utf-8"));
@@ -177,12 +177,11 @@ describe("Storage.createWorkspace", () => {
     expect(ws.memoryNamespace).toBeUndefined();
   });
 
-  it("creates user workspace directory if it does not exist", () => {
-    const userDir = join(dataDir, "workspaces", "new-user");
-    expect(existsSync(userDir)).toBe(false);
+  it("keeps workspace directory available", () => {
+    const workspaceDir = join(dataDir, "workspaces");
 
     storage.createWorkspace("new-user", createReq());
-    expect(existsSync(userDir)).toBe(true);
+    expect(existsSync(workspaceDir)).toBe(true);
   });
 });
 
@@ -202,47 +201,29 @@ describe("Storage.getWorkspace", () => {
     expect(storage.getWorkspace(USER, "nope-1234")).toBeUndefined();
   });
 
-  it("returns undefined for wrong user", () => {
+  it("reads by id regardless of caller user before pairing", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    expect(storage.getWorkspace(USER2, ws.id)).toBeUndefined();
+    expect(storage.getWorkspace(USER2, ws.id)?.id).toBe(ws.id);
   });
 
   it("handles corrupt JSON gracefully", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
     writeFileSync(path, "{{not valid json}}");
     expect(storage.getWorkspace(USER, ws.id)).toBeUndefined();
   });
 
-  it("infers runtime for legacy records missing runtime field", () => {
+  it("rejects records missing runtime", () => {
     const ws = storage.createWorkspace(USER, createReq({ policyPreset: "container" }));
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
-    // Simulate legacy record: remove runtime field
+    // Simulate removed legacy fallback: runtime is now required.
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     delete raw.runtime;
     writeFileSync(path, JSON.stringify(raw));
 
-    const got = storage.getWorkspace(USER, ws.id);
-    expect(got).toBeDefined();
-    expect(got!.runtime).toBe("container");
-  });
-
-  it("infers runtime=host for legacy record with hostMount", () => {
-    const ws = storage.createWorkspace(
-      USER,
-      createReq({ hostMount: "~/workspace", policyPreset: "host" }),
-    );
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
-
-    // Remove runtime field to simulate legacy
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    delete raw.runtime;
-    writeFileSync(path, JSON.stringify(raw));
-
-    const got = storage.getWorkspace(USER, ws.id);
-    expect(got!.runtime).toBe("host");
+    expect(storage.getWorkspace(USER, ws.id)).toBeUndefined();
   });
 });
 
@@ -263,17 +244,17 @@ describe("Storage.listWorkspaces", () => {
     expect(list.map((w) => w.name).sort()).toEqual(["ws-1", "ws-2", "ws-3"]);
   });
 
-  it("isolates workspaces between users", () => {
+  it("lists all workspaces from flat owner layout before pairing", () => {
     storage.createWorkspace(USER, createReq({ name: "user1-ws" }));
     storage.createWorkspace(USER2, createReq({ name: "user2-ws" }));
 
     const list1 = storage.listWorkspaces(USER);
     const list2 = storage.listWorkspaces(USER2);
 
-    expect(list1).toHaveLength(1);
-    expect(list1[0].name).toBe("user1-ws");
-    expect(list2).toHaveLength(1);
-    expect(list2[0].name).toBe("user2-ws");
+    expect(list1).toHaveLength(2);
+    expect(list2).toHaveLength(2);
+    expect(list1.map((w) => w.name).sort()).toEqual(["user1-ws", "user2-ws"]);
+    expect(list2.map((w) => w.name).sort()).toEqual(["user1-ws", "user2-ws"]);
   });
 
   it("sorts by createdAt ascending", () => {
@@ -285,7 +266,7 @@ describe("Storage.listWorkspaces", () => {
 
     // Force distinct timestamps on disk
     for (const [ws, ts] of [[ws1, 1000], [ws2, 2000], [ws3, 3000]] as const) {
-      const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+      const path = join(dataDir, "workspaces", `${ws.id}.json`);
       const raw = JSON.parse(readFileSync(path, "utf-8"));
       raw.createdAt = ts;
       writeFileSync(path, JSON.stringify(raw));
@@ -301,7 +282,7 @@ describe("Storage.listWorkspaces", () => {
     storage.createWorkspace(USER, createReq({ name: "good" }));
 
     // Write a corrupt file
-    const corruptPath = join(dataDir, "workspaces", USER, "corrupt.json");
+    const corruptPath = join(dataDir, "workspaces", "corrupt.json");
     writeFileSync(corruptPath, "not json at all");
 
     const list = storage.listWorkspaces(USER);
@@ -312,7 +293,7 @@ describe("Storage.listWorkspaces", () => {
   it("skips non-JSON files", () => {
     storage.createWorkspace(USER, createReq({ name: "real" }));
 
-    const txtPath = join(dataDir, "workspaces", USER, "notes.txt");
+    const txtPath = join(dataDir, "workspaces", "notes.txt");
     writeFileSync(txtPath, "just notes");
 
     expect(storage.listWorkspaces(USER)).toHaveLength(1);
@@ -493,7 +474,7 @@ describe("Storage.updateWorkspace", () => {
     storage.updateWorkspace(USER, ws.id, { name: "after" });
 
     // Read directly from disk
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     expect(raw.name).toBe("after");
   });
@@ -502,9 +483,9 @@ describe("Storage.updateWorkspace", () => {
     expect(storage.updateWorkspace(USER, "nope-1234", { name: "x" })).toBeUndefined();
   });
 
-  it("returns undefined for wrong user", () => {
+  it("updates by id regardless of caller user before pairing", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    expect(storage.updateWorkspace(USER2, ws.id, { name: "x" })).toBeUndefined();
+    expect(storage.updateWorkspace(USER2, ws.id, { name: "x" })?.name).toBe("x");
   });
 
   it("handles empty update (no fields)", () => {
@@ -529,7 +510,7 @@ describe("Storage.deleteWorkspace", () => {
 
   it("removes file from disk", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
     expect(existsSync(path)).toBe(true);
 
     storage.deleteWorkspace(USER, ws.id);
@@ -540,12 +521,10 @@ describe("Storage.deleteWorkspace", () => {
     expect(storage.deleteWorkspace(USER, "nope-1234")).toBe(false);
   });
 
-  it("returns false for wrong user", () => {
+  it("deletes by id regardless of caller user before pairing", () => {
     const ws = storage.createWorkspace(USER, createReq());
-    expect(storage.deleteWorkspace(USER2, ws.id)).toBe(false);
-
-    // Original should still exist
-    expect(storage.getWorkspace(USER, ws.id)).toBeDefined();
+    expect(storage.deleteWorkspace(USER2, ws.id)).toBe(true);
+    expect(storage.getWorkspace(USER, ws.id)).toBeUndefined();
   });
 
   it("does not affect other workspaces", () => {
@@ -620,9 +599,9 @@ describe("Storage.ensureDefaultWorkspaces", () => {
   });
 });
 
-// ─── Storage: runtime inference ───
+// ─── Storage: runtime validation ───
 
-describe("Storage runtime inference", () => {
+describe("Storage runtime validation", () => {
   it("preserves explicit runtime=host", () => {
     const ws = storage.createWorkspace(USER, createReq({ runtime: "host" }));
     const got = storage.getWorkspace(USER, ws.id);
@@ -635,57 +614,29 @@ describe("Storage runtime inference", () => {
     expect(got!.runtime).toBe("container");
   });
 
-  it("infers container when policyPreset=container and no hostMount (legacy)", () => {
+  it("rejects legacy records missing runtime", () => {
     const ws = storage.createWorkspace(USER, createReq({ policyPreset: "container" }));
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
-    // Simulate legacy: strip runtime
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     delete raw.runtime;
     writeFileSync(path, JSON.stringify(raw));
 
-    const got = storage.getWorkspace(USER, ws.id);
-    expect(got!.runtime).toBe("container");
+    expect(storage.getWorkspace(USER, ws.id)).toBeUndefined();
   });
 
-  it("infers host when policyPreset is not container (legacy)", () => {
-    const ws = storage.createWorkspace(USER, createReq({ policyPreset: "host" }));
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+  it("list skips records missing runtime", () => {
+    const good = storage.createWorkspace(USER, createReq({ name: "good" }));
+    const bad = storage.createWorkspace(USER, createReq({ name: "bad" }));
+    const badPath = join(dataDir, "workspaces", `${bad.id}.json`);
 
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    const raw = JSON.parse(readFileSync(badPath, "utf-8"));
     delete raw.runtime;
-    writeFileSync(path, JSON.stringify(raw));
-
-    const got = storage.getWorkspace(USER, ws.id);
-    expect(got!.runtime).toBe("host");
-  });
-
-  it("infers host when hostMount is present (legacy)", () => {
-    const ws = storage.createWorkspace(
-      USER,
-      createReq({ policyPreset: "container", hostMount: "/work" }),
-    );
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
-
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    delete raw.runtime;
-    writeFileSync(path, JSON.stringify(raw));
-
-    const got = storage.getWorkspace(USER, ws.id);
-    expect(got!.runtime).toBe("host");
-  });
-
-  it("list also applies runtime inference to each workspace", () => {
-    const ws = storage.createWorkspace(USER, createReq({ policyPreset: "container" }));
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
-
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    delete raw.runtime;
-    writeFileSync(path, JSON.stringify(raw));
+    writeFileSync(badPath, JSON.stringify(raw));
 
     const list = storage.listWorkspaces(USER);
-    const found = list.find((w) => w.id === ws.id);
-    expect(found!.runtime).toBe("container");
+    expect(list.map((w) => w.id)).toContain(good.id);
+    expect(list.map((w) => w.id)).not.toContain(bad.id);
   });
 });
 
@@ -877,7 +828,7 @@ describe("Workspace edge cases", () => {
     storage.updateWorkspace(USER, ws.id, { name: "updated" });
     storage.deleteWorkspace(USER, ws.id);
 
-    const path = join(dataDir, "workspaces", USER, `${ws.id}.json`);
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
     expect(existsSync(path)).toBe(false);
   });
 

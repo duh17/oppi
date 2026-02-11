@@ -245,9 +245,6 @@ export async function spawnPiContainer(
 ): Promise<ChildProcess> {
   const key = session.id;
 
-  // Best-effort migration from legacy session-scoped sandbox to workspace-scoped layout.
-  deps.sandbox.migrateLegacySessionLayout(session.userId, workspaceId, session.id);
-
   // Register session with auth proxy (proxy validates session tokens on API requests)
   deps.authProxy?.registerSession(session.id, session.userId);
 

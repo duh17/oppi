@@ -30,7 +30,6 @@ import { homedir } from "node:os";
 // ─── Constants ───
 
 export const AUTH_PROXY_PORT = 7751;
-const PROXY_TOKEN_PREFIX = "proxy-";
 const ANTHROPIC_OAUTH_STUB_PREFIX = "sk-ant-oat01-proxy-";
 
 /**
@@ -114,24 +113,14 @@ export const ROUTES: ProviderRoute[] = [
     upstream: "https://api.anthropic.com",
 
     extractSessionId(headers: Record<string, string>): string | null {
-      // Preferred path: OAuth-shaped Anthropic placeholder in Authorization header.
       const bearer = getBearerToken(headers["authorization"]);
       if (bearer?.startsWith(ANTHROPIC_OAUTH_STUB_PREFIX)) {
         return bearer.slice(ANTHROPIC_OAUTH_STUB_PREFIX.length);
       }
-
-      // Backward compatibility: older sessions used x-api-key proxy-<sessionId>.
-      const key = headers["x-api-key"];
-      if (key?.startsWith(PROXY_TOKEN_PREFIX)) return key.slice(PROXY_TOKEN_PREFIX.length);
-      if (key?.startsWith(ANTHROPIC_OAUTH_STUB_PREFIX))
-        return key.slice(ANTHROPIC_OAUTH_STUB_PREFIX.length);
-
       return null;
     },
 
     injectAuth(token: string, headers: Record<string, string>): void {
-      // Replace x-api-key with OAuth Bearer auth
-      delete headers["x-api-key"];
       headers["authorization"] = `Bearer ${token}`;
 
       // Merge OAuth-required beta headers with existing ones from the SDK
