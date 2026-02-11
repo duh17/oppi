@@ -5,8 +5,11 @@ import SwiftUI
 /// Used by both SwiftUI file-tool rows (read/write/edit) and UIKit-native
 /// bash rows so expansion feels consistent across render paths.
 enum ToolRowExpansionAnimation {
-    static let duration: TimeInterval = 0.22
-    static let swiftUI: Animation = .easeInOut(duration: duration)
+    static let expandDuration: TimeInterval = 0.22
+    static let collapseDuration: TimeInterval = 0.14
+
+    static let swiftUIExpand: Animation = .easeInOut(duration: expandDuration)
+    static let swiftUICollapse: Animation = .easeOut(duration: collapseDuration)
 }
 
 /// Identifies a file to open in a sheet. Uses `.sheet(item:)` pattern
@@ -509,14 +512,13 @@ private struct ToolCallRow: View {
                     }
                     .transition(
                         .asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.99, anchor: .top)),
+                            insertion: .opacity.combined(with: .scale(scale: 0.995, anchor: .top)),
                             removal: .opacity
                         )
                     )
                 }
             }
             .padding(8)
-            .animation(ToolRowExpansionAnimation.swiftUI, value: isExpanded)
             .background(stateBackground)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
@@ -542,7 +544,11 @@ private struct ToolCallRow: View {
     // MARK: - Expand & Lazy Load
 
     private func setExpanded(_ expanded: Bool) {
-        withAnimation(ToolRowExpansionAnimation.swiftUI) {
+        let animation = expanded
+            ? ToolRowExpansionAnimation.swiftUIExpand
+            : ToolRowExpansionAnimation.swiftUICollapse
+
+        withAnimation(animation) {
             if expanded {
                 reducer.expandedItemIDs.insert(id)
             } else {

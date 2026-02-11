@@ -505,13 +505,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             let cell = collectionView.cellForItem(at: indexPath)
             let isNativeToolCell = cell?.contentConfiguration is ToolTimelineRowConfiguration
             let isNativeThinkingCell = cell?.contentConfiguration is ThinkingTimelineRowConfiguration
-
             switch item {
             case .toolCall(_, _, _, _, let outputByteCount, _, _):
                 guard isNativeToolCell else { return }
 
-                let isExpanded = reducer.expandedItemIDs.contains(itemID)
-                if isExpanded {
+                let wasExpanded = reducer.expandedItemIDs.contains(itemID)
+                if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
@@ -521,9 +520,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                         in: collectionView
                     )
                 }
-
-                animateNativeToolExpansion(itemID: itemID, item: item, in: collectionView)
-
+                animateNativeToolExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
             case .thinking(_, _, _, let isDone):
                 guard isDone,
                       isNativeThinkingCell,
@@ -848,6 +845,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private func animateNativeToolExpansion(
             itemID: String,
             item: ChatItem,
+            isExpanding: Bool,
             in collectionView: UICollectionView
         ) {
             guard let index = currentIDs.firstIndex(of: itemID),
@@ -859,10 +857,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             }
             collectionView.layoutIfNeeded()
             cell.contentConfiguration = configuration
+            let duration = isExpanding ? ToolRowExpansionAnimation.expandDuration : ToolRowExpansionAnimation.collapseDuration
+            let timing = isExpanding ? CAMediaTimingFunction(name: .easeInEaseOut) : CAMediaTimingFunction(name: .easeOut)
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
             CATransaction.begin()
-            CATransaction.setAnimationDuration(ToolRowExpansionAnimation.duration)
-            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+            CATransaction.setAnimationDuration(duration)
+            CATransaction.setAnimationTimingFunction(timing)
             CATransaction.setCompletionBlock { ChatTimelinePerf.endLayoutPass(layoutToken) }
             collectionView.performBatchUpdates { collectionView.collectionViewLayout.invalidateLayout() }
             CATransaction.commit()
