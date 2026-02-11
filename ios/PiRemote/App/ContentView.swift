@@ -18,11 +18,6 @@ struct ContentView: View {
                             WorkspaceHomeView()
                         }
                     }
-                    SwiftUI.Tab("Sessions", systemImage: "terminal", value: AppTab.sessions) {
-                        NavigationStack {
-                            SessionListView()
-                        }
-                    }
                     SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
                         NavigationStack {
                             SettingsView()

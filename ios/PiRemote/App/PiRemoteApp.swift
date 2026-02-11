@@ -210,7 +210,7 @@ struct PiRemoteApp: App {
                 return
             }
             connection.sessionStore.activeSessionId = sessionId
-            navigation.selectedTab = .sessions
+            navigation.selectedTab = .workspaces
         }
     }
 

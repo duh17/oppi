@@ -11,7 +11,7 @@ struct RestorationStateTests {
         let state = RestorationState(
             version: RestorationState.schemaVersion,
             activeSessionId: "s1",
-            selectedTab: "sessions",
+            selectedTab: "workspaces",
             composerDraft: "draft text",
             scrollAnchorItemId: "item-42",
             wasNearBottom: false,
@@ -23,7 +23,7 @@ struct RestorationStateTests {
 
         #expect(decoded.version == state.version)
         #expect(decoded.activeSessionId == "s1")
-        #expect(decoded.selectedTab == "sessions")
+        #expect(decoded.selectedTab == "workspaces")
         #expect(decoded.composerDraft == "draft text")
         #expect(decoded.scrollAnchorItemId == "item-42")
         #expect(decoded.wasNearBottom == false)
@@ -62,7 +62,7 @@ struct RestorationStateTests {
         conn.composerDraft = "test draft"
 
         let nav = AppNavigation()
-        nav.selectedTab = .sessions
+        nav.selectedTab = .workspaces
 
         RestorationState.save(from: conn, navigation: nav)
 
@@ -70,7 +70,7 @@ struct RestorationStateTests {
         #expect(loaded != nil)
         #expect(loaded?.activeSessionId == "s1")
         #expect(loaded?.composerDraft == "test draft")
-        #expect(loaded?.selectedTab == "sessions")
+        #expect(loaded?.selectedTab == "workspaces")
 
         // Clean up
         RestorationState.clear()
@@ -214,13 +214,13 @@ struct RestorationStateTests {
 struct AppTabTests {
 
     @Test func rawStringRoundTrips() {
-        #expect(AppTab.sessions.rawString == "sessions")
+        #expect(AppTab.workspaces.rawString == "workspaces")
         #expect(AppTab.settings.rawString == "settings")
     }
 
     @Test func initFromRawString() {
         #expect(AppTab(rawString: "workspaces") == .workspaces)
-        #expect(AppTab(rawString: "sessions") == .sessions)
+        #expect(AppTab(rawString: "sessions") == .workspaces)
         #expect(AppTab(rawString: "settings") == .settings)
     }
 

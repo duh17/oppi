@@ -10,7 +10,7 @@ struct RestorationState: Codable {
 
     let version: Int
     let activeSessionId: String?
-    let selectedTab: String  // "sessions", "settings"
+    let selectedTab: String  // "workspaces", "settings"
     let composerDraft: String?
     /// ID of the topmost visible chat item when the app was backgrounded.
     let scrollAnchorItemId: String?
@@ -65,16 +65,19 @@ extension AppTab {
     var rawString: String {
         switch self {
         case .workspaces: return "workspaces"
-        case .sessions: return "sessions"
         case .settings: return "settings"
         }
     }
 
     init(rawString: String) {
         switch rawString {
-        case "sessions": self = .sessions
-        case "settings": self = .settings
-        default: self = .workspaces
+        case "settings":
+            self = .settings
+        case "sessions":
+            // Backward compatibility for pre-workspace-tab snapshots.
+            self = .workspaces
+        default:
+            self = .workspaces
         }
     }
 }
