@@ -313,9 +313,9 @@ private struct StreamingCursor: View {
         Rectangle()
             .fill(Color.tokyoPurple)
             .frame(width: 8, height: 14)
-            .opacity(isVisible ? 0.8 : 0.2)
+            .opacity(isVisible ? 0.55 : 0.4)
             .onAppear {
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                     isVisible = false
                 }
             }
@@ -416,11 +416,17 @@ private struct ToolCallRow: View {
 
     @State private var isLoadingOutput = false
 
+    private let filePathMaxWidth: CGFloat = 220
+
     private var isExpanded: Bool { reducer.expandedItemIDs.contains(id) }
     private var args: [String: JSONValue]? { toolArgsStore.args(for: id) }
-    private var toolFilePath: String? { ToolCallFormatting.filePath(from: args) }
+    private var toolFilePath: String? {
+        ToolCallFormatting.filePath(from: args)
+            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+    }
     private var readStartLine: Int { ToolCallFormatting.readStartLine(from: args) }
     private var normalizedTool: String { ToolCallFormatting.normalized(tool) }
+    private var trailingMinWidth: CGFloat { normalizedTool == "edit" ? 72 : 44 }
     private var bashRawCommand: String? {
         args?["command"]?.stringValue ?? ToolCallFormatting.parseArgValue("command", from: argsSummary)
     }
@@ -478,14 +484,16 @@ private struct ToolCallRow: View {
                 if !isExpanded && isDone { collapsedPreview }
 
                 if isExpanded {
-                    if isLoadingOutput {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading output…").font(.caption).foregroundStyle(.tokyoComment)
+                    Group {
+                        if isLoadingOutput {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Loading output…").font(.caption).foregroundStyle(.tokyoComment)
+                            }
+                            .padding(8)
+                        } else {
+                            expandedContent
                         }
-                        .padding(8)
-                    } else {
-                        expandedContent
                     }
                 }
             }
@@ -514,7 +522,7 @@ private struct ToolCallRow: View {
 
     // MARK: - Expand & Lazy Load
 
-    private func setExpanded(_ expanded: Bool, animated: Bool) {
+    private func setExpanded(_ expanded: Bool) {
         let mutation = {
             if expanded {
                 reducer.expandedItemIDs.insert(id)
@@ -523,26 +531,20 @@ private struct ToolCallRow: View {
             }
         }
 
-        if animated {
-            withAnimation(.easeOut(duration: 0.16)) {
-                mutation()
-            }
-        } else {
-            withTransaction(Transaction(animation: nil)) {
-                mutation()
-            }
+        // Avoid height animations here. Mixed native/SwiftUI row switching can
+        // produce perceived flicker during expand/collapse when animated.
+        withTransaction(Transaction(animation: nil)) {
+            mutation()
         }
     }
 
     private func expandOrLazyLoad() {
         if isExpanded {
-            // Collapsing large tool output can trigger a visible bounce if the
-            // height change is animated through UIKit-hosted layout.
-            setExpanded(false, animated: false)
+            setExpanded(false)
             return
         }
 
-        setExpanded(true, animated: true)
+        setExpanded(true)
 
         let hasOutput = !toolOutputStore.fullOutput(for: id).isEmpty
         if !hasOutput && outputByteCount > 0 && !isLoadingOutput {
@@ -570,13 +572,19 @@ private struct ToolCallRow: View {
     // MARK: - Tool Header
 
     /// Composable tool header — all headers follow the same shell:
-    /// `statusIcon | [tool-specific content] | Spacer | trailingInfo`
+    /// `statusIcon | [tool-specific content] | trailingInfo`
+    ///
+    /// Middle content can shrink/truncate; trailing info stays anchored.
     @ViewBuilder
     private var toolHeader: some View {
         HStack(spacing: 6) {
             statusIcon
-            toolHeaderContent
-            Spacer()
+
+            HStack(spacing: 4) {
+                toolHeaderContent
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             trailingInfo
         }
     }
@@ -589,8 +597,8 @@ private struct ToolCallRow: View {
             Text("$").font(.caption.monospaced().bold()).foregroundStyle(.tokyoGreen)
             if isExpanded {
                 Text("bash")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(theme.text.tertiary)
+                    .font(.caption2.monospaced().bold())
+                    .foregroundStyle(.tokyoGreen)
                     .lineLimit(1)
             } else {
                 Text(bashCommand)
@@ -603,7 +611,11 @@ private struct ToolCallRow: View {
         case "read", "write", "edit":
             let (icon, verb) = fileToolInfo
             Image(systemName: icon).font(.caption).foregroundStyle(.tokyoCyan)
-            Text(verb).font(.caption.monospaced().bold()).foregroundStyle(.tokyoCyan)
+            Text(verb)
+                .font(.caption.monospaced().bold())
+                .foregroundStyle(.tokyoCyan)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             filePathLabel
 
         case "grep":
@@ -675,10 +687,19 @@ private struct ToolCallRow: View {
                     .foregroundStyle(.tokyoBlue)
                     .underline(color: .tokyoBlue.opacity(0.5))
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: filePathMaxWidth, alignment: .leading)
+                    .layoutPriority(0)
             }
             .buttonStyle(.plain)
         } else {
-            Text(display).font(.caption.monospaced()).foregroundStyle(.tokyoFgDim).lineLimit(1)
+            Text(display)
+                .font(.caption.monospaced())
+                .foregroundStyle(.tokyoFgDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: filePathMaxWidth, alignment: .leading)
+                .layoutPriority(0)
         }
     }
 
@@ -689,33 +710,27 @@ private struct ToolCallRow: View {
     }
 
     private var trailingInfo: some View {
-        HStack(spacing: 4) {
-            if normalizedTool == "edit",
-               let stats = ToolCallFormatting.editDiffStats(from: args) {
-                if stats.added > 0 {
-                    Text("+\(stats.added)")
-                        .font(.caption2.monospaced().bold())
-                        .foregroundStyle(.tokyoGreen)
-                }
-                if stats.removed > 0 {
-                    Text("-\(stats.removed)")
-                        .font(.caption2.monospaced().bold())
-                        .foregroundStyle(.tokyoRed)
-                }
-                if stats.added == 0 && stats.removed == 0 {
-                    Text("modified")
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tokyoComment)
-                }
-            }
+        let editStats = normalizedTool == "edit" ? ToolCallFormatting.editDiffStats(from: args) : nil
 
-            if outputByteCount > 0 {
+        return HStack(spacing: 4) {
+            if let stats = editStats {
+                Text("+\(stats.added)")
+                    .font(.caption2.monospaced().bold())
+                    .foregroundStyle(.tokyoGreen)
+                Text("-\(stats.removed)")
+                    .font(.caption2.monospaced().bold())
+                    .foregroundStyle(.tokyoRed)
+            } else if outputByteCount > 0 {
                 Text(ToolCallFormatting.formatBytes(outputByteCount))
                     .font(.caption2).foregroundStyle(.tokyoComment)
             }
+
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 .font(.caption2).foregroundStyle(.tokyoComment)
         }
+        .frame(minWidth: trailingMinWidth, alignment: .trailing)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(3)
     }
 
     private var bashCommand: String {
@@ -760,25 +775,6 @@ private struct ToolCallRow: View {
                 .foregroundStyle(.tokyoFgDim)
                 .lineLimit(3)
                 .padding(.horizontal, 4)
-        }
-    }
-
-    /// +N/-N change stats for edit tool.
-    @ViewBuilder
-    private var editStats: some View {
-        if let stats = ToolCallFormatting.editDiffStats(from: args) {
-            HStack(spacing: 8) {
-                if stats.added > 0 {
-                    Text("+\(stats.added)").font(.caption2.monospaced().bold()).foregroundStyle(.tokyoGreen)
-                }
-                if stats.removed > 0 {
-                    Text("-\(stats.removed)").font(.caption2.monospaced().bold()).foregroundStyle(.tokyoRed)
-                }
-                if stats.added == 0 && stats.removed == 0 {
-                    Text("modified").font(.caption2.monospaced()).foregroundStyle(.tokyoComment)
-                }
-            }
-            .padding(.horizontal, 4)
         }
     }
 
@@ -962,30 +958,4 @@ struct SystemEventRow: View {
         .padding(.vertical, 4)
     }
 }
-
-// MARK: - Error
-
-private struct ErrorRow: View {
-    let message: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.tokyoRed)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.tokyoFg)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoRed.opacity(0.18))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .contextMenu {
-            Button("Copy Error", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = message
-            }
-        }
-    }
-}
-
 

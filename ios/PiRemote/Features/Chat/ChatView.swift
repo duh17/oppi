@@ -49,6 +49,23 @@ struct ChatView: View {
         session?.status == .stopped
     }
 
+    private var runtimeSyncState: RuntimeStatusBadge.SyncState {
+        guard let wsClient = connection.wsClient else {
+            return .offline
+        }
+
+        let ownsSession = wsClient.connectedSessionId == sessionId
+
+        switch wsClient.status {
+        case .connected:
+            return ownsSession ? .live : .offline
+        case .connecting, .reconnecting:
+            return ownsSession ? .syncing : .offline
+        case .disconnected:
+            return .offline
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             SessionToolbar(
@@ -123,7 +140,8 @@ struct ChatView: View {
                     }
                     RuntimeStatusBadge(
                         runtime: session?.runtime,
-                        statusColor: session?.status.color ?? .tokyoComment
+                        statusColor: session?.status.color ?? .tokyoComment,
+                        syncState: runtimeSyncState
                     )
                 }
             }
@@ -590,7 +608,7 @@ private struct ChatTimelineView: View {
     private static let initialRenderWindow = 80
     private static let renderWindowStep = 60
     /// Guardrail for exact scroll restoration. Expanding the window to thousands
-    /// of rows in one pass can stall LazyVStack placement on older devices.
+    /// of rows in one pass can stall placement on older devices.
     private static let maxRestorationWindow = 180
 
     let sessionId: String
@@ -600,9 +618,14 @@ private struct ChatTimelineView: View {
     let onFork: (String) -> Void
 
     @Environment(TimelineReducer.self) private var reducer
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(\.theme) private var theme
 
     @State private var renderWindow = Self.initialRenderWindow
     @State private var fileToOpen: FileToOpen?
+    @State private var scrollCommandNonce = 0
+    @State private var pendingScrollCommand: ChatTimelineScrollCommand?
 
     private var visibleItems: ArraySlice<ChatItem> {
         reducer.items.suffix(renderWindow)
@@ -612,94 +635,102 @@ private struct ChatTimelineView: View {
         max(0, reducer.items.count - visibleItems.count)
     }
 
+    private var showsWorkingIndicator: Bool {
+        isBusy && reducer.streamingAssistantID == nil
+    }
+
+    private var bottomItemID: String? {
+        if showsWorkingIndicator {
+            return ChatTimelineCollectionView.workingIndicatorID
+        }
+        return visibleItems.last?.id
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    if hiddenCount > 0 {
-                        Button {
-                            renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
-                        } label: {
-                            Text("Show \(min(Self.renderWindowStep, hiddenCount)) earlier messages (\(hiddenCount) hidden)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.tokyoBlue)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 6)
-                        }
-                        .buttonStyle(.plain)
-                    }
+        ChatTimelineCollectionView(
+            configuration: .init(
+                items: Array(visibleItems),
+                hiddenCount: hiddenCount,
+                renderWindowStep: Self.renderWindowStep,
+                isBusy: isBusy,
+                streamingAssistantID: reducer.streamingAssistantID,
+                sessionId: sessionId,
+                onFork: onFork,
+                onOpenFile: { fileToOpen = $0 },
+                onShowEarlier: {
+                    renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
+                },
+                scrollCommand: pendingScrollCommand,
+                scrollController: scrollController,
+                reducer: reducer,
+                toolOutputStore: reducer.toolOutputStore,
+                toolArgsStore: reducer.toolArgsStore,
+                connection: connection,
+                audioPlayer: audioPlayer,
+                theme: theme,
+                themeID: ThemeRuntimeState.currentThemeID()
+            )
+        )
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            PermissionOverlay(sessionId: sessionId)
+        }
+        .background(Color.tokyoBg)
+        .overlay {
+            if reducer.items.isEmpty && !isBusy {
+                ChatEmptyState()
+            }
+        }
+        .onChange(of: reducer.renderVersion) { _, _ in
+            scrollController._diagnosticItemCount = visibleItems.count
+            scrollController.handleRenderVersionChange(
+                streamingID: reducer.streamingAssistantID,
+                bottomItemID: bottomItemID
+            ) { targetID in
+                issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
+            }
+        }
+        .onChange(of: sessionManager.needsInitialScroll) { _, needs in
+            guard needs else { return }
+            sessionManager.needsInitialScroll = false
+            scrollController.needsInitialScroll = true
+            scrollController.handleInitialScroll(bottomItemID: bottomItemID) { targetID in
+                issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
+            }
+        }
+        .onChange(of: scrollController.scrollTargetID) { _, targetID in
+            guard targetID != nil else { return }
+            if let targetID, !visibleItems.contains(where: { $0.id == targetID }) {
+                renderWindow = reducer.items.count
+            }
+            scrollController.handleScrollTarget { target in
+                issueScrollCommand(id: target, anchor: .top, animated: true)
+            }
+        }
+        .onChange(of: sessionManager.restorationScrollItemId) { _, itemId in
+            guard let itemId else { return }
+            sessionManager.restorationScrollItemId = nil
 
-                    ForEach(visibleItems) { item in
-                        ChatItemRow(
-                            item: item,
-                            isStreaming: item.id == reducer.streamingAssistantID,
-                            sessionId: sessionId,
-                            onFork: onFork,
-                            onOpenFile: { fileToOpen = $0 }
-                        )
-                    }
+            guard let targetIndex = reducer.items.firstIndex(where: { $0.id == itemId }) else { return }
+            let requiredWindow = reducer.items.count - targetIndex
+            guard requiredWindow <= Self.maxRestorationWindow else { return }
 
-                    if isBusy && reducer.streamingAssistantID == nil {
-                        WorkingIndicator()
-                            .id("working-indicator")
-                    }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bottom-sentinel")
-                        .onAppear { scrollController.onSentinelAppear() }
-                        .onDisappear { scrollController.onSentinelDisappear() }
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+            if !visibleItems.contains(where: { $0.id == itemId }) {
+                renderWindow = max(renderWindow, requiredWindow)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                PermissionOverlay(sessionId: sessionId)
-            }
-            .background(Color.tokyoBg)
-            .overlay {
-                if reducer.items.isEmpty && !isBusy {
-                    ChatEmptyState()
-                }
-            }
-            .onChange(of: reducer.renderVersion) { _, _ in
-                scrollController._diagnosticItemCount = visibleItems.count
-                scrollController.handleRenderVersionChange(
-                    proxy: proxy,
-                    streamingID: reducer.streamingAssistantID
-                )
-            }
-            .onChange(of: sessionManager.needsInitialScroll) { _, needs in
-                guard needs else { return }
-                sessionManager.needsInitialScroll = false
-                scrollController.needsInitialScroll = true
-                scrollController.handleInitialScroll(proxy: proxy)
-            }
-            .onChange(of: scrollController.scrollTargetID) { _, targetID in
-                guard let targetID else { return }
-                if !visibleItems.contains(where: { $0.id == targetID }) {
-                    renderWindow = reducer.items.count
-                }
-                scrollController.handleScrollTarget(proxy: proxy)
-            }
-            .onChange(of: sessionManager.restorationScrollItemId) { _, itemId in
-                guard let itemId else { return }
-                sessionManager.restorationScrollItemId = nil
-
-                guard let targetIndex = reducer.items.firstIndex(where: { $0.id == itemId }) else { return }
-                let requiredWindow = reducer.items.count - targetIndex
-                guard requiredWindow <= Self.maxRestorationWindow else { return }
-
-                if !visibleItems.contains(where: { $0.id == itemId }) {
-                    renderWindow = max(renderWindow, requiredWindow)
-                }
-                scrollController.scrollTargetID = itemId
-            }
+            scrollController.scrollTargetID = itemId
         }
         .sheet(item: $fileToOpen) { file in
             RemoteFileView(sessionId: file.sessionId, path: file.path)
         }
+    }
+
+    private func issueScrollCommand(id: String, anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {
+        scrollCommandNonce &+= 1
+        pendingScrollCommand = ChatTimelineScrollCommand(
+            id: id,
+            anchor: anchor,
+            animated: animated,
+            nonce: scrollCommandNonce
+        )
     }
 }

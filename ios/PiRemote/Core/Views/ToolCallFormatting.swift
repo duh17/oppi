@@ -94,6 +94,9 @@ enum ToolCallFormatting {
     }
 
     /// Format file path for header display with optional line range.
+    ///
+    /// Prioritizes the most relevant suffix (`parent/file`) so the filename and
+    /// read line range remain visible in narrow tool rows.
     static func displayFilePath(
         tool: String,
         args: [String: JSONValue]?,
@@ -103,7 +106,7 @@ enum ToolCallFormatting {
             ?? parseArgValue("path", from: argsSummary)
         guard let path = raw else { return argsSummary }
 
-        var display = path.shortenedPath
+        var display = compactDisplayPath(path)
 
         // Append line range for read tool
         if isReadTool(tool) {
@@ -116,6 +119,36 @@ enum ToolCallFormatting {
         }
 
         return display
+    }
+
+    /// Keep only the path tail for compact row headers.
+    ///
+    /// Examples:
+    /// - `/Users/chenda/workspace/pios/ios/PiRemote/Features/Chat/File.swift`
+    ///   -> `Chat/File.swift`
+    /// - `src/server.ts` -> `src/server.ts`
+    /// - `README.md` -> `README.md`
+    private static func compactDisplayPath(_ rawPath: String) -> String {
+        let shortened = rawPath.shortenedPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !shortened.isEmpty else { return rawPath }
+
+        var components = shortened
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        if components.first == "~" {
+            components.removeFirst()
+        }
+
+        guard !components.isEmpty else {
+            return shortened
+        }
+
+        if components.count == 1 {
+            return components[0]
+        }
+
+        return components.suffix(2).joined(separator: "/")
     }
 
     /// Parse a value from the flat argsSummary string.
@@ -163,12 +196,44 @@ enum ToolCallFormatting {
     static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {
         guard let oldText = args?["oldText"]?.stringValue,
               let newText = args?["newText"]?.stringValue else { return nil }
-        let oldLines = oldText.split(separator: "\n", omittingEmptySubsequences: false).count
-        let newLines = newText.split(separator: "\n", omittingEmptySubsequences: false).count
-        return DiffStats(
-            added: max(0, newLines - oldLines),
-            removed: max(0, oldLines - newLines)
-        )
+
+        if oldText == newText {
+            return DiffStats(added: 0, removed: 0)
+        }
+
+        var oldLines = oldText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var newLines = newText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        // Keep line counts aligned with DiffEngine behavior (trim synthetic
+        // trailing empty line created by terminal newline).
+        if oldLines.count > 1, oldLines.last == "" {
+            oldLines.removeLast()
+        }
+        if newLines.count > 1, newLines.last == "" {
+            newLines.removeLast()
+        }
+
+        let sharedCount = min(oldLines.count, newLines.count)
+        var added = 0
+        var removed = 0
+
+        // Count in-place replacements as one removed + one added line so
+        // edits like "rename var" surface as changed lines in collapsed rows.
+        if sharedCount > 0 {
+            for index in 0..<sharedCount where oldLines[index] != newLines[index] {
+                added += 1
+                removed += 1
+            }
+        }
+
+        if newLines.count > sharedCount {
+            added += newLines.count - sharedCount
+        }
+        if oldLines.count > sharedCount {
+            removed += oldLines.count - sharedCount
+        }
+
+        return DiffStats(added: added, removed: removed)
     }
 
     // MARK: - Preview Extraction

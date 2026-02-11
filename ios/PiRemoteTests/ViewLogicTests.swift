@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import SwiftUI
+import UIKit
 @testable import PiRemote
 
 // MARK: - DiffEngine
@@ -386,6 +387,27 @@ struct SyntaxHighlighterTests {
         #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
         #expect(foregroundColor(of: "--scheme", in: result) == .tokyoYellow)
         #expect(foregroundColor(of: "$SCHEME", in: result) == .tokyoCyan)
+    }
+
+    @Test func shellHighlightingBridgesToUIKitForegroundColors() {
+        let line = "xcodebuild -scheme PiRemote"
+        let highlighted = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let bridged = NSAttributedString(highlighted)
+        let text = bridged.string as NSString
+
+        let commandRange = text.range(of: "xcodebuild")
+        let optionRange = text.range(of: "-scheme")
+        guard commandRange.location != NSNotFound,
+              optionRange.location != NSNotFound else {
+            Issue.record("Expected shell tokens in bridged attributed string")
+            return
+        }
+
+        let commandColor = bridged.attribute(.foregroundColor, at: commandRange.location, effectiveRange: nil) as? UIColor
+        let optionColor = bridged.attribute(.foregroundColor, at: optionRange.location, effectiveRange: nil) as? UIColor
+
+        #expect(commandColor == UIColor(Color.tokyoCyan))
+        #expect(optionColor == UIColor(Color.tokyoYellow))
     }
 
     private func foregroundColor(of substring: String, in attributed: AttributedString) -> Color? {

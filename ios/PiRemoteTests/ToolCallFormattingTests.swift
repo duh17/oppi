@@ -130,11 +130,10 @@ struct ToolCallFormattingTests {
 
     // MARK: - Display File Path
 
-    @Test func displayFilePathShortens() {
+    @Test func displayFilePathShowsTailComponents() {
         let args: [String: JSONValue] = ["path": .string("/Users/chenda/workspace/project/src/main.swift")]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
-        #expect(result.contains("~"))
-        #expect(!result.hasPrefix("/Users/chenda"))
+        #expect(result == "src/main.swift")
     }
 
     @Test func displayFilePathWithLineRange() {
@@ -145,6 +144,16 @@ struct ToolCallFormattingTests {
         ]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
         #expect(result.contains(":10-29"))
+    }
+
+    @Test func displayFilePathShowsTailAndLineRangeForAbsolutePath() {
+        let args: [String: JSONValue] = [
+            "path": .string("/Users/chenda/workspace/pios/ios/PiRemote/Features/Chat/ToolTimelineRowContent.swift"),
+            "offset": .number(1),
+            "limit": .number(120),
+        ]
+        let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
+        #expect(result == "Chat/ToolTimelineRowContent.swift:1-120")
     }
 
     @Test func displayFilePathOffsetOnly() {
@@ -187,6 +196,35 @@ struct ToolCallFormattingTests {
     @Test func parseArgValueMissing() {
         let result = ToolCallFormatting.parseArgValue("missing", from: "path: /src/main.swift")
         #expect(result == nil)
+    }
+
+    // MARK: - Edit Diff Stats
+
+    @Test func editDiffStatsCountsReplacements() {
+        let args: [String: JSONValue] = [
+            "oldText": .string("let value = 1\n"),
+            "newText": .string("let value = 2\n"),
+        ]
+
+        let stats = ToolCallFormatting.editDiffStats(from: args)
+        #expect(stats?.added == 1)
+        #expect(stats?.removed == 1)
+    }
+
+    @Test func editDiffStatsCountsInsertionsAndDeletions() {
+        let args: [String: JSONValue] = [
+            "oldText": .string("a\nb\nc\n"),
+            "newText": .string("a\nb\n"),
+        ]
+
+        let stats = ToolCallFormatting.editDiffStats(from: args)
+        #expect(stats?.added == 0)
+        #expect(stats?.removed == 1)
+    }
+
+    @Test func editDiffStatsNilWhenArgsMissing() {
+        #expect(ToolCallFormatting.editDiffStats(from: nil) == nil)
+        #expect(ToolCallFormatting.editDiffStats(from: ["oldText": .string("a")]) == nil)
     }
 
     // MARK: - Format Bytes

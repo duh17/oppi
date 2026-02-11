@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - ANSIParser
 
@@ -34,7 +35,9 @@ enum ANSIParser {
             case .text(let str):
                 var attrs = AttributedString(str)
                 attrs.font = state.font(base: baseFont)
-                attrs.foregroundColor = state.foreground ?? baseForeground
+                let foreground = state.foreground ?? baseForeground
+                attrs.foregroundColor = foreground
+                attrs[AttributeScopes.UIKitAttributes.ForegroundColorAttribute.self] = UIColor(foreground)
                 if state.underline {
                     attrs.underlineStyle = .single
                 }

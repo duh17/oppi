@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 // MARK: - Async Tool Output
@@ -14,38 +15,66 @@ struct AsyncToolOutput: View {
 
     @State private var parsed: ParsedToolOutput?
 
+    private var parseKey: String {
+        let prefix = String(output.prefix(64))
+        let suffix = String(output.suffix(64))
+        return "\(output.utf8.count):\(filePath ?? ""):\(prefix):\(suffix)"
+    }
+
+    /// Use a full-fidelity fallback while background parsing runs. This keeps
+    /// expanded rows visually stable when cells are reused during scrolling.
+    private var effectiveParsed: ParsedToolOutput {
+        parsed ?? ParsedToolOutput(
+            images: [],
+            audio: [],
+            strippedText: output,
+            isReadFile: filePath != nil,
+            isReadWithMedia: false,
+            structured: nil
+        )
+    }
+
     var body: some View {
+        let model = effectiveParsed
+
         Group {
-            if let parsed {
-                if parsed.isReadWithMedia {
-                    ToolOutputMedia(
-                        images: parsed.images,
-                        audio: parsed.audio,
-                        strippedText: parsed.strippedText,
-                        isError: isError
-                    )
-                } else if parsed.isReadFile, let filePath {
-                    FileContentView(content: output, filePath: filePath, startLine: startLine)
-                } else {
-                    ToolOutputMedia(
-                        images: parsed.images,
-                        audio: parsed.audio,
-                        strippedText: parsed.strippedText,
-                        isError: isError
-                    )
-                }
+            if model.isReadWithMedia {
+                ToolOutputMedia(
+                    images: model.images,
+                    audio: model.audio,
+                    strippedText: model.strippedText,
+                    isError: isError
+                )
+            } else if model.isReadFile, let filePath {
+                FileContentView(content: output, filePath: filePath, startLine: startLine)
+            } else if let structured = model.structured {
+                StructuredToolOutputView(value: structured, isError: isError)
             } else {
-                Text(String(output.prefix(200)))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(isError ? .tokyoRed : .tokyoFgDim)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ToolOutputMedia(
+                    images: model.images,
+                    audio: model.audio,
+                    strippedText: model.strippedText,
+                    isError: isError
+                )
             }
         }
-        .task(id: output.count) {
-            parsed = await Task.detached(priority: .userInitiated) {
-                ParsedToolOutput.parse(output, isReadFile: filePath != nil)
+        .transaction { tx in
+            tx.animation = nil
+        }
+        .task(id: parseKey) {
+            if let cached = ParsedToolOutputCache.shared.value(forKey: parseKey) {
+                parsed = cached
+                return
+            }
+
+            let output = self.output
+            let isReadFile = self.filePath != nil
+            let computed = await Task.detached(priority: .userInitiated) {
+                ParsedToolOutput.parse(output, isReadFile: isReadFile)
             }.value
+
+            ParsedToolOutputCache.shared.set(computed, forKey: parseKey)
+            parsed = computed
         }
     }
 }
@@ -59,6 +88,7 @@ private struct ParsedToolOutput: Sendable {
     let strippedText: String
     let isReadFile: Bool
     let isReadWithMedia: Bool
+    let structured: JSONValue?
 
     static func parse(_ output: String, isReadFile: Bool) -> ParsedToolOutput {
         let images = ImageExtractor.extract(from: output)
@@ -77,13 +107,61 @@ private struct ParsedToolOutput: Sendable {
             strippedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        let structured = parseStructuredJSON(strippedText, isReadFile: isReadFile, hasMedia: !images.isEmpty || !audio.isEmpty)
+
         return ParsedToolOutput(
             images: images,
             audio: audio,
             strippedText: strippedText,
             isReadFile: isReadFile,
-            isReadWithMedia: isReadFile && (!images.isEmpty || !audio.isEmpty)
+            isReadWithMedia: isReadFile && (!images.isEmpty || !audio.isEmpty),
+            structured: structured
         )
+    }
+
+    private static func parseStructuredJSON(_ text: String, isReadFile: Bool, hasMedia: Bool) -> JSONValue? {
+        if isReadFile || hasMedia {
+            return nil
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "{" || first == "[" else {
+            return nil
+        }
+
+        guard let data = trimmed.data(using: .utf8) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
+    }
+}
+
+/// In-memory cache for parsed tool output to avoid repeated async re-parsing
+/// when expanded rows scroll off/on screen and cells are reused.
+private final class ParsedToolOutputCache: @unchecked Sendable {
+    static let shared = ParsedToolOutputCache()
+
+    private let cache = NSCache<NSString, Box>()
+
+    private init() {
+        cache.countLimit = 256
+    }
+
+    func value(forKey key: String) -> ParsedToolOutput? {
+        cache.object(forKey: key as NSString)?.value
+    }
+
+    func set(_ value: ParsedToolOutput, forKey key: String) {
+        cache.setObject(Box(value), forKey: key as NSString)
+    }
+
+    private final class Box {
+        let value: ParsedToolOutput
+
+        init(_ value: ParsedToolOutput) {
+            self.value = value
+        }
     }
 }
 
@@ -145,6 +223,44 @@ private struct ToolOutputMedia: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Structured Tool Output
+
+/// Generic renderer for structured JSON outputs from custom extensions.
+private struct StructuredToolOutputView: View {
+    let value: JSONValue
+    let isError: Bool
+
+    private var prettyJSON: String {
+        guard let data = try? prettyEncoder.encode(value),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return value.summary(maxLength: 4_000)
+        }
+        return String(text.prefix(20_000))
+    }
+
+    private var prettyEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+
+    var body: some View {
+        Text(prettyJSON)
+            .font(.caption.monospaced())
+            .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.tokyoBgDark)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contextMenu {
+                Button("Copy Output", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = prettyJSON
+                }
+            }
     }
 }
 

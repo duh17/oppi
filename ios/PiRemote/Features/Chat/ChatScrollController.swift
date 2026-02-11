@@ -115,15 +115,31 @@ final class ChatScrollController {
         anchor.isNearBottom = false
     }
 
+    /// CollectionView backend updates this directly from scroll callbacks.
+    func updateNearBottom(_ isNearBottom: Bool) {
+        guard anchor.isNearBottom != isNearBottom else { return }
+        anchor.isNearBottom = isNearBottom
+    }
+
+    /// CollectionView backend updates this from visible index tracking.
+    func updateTopVisibleItemId(_ itemId: String?) {
+        guard anchor.topVisibleItemId != itemId else { return }
+        anchor.topVisibleItemId = itemId
+    }
+
     // MARK: - Auto-Scroll on Content Change
 
     /// Called when `renderVersion` changes. Schedules a throttled scroll
     /// if the user is near the bottom.
     ///
     /// When `streamingID` is provided, scrolls to the streaming assistant
-    /// message instead of the bottom sentinel. This prevents the cursor
-    /// from bouncing as the sentinel position shifts with content growth.
-    func handleRenderVersionChange(proxy: ScrollViewProxy, streamingID: String? = nil) {
+    /// message instead of the bottom item. This prevents the cursor from
+    /// bouncing as content grows.
+    func handleRenderVersionChange(
+        streamingID: String? = nil,
+        bottomItemID: String?,
+        performScrollToBottom: @escaping (String) -> Void
+    ) {
         guard anchor.isNearBottom else { return }
         guard !isKeyboardTransitionActive else { return }
 
@@ -131,7 +147,7 @@ final class ChatScrollController {
 
         // Guardrail: in very large timelines, non-streaming auto-scrolls are
         // usually redundant (the user is already at the tail) and can trigger
-        // expensive LazyVStack placement cascades.
+        // expensive placement cascades.
         if isHeavyTimeline, streamingID == nil {
             return
         }
@@ -144,10 +160,7 @@ final class ChatScrollController {
             return
         }
 
-        // During active streaming, scroll to the message itself so the
-        // cursor stays pinned in the viewport. Fall back to the sentinel
-        // for non-streaming updates (tool rows, working indicator, etc.).
-        let targetID = streamingID ?? "bottom-sentinel"
+        guard let targetID = streamingID ?? bottomItemID else { return }
         let throttleDelay: Duration = isHeavyTimeline ? .milliseconds(180) : .milliseconds(60)
 
         scrollTask = Task { @MainActor in
@@ -156,10 +169,20 @@ final class ChatScrollController {
             guard !Task.isCancelled else { return }
             guard anchor.isNearBottom else { return }
 
+            performScrollToBottom(targetID)
+            lastAutoScrollAt = ContinuousClock.now
+        }
+    }
+
+    /// Legacy ScrollViewProxy adapter (kept for fallback path).
+    func handleRenderVersionChange(proxy: ScrollViewProxy, streamingID: String? = nil) {
+        handleRenderVersionChange(
+            streamingID: streamingID,
+            bottomItemID: "bottom-sentinel"
+        ) { targetID in
             withTransaction(Transaction(animation: nil)) {
                 proxy.scrollTo(targetID, anchor: .bottom)
             }
-            lastAutoScrollAt = ContinuousClock.now
         }
     }
 
@@ -168,23 +191,38 @@ final class ChatScrollController {
 
     /// Called when `needsInitialScroll` becomes true. Scrolls to bottom
     /// after a short layout delay.
-    func handleInitialScroll(proxy: ScrollViewProxy) {
+    func handleInitialScroll(bottomItemID: String?, performScrollToBottom: @escaping (String) -> Void) {
         guard needsInitialScroll else { return }
         needsInitialScroll = false
 
+        guard let bottomItemID else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            performScrollToBottom(bottomItemID)
+        }
+    }
+
+    /// Legacy ScrollViewProxy adapter (kept for fallback path).
+    func handleInitialScroll(proxy: ScrollViewProxy) {
+        handleInitialScroll(bottomItemID: "bottom-sentinel") { bottomItemID in
             withTransaction(Transaction(animation: nil)) {
-                proxy.scrollTo("bottom-sentinel", anchor: .bottom)
+                proxy.scrollTo(bottomItemID, anchor: .bottom)
             }
         }
     }
 
     /// Called when `scrollTargetID` changes. Scrolls to the target item
     /// with animation after a layout delay.
-    func handleScrollTarget(proxy: ScrollViewProxy) {
+    func handleScrollTarget(performScrollToTop: @escaping (String) -> Void) {
         guard let target = scrollTargetID else { return }
         scrollTargetID = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            performScrollToTop(target)
+        }
+    }
+
+    /// Legacy ScrollViewProxy adapter (kept for fallback path).
+    func handleScrollTarget(proxy: ScrollViewProxy) {
+        handleScrollTarget { target in
             withAnimation(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo(target, anchor: .top)
             }

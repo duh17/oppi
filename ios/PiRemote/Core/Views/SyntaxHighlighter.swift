@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - SyntaxLanguage
 
@@ -801,6 +802,7 @@ enum SyntaxHighlighter {
     private static func colored(_ text: String, _ color: Color) -> AttributedString {
         var attr = AttributedString(text)
         attr.foregroundColor = color
+        attr[AttributeScopes.UIKitAttributes.ForegroundColorAttribute.self] = UIColor(color)
         return attr
     }
 }
