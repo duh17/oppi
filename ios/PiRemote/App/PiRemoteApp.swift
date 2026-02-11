@@ -324,9 +324,10 @@ struct PiRemoteApp: App {
                 }
             }
         } catch {
-            // If profile check fails, continue with cached policy and rely on
-            // the refresh path below for online/offline handling.
+            launchOutcome = "missing_security_profile"
             appLog.error("SECURITY profile check failed on launch: \(error.localizedDescription, privacy: .public)")
+            navigation.showOnboarding = true
+            return
         }
 
         navigation.showOnboarding = false

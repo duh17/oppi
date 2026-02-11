@@ -271,7 +271,22 @@ async function cmdInvite(
     name: shortHostLabel(inviteHost),
   };
 
-  const inviteFormat = config.invite?.format || "v1-unsigned";
+  const inviteFormat = config.invite?.format || "v2-signed";
+  const securityProfile = config.security?.profile || "legacy";
+  const allowLegacyUnsigned =
+    securityProfile === "legacy" && (config.invite?.allowLegacyV1Unsigned ?? false);
+
+  if (inviteFormat === "v1-unsigned" && !allowLegacyUnsigned) {
+    console.log(
+      chalk.red(
+        `  Error: invite.format=v1-unsigned is not allowed for security profile "${securityProfile}".`,
+      ),
+    );
+    console.log(chalk.dim("  Set invite.format to v2-signed (recommended)."));
+    console.log("");
+    process.exit(1);
+  }
+
   let inviteJson: string;
   let inviteUrl: string;
 

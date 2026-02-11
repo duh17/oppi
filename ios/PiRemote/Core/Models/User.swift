@@ -9,10 +9,9 @@ struct User: Codable, Sendable, Equatable {
 
 /// Connection credentials from QR code scan.
 ///
-/// Legacy v1 QR payload:
-/// `{"host":"...","port":7749,"token":"sk_...","name":"Chen"}`
-///
 /// Signed v2 payload is an envelope decoded by `decodeInvitePayload(_:)`.
+///
+/// Historical note: legacy unsigned v1 payloads are no longer accepted.
 struct ServerCredentials: Codable, Sendable, Equatable {
     let host: String
     let port: Int
@@ -69,18 +68,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         URL(string: "ws://\(host):\(port)/workspaces/\(workspaceId)/sessions/\(sessionId)/stream")
     }
 
-    /// Decode either legacy v1 invite JSON or signed v2 envelope JSON.
+    /// Decode signed v2 invite envelope JSON.
     static func decodeInvitePayload(_ payload: String) -> ServerCredentials? {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
-
-        // v1 legacy path
-        if let legacy = try? decoder.decode(ServerCredentials.self, from: data) {
-            guard !legacy.host.isEmpty, (1...65_535).contains(legacy.port), !legacy.token.isEmpty else {
-                return nil
-            }
-            return legacy
-        }
 
         // v2 signed envelope path
         guard let env = try? decoder.decode(InviteEnvelopeV2.self, from: data) else {

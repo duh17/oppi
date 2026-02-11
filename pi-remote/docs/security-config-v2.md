@@ -73,7 +73,7 @@ Non-goals (v2):
     "format": "v2-signed",
     "maxAgeSeconds": 600,
     "singleUse": false,
-    "allowLegacyV1Unsigned": true
+    "allowLegacyV1Unsigned": false
   }
 }
 ```
@@ -102,7 +102,7 @@ Defines server signing identity for invites and trust handshakes.
 - `v2-signed` (recommended)
 
 #### `invite.allowLegacyV1Unsigned`
-Temporary compatibility switch. Must default to `false` in strict profile.
+Compatibility switch for explicit legacy mode only. Must be `false` for non-legacy security profiles.
 
 ---
 
@@ -166,7 +166,7 @@ Response:
   },
   "invite": {
     "format": "v2-signed",
-    "allowLegacyV1Unsigned": true,
+    "allowLegacyV1Unsigned": false,
     "maxAgeSeconds": 600
   }
 }
@@ -207,10 +207,10 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 - Persist `keyId`, `fingerprint` in config.
 - Expose `/security/profile`.
 
-### Phase 2 — Signed invites (dual-stack)
+### Phase 2 — Signed invites (v2-first)
 - `invite` command emits v2 by default.
-- Keep optional v1 emission via explicit flag.
-- iOS accepts both v1 and v2 during migration.
+- v1 emission is only allowed when `security.profile=legacy` **and** `invite.allowLegacyV1Unsigned=true`.
+- iOS accepts signed v2 invites only.
 
 ### Phase 3 — Client pinning and enforcement
 - iOS pins fingerprint after verified bootstrap.
@@ -219,11 +219,11 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 
 ### Phase 4 — Tighten defaults
 - `invite.allowLegacyV1Unsigned=false` by default.
-- strict profile disallows v1 entirely.
+- Non-legacy profiles reject unsigned invites.
 - transport outside tailnet must be TLS.
 
 ### Phase 5 — Deprecation cleanup
-- Remove legacy invite parser path after migration window.
+- Keep legacy parser/emission paths only behind explicit legacy profile.
 - Remove compatibility toggles no longer needed.
 
 ---
@@ -232,11 +232,10 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 
 | Server | iOS | Result |
 |---|---|---|
-| v1 config + v1 invite | old iOS | works (legacy) |
-| v2 config + dual invite | old iOS | v1 only |
-| v2 config + dual invite | new iOS | prefers v2 signed |
-| v2 strict + v2-only | old iOS | blocked (expected) |
-| v2 strict + v2-only | new iOS | works |
+| legacy profile + explicit v1 enable | old iOS | works (legacy only) |
+| non-legacy profile + v2 signed invite | new iOS | works |
+| non-legacy profile + unsigned invite config | any iOS | blocked by server config validation |
+| strict profile + v2-only | old iOS | blocked (expected) |
 
 ---
 
@@ -268,7 +267,9 @@ For current dogfood:
 - `allowInsecureHttpInTailnet = true`
 - `requirePinnedServerIdentity = true`
 - `invite.format = v2-signed`
-- `invite.allowLegacyV1Unsigned = true` (temporary)
+- `invite.allowLegacyV1Unsigned = false`
 
-Target production-ish default:
-- flip `allowLegacyV1Unsigned` to `false` after one release cycle.
+Legacy fallback (only for emergency compatibility):
+- set `security.profile = legacy`
+- set `invite.allowLegacyV1Unsigned = true`
+- explicitly opt into `invite.format = v1-unsigned`

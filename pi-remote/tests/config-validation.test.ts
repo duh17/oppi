@@ -24,6 +24,7 @@ describe("Storage config validation", () => {
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.security?.profile).toBe("tailscale-permissive");
     expect(result.config?.invite?.format).toBe("v2-signed");
+    expect(result.config?.invite?.allowLegacyV1Unsigned).toBe(false);
   });
 
   it("rejects unknown top-level keys in strict mode", () => {
@@ -97,6 +98,7 @@ describe("Storage config validation", () => {
     expect(config.security?.profile).toBe("tailscale-permissive");
     expect(config.identity?.algorithm).toBe("ed25519");
     expect(config.invite?.format).toBe("v2-signed");
+    expect(config.invite?.allowLegacyV1Unsigned).toBe(false);
 
     const rewritten = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")) as {
       configVersion?: number;
@@ -111,7 +113,7 @@ describe("Storage config validation", () => {
     expect(rewritten.invite?.format).toBe("v2-signed");
   });
 
-  it("warns when strict profile still allows legacy unsigned invites", () => {
+  it("rejects legacy unsigned invite compatibility when profile is strict", () => {
     const raw = Storage.getDefaultConfig(dir);
     raw.security = {
       ...raw.security!,
@@ -125,11 +127,32 @@ describe("Storage config validation", () => {
 
     const result = Storage.validateConfig(raw, dir, true);
 
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toBe(false);
     expect(
-      result.warnings.some((warning) =>
-        warning.includes("allowLegacyV1Unsigned=true weakens strict bootstrap posture"),
+      result.errors.some((error) =>
+        error.includes("config.invite.allowLegacyV1Unsigned: must be false"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unsigned invite format outside legacy security profile", () => {
+    const raw = Storage.getDefaultConfig(dir);
+    raw.security = {
+      ...raw.security!,
+      profile: "tailscale-permissive",
+    };
+    raw.invite = {
+      ...raw.invite!,
+      format: "v1-unsigned",
+      allowLegacyV1Unsigned: false,
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((error) =>
+        error.includes("config.invite.format: \"v1-unsigned\" is only allowed"),
       ),
     ).toBe(true);
   });

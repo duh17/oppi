@@ -76,7 +76,7 @@ function defaultInviteConfig(): ServerInviteConfig {
     format: "v2-signed",
     maxAgeSeconds: 600,
     singleUse: false,
-    allowLegacyV1Unsigned: true,
+    allowLegacyV1Unsigned: false,
   };
 }
 
@@ -465,10 +465,23 @@ function normalizeConfig(
     }
   }
 
-  if (config.security?.profile === "strict" && config.invite?.allowLegacyV1Unsigned) {
-    warnings.push(
-      "config.invite.allowLegacyV1Unsigned=true weakens strict bootstrap posture; set to false when all clients support v2 invites",
-    );
+  const profile = config.security?.profile ?? "legacy";
+  if (profile !== "legacy" && config.invite) {
+    if (config.invite.format === "v1-unsigned") {
+      errors.push(
+        'config.invite.format: "v1-unsigned" is only allowed when config.security.profile="legacy"',
+      );
+      config.invite.format = "v2-signed";
+      changed = true;
+    }
+
+    if (config.invite.allowLegacyV1Unsigned) {
+      errors.push(
+        `config.invite.allowLegacyV1Unsigned: must be false when config.security.profile="${profile}"`,
+      );
+      config.invite.allowLegacyV1Unsigned = false;
+      changed = true;
+    }
   }
 
   return { valid: errors.length === 0, errors, warnings, config, changed };

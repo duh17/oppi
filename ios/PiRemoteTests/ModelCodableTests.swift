@@ -477,6 +477,20 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds?.normalizedServerFingerprint == envelope.payload.fingerprint)
     }
 
+    @Test func decodeInvitePayloadRejectsLegacyUnsignedPayload() {
+        let legacy = """
+        {
+            "host": "my-server.tail00000.ts.net",
+            "port": 7749,
+            "token": "sk_legacy",
+            "name": "legacy"
+        }
+        """
+
+        let creds = ServerCredentials.decodeInvitePayload(legacy)
+        #expect(creds == nil)
+    }
+
     @Test func decodeInvitePayloadRejectsTamperedSignedEnvelope() throws {
         let now = Int(Date().timeIntervalSince1970)
         var envelope = try makeSignedEnvelope(iat: now, exp: now + 600)

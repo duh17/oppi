@@ -122,27 +122,22 @@ struct OnboardingView: View {
                 return
             }
 
-            let profile: ServerSecurityProfile?
+            let profile: ServerSecurityProfile
             do {
                 profile = try await api.securityProfile()
             } catch {
-                if credentials.inviteVersion == 2 {
-                    connectionTest = .failed("Server is missing security profile endpoint required for signed invite trust")
-                    return
-                }
-                profile = nil
+                connectionTest = .failed("Unable to fetch server security profile. Re-pair with a current server build.")
+                return
             }
 
-            if let profile {
-                if let violation = ConnectionSecurityPolicy.evaluate(host: credentials.host, profile: profile) {
-                    connectionTest = .failed(violation.localizedDescription)
-                    return
-                }
+            if let violation = ConnectionSecurityPolicy.evaluate(host: credentials.host, profile: profile) {
+                connectionTest = .failed(violation.localizedDescription)
+                return
+            }
 
-                if let inviteMismatch = inviteMismatchReason(credentials: credentials, profile: profile) {
-                    connectionTest = .failed(inviteMismatch)
-                    return
-                }
+            if let inviteMismatch = inviteMismatchReason(credentials: credentials, profile: profile) {
+                connectionTest = .failed(inviteMismatch)
+                return
             }
 
             // Confirm bearer token is valid after trust checks.
@@ -151,13 +146,13 @@ struct OnboardingView: View {
             let existing = KeychainService.loadCredentials()
             let sameTarget = isSameServer(existing, credentials)
             let existingFingerprint = existing?.normalizedServerFingerprint
-            let profileFingerprint = profile?.identity.normalizedFingerprint
+            let profileFingerprint = profile.identity.normalizedFingerprint
             let requiresTrustReset = sameTarget
                 && existingFingerprint != nil
                 && profileFingerprint != nil
                 && existingFingerprint != profileFingerprint
 
-            let requiresPinnedTrust = (profile?.requirePinnedServerIdentity ?? false) && profileFingerprint != nil
+            let requiresPinnedTrust = (profile.requirePinnedServerIdentity ?? false) && profileFingerprint != nil
             let requiresInviteTrust = credentials.inviteVersion == 2 && credentials.normalizedServerFingerprint != nil
 
             if requiresTrustReset || requiresPinnedTrust || requiresInviteTrust {
@@ -176,7 +171,7 @@ struct OnboardingView: View {
                 }
             }
 
-            let effectiveCredentials = profile.map(credentials.applyingSecurityProfile) ?? credentials
+            let effectiveCredentials = credentials.applyingSecurityProfile(profile)
 
             // Save credentials and transition
             try KeychainService.saveCredentials(effectiveCredentials)
