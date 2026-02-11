@@ -128,7 +128,7 @@ final class ServerConnection {
     ///
     /// The caller owns stream consumption and task lifecycle.
     /// On stream termination, `WebSocketClient` disconnects via `onTermination`.
-    func streamSession(_ sessionId: String, workspaceId: String? = nil) -> AsyncStream<ServerMessage>? {
+    func streamSession(_ sessionId: String, workspaceId: String) -> AsyncStream<ServerMessage>? {
         guard let wsClient else { return nil }
 
         // v1 one-stream policy
@@ -607,6 +607,11 @@ final class ServerConnection {
 
         // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = activeSessionId else { return }
+        guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
+              !workspaceId.isEmpty else {
+            logger.error("Missing workspaceId for active session \(sessionId)")
+            return
+        }
 
         let streamAttached = wsClient?.connectedSessionId == sessionId
         let streamAlive: Bool
@@ -629,7 +634,7 @@ final class ServerConnection {
             extensionTimeoutTask = nil
 
             do {
-                let (session, _) = try await apiClient.getSession(id: sessionId)
+                let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
                 sessionStore.upsert(session)
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
@@ -637,7 +642,7 @@ final class ServerConnection {
         } else {
             // Stream alive — refresh session metadata
             do {
-                let (session, _) = try await apiClient.getSession(id: sessionId)
+                let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
                 sessionStore.upsert(session)
             } catch {
                 logger.error("Failed to refresh session metadata: \(error)")

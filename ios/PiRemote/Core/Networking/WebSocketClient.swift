@@ -71,8 +71,8 @@ final class WebSocketClient {
     /// Disconnects any existing connection first (v1 one-stream policy).
     /// Returns an `AsyncStream` that yields `ServerMessage` until disconnect.
     ///
-    /// When `workspaceId` is provided, uses the v2 workspace-scoped WS path.
-    func connect(sessionId: String, workspaceId: String? = nil) -> AsyncStream<ServerMessage> {
+    /// Uses the workspace-scoped v2 WS path.
+    func connect(sessionId: String, workspaceId: String) -> AsyncStream<ServerMessage> {
         // Disconnect previous connection
         disconnect()
 
@@ -85,7 +85,7 @@ final class WebSocketClient {
             "Connect requested",
             metadata: [
                 "sessionId": sessionId,
-                "workspaceId": workspaceId ?? "none",
+                "workspaceId": workspaceId,
             ]
         )
 
@@ -289,7 +289,7 @@ final class WebSocketClient {
         ClientLog.error("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
     }
 
-    private func openWebSocket(sessionId: String, workspaceId: String? = nil, continuation: AsyncStream<ServerMessage>.Continuation) {
+    private func openWebSocket(sessionId: String, workspaceId: String, continuation: AsyncStream<ServerMessage>.Continuation) {
         guard let url = credentials.webSocketURL(sessionId: sessionId, workspaceId: workspaceId) else {
             logger.error("Invalid WebSocket URL for session \(sessionId) — disconnecting")
             disconnect()
@@ -445,8 +445,11 @@ final class WebSocketClient {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard let self, let cont = self.continuation else { return }
-                self.openWebSocket(sessionId: sessionId, workspaceId: self.connectedWorkspaceId, continuation: cont)
+                guard let self,
+                      let cont = self.continuation,
+                      let workspaceId = self.connectedWorkspaceId,
+                      !workspaceId.isEmpty else { return }
+                self.openWebSocket(sessionId: sessionId, workspaceId: workspaceId, continuation: cont)
             }
         }
     }

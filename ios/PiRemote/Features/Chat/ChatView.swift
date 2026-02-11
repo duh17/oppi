@@ -110,6 +110,7 @@ struct ChatView: View {
 
             ChatTimelineView(
                 sessionId: sessionId,
+                workspaceId: session?.workspaceId,
                 isBusy: isBusy,
                 scrollController: scrollController,
                 sessionManager: sessionManager,
@@ -499,6 +500,10 @@ struct ChatView: View {
             reducer.process(.error(sessionId: sessionId, message: "No API client available"))
             return
         }
+        guard let workspaceId = session?.workspaceId, !workspaceId.isEmpty else {
+            reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
+            return
+        }
 
         uploadingClientLogs = true
         ClientLog.info("ChatView", "Manual client log upload requested", metadata: [
@@ -522,7 +527,7 @@ struct ChatView: View {
             )
 
             do {
-                try await api.uploadClientLogs(sessionId: sessionId, request: request)
+                try await api.uploadClientLogs(workspaceId: workspaceId, sessionId: sessionId, request: request)
                 reducer.appendSystemEvent("Uploaded \(entries.count) client log entries")
                 ClientLog.info("ChatView", "Client log upload succeeded", metadata: [
                     "sessionId": sessionId,
@@ -722,6 +727,7 @@ private struct ChatTimelineView: View {
     private static let maxRestorationWindow = 180
 
     let sessionId: String
+    let workspaceId: String?
     let isBusy: Bool
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
@@ -765,6 +771,7 @@ private struct ChatTimelineView: View {
                 isBusy: isBusy,
                 streamingAssistantID: reducer.streamingAssistantID,
                 sessionId: sessionId,
+                workspaceId: workspaceId,
                 onFork: onFork,
                 onOpenFile: { fileToOpen = $0 },
                 onShowEarlier: {
@@ -830,7 +837,7 @@ private struct ChatTimelineView: View {
             scrollController.scrollTargetID = itemId
         }
         .sheet(item: $fileToOpen) { file in
-            RemoteFileView(sessionId: file.sessionId, path: file.path)
+            RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)
         }
     }
 

@@ -142,19 +142,41 @@ struct APIClientTests {
         let client = makeClient()
         defer { cleanup() }
 
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
-            {"sessions":[
-                {"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},
-                {"id":"s2","userId":"u1","status":"busy","createdAt":0,"lastActivity":0,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
-            ]}
-            """)
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/workspaces":
+                return self.mockResponse(json: """
+                {"workspaces":[
+                    {"id":"w1","userId":"u1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
+                    {"id":"w2","userId":"u1","name":"Ops","skills":[],"createdAt":0,"updatedAt":0}
+                ]}
+                """)
+
+            case "/workspaces/w1/sessions":
+                return self.mockResponse(json: """
+                {"sessions":[
+                    {"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+                ]}
+                """)
+
+            case "/workspaces/w2/sessions":
+                return self.mockResponse(json: """
+                {"sessions":[
+                    {"id":"s2","userId":"u1","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
+                ]}
+                """)
+
+            default:
+                Issue.record("Unexpected path: \(request.url?.path ?? "nil")")
+                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
+            }
         }
 
         let sessions = try await client.listSessions()
         #expect(sessions.count == 2)
-        #expect(sessions[0].id == "s1")
-        #expect(sessions[1].status == .busy)
+        #expect(sessions[0].id == "s2")
+        #expect(sessions[1].id == "s1")
+        #expect(sessions[0].status == .busy)
     }
 
     @Test func createSession() async throws {
@@ -162,17 +184,28 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "POST")
-            #expect(request.url?.path.hasSuffix("/sessions") == true)
+            switch request.url?.path {
+            case "/workspaces":
+                return self.mockResponse(json: """
+                {"workspaces":[{"id":"w1","userId":"u1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
+                """)
 
-            return self.mockResponse(json: """
-            {"session":{"id":"new","userId":"u1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
-            """)
+            case "/workspaces/w1/sessions":
+                #expect(request.httpMethod == "POST")
+                return self.mockResponse(json: """
+                {"session":{"id":"new","userId":"u1","workspaceId":"w1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+                """)
+
+            default:
+                Issue.record("Unexpected path: \(request.url?.path ?? "nil")")
+                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
+            }
         }
 
         let session = try await client.createSession(name: "Test", model: "claude-sonnet-4-20250514")
         #expect(session.id == "new")
         #expect(session.status == .starting)
+        #expect(session.workspaceId == "w1")
     }
 
     @Test func getSessionWithTrace() async throws {
@@ -180,11 +213,11 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/sessions/s1")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1")
             #expect(request.url?.query == "view=context")
             return self.mockResponse(json: """
             {
-                "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
                     {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
                 ]
@@ -192,7 +225,7 @@ struct APIClientTests {
             """)
         }
 
-        let (session, trace) = try await client.getSession(id: "s1")
+        let (session, trace) = try await client.getSession(workspaceId: "w1", id: "s1")
         #expect(session.id == "s1")
         #expect(trace.count == 1)
         #expect(trace[0].type == .user)
@@ -203,11 +236,11 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/sessions/s1")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1")
             #expect(request.url?.query == "view=full")
             return self.mockResponse(json: """
             {
-                "session":{"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
                     {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
                 ]
@@ -215,7 +248,7 @@ struct APIClientTests {
             """)
         }
 
-        let (_, trace) = try await client.getSession(id: "s1", traceView: .full)
+        let (_, trace) = try await client.getSession(workspaceId: "w1", id: "s1", traceView: .full)
         #expect(trace.count == 1)
     }
 
@@ -224,7 +257,7 @@ struct APIClientTests {
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path.hasSuffix("/sessions/s1/events") == true)
+            #expect(request.url?.path.hasSuffix("/workspaces/w1/sessions/s1/events") == true)
             #expect(request.url?.query == "since=5")
             return self.mockResponse(json: """
             {
@@ -234,13 +267,13 @@ struct APIClientTests {
                 {"type":"agent_end","seq":8}
               ],
               "currentSeq": 8,
-              "session": {"id":"s1","userId":"u1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+              "session": {"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
               "catchUpComplete": true
             }
             """)
         }
 
-        let response = try await client.getSessionEvents(id: "s1", since: 5)
+        let response = try await client.getSessionEvents(workspaceId: "w1", id: "s1", since: 5)
         #expect(response.currentSeq == 8)
         #expect(response.catchUpComplete)
         #expect(response.events.count == 3)
@@ -257,13 +290,14 @@ struct APIClientTests {
         let client = makeClient()
         defer { cleanup() }
 
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
-            {"session":{"id":"s1","userId":"u1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/stop")
+            return self.mockResponse(json: """
+            {"session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
             """)
         }
 
-        let session = try await client.stopSession(id: "s1")
+        let session = try await client.stopSession(workspaceId: "w1", id: "s1")
         #expect(session.status == .stopped)
     }
 
@@ -273,10 +307,11 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "DELETE")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1")
             return self.mockResponse(json: "{}")
         }
 
-        try await client.deleteSession(id: "s1")
+        try await client.deleteSession(workspaceId: "w1", id: "s1")
     }
 
     // getSessionTrace removed — merged into getSession.
@@ -548,7 +583,7 @@ struct APIClientTests {
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
 
-            #expect(request.url?.path == "/sessions/s1/files")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/files")
             #expect(pathQuery == "/tmp/main.swift")
             #expect(request.url?.absoluteString.contains("%3Fpath=") == false)
 
@@ -562,7 +597,7 @@ struct APIClientTests {
             return (body, response)
         }
 
-        let content = try await client.getSessionFile(sessionId: "s1", path: "/tmp/main.swift")
+        let content = try await client.getSessionFile(workspaceId: "w1", sessionId: "s1", path: "/tmp/main.swift")
         #expect(content == "print(\"hello\")")
     }
 

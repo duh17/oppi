@@ -62,7 +62,8 @@ final class ChatSessionManager {
     /// without performing REST requests.
     var _loadHistoryForTesting: ((_ cachedEventCount: Int?, _ cachedLastEventId: String?) async -> (eventCount: Int, lastEventId: String?)?)?
 
-    /// Test seam: override event catch-up loading (`/sessions/:id/events?since=`).
+    /// Test seam: override event catch-up loading
+    /// (`/workspaces/:workspaceId/sessions/:id/events?since=`).
     var _loadCatchUpForTesting: ((_ since: Int, _ currentSeq: Int) async -> APIClient.SessionEventsResponse?)?
 
     /// Test seam: inject inbound sequence metadata per streamed message.
@@ -106,6 +107,33 @@ final class ChatSessionManager {
         guard seq > lastSeenSeq else { return }
         lastSeenSeq = seq
         persistLastSeenSeq()
+    }
+
+    private func resolveWorkspaceId(from sessionStore: SessionStore) -> String? {
+        if let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
+           !workspaceId.isEmpty {
+            return workspaceId
+        }
+
+        if let workspaceId = sessionStore.activeSession?.workspaceId,
+           !workspaceId.isEmpty {
+            return workspaceId
+        }
+
+        return nil
+    }
+
+    private func openSessionStream(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) -> AsyncStream<ServerMessage>? {
+        if let streamForTesting = _streamSessionForTesting?(sessionId) {
+            connection._setActiveSessionIdForTesting(sessionId)
+            return streamForTesting
+        }
+
+        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else { return nil }
+        return connection.streamSession(sessionId, workspaceId: workspaceId)
     }
 
     private func markSyncStarted() {
@@ -195,19 +223,9 @@ final class ChatSessionManager {
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
         }
 
-        // Open WS stream first — server sends `connected` immediately.
-        // Use workspace-scoped v2 path when the session has a workspaceId.
-        let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId
-        let stream: AsyncStream<ServerMessage>?
-        if let streamForTesting = _streamSessionForTesting?(sessionId) {
-            connection._setActiveSessionIdForTesting(sessionId)
-            stream = streamForTesting
-        } else {
-            stream = connection.streamSession(sessionId, workspaceId: workspaceId)
-        }
-
-        guard let stream else {
-            reducer.process(.error(sessionId: sessionId, message: "WebSocket unavailable"))
+        guard let stream = openSessionStream(connection: connection, sessionStore: sessionStore) else {
+            markSyncFailed()
+            reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
             return
         }
 
@@ -346,8 +364,13 @@ final class ChatSessionManager {
             guard !Task.isCancelled else { return }
 
             guard let api = connection.apiClient else { return }
+            guard let workspaceId = self.resolveWorkspaceId(from: sessionStore) else {
+                log.warning("Reconcile skipped for \(self.sessionId): missing workspaceId")
+                return
+            }
+
             do {
-                let (session, _) = try await api.getSession(id: sessionId)
+                let (session, _) = try await api.getSession(workspaceId: workspaceId, id: sessionId)
                 sessionStore.upsert(session)
             } catch {
                 log.warning("Reconcile failed: \(error.localizedDescription)")
@@ -383,8 +406,14 @@ final class ChatSessionManager {
         if let fetchHook = _fetchTraceSnapshotForTesting {
             trace = await fetchHook()
         } else if let api = connection.apiClient {
+            guard let workspaceId = resolveWorkspaceId(from: connection.sessionStore) else {
+                log.debug("Snapshot flush skipped for \(self.sessionId): missing workspaceId")
+                return
+            }
+
             do {
                 let (_, fetchedTrace) = try await api.getSession(
+                    workspaceId: workspaceId,
                     id: sessionId,
                     traceView: .full
                 )
@@ -450,7 +479,16 @@ final class ChatSessionManager {
         if let catchUpHook = _loadCatchUpForTesting {
             response = await catchUpHook(since, currentSeq)
         } else if let api = connection.apiClient {
-            response = try? await api.getSessionEvents(id: sessionId, since: since)
+            if let workspaceId = resolveWorkspaceId(from: sessionStore) {
+                response = try? await api.getSessionEvents(
+                    workspaceId: workspaceId,
+                    id: sessionId,
+                    since: since
+                )
+            } else {
+                log.warning("Catch-up skipped for \(self.sessionId): missing workspaceId")
+                response = nil
+            }
         } else {
             response = nil
         }
@@ -522,8 +560,15 @@ final class ChatSessionManager {
         cachedEventCount: Int?,
         cachedLastEventId: String?
     ) async -> TraceSignature? {
+        guard let workspaceId = resolveWorkspaceId(from: sessionStore) else {
+            markSyncFailed()
+            log.warning("Trace fetch skipped for \(self.sessionId): missing workspaceId")
+            return nil
+        }
+
         do {
             let (session, trace) = try await api.getSession(
+                workspaceId: workspaceId,
                 id: sessionId,
                 traceView: .full
             )

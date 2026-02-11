@@ -25,6 +25,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         let isBusy: Bool
         let streamingAssistantID: String?
         let sessionId: String
+        let workspaceId: String?
         let onFork: (String) -> Void
         let onOpenFile: (FileToOpen) -> Void
         let onShowEarlier: () -> Void
@@ -85,6 +86,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var renderWindowStep = 0
         private var streamingAssistantID: String?
         private var sessionId = ""
+        private var workspaceId: String?
         private var onFork: ((String) -> Void)?
         private var onOpenFile: ((FileToOpen) -> Void)?
         private var onShowEarlier: (() -> Void)?
@@ -201,6 +203,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     ChatItemRow(
                         item: item,
                         isStreaming: itemID == self.streamingAssistantID,
+                        workspaceId: self.workspaceId,
                         sessionId: self.sessionId,
                         onFork: self.onFork,
                         onOpenFile: self.onOpenFile
@@ -374,10 +377,11 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
 
-            if sessionId != configuration.sessionId {
+            if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
                 cancelAllToolOutputLoadTasks()
             }
             sessionId = configuration.sessionId
+            workspaceId = configuration.workspaceId
 
             onFork = configuration.onFork
             onOpenFile = configuration.onOpenFile
@@ -768,16 +772,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             if let fetchHook = _fetchToolOutputForTesting {
                 fetchToolOutput = fetchHook
             } else {
-                guard let connection,
-                      let apiClient = connection.apiClient else {
-                    return
-                }
+                guard let apiClient = connection?.apiClient,
+                      let workspaceId,
+                      !workspaceId.isEmpty else { return }
 
                 fetchToolOutput = { sessionId, toolCallId in
-                    try await apiClient.getNonEmptyToolOutput(
-                        sessionId: sessionId,
-                        toolCallId: toolCallId
-                    ) ?? ""
+                    try await apiClient.getNonEmptyToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId) ?? ""
                 }
             }
 

@@ -342,9 +342,9 @@ struct ServerCredentialsTests {
 
     @Test func webSocketURLValid() {
         let creds = ServerCredentials(host: "192.168.1.10", port: 7749, token: "sk_test", name: "Test")
-        let url = creds.webSocketURL(sessionId: "abc-123")
+        let url = creds.webSocketURL(sessionId: "abc-123", workspaceId: "w1")
         #expect(url != nil)
-        #expect(url?.absoluteString == "ws://192.168.1.10:7749/sessions/abc-123/stream")
+        #expect(url?.absoluteString == "ws://192.168.1.10:7749/workspaces/w1/sessions/abc-123/stream")
     }
 
     @Test func credentialsCodableRoundTrip() throws {

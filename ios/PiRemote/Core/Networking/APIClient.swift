@@ -56,19 +56,39 @@ actor APIClient {
 
     // MARK: - Sessions
 
-    /// List all sessions for the authenticated user.
+    /// List all sessions for the authenticated user by aggregating
+    /// workspace-scoped session lists.
     func listSessions() async throws -> [Session] {
-        let data = try await get("/sessions")
-        struct Response: Decodable { let sessions: [Session] }
-        return try JSONDecoder().decode(Response.self, from: data).sessions
+        let workspaces = try await listWorkspaces()
+        var sessions: [Session] = []
+        sessions.reserveCapacity(workspaces.count * 2)
+
+        for workspace in workspaces {
+            let workspaceSessions = try await listWorkspaceSessions(workspaceId: workspace.id)
+            sessions.append(contentsOf: workspaceSessions)
+        }
+
+        return sessions.sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// Create a new session, optionally tied to a workspace.
+    /// Create a new session in a target workspace.
+    ///
+    /// If `workspaceId` is nil, the first available workspace is used.
     func createSession(name: String? = nil, model: String? = nil, workspaceId: String? = nil) async throws -> Session {
-        struct Body: Encodable { let name: String?; let model: String?; let workspaceId: String? }
-        let data = try await post("/sessions", body: Body(name: name, model: model, workspaceId: workspaceId))
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
+        if let workspaceId, !workspaceId.isEmpty {
+            return try await createWorkspaceSession(workspaceId: workspaceId, name: name, model: model)
+        }
+
+        let workspaces = try await listWorkspaces()
+        guard let fallbackWorkspace = workspaces.first else {
+            throw APIError.server(status: 404, message: "No workspaces available")
+        }
+
+        return try await createWorkspaceSession(
+            workspaceId: fallbackWorkspace.id,
+            name: name,
+            model: model
+        )
     }
 
     struct SequencedServerEvent: Sendable, Equatable {
@@ -87,8 +107,8 @@ actor APIClient {
     ///
     /// Decodes the response in a single pass using `Decodable` — no intermediate
     /// `JSONValue` tree, no per-event re-encode/re-decode round-trip.
-    func getSessionEvents(id: String, since: Int) async throws -> SessionEventsResponse {
-        let data = try await get("/sessions/\(id)/events?since=\(since)")
+    func getSessionEvents(workspaceId: String, id: String, since: Int) async throws -> SessionEventsResponse {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(id)/events?since=\(since)")
 
         let payload = try JSONDecoder().decode(SessionEventsPayload.self, from: data)
 
@@ -104,7 +124,7 @@ actor APIClient {
         )
     }
 
-    /// Wire format for `/sessions/:id/events` response.
+    /// Wire format for `/workspaces/:workspaceId/sessions/:id/events` response.
     ///
     /// Each event object has `seq` alongside the `ServerMessage` fields:
     /// `{ "seq": 42, "type": "text_delta", "delta": "hello" }`.
@@ -133,27 +153,28 @@ actor APIClient {
 
     /// Get a session with trace events for either context or full timeline view.
     func getSession(
+        workspaceId: String,
         id: String,
         traceView: SessionTraceView = .context
     ) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("/sessions/\(id)?view=\(traceView.rawValue)")
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(id)?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.session, response.trace)
     }
 
     /// Stop a running session.
-    func stopSession(id: String) async throws -> Session {
-        let data = try await post("/sessions/\(id)/stop", body: EmptyBody())
+    func stopSession(workspaceId: String, id: String) async throws -> Session {
+        let data = try await post("/workspaces/\(workspaceId)/sessions/\(id)/stop", body: EmptyBody())
         struct Response: Decodable { let session: Session? }
         let response = try JSONDecoder().decode(Response.self, from: data)
         if let session = response.session { return session }
-        return try await getSession(id: id).session
+        return try await getSession(workspaceId: workspaceId, id: id).session
     }
 
     /// Delete a session permanently.
-    func deleteSession(id: String) async throws {
-        _ = try await request("DELETE", path: "/sessions/\(id)")
+    func deleteSession(workspaceId: String, id: String) async throws {
+        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(id)")
     }
 
     // MARK: - Models
@@ -311,11 +332,7 @@ actor APIClient {
 
     /// Stop a session via its workspace.
     func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/stop", body: EmptyBody())
-        struct Response: Decodable { let session: Session? }
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        if let session = response.session { return session }
-        return try await getSession(id: sessionId).session
+        try await stopSession(workspaceId: workspaceId, id: sessionId)
     }
 
     /// Get session detail via workspace path.
@@ -324,17 +341,12 @@ actor APIClient {
         sessionId: String,
         traceView: SessionTraceView = .context
     ) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get(
-            "/workspaces/\(workspaceId)/sessions/\(sessionId)?view=\(traceView.rawValue)"
-        )
-        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        return (response.session, response.trace)
+        try await getSession(workspaceId: workspaceId, id: sessionId, traceView: traceView)
     }
 
     /// Delete a session via workspace path.
     func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
-        _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(sessionId)")
+        try await deleteSession(workspaceId: workspaceId, id: sessionId)
     }
 
     // MARK: - Tool Output & Files
@@ -375,16 +387,16 @@ actor APIClient {
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
     ///
     /// Used to lazy-load evicted tool output when the user expands an old tool call row.
-    func getToolOutput(sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
-        let data = try await get("/sessions/\(sessionId)/tool-output/\(toolCallId)")
+    func getToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)")
         struct Response: Decodable { let output: String; let isError: Bool }
         let response = try JSONDecoder().decode(Response.self, from: data)
         return (response.output, response.isError)
     }
 
     /// Fetch full tool output and return nil if it is empty/whitespace-only.
-    func getNonEmptyToolOutput(sessionId: String, toolCallId: String) async throws -> String? {
-        let (output, _) = try await getToolOutput(sessionId: sessionId, toolCallId: toolCallId)
+    func getNonEmptyToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
+        let (output, _) = try await getToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId)
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : output
     }
@@ -393,8 +405,8 @@ actor APIClient {
     ///
     /// Returns the raw file content as a string. Used when the user taps a file path
     /// in a tool call row to view the current file on disk.
-    func getSessionFile(sessionId: String, path: String) async throws -> String {
-        let data = try await get("/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
+    func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
         // File content is returned as raw bytes — decode as UTF-8 text
         guard let text = String(data: data, encoding: .utf8) else {
             throw APIError.server(status: 422, message: "File is not text (binary content)")
@@ -403,8 +415,8 @@ actor APIClient {
     }
 
     /// Fetch raw file data from the session's working directory (for binary files like images).
-    func getSessionFileData(sessionId: String, path: String) async throws -> Data {
-        return try await get("/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
+    func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
+        return try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/files?path=\(try encodeQueryPath(path))")
     }
 
     // MARK: - Device Token
@@ -425,8 +437,8 @@ actor APIClient {
     // MARK: - Diagnostics
 
     /// Upload in-app client logs for a specific session (dev/debug triage).
-    func uploadClientLogs(sessionId: String, request body: ClientLogUploadRequest) async throws {
-        _ = try await post("/sessions/\(sessionId)/client-logs", body: body)
+    func uploadClientLogs(workspaceId: String, sessionId: String, request body: ClientLogUploadRequest) async throws {
+        _ = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/client-logs", body: body)
     }
 
     // MARK: - Private
@@ -477,7 +489,8 @@ actor APIClient {
     /// Build a request URL from an API path that may include a query string.
     ///
     /// `URL.appendingPathComponent` encodes `?` as a literal path character,
-    /// which breaks routes like `/sessions/:id/files?path=...` and yields 404.
+    /// which breaks routes like `/workspaces/:workspaceId/sessions/:id/files?path=...`
+    /// and yields 404.
     private func makeURL(path: String) throws -> URL {
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         let rawPath = parts.first.map(String.init) ?? ""

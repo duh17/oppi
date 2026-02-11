@@ -162,8 +162,13 @@ struct PiRemoteApp: App {
             entries: entries
         )
 
+        guard let workspaceId = connection.sessionStore.workspaceId(for: sessionId), !workspaceId.isEmpty else {
+            autoClientLogUploadInFlight = false
+            return
+        }
+
         do {
-            try await api.uploadClientLogs(sessionId: sessionId, request: request)
+            try await api.uploadClientLogs(workspaceId: workspaceId, sessionId: sessionId, request: request)
             if connection.sessionStore.activeSessionId == sessionId {
                 connection.reducer.appendSystemEvent("Auto-uploaded \(entries.count) client log entries after stall")
             }
@@ -564,6 +569,7 @@ private struct UIHangHarnessView: View {
                     isBusy: collectionIsBusy,
                     streamingAssistantID: collectionStreamingAssistantID,
                     sessionId: "harness-\(selectedSession.rawValue)",
+                    workspaceId: "harness-workspace",
                     onFork: { _ in },
                     onOpenFile: { _ in },
                     onShowEarlier: {

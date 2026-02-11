@@ -1,5 +1,4 @@
 import SwiftUI
-
 /// Shared expand/collapse motion profile for tool rows.
 ///
 /// Used by both SwiftUI file-tool rows (read/write/edit) and UIKit-native
@@ -11,13 +10,13 @@ enum ToolRowExpansionAnimation {
     static let swiftUIExpand: Animation = .easeInOut(duration: expandDuration)
     static let swiftUICollapse: Animation = .easeOut(duration: collapseDuration)
 }
-
 /// Identifies a file to open in a sheet. Uses `.sheet(item:)` pattern
 /// to avoid the stale-capture bug with `.sheet(isPresented:)`.
 struct FileToOpen: Identifiable {
+    let workspaceId: String
     let sessionId: String
     let path: String
-    var id: String { "\(sessionId)/\(path)" }
+    var id: String { "\(workspaceId)/\(sessionId)/\(path)" }
 }
 
 /// Renders a single `ChatItem` in the chat timeline.
@@ -26,6 +25,7 @@ struct FileToOpen: Identifiable {
 struct ChatItemRow: View {
     let item: ChatItem
     var isStreaming: Bool = false
+    var workspaceId: String?
     var sessionId: String?
     var onFork: ((String) -> Void)?
     var onOpenFile: ((FileToOpen) -> Void)?
@@ -64,6 +64,7 @@ struct ChatItemRow: View {
                 id: id, tool: tool, argsSummary: args,
                 outputPreview: preview, outputByteCount: bytes,
                 isError: isError, isDone: isDone,
+                workspaceId: workspaceId,
                 sessionId: sessionId,
                 onOpenFile: onOpenFile
             )
@@ -417,6 +418,7 @@ private struct ToolCallRow: View {
     let outputByteCount: Int
     let isError: Bool
     let isDone: Bool
+    var workspaceId: String?
     var sessionId: String?
     var onOpenFile: ((FileToOpen) -> Void)?
 
@@ -534,7 +536,7 @@ private struct ToolCallRow: View {
                 Button("Copy Command", systemImage: "terminal") {
                     copyCommandToClipboard()
                 }
-                if toolFilePath != nil, sessionId != nil {
+                if toolFilePath != nil, sessionId != nil, workspaceId != nil {
                     Button("Open File", systemImage: "doc.text.magnifyingglass") { openFile() }
                 }
             }
@@ -572,13 +574,16 @@ private struct ToolCallRow: View {
     }
 
     private func lazyLoadOutput() {
-        guard let sessionId, let api = connection.apiClient else { return }
+        guard let workspaceId, !workspaceId.isEmpty,
+              let sessionId,
+              let api = connection.apiClient else { return }
         isLoadingOutput = true
 
         Task {
             let output: String?
             do {
                 output = try await api.getNonEmptyToolOutput(
+                    workspaceId: workspaceId,
                     sessionId: sessionId,
                     toolCallId: id
                 )
@@ -596,8 +601,11 @@ private struct ToolCallRow: View {
     }
 
     private func openFile() {
-        guard let path = toolFilePath, let sid = sessionId else { return }
-        onOpenFile?(FileToOpen(sessionId: sid, path: path))
+        guard let path = toolFilePath,
+              let wid = workspaceId,
+              !wid.isEmpty,
+              let sid = sessionId else { return }
+        onOpenFile?(FileToOpen(workspaceId: wid, sessionId: sid, path: path))
     }
 
     // MARK: - Tool Header

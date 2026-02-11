@@ -363,6 +363,7 @@ private func makeConfiguration(
         isBusy: false,
         streamingAssistantID: nil,
         sessionId: sessionId,
+        workspaceId: "ws-test",
         onFork: { _ in },
         onOpenFile: { _ in },
         onShowEarlier: {},

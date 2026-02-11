@@ -9,6 +9,7 @@ private let logger = Logger(subsystem: "dev.chenda.PiRemote", category: "RemoteF
 /// Reuses `FileContentView` for rendering — same syntax highlighting,
 /// markdown, JSON, images as inline tool output.
 struct RemoteFileView: View {
+    let workspaceId: String
     let sessionId: String
     let path: String
 
@@ -88,12 +89,32 @@ struct RemoteFileView: View {
             return
         }
 
+        let resolvedWorkspaceId: String
+        if !workspaceId.isEmpty {
+            resolvedWorkspaceId = workspaceId
+        } else if let cachedWorkspaceId = connection.sessionStore.workspaceId(for: sessionId),
+                  !cachedWorkspaceId.isEmpty {
+            resolvedWorkspaceId = cachedWorkspaceId
+        } else {
+            errorMessage = "Missing workspace context for this session"
+            isLoading = false
+            return
+        }
+
         do {
             if isImagePath {
-                let data = try await api.getSessionFileData(sessionId: sessionId, path: path)
+                let data = try await api.getSessionFileData(
+                    workspaceId: resolvedWorkspaceId,
+                    sessionId: sessionId,
+                    path: path
+                )
                 self.imageData = data
             } else {
-                let text = try await api.getSessionFile(sessionId: sessionId, path: path)
+                let text = try await api.getSessionFile(
+                    workspaceId: resolvedWorkspaceId,
+                    sessionId: sessionId,
+                    path: path
+                )
                 self.content = text
             }
         } catch {

@@ -19,6 +19,14 @@ final class SessionStore {
         sessions.first { $0.id == activeSessionId }
     }
 
+    func session(id: String) -> Session? {
+        sessions.first { $0.id == id }
+    }
+
+    func workspaceId(for sessionId: String) -> String? {
+        session(id: sessionId)?.workspaceId
+    }
+
     func markSyncStarted() {
         isSyncing = true
     }

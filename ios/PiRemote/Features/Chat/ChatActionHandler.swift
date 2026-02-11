@@ -285,9 +285,11 @@ final class ChatActionHandler {
                 try await connection.sendStopSession()
                 reducer.appendSystemEvent("Session stopped")
             } catch {
-                if let api = connection.apiClient {
+                if let api = connection.apiClient,
+                   let workspaceId = sessionStore.workspaceId(for: sessionId),
+                   !workspaceId.isEmpty {
                     do {
-                        let updatedSession = try await api.stopSession(id: sessionId)
+                        let updatedSession = try await api.stopSession(workspaceId: workspaceId, id: sessionId)
                         sessionStore.upsert(updatedSession)
                         reducer.appendSystemEvent("Session stopped")
                     } catch {

@@ -202,9 +202,11 @@ struct SessionListView: View {
 
     private func deleteSession(_ session: Session) async {
         guard let api = connection.apiClient else { return }
+        guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return }
+
         sessionStore.remove(id: session.id)
         do {
-            try await api.deleteSession(id: session.id)
+            try await api.deleteSession(workspaceId: workspaceId, id: session.id)
             Task.detached { await TimelineCache.shared.removeTrace(session.id) }
         } catch {
             print("[delete] failed for \(session.id): \(error)")
