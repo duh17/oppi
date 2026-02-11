@@ -89,6 +89,16 @@ struct ToolCallFormattingTests {
         #expect(result == "ls -la")
     }
 
+    @Test func bashCommandStripsQuotedSummary() {
+        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "command: 'ls -la'")
+        #expect(result == "ls -la")
+    }
+
+    @Test func bashCommandStripsDanglingTrailingQuote() {
+        let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "command: ls -la'")
+        #expect(result == "ls -la")
+    }
+
     @Test func bashCommandRawSummary() {
         let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "some arg")
         #expect(result == "some arg")

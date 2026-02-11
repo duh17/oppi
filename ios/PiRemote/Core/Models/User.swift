@@ -102,6 +102,61 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         )
     }
 
+    /// Decode a deep-link invite.
+    ///
+    /// Supported routes:
+    /// - `pi://connect?...`
+    /// - `pi://pair?...`
+    /// - `oppi://connect?...`
+    /// - `oppi://pair?...`
+    static func decodeInviteURL(_ url: URL) -> ServerCredentials? {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "pi" || scheme == "oppi" else {
+            return nil
+        }
+
+        let hostRoute = url.host?.lowercased()
+        let pathRoute = url.path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
+        let route = hostRoute?.isEmpty == false ? hostRoute : (pathRoute.isEmpty ? nil : pathRoute)
+
+        guard route == "connect" || route == "pair" else {
+            return nil
+        }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let queryItems = components.queryItems ?? []
+        let inviteParam = queryValue(named: "invite", in: queryItems)
+
+        if let version = queryValue(named: "v", in: queryItems),
+           !version.isEmpty,
+           version != "2" {
+            return nil
+        }
+
+        if let inviteParam,
+           let inviteData = decodeBase64URL(inviteParam),
+           let invitePayload = String(data: inviteData, encoding: .utf8) {
+            return decodeInvitePayload(invitePayload)
+        }
+
+        if let rawPayload = queryValue(named: "payload", in: queryItems), !rawPayload.isEmpty {
+            return decodeInvitePayload(rawPayload)
+        }
+
+        return nil
+    }
+
+    /// Decode a deep-link invite from raw text.
+    static func decodeInviteURLString(_ value: String) -> ServerCredentials? {
+        guard let url = URL(string: value) else { return nil }
+        return decodeInviteURL(url)
+    }
+
     var normalizedServerFingerprint: String? {
         guard let serverFingerprint else { return nil }
         let trimmed = serverFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -159,6 +214,10 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         ].joined(separator: "\n")
     }
 
+    private static func queryValue(named name: String, in queryItems: [URLQueryItem]) -> String? {
+        queryItems.first(where: { $0.name == name })?.value
+    }
+
     private static func decodeBase64URL(_ value: String) -> Data? {
         var normalized = value
             .replacingOccurrences(of: "-", with: "+")
@@ -210,7 +269,6 @@ struct ServerSecurityProfile: Codable, Sendable, Equatable {
 
     struct Invite: Codable, Sendable, Equatable {
         let format: String
-        let allowLegacyV1Unsigned: Bool
         let maxAgeSeconds: Int
     }
 

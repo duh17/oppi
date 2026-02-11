@@ -19,7 +19,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var skills: [String]        // ["searxng", "fetch", "ast-grep"]
 
     // Permissions
-    var policyPreset: String    // "host" | "container"
+    var policyPreset: String    // "container" | "host" | "host_standard" | "host_locked"
 
     // Context
     var systemPrompt: String?
@@ -103,5 +103,19 @@ extension Workspace: Codable {
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)
+    }
+}
+
+// MARK: - Presentation helpers
+
+extension Workspace {
+    var policyPresetLabel: String {
+        switch policyPreset {
+        case "container": return "Container"
+        case "host": return "Host Dev"
+        case "host_standard": return "Host Standard"
+        case "host_locked": return "Host Locked"
+        default: return policyPreset
+        }
     }
 }

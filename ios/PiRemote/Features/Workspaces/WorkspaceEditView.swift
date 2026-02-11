@@ -79,10 +79,15 @@ struct WorkspaceEditView: View {
 
             Section("Policy") {
                 Picker("Preset", selection: $policyPreset) {
-                    Text("Container").tag("container")
-                    Text("Host").tag("host")
+                    ForEach(policyOptions, id: \.value) { option in
+                        Text(option.label).tag(option.value)
+                    }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+
+                Text(policyPresetDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section(runtime == "container" ? "Workspace Mount" : "Host Working Directory") {
@@ -247,6 +252,9 @@ struct WorkspaceEditView: View {
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
         .onAppear { loadFromWorkspace() }
+        .onChange(of: runtime) { _, newRuntime in
+            normalizePolicyPreset(for: newRuntime)
+        }
         .task {
             await loadModels()
             await loadExtensions()
@@ -264,6 +272,36 @@ struct WorkspaceEditView: View {
                 seen.insert(value)
                 return true
             }
+    }
+
+    private var policyOptions: [(label: String, value: String)] {
+        if runtime == "host" {
+            return [
+                ("Host Dev", "host"),
+                ("Host Standard", "host_standard"),
+                ("Host Locked", "host_locked"),
+            ]
+        }
+        return [("Container", "container")]
+    }
+
+    private var policyPresetDescription: String {
+        switch policyPreset {
+        case "host":
+            return "Developer trust mode: low friction, broad local autonomy."
+        case "host_standard":
+            return "Approval-first host mode for regular users."
+        case "host_locked":
+            return "Strict host mode: unknown actions blocked by default."
+        default:
+            return "Container mode: isolated runtime with standard supervision."
+        }
+    }
+
+    private func normalizePolicyPreset(for runtime: String) {
+        let allowed = Set(policyOptions.map(\.value))
+        guard !allowed.contains(policyPreset) else { return }
+        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private var selectedExtensionNames: [String] {
@@ -310,6 +348,7 @@ struct WorkspaceEditView: View {
         extensionMode = workspace.extensionMode ?? (workspace.extensions == nil ? "legacy" : "explicit")
         extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
         defaultModel = workspace.defaultModel ?? ""
+        normalizePolicyPreset(for: runtime)
     }
 
     private func loadModels() async {

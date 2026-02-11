@@ -30,11 +30,14 @@ struct ChatItemRow: View {
     var onFork: ((String) -> Void)?
     var onOpenFile: ((FileToOpen) -> Void)?
 
-    /// Server-backed user/assistant messages can be forked.
+    /// Server-backed user messages can be forked.
+    ///
+    /// Mirrors pi CLI: fork targets come from `get_fork_messages`, which
+    /// enumerates canonical user message entry IDs.
     private var isForkable: Bool {
         guard UUID(uuidString: item.id) == nil else { return false }
         switch item {
-        case .userMessage, .assistantMessage: return true
+        case .userMessage: return true
         default: return false
         }
     }
@@ -442,7 +445,8 @@ private struct ToolCallRow: View {
     private var normalizedTool: String { ToolCallFormatting.normalized(tool) }
     private var trailingMinWidth: CGFloat { normalizedTool == "edit" ? 72 : 44 }
     private var bashRawCommand: String? {
-        args?["command"]?.stringValue ?? ToolCallFormatting.parseArgValue("command", from: argsSummary)
+        let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
+        return command.isEmpty ? nil : command
     }
     private var expandedBashCommandText: String? {
         guard normalizedTool == "bash" else { return nil }
@@ -640,10 +644,11 @@ private struct ToolCallRow: View {
                     .foregroundStyle(.tokyoGreen)
                     .lineLimit(1)
             } else {
-                Text(bashCommand)
+                Text(bashCommandHeader)
                     .font(.caption.monospaced())
                     .foregroundStyle(.tokyoFg)
-                    .lineLimit(3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .multilineTextAlignment(.leading)
             }
 
@@ -776,6 +781,12 @@ private struct ToolCallRow: View {
         ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
     }
 
+    private var bashCommandHeader: String {
+        bashCommand
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var todoSummary: String {
         ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
     }
@@ -786,7 +797,7 @@ private struct ToolCallRow: View {
     private var collapsedPreview: some View {
         switch normalizedTool {
         case "bash":
-            previewLines(ToolCallFormatting.tailLines(outputPreview))
+            previewLines(ToolCallFormatting.tailLines(outputPreview, count: 1))
 
         case "read":
             if !isError { previewLines(ToolCallFormatting.headLines(outputPreview)) }

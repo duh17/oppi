@@ -36,7 +36,8 @@ final class ChatActionHandler {
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
     private static let autoTitleSourceLimit = 600
-    private static let autoTitleMaxLength = 64
+    private static let autoTitleMaxLength = 48
+    private static let autoTitleMaxWords = 6
     static let autoTitleEnabledDefaultsKey = "dev.chenda.PiRemote.session.autoTitle.enabled"
     private static var isAutoTitleEnabled: Bool {
         UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? true
@@ -44,8 +45,11 @@ final class ChatActionHandler {
     private static let autoTitleInstructions = """
         You create concise coding session titles.
         Return only the title text.
-        Use 2 to 6 words.
-        No quotes, no markdown, no trailing punctuation.
+        Rules:
+        - 2 to 5 words.
+        - Focus on one concrete objective.
+        - No quotes, markdown, or trailing punctuation.
+        - For TODO/task-list/planning sessions, start with "TODO:" then 2 to 4 words.
         """
 
     private static let quickReplySuggestionInstructions = """
@@ -393,21 +397,20 @@ final class ChatActionHandler {
         sessionStore: SessionStore,
         sessionId: String
     ) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let normalized = Self.normalizeManualSessionName(name) else { return }
 
         let session = sessionStore.sessions.first(where: { $0.id == sessionId })
         let previousName = session?.name
 
         // Optimistic update
         if var optimistic = session {
-            optimistic.name = trimmed
+            optimistic.name = normalized
             sessionStore.upsert(optimistic)
         }
 
         Task { @MainActor in
             do {
-                try await connection.setSessionName(trimmed)
+                try await connection.setSessionName(normalized)
             } catch {
                 if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                     rollback.name = previousName
@@ -480,7 +483,7 @@ final class ChatActionHandler {
     private func generateSessionTitle(from firstMessage: String) async -> String? {
         if let hook = _generateSessionTitleForTesting {
             let candidate = await hook(firstMessage)
-            return Self.normalizeTitle(candidate)
+            return Self.normalizeAutoTitle(candidate, sourceMessage: firstMessage)
         }
 
         return await Task.detached(priority: .utility) {
@@ -506,7 +509,7 @@ final class ChatActionHandler {
         do {
             let session = LanguageModelSession(instructions: autoTitleInstructions)
             let response = try await session.respond(to: prompt)
-            return normalizeTitle(response.content) ?? fallback
+            return normalizeAutoTitle(response.content, sourceMessage: firstMessage) ?? fallback
         } catch {
             log.error("Auto title generation failed: \(error.localizedDescription, privacy: .public)")
             return fallback
@@ -655,14 +658,31 @@ final class ChatActionHandler {
         let firstLine = collapsed.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? collapsed
         let tokens = firstLine
             .split(whereSeparator: { $0.isWhitespace })
-            .prefix(6)
+            .prefix(autoTitleMaxWords)
             .map(String.init)
             .joined(separator: " ")
 
-        return normalizeTitle(tokens)
+        return normalizeAutoTitle(tokens, sourceMessage: firstMessage)
     }
 
-    private static func normalizeTitle(_ raw: String?) -> String? {
+    private static func normalizeAutoTitle(_ raw: String?, sourceMessage: String) -> String? {
+        guard var title = sanitizeTitle(raw) else { return nil }
+
+        if isTodoSessionPrompt(sourceMessage) {
+            title = ensureTodoPrefix(title)
+        }
+
+        title = limitWordCount(title, maxWords: autoTitleMaxWords)
+
+        if title.count > autoTitleMaxLength {
+            title = truncateTitle(title, maxLength: autoTitleMaxLength)
+        }
+
+        guard !title.isEmpty else { return nil }
+        return title
+    }
+
+    private static func sanitizeTitle(_ raw: String?) -> String? {
         guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
             return nil
         }
@@ -672,7 +692,17 @@ final class ChatActionHandler {
         }
 
         title = title.replacingOccurrences(
-            of: "(?i)^title\\s*:\\s*",
+            of: #"(?i)^title\s*:\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"^\s*[-*•]\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"^\s*\d+\s*[\).:-]\s*"#,
             with: "",
             options: .regularExpression
         )
@@ -680,8 +710,69 @@ final class ChatActionHandler {
         title = title.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?"))
         title = collapseWhitespace(title)
 
+        guard !title.isEmpty else { return nil }
+        return title
+    }
+
+    private static func isTodoSessionPrompt(_ sourceMessage: String) -> Bool {
+        sourceMessage.range(
+            of: #"(?i)\b(todo|to[- ]do|task(?: list|s)?|checklist|action items?|next steps?|planning)\b"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func ensureTodoPrefix(_ title: String) -> String {
+        var core = title.replacingOccurrences(
+            of: #"(?i)^(?:todo|to[- ]do|task(?: list|s)?)\s*[:\-]?\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        core = core.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !core.isEmpty else { return "TODO" }
+        return "TODO: \(core)"
+    }
+
+    private static func limitWordCount(_ text: String, maxWords: Int) -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+        guard words.count > maxWords else { return text }
+        return words.prefix(maxWords).map(String.init).joined(separator: " ")
+    }
+
+    private static func truncateTitle(_ title: String, maxLength: Int) -> String {
+        guard title.count > maxLength else { return title }
+
+        let endIndex = title.index(title.startIndex, offsetBy: maxLength)
+        var truncated = String(title[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let cutMidWord: Bool = {
+            guard endIndex < title.endIndex else { return false }
+            let next = title[endIndex]
+            let prev = title[title.index(before: endIndex)]
+            return !next.isWhitespace && !prev.isWhitespace
+        }()
+
+        if cutMidWord,
+           let lastSpace = truncated.lastIndex(where: { $0.isWhitespace }) {
+            truncated = String(truncated[..<lastSpace])
+        }
+
+        truncated = truncated.trimmingCharacters(in: .whitespacesAndNewlines)
+        truncated = truncated.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?-"))
+
+        if truncated.isEmpty {
+            return String(title[..<endIndex]).trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
+        }
+
+        return truncated
+    }
+
+    private static func normalizeManualSessionName(_ raw: String) -> String? {
+        var title = collapseWhitespace(raw)
+        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+
         if title.count > autoTitleMaxLength {
-            title = String(title.prefix(autoTitleMaxLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+            title = truncateTitle(title, maxLength: autoTitleMaxLength)
         }
 
         guard !title.isEmpty else { return nil }

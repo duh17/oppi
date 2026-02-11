@@ -595,21 +595,13 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 return nil
             }
 
-            let canFork = UUID(uuidString: itemID) == nil && onFork != nil
-            let forkAction: (() -> Void)?
-            if canFork {
-                forkAction = { [weak self] in
-                    self?.onFork?(itemID)
-                }
-            } else {
-                forkAction = nil
-            }
-
+            // Fork targets are canonical user entry IDs from get_fork_messages.
+            // Assistant rows are display nodes and may have synthetic IDs.
             return AssistantTimelineRowConfiguration(
                 text: text,
                 isStreaming: isStreaming,
-                canFork: canFork,
-                onFork: forkAction,
+                canFork: false,
+                onFork: nil,
                 themeID: currentThemeID
             )
         }
@@ -664,19 +656,23 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             var preview: String?
             var toolNamePrefix: String?
             var toolNameColor = UIColor(Color.tokyoCyan)
+            var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
 
             switch normalizedTool {
             case "bash":
-                let command = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
+                let compactCommand = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 if isExpanded {
                     title = "$ bash"
                 } else {
-                    title = command.isEmpty ? "$ bash" : "$ \(command)"
+                    title = compactCommand.isEmpty ? "$ bash" : "$ \(compactCommand)"
+                    titleLineBreakMode = .byTruncatingMiddle
                 }
                 toolNamePrefix = "$"
                 toolNameColor = UIColor(Color.tokyoGreen)
                 if isDone {
-                    preview = ToolCallFormatting.tailLines(outputPreview)
+                    preview = ToolCallFormatting.tailLines(outputPreview, count: 1)
                 }
 
             case "todo":
@@ -712,15 +708,15 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
                 switch normalizedTool {
                 case "bash":
-                    let command = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
+                    let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
                     copyCommandText = command.isEmpty ? nil : command
-                    expandedCommandText = command.isEmpty ? nil : Self.truncatedExpandedToolText(command, maxChars: 1_200)
-                    expandedOutputText = outputTrimmed.isEmpty ? nil : Self.truncatedExpandedToolText(outputTrimmed)
+                    expandedCommandText = command.isEmpty ? nil : command
+                    expandedOutputText = outputTrimmed.isEmpty ? nil : outputTrimmed
                     showSeparatedCommandAndOutput = true
 
                 default:
                     if !outputTrimmed.isEmpty {
-                        expandedText = Self.truncatedExpandedToolText(outputTrimmed)
+                        expandedText = outputTrimmed
                     }
                 }
             }
@@ -739,7 +735,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 copyCommandText: copyCommandText,
                 copyOutputText: copyOutputText,
                 trailing: trailing,
-                titleLineBreakMode: .byTruncatingTail,
+                titleLineBreakMode: titleLineBreakMode,
                 toolNamePrefix: toolNamePrefix,
                 toolNameColor: toolNameColor,
                 editAdded: nil,
@@ -748,12 +744,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 isDone: isDone,
                 isError: isError
             )
-        }
-
-        private static func truncatedExpandedToolText(_ text: String, maxChars: Int = 1_600) -> String {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.count > maxChars else { return trimmed }
-            return String(trimmed.prefix(maxChars - 1)) + "…"
         }
 
         private func loadFullToolOutputIfNeeded(

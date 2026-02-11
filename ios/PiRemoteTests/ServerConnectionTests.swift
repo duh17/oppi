@@ -795,6 +795,108 @@ struct ServerConnectionTests {
         }
     }
 
+    // MARK: - Fork
+
+    @MainActor
+    @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {
+        let conn = makeConnection()
+        var sentTypes: [String] = []
+        var forkEntryId: String?
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getForkMessages(let requestId):
+                sentTypes.append("get_fork_messages")
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "get_fork_messages",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "messages": .array([
+                                .object([
+                                    "entryId": .string("entry-123"),
+                                    "text": .string("Original user prompt"),
+                                ]),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            case .fork(let entryId, let requestId):
+                sentTypes.append("fork")
+                forkEntryId = entryId
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "fork",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([:]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        try await conn.forkFromTimelineEntry("entry-123")
+
+        #expect(sentTypes == ["get_fork_messages", "fork"])
+        #expect(forkEntryId == "entry-123")
+    }
+
+    @MainActor
+    @Test func forkFromTimelineEntryRejectsNonForkableEntry() async {
+        let conn = makeConnection()
+        var sentTypes: [String] = []
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getForkMessages(let requestId):
+                sentTypes.append("get_fork_messages")
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "get_fork_messages",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "messages": .array([
+                                .object([
+                                    "entryId": .string("entry-allowed"),
+                                    "text": .string("Allowed"),
+                                ]),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            case .fork:
+                sentTypes.append("fork")
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        do {
+            try await conn.forkFromTimelineEntry("entry-denied")
+            Issue.record("Expected entryNotForkable error")
+        } catch let error as ForkRequestError {
+            #expect(error == .entryNotForkable)
+        } catch {
+            Issue.record("Expected ForkRequestError.entryNotForkable, got \(error)")
+        }
+
+        #expect(sentTypes == ["get_fork_messages"])
+    }
+
     // MARK: - requestState
 
     @MainActor

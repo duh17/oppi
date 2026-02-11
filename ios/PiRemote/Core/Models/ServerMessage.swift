@@ -109,7 +109,7 @@ extension ServerMessage: Decodable {
         // error
         case error, code, fatal
         // permission_request
-        case id, sessionId, input, displaySummary, risk, timeoutAt
+        case id, sessionId, input, displaySummary, risk, timeoutAt, expires, resolutionOptions
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // extension_ui_notification
@@ -251,7 +251,9 @@ extension ServerMessage: Decodable {
                 displaySummary: try c.decode(String.self, forKey: .displaySummary),
                 risk: try c.decode(RiskLevel.self, forKey: .risk),
                 reason: try c.decode(String.self, forKey: .reason),
-                timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000)
+                timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000),
+                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true,
+                resolutionOptions: try c.decodeIfPresent(PermissionResolutionOptions.self, forKey: .resolutionOptions)
             )
             self = .permissionRequest(perm)
 

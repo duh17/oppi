@@ -16,6 +16,7 @@ struct PiRemoteApp: App {
     @State private var autoClientLogUploadInFlight = false
     @State private var lastAutoClientLogUploadMs: Int64 = 0
 #endif
+    @State private var inviteBootstrapInFlight = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -41,6 +42,11 @@ struct PiRemoteApp: App {
                     .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                         handleMemoryWarning()
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
+                        guard let url = notification.object as? URL else { return }
+                        Task { @MainActor in await handleIncomingInviteURL(url) }
+                    }
+                    .onOpenURL { url in Task { @MainActor in await handleIncomingInviteURL(url) } }
                     .task {
                         await SentryService.shared.configure()
 #if DEBUG
@@ -51,6 +57,50 @@ struct PiRemoteApp: App {
                         await reconnectOnLaunch()
                     }
             }
+        }
+    }
+
+    @MainActor
+    private func handleIncomingInviteURL(_ url: URL) async {
+        guard !inviteBootstrapInFlight else { return }
+        guard let credentials = ServerCredentials.decodeInviteURL(url) else {
+            if let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" {
+                connection.extensionToast = "Unsupported invite link format"
+            }
+            return
+        }
+        inviteBootstrapInFlight = true
+        defer { inviteBootstrapInFlight = false }
+        let existingCredentials = connection.credentials ?? KeychainService.loadCredentials()
+        let hadExistingCredentials = existingCredentials != nil
+        do {
+            let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: existingCredentials
+            ) { reason in await BiometricService.shared.authenticate(reason: reason) }
+
+            connection.disconnectSession()
+            connection.reducer.reset()
+            connection.permissionStore.pending.removeAll()
+            connection.sessionStore.sessions.removeAll()
+            connection.sessionStore.activeSessionId = nil
+            try KeychainService.saveCredentials(bootstrap.effectiveCredentials)
+            guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
+                throw InviteBootstrapError.message("Connection blocked by server transport policy")
+            }
+
+            connection.sessionStore.markSyncStarted()
+            connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
+            connection.sessionStore.markSyncSucceeded()
+            navigation.showOnboarding = false
+            navigation.selectedTab = .workspaces
+            if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
+            await PushRegistration.shared.requestAndRegister()
+            connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
+        } catch {
+            connection.sessionStore.markSyncFailed()
+            if !hadExistingCredentials { navigation.showOnboarding = true }
+            connection.extensionToast = "Invite link failed: \(error.localizedDescription)"
         }
     }
 

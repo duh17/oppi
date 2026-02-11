@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Condensed session outline for navigating long conversations.
+/// Condensed session timeline for navigating long conversations.
 ///
 /// Shows two panes:
-/// - Outline: scannable timeline entries, filterable by type
+/// - Session Timeline: scannable timeline entries, filterable by type
 /// - Changes: centralized file-change summary (edit/write) grouped by file
 struct SessionOutlineView: View {
     let sessionId: String
@@ -20,7 +20,7 @@ struct SessionOutlineView: View {
     @State private var mode: OutlineMode = .outline
 
     enum OutlineMode: String, CaseIterable {
-        case outline = "Outline"
+        case outline = "Session Timeline"
         case changes = "Changes"
     }
 
@@ -34,10 +34,15 @@ struct SessionOutlineView: View {
         items.filter { item in
             switch filter {
             case .all:
-                // Hide system events and permission resolved badges from outline
+                // Keep the list focused: hide most system-only noise,
+                // but preserve compaction markers so users can locate the boundary.
                 switch item {
-                case .systemEvent, .permissionResolved: return false
-                default: return true
+                case .permissionResolved:
+                    return false
+                case .systemEvent:
+                    return isCompactionEvent(item)
+                default:
+                    return true
                 }
             case .messages:
                 switch item {
@@ -84,7 +89,7 @@ struct SessionOutlineView: View {
             .background(Color.tokyoBg)
             .searchable(
                 text: $searchText,
-                prompt: mode == .outline ? "Search session…" : "Search changed files…"
+                prompt: mode == .outline ? "Search session timeline…" : "Search changed files…"
             )
             .navigationTitle(mode.rawValue)
             .navigationBarTitleDisplayMode(.inline)
@@ -141,6 +146,7 @@ struct SessionOutlineView: View {
                                 item: item,
                                 summary: outlineSummary(for: item),
                                 diffStats: outlineDiffStats(for: item),
+                                isCompaction: isCompactionEvent(item),
                                 showDivider: index < filteredItems.count - 1
                             )
                         }
@@ -159,20 +165,41 @@ struct SessionOutlineView: View {
         }
     }
 
-    /// Only persisted user/assistant messages can be forked from.
+    /// Only persisted user messages can be forked from.
     ///
+    /// Mirrors pi CLI behavior (`get_fork_messages` returns user entry IDs).
     /// Live in-flight rows use local UUID placeholders that the server
     /// cannot resolve as fork ancestry entries.
     private func isForkable(_ item: ChatItem) -> Bool {
         guard isServerBackedEntryID(item.id) else { return false }
         switch item {
-        case .userMessage, .assistantMessage: return true
+        case .userMessage: return true
         default: return false
         }
     }
 
     private func isServerBackedEntryID(_ id: String) -> Bool {
         UUID(uuidString: id) == nil
+    }
+
+    private func isCompactionEvent(_ item: ChatItem) -> Bool {
+        switch item {
+        case .toolCall(_, let tool, _, _, _, _, _):
+            return ToolCallFormatting.normalized(tool) == "__compaction"
+        case .systemEvent(_, let message):
+            return isCompactionMessage(message)
+        default:
+            return false
+        }
+    }
+
+    private func isCompactionMessage(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard !normalized.isEmpty else { return false }
+        return normalized.contains("compact")
     }
 
     // MARK: - Summary Text
@@ -224,6 +251,9 @@ struct SessionOutlineView: View {
             let cmd = args?["command"]?.stringValue ?? argsSummary
             return "$ " + String(cmd.replacingOccurrences(of: "\n", with: " ").prefix(100))
 
+        case "__compaction":
+            return "Context compacted"
+
         case "read", "Read":
             let path = args?["path"]?.stringValue ?? args?["file_path"]?.stringValue ?? ""
             return "read " + path.shortenedPath
@@ -258,6 +288,7 @@ private struct OutlineRow: View {
     let item: ChatItem
     let summary: String
     var diffStats: ToolCallFormatting.DiffStats?
+    let isCompaction: Bool
     let showDivider: Bool
 
     var body: some View {
@@ -276,6 +307,15 @@ private struct OutlineRow: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isCompaction {
+                    Text("Compaction")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.tokyoOrange.opacity(0.18), in: Capsule())
+                        .foregroundStyle(.tokyoOrange)
+                }
 
                 // Diff stats for edit tools
                 if let stats = diffStats {
@@ -312,6 +352,10 @@ private struct OutlineRow: View {
     }
 
     private var iconName: String {
+        if isCompaction {
+            return "arrow.trianglehead.2.clockwise.rotate.90"
+        }
+
         switch item {
         case .userMessage: return "person.fill"
         case .assistantMessage: return "cpu"
@@ -334,6 +378,10 @@ private struct OutlineRow: View {
     }
 
     private var iconColor: Color {
+        if isCompaction {
+            return .tokyoOrange
+        }
+
         switch item {
         case .userMessage: return .tokyoBlue
         case .assistantMessage: return .tokyoPurple
@@ -349,6 +397,10 @@ private struct OutlineRow: View {
     }
 
     private var textColor: Color {
+        if isCompaction {
+            return .tokyoFg
+        }
+
         switch item {
         case .userMessage: return .tokyoFg
         case .assistantMessage: return .tokyoFgDim

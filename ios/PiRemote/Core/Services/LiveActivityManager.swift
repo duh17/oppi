@@ -229,7 +229,7 @@ final class LiveActivityManager {
 
     private func registerLiveActivityToken(_ tokenData: Data) async {
         let token = tokenData.map { String(format: "%02x", $0) }.joined()
-        logger.info("Live Activity push token updated: \(String(token.prefix(16)))...")
+        logger.info("Live Activity push token updated (chars: \(token.count))")
         await PushRegistration.shared.sendTokenToServer(token, tokenType: "liveactivity")
     }
 

@@ -15,7 +15,7 @@ struct ConnectionSecurityPolicyTests {
             allowInsecureHttpInTailnet: allowInsecureHttpInTailnet,
             requirePinnedServerIdentity: requirePinnedServerIdentity,
             identity: .init(enabled: true, algorithm: "ed25519", keyId: "srv", fingerprint: "sha256:test"),
-            invite: .init(format: "v2-signed", allowLegacyV1Unsigned: false, maxAgeSeconds: 600)
+            invite: .init(format: "v2-signed", maxAgeSeconds: 600)
         )
     }
 

@@ -101,7 +101,7 @@ private struct WorkspaceRowView: View {
                     Text("•")
                         .foregroundStyle(.tertiary)
 
-                    Text(workspace.policyPreset)
+                    Text(workspace.policyPresetLabel)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }

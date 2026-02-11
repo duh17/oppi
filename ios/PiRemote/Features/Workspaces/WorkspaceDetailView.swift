@@ -314,6 +314,12 @@ private struct WorkspacePolicyProfileView: View {
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
+
+                            if let expiresAt = rule.expiresAt {
+                                Text("Expires \(expiresAt, style: .relative)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                         .padding(.vertical, 2)
                     }
@@ -396,7 +402,7 @@ private struct WorkspacePolicyProfileView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                Text("Preset: \(profile.policyPreset) • Updated \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Preset: \(policyPresetLabel(profile.policyPreset)) • Updated \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -414,6 +420,16 @@ private struct WorkspacePolicyProfileView: View {
             .padding(.vertical, 4)
             .background(color.opacity(0.18), in: Capsule())
             .foregroundStyle(color)
+    }
+
+    private func policyPresetLabel(_ value: String) -> String {
+        switch value {
+        case "container": return "Container"
+        case "host": return "Host Dev"
+        case "host_standard": return "Host Standard"
+        case "host_locked": return "Host Locked"
+        default: return value
+        }
     }
 
     private func ruleMatchSummary(_ match: PolicyRuleRecord.Match?) -> String? {

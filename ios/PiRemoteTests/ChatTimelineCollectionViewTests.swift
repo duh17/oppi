@@ -266,6 +266,38 @@ struct ToolTimelineRowContentViewTests {
         #expect(size.height > 0)
         #expect(size.height < 220)
     }
+
+    @MainActor
+    @Test func errorOutputPresentationStripsANSIEscapeCodes() {
+        let input = "\u{001B}[31mFAIL\u{001B}[39m tests/workspace-crud.test.ts"
+
+        let presentation = ToolTimelineRowContentView.makeANSIOutputPresentation(
+            input,
+            isError: true
+        )
+
+        let rendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
+        #expect(rendered == "FAIL tests/workspace-crud.test.ts")
+        #expect(!rendered.contains("[31m"))
+        #expect(!rendered.contains("[39m"))
+    }
+
+    @MainActor
+    @Test func errorOutputFallbackStillStripsANSIWhenHighlightingSkipped() {
+        let input = "\u{001B}[31mFAIL\u{001B}[39m " + String(repeating: "x", count: 80)
+
+        let presentation = ToolTimelineRowContentView.makeANSIOutputPresentation(
+            input,
+            isError: true,
+            maxHighlightBytes: 8
+        )
+
+        #expect(presentation.attributedText == nil)
+        let rendered = presentation.plainText ?? ""
+        #expect(rendered.hasPrefix("FAIL "))
+        #expect(!rendered.contains("[31m"))
+        #expect(!rendered.contains("[39m"))
+    }
 }
 
 @Suite("AssistantTimelineRowContentView")
@@ -312,6 +344,57 @@ struct AssistantTimelineRowContentViewTests {
         let trailingBacktickIndex = range.location + range.length
         let trailingBacktickLink = textView.attributedText.attribute(.link, at: trailingBacktickIndex, effectiveRange: nil)
         #expect(trailingBacktickLink == nil)
+    }
+
+    @MainActor
+    @Test func excludesTrailingApostropheFromCustomSchemeLinkAttribute() throws {
+        let customURL = "oppi://pair?invite=test_payload"
+        let text = "Use \(customURL)' to connect"
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+        let textView = try #require(view.subviews.compactMap { $0 as? UITextView }.first)
+
+        let nsText = text as NSString
+        let range = nsText.range(of: customURL)
+        #expect(range.location != NSNotFound)
+
+        let linkedValue = textView.attributedText.attribute(.link, at: range.location, effectiveRange: nil)
+        let linkedURL = try #require(linkedValue as? URL)
+        #expect(linkedURL.absoluteString == customURL)
+
+        let trailingTickIndex = range.location + range.length
+        let trailingTickLink = textView.attributedText.attribute(.link, at: trailingTickIndex, effectiveRange: nil)
+        #expect(trailingTickLink == nil)
+    }
+
+    @MainActor
+    @Test func trimsTrailingEncodedBacktickBeforeRoutingInviteLink() throws {
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration())
+        let url = try #require(URL(string: "oppi://connect?v=2&invite=test-payload%60"))
+
+        final class URLCapture: @unchecked Sendable {
+            var value: URL?
+        }
+        let observed = URLCapture()
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: .inviteDeepLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            observed.value = notification.object as? URL
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let shouldOpenExternally = view.textView(
+            UITextView(),
+            shouldInteractWith: url,
+            in: NSRange(location: 0, length: 0),
+            interaction: .invokeDefaultAction
+        )
+
+        #expect(!shouldOpenExternally)
+        let routedURL = try #require(observed.value)
+        #expect(routedURL.absoluteString == "oppi://connect?v=2&invite=test-payload")
     }
 
     @MainActor

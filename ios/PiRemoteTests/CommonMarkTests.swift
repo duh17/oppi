@@ -725,6 +725,22 @@ struct FlatSegmentTextTests {
         #expect(links.isEmpty)
     }
 
+    @Test func deepLinkMarkdownPreservesTapTarget() {
+        let markdown = "Migrate via [invite](pi://connect?v=2&invite=test-payload).\n"
+        let blocks = parseCommonMark(markdown)
+        let segments = FlatSegment.build(from: blocks)
+
+        guard let first = segments.first,
+              case .text(let attributed) = first else {
+            Issue.record("Expected first segment to be .text")
+            return
+        }
+
+        let links = attributed.runs.compactMap(\.link)
+        #expect(links.count == 1)
+        #expect(links.first?.absoluteString == "pi://connect?v=2&invite=test-payload")
+    }
+
     @Test func adjacentTextBlocksMergeForCrossBlockSelection() {
         let markdown = """
         # Heading

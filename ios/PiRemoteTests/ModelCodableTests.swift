@@ -255,6 +255,27 @@ struct PermissionCodableTests {
         #expect(perm.risk == .critical)
         #expect(perm.reason == "Destructive command")
         #expect(perm.timeoutAt.timeIntervalSince1970 == 1700003600)
+        #expect(perm.expires)
+    }
+
+    @Test func decodePermissionRequestWithoutExpiry() throws {
+        let json = """
+        {
+            "id": "p1",
+            "sessionId": "s1",
+            "tool": "bash",
+            "input": {"command": "git push origin main"},
+            "displaySummary": "bash: git push origin main",
+            "risk": "high",
+            "reason": "Git push",
+            "timeoutAt": 1700003600000,
+            "expires": false
+        }
+        """
+        let perm = try JSONDecoder().decode(PermissionRequest.self, from: json.data(using: .utf8)!)
+
+        #expect(!perm.expires)
+        #expect(!perm.hasExpiry)
     }
 
     @Test func encodeDecodeRoundTrip() throws {
@@ -361,6 +382,50 @@ struct ServerCredentialsTests {
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ServerCredentials.self, from: encoded)
         #expect(original == decoded)
+    }
+
+    @Test func decodeLegacyCredentialPayloadDefaultsSecurityFields() throws {
+        let json = """
+        {"host":"legacy-host","port":7749,"token":"sk_legacy","name":"Legacy"}
+        """
+
+        let decoded = try JSONDecoder().decode(ServerCredentials.self, from: json.data(using: .utf8)!)
+
+        #expect(decoded.serverFingerprint == nil)
+        #expect(decoded.securityProfile == nil)
+        #expect(decoded.inviteVersion == nil)
+        #expect(decoded.inviteKeyId == nil)
+        #expect(decoded.requireTlsOutsideTailnet == nil)
+        #expect(decoded.allowInsecureHttpInTailnet == nil)
+        #expect(decoded.requirePinnedServerIdentity == nil)
+    }
+
+    @Test func decodeCredentialPayloadWithSecurityFields() throws {
+        let json = """
+        {
+            "host":"secure-host",
+            "port":7749,
+            "token":"sk_secure",
+            "name":"Secure",
+            "serverFingerprint":"sha256:abc123",
+            "securityProfile":"host",
+            "inviteVersion":2,
+            "inviteKeyId":"srv-key-1",
+            "requireTlsOutsideTailnet":true,
+            "allowInsecureHttpInTailnet":false,
+            "requirePinnedServerIdentity":true
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(ServerCredentials.self, from: json.data(using: .utf8)!)
+
+        #expect(decoded.serverFingerprint == "sha256:abc123")
+        #expect(decoded.securityProfile == "host")
+        #expect(decoded.inviteVersion == 2)
+        #expect(decoded.inviteKeyId == "srv-key-1")
+        #expect(decoded.requireTlsOutsideTailnet == true)
+        #expect(decoded.allowInsecureHttpInTailnet == false)
+        #expect(decoded.requirePinnedServerIdentity == true)
     }
 }
 
@@ -475,6 +540,50 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds?.inviteKeyId == envelope.kid)
         #expect(creds?.securityProfile == envelope.payload.securityProfile)
         #expect(creds?.normalizedServerFingerprint == envelope.payload.fingerprint)
+    }
+
+    @Test func decodeInviteURLAcceptsSignedV2DeepLink() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
+        let inviteJSON = try encodeEnvelope(envelope)
+        let inviteB64 = Data(inviteJSON.utf8).base64URLEncodedString
+
+        let piConnectURL = try #require(URL(string: "pi://connect?v=2&invite=\(inviteB64)"))
+        let oppiConnectURL = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
+        let oppiPairURL = try #require(URL(string: "oppi://pair?invite=\(inviteB64)"))
+
+        let piConnectCreds = ServerCredentials.decodeInviteURL(piConnectURL)
+        let oppiConnectCreds = ServerCredentials.decodeInviteURL(oppiConnectURL)
+        let oppiPairCreds = ServerCredentials.decodeInviteURL(oppiPairURL)
+        let decodedFromString = ServerCredentials.decodeInviteURLString("oppi://pair?invite=\(inviteB64)")
+
+        #expect(piConnectCreds?.host == envelope.payload.host)
+        #expect(oppiConnectCreds?.host == envelope.payload.host)
+        #expect(oppiPairCreds?.host == envelope.payload.host)
+        #expect(decodedFromString?.host == envelope.payload.host)
+        #expect(piConnectCreds?.inviteVersion == 2)
+        #expect(oppiConnectCreds?.inviteVersion == 2)
+        #expect(oppiPairCreds?.inviteVersion == 2)
+    }
+
+    @Test func decodeInviteURLRejectsLegacyUnsignedDeepLink() throws {
+        let legacyURL = try #require(
+            URL(string: "pi://connect?host=my-server.tail00000.ts.net&port=7749&token=sk_legacy&name=legacy")
+        )
+
+        let creds = ServerCredentials.decodeInviteURL(legacyURL)
+        #expect(creds == nil)
+    }
+
+    @Test func decodeInviteURLRejectsUnknownRoute() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
+        let inviteJSON = try encodeEnvelope(envelope)
+        let inviteB64 = Data(inviteJSON.utf8).base64URLEncodedString
+
+        let unsupported = try #require(URL(string: "oppi://migrate?invite=\(inviteB64)"))
+        let creds = ServerCredentials.decodeInviteURL(unsupported)
+        #expect(creds == nil)
     }
 
     @Test func decodeInvitePayloadRejectsLegacyUnsignedPayload() {

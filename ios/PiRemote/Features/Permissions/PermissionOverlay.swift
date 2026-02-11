@@ -20,8 +20,8 @@ struct PermissionOverlay: View {
             PermissionPill(
                 request: first,
                 totalCount: pending.count,
-                onAllow: { respond(id: first.id, action: .allow) },
-                onDeny: { respond(id: first.id, action: .deny) },
+                onAllow: { respond(id: first.id, choice: .allowOnce()) },
+                onDeny: { respond(id: first.id, choice: .denyOnce()) },
                 onTap: { showSheet = true }
             )
             .padding(.horizontal, 12)
@@ -31,11 +31,11 @@ struct PermissionOverlay: View {
             .sheet(isPresented: $showSheet) {
                 PermissionSheet(
                     requests: pending,
-                    onRespond: { id, action in
-                        respond(id: id, action: action)
+                    onRespond: { id, choice in
+                        respond(id: id, choice: choice)
                     }
                 )
-                .presentationDetents([.height(340), .medium])
+                .presentationDetents([.height(340), .medium, .large])
                 .presentationDragIndicator(.visible)
             }
             .onChange(of: pending.isEmpty) { _, isEmpty in
@@ -46,10 +46,10 @@ struct PermissionOverlay: View {
         }
     }
 
-    private func respond(id: String, action: PermissionAction) {
+    private func respond(id: String, choice: PermissionResponseChoice) {
         Task { @MainActor in
             // Biometric gate: require Face ID for high-risk approvals
-            if action == .allow {
+            if choice.action == .allow {
                 let request = pending.first { $0.id == id }
                 if let request, BiometricService.shared.requiresBiometric(for: request.risk) {
                     let toolLabel = request.tool
@@ -63,7 +63,12 @@ struct PermissionOverlay: View {
             }
 
             do {
-                try await connection.respondToPermission(id: id, action: action)
+                try await connection.respondToPermission(
+                    id: id,
+                    action: choice.action,
+                    scope: choice.scope,
+                    expiresInMs: choice.expiresInMs
+                )
             } catch {
                 // Permission response failed — will timeout server-side
             }

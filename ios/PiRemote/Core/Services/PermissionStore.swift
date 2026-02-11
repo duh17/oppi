@@ -41,8 +41,8 @@ final class PermissionStore {
     /// Returns the full requests so callers can record resolved markers with tool/summary.
     func sweepExpired() -> [PermissionRequest] {
         let now = Date()
-        let expired = pending.filter { $0.timeoutAt < now }
-        pending.removeAll { $0.timeoutAt < now }
+        let expired = pending.filter { $0.hasExpiry && $0.timeoutAt < now }
+        pending.removeAll { $0.hasExpiry && $0.timeoutAt < now }
         return expired
     }
 }

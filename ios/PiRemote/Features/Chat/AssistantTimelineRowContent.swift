@@ -30,6 +30,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         pattern: #"(?i)\b(?:pi|oppi)://[^\s<>\"'`]+"#,
         options: []
     )
+    private static let trailingLinkDelimiters: Set<Character> = ["`", "'", "\"", "’", "”"]
+    private static let trailingEncodedLinkDelimiters = ["%60", "%27", "%22"]
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
 
@@ -179,7 +181,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         while adjustedLength > 0 {
             let lastCharacterRange = NSRange(location: range.location + adjustedLength - 1, length: 1)
             let character = nsText.substring(with: lastCharacterRange)
-            if character == "`" {
+            if Self.shouldTrimTrailingLinkCharacter(character) {
                 adjustedLength -= 1
                 continue
             }
@@ -192,11 +194,48 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         let adjustedRange = NSRange(location: range.location, length: adjustedLength)
         let rawURL = nsText.substring(with: adjustedRange)
-        guard let url = URL(string: rawURL) else {
+        let normalizedURLString = Self.normalizedURLString(rawURL)
+        guard let url = URL(string: normalizedURLString) else {
             return nil
         }
 
-        return (url: url, range: adjustedRange)
+        let rawLength = (rawURL as NSString).length
+        let normalizedLength = (normalizedURLString as NSString).length
+        let rangeLength = max(0, adjustedRange.length - max(0, rawLength - normalizedLength))
+        let finalRange = NSRange(location: adjustedRange.location, length: rangeLength)
+
+        return (url: url, range: finalRange)
+    }
+
+    private static func shouldTrimTrailingLinkCharacter(_ character: String) -> Bool {
+        guard character.count == 1, let scalar = character.first else {
+            return false
+        }
+        return trailingLinkDelimiters.contains(scalar)
+    }
+
+    private static func normalizedURLString(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        while !value.isEmpty {
+            if let suffix = trailingEncodedLinkDelimiters.first(where: { value.lowercased().hasSuffix($0) }) {
+                value = String(value.dropLast(suffix.count))
+                continue
+            }
+
+            guard let last = value.last, trailingLinkDelimiters.contains(last) else {
+                break
+            }
+
+            value.removeLast()
+        }
+
+        return value
+    }
+
+    private static func normalizedInteractionURL(_ url: URL) -> URL {
+        let normalized = normalizedURLString(url.absoluteString)
+        return URL(string: normalized) ?? url
     }
 
     private func startCursorAnimationIfNeeded() {
@@ -230,12 +269,14 @@ extension AssistantTimelineRowContentView: UITextViewDelegate {
         in characterRange: NSRange,
         interaction: UITextItemInteraction
     ) -> Bool {
-        guard let scheme = url.scheme?.lowercased() else {
+        let normalizedURL = Self.normalizedInteractionURL(url)
+
+        guard let scheme = normalizedURL.scheme?.lowercased() else {
             return true
         }
 
         if scheme == "pi" || scheme == "oppi" {
-            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: url)
+            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
             return false
         }
 

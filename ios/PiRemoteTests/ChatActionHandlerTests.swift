@@ -445,6 +445,119 @@ struct ChatActionHandlerTests {
     }
 
     @MainActor
+    @Test func sendPromptAutoTitlePrefixesTodoForTaskPrompts() async {
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
+        handler._generateSessionTitleForTesting = { _ in
+            "Ship migration checklist this week"
+        }
+
+        var setSessionNameValue: String?
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setSessionNameValue = name
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "let's do a TODO list for workspace migration and rollout",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        await waitForCondition(timeoutMs: 800) {
+            setSessionNameValue != nil
+        }
+
+        #expect(setSessionNameValue == "TODO: Ship migration checklist this week")
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "TODO: Ship migration checklist this week")
+    }
+
+    @MainActor
+    @Test func sendPromptAutoTitleLimitsWordCount() async {
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
+        handler._generateSessionTitleForTesting = { _ in
+            "Title: Investigate websocket reconnect state drift after background foreground transitions now"
+        }
+
+        var setSessionNameValue: String?
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setSessionNameValue = name
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "debug reconnect flow",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        await waitForCondition(timeoutMs: 800) {
+            setSessionNameValue != nil
+        }
+
+        #expect(setSessionNameValue == "Investigate websocket reconnect state drift")
+    }
+
+    @MainActor
     @Test func sendPromptDoesNotAutoTitleWhenSessionAlreadyNamed() async {
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
@@ -594,6 +707,45 @@ struct ChatActionHandlerTests {
         }
 
         #expect(sentName == "Better session name")
+    }
+
+    @MainActor
+    @Test func renameCollapsesWhitespaceAndLimitsLength() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeSession(id: "s1", name: "Old", messageCount: 0))
+
+        var sentName: String?
+        connection._sendMessageForTesting = { message in
+            if case .setSessionName(let name, _) = message {
+                sentName = name
+            }
+        }
+
+        let longName = "  Improve   TODO   planning    flow   for   release  candidate  and post-launch cleanup work  "
+        handler.rename(
+            longName,
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionId: "s1"
+        )
+
+        await waitForCondition(timeoutMs: 800) {
+            sentName != nil
+        }
+
+        guard let sentName else {
+            Issue.record("Expected set_session_name call")
+            return
+        }
+
+        #expect(!sentName.contains("  "))
+        #expect(sentName.count <= 48)
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == sentName)
     }
 
     @MainActor

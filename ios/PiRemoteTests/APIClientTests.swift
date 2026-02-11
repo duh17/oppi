@@ -58,6 +58,32 @@ struct APIClientTests {
         return (data, response)
     }
 
+    private func requestBodyData(_ request: URLRequest) -> Data {
+        if let body = request.httpBody {
+            return body
+        }
+
+        guard let stream = request.httpBodyStream else {
+            return Data()
+        }
+
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 1024)
+
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            if read <= 0 {
+                break
+            }
+            data.append(contentsOf: buffer.prefix(read))
+        }
+
+        return data
+    }
+
     // MARK: - Health
 
     @Test func healthReturnsTrue() async throws {
@@ -120,7 +146,6 @@ struct APIClientTests {
               },
               "invite": {
                 "format": "v2-signed",
-                "allowLegacyV1Unsigned": true,
                 "maxAgeSeconds": 600
               }
             }
@@ -134,6 +159,57 @@ struct APIClientTests {
         #expect(profile.identity.keyId == "srv-default")
         #expect(profile.identity.normalizedFingerprint == "sha256:test")
         #expect(profile.invite.format == "v2-signed")
+    }
+
+    @Test func updateSecurityProfileEncodesPayloadAndDecodesResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PUT")
+            #expect(request.url?.path == "/security/profile")
+
+            let bodyData = self.requestBodyData(request)
+            let raw = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any]
+            #expect(raw?["profile"] as? String == "strict")
+            #expect(raw?["requireTlsOutsideTailnet"] as? Bool == true)
+            #expect(raw?["allowInsecureHttpInTailnet"] as? Bool == false)
+            #expect(raw?["requirePinnedServerIdentity"] as? Bool == true)
+            let invite = raw?["invite"] as? [String: Any]
+            #expect(invite?["maxAgeSeconds"] as? Int == 300)
+
+            return self.mockResponse(json: """
+            {
+              "configVersion": 2,
+              "profile": "strict",
+              "requireTlsOutsideTailnet": true,
+              "allowInsecureHttpInTailnet": false,
+              "requirePinnedServerIdentity": true,
+              "identity": {
+                "enabled": true,
+                "algorithm": "ed25519",
+                "keyId": "srv-default",
+                "fingerprint": "sha256:test"
+              },
+              "invite": {
+                "format": "v2-signed",
+                "maxAgeSeconds": 300
+              }
+            }
+            """)
+        }
+
+        let profile = try await client.updateSecurityProfile(
+            profile: "strict",
+            requireTlsOutsideTailnet: true,
+            allowInsecureHttpInTailnet: false,
+            requirePinnedServerIdentity: true,
+            inviteMaxAgeSeconds: 300
+        )
+
+        #expect(profile.profile == "strict")
+        #expect(profile.allowInsecureHttpInTailnet == false)
+        #expect(profile.invite.maxAgeSeconds == 300)
     }
 
     // MARK: - Sessions

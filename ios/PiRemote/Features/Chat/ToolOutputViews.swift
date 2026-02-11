@@ -176,22 +176,30 @@ private struct ToolOutputMedia: View {
 
     @State private var ansiAttributed: AttributedString?
 
+    private var renderText: String {
+        String(strippedText.prefix(2000))
+    }
+
+    private var fallbackText: String {
+        ANSIParser.strip(renderText)
+    }
+
+    private var ansiKey: String {
+        let prefix = String(renderText.prefix(64))
+        let suffix = String(renderText.suffix(64))
+        return "\(isError):\(renderText.utf8.count):\(prefix):\(suffix)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !strippedText.isEmpty {
-                let displayText = String(strippedText.prefix(2000))
-                if isError {
-                    Text(displayText)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoRed)
-                        .textSelection(.enabled)
-                } else if let ansiAttributed {
+                if let ansiAttributed {
                     Text(ansiAttributed)
                         .textSelection(.enabled)
                 } else {
-                    Text(displayText)
+                    Text(fallbackText)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
                         .textSelection(.enabled)
                 }
             }
@@ -212,11 +220,19 @@ private struct ToolOutputMedia: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.tokyoBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .task(id: strippedText.count) {
-            guard !isError, !strippedText.isEmpty else { return }
-            let text = String(strippedText.prefix(2000))
+        .task(id: ansiKey) {
+            guard !renderText.isEmpty else {
+                ansiAttributed = nil
+                return
+            }
+
+            let text = renderText
+            let shouldTintError = isError
             ansiAttributed = await Task.detached(priority: .userInitiated) {
-                ANSIParser.attributedString(from: text)
+                ANSIParser.attributedString(
+                    from: text,
+                    baseForeground: shouldTintError ? .tokyoRed : .tokyoFg
+                )
             }.value
         }
         .contextMenu {

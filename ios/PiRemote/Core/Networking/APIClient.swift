@@ -54,6 +54,27 @@ actor APIClient {
         return try JSONDecoder().decode(ServerSecurityProfile.self, from: data)
     }
 
+    /// Update server security posture.
+    ///
+    /// This modifies global server policy settings and returns the updated profile.
+    func updateSecurityProfile(
+        profile: String,
+        requireTlsOutsideTailnet: Bool,
+        allowInsecureHttpInTailnet: Bool,
+        requirePinnedServerIdentity: Bool,
+        inviteMaxAgeSeconds: Int
+    ) async throws -> ServerSecurityProfile {
+        let body = UpdateSecurityProfileRequest(
+            profile: profile,
+            requireTlsOutsideTailnet: requireTlsOutsideTailnet,
+            allowInsecureHttpInTailnet: allowInsecureHttpInTailnet,
+            requirePinnedServerIdentity: requirePinnedServerIdentity,
+            invite: InviteUpdate(maxAgeSeconds: inviteMaxAgeSeconds)
+        )
+        let data = try await put("/security/profile", body: body)
+        return try JSONDecoder().decode(ServerSecurityProfile.self, from: data)
+    }
+
     // MARK: - Sessions
 
     /// List all sessions for the authenticated user by aggregating
@@ -535,6 +556,20 @@ actor APIClient {
     private struct ServerError: Decodable { let error: String }
 }
 
+// MARK: - Security Request Types
+
+private struct InviteUpdate: Encodable {
+    let maxAgeSeconds: Int
+}
+
+private struct UpdateSecurityProfileRequest: Encodable {
+    let profile: String
+    let requireTlsOutsideTailnet: Bool
+    let allowInsecureHttpInTailnet: Bool
+    let requirePinnedServerIdentity: Bool
+    let invite: InviteUpdate
+}
+
 // MARK: - Workspace Request Types
 
 struct CreateWorkspaceRequest: Encodable {
@@ -666,6 +701,23 @@ struct PolicyAuditUserChoice: Decodable, Sendable {
     let action: String
     let scope: String
     let learnedRuleId: String?
+    let expiresAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case action, scope, learnedRuleId, expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        scope = try c.decode(String.self, forKey: .scope)
+        learnedRuleId = try c.decodeIfPresent(String.self, forKey: .learnedRuleId)
+        if let expiresAtMs = try c.decodeIfPresent(Double.self, forKey: .expiresAt) {
+            expiresAt = Date(timeIntervalSince1970: expiresAtMs / 1000)
+        } else {
+            expiresAt = nil
+        }
+    }
 }
 
 struct PolicyAuditEntry: Decodable, Identifiable, Sendable {

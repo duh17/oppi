@@ -41,6 +41,14 @@ struct ChatView: View {
         sessionStore.sessions.first { $0.id == sessionId }
     }
 
+    private var sessionDisplayName: String {
+        let trimmed = session?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return "Session \(String(sessionId.prefix(8)))"
+    }
+
     private var isBusy: Bool {
         session?.status == .busy || session?.status == .stopping
     }
@@ -120,7 +128,7 @@ struct ChatView: View {
             footerArea
         }
         .background(Color.tokyoBg.ignoresSafeArea())
-        .navigationTitle(sessionId)
+        .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
@@ -184,7 +192,7 @@ struct ChatView: View {
         .alert("Rename Session", isPresented: $showRenameAlert) {
             renameAlert
         } message: {
-            Text("Enter a new name for this session.")
+            Text("Keep it short (2–6 words). For task planning, start with TODO: ...")
         }
         .task(id: sessionManager.connectionGeneration) {
             await sessionManager.connect(
@@ -297,10 +305,15 @@ struct ChatView: View {
 
     private var sessionTitleLabel: some View {
         HStack(spacing: 6) {
-            Text(sessionId)
-                .font(.caption.monospaced())
+            Text(sessionDisplayName)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.tokyoFg)
                 .lineLimit(1)
+
+            Text(String(sessionId.prefix(6)))
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tokyoComment)
+
             Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
                 .foregroundStyle(copiedSessionID ? .tokyoGreen : .tokyoComment)
@@ -558,13 +571,9 @@ struct ChatView: View {
     }
 
     private func forkFromMessage(_ entryId: String) {
-        if UUID(uuidString: entryId) != nil {
-            reducer.process(.error(sessionId: sessionId, message: "Wait for this turn to finish before forking."))
-            return
-        }
         Task {
             do {
-                try await connection.send(.fork(entryId: entryId))
+                try await connection.forkFromTimelineEntry(entryId)
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
             }

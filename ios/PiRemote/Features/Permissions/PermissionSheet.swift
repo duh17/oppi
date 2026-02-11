@@ -6,7 +6,7 @@ import SwiftUI
 /// Multiple pending: TabView pager between requests.
 struct PermissionSheet: View {
     let requests: [PermissionRequest]
-    let onRespond: (String, PermissionAction) -> Void
+    let onRespond: (String, PermissionResponseChoice) -> Void
 
     @State private var currentPage: Int = 0
     @Environment(\.dismiss) private var dismiss
@@ -25,31 +25,17 @@ struct PermissionSheet: View {
     // MARK: - Single Request
 
     private func singleRequestView(_ request: PermissionRequest) -> some View {
-        VStack(spacing: 20) {
-            // Header
-            PermissionSheetHeader(request: request)
+        VStack(spacing: 0) {
+            requestBody(request)
 
-            // Command display
-            CommandBox(summary: request.displaySummary, tool: request.tool)
-
-            // Reason
-            if !request.reason.isEmpty {
-                Text(request.reason)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Spacer()
-
-            // Action buttons
-            PermissionActionButtons(request: request) { action in
-                onRespond(request.id, action)
+            PermissionActionButtons(request: request) { choice in
+                onRespond(request.id, choice)
                 dismiss()
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 24)
         }
-        .padding(24)
-        .padding(.top, 4)
     }
 
     // MARK: - Multiple Requests (Pager)
@@ -68,7 +54,7 @@ struct PermissionSheet: View {
             if requests.count >= 3 {
                 Button {
                     for request in requests {
-                        onRespond(request.id, .deny)
+                        onRespond(request.id, .denyOnce())
                     }
                     dismiss()
                 } label: {
@@ -86,29 +72,39 @@ struct PermissionSheet: View {
     }
 
     private func singlePageContent(_ request: PermissionRequest) -> some View {
-        VStack(spacing: 20) {
-            PermissionSheetHeader(request: request)
-            CommandBox(summary: request.displaySummary, tool: request.tool)
+        VStack(spacing: 0) {
+            requestBody(request)
 
-            if !request.reason.isEmpty {
-                Text(request.reason)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Spacer()
-
-            PermissionActionButtons(request: request) { action in
-                onRespond(request.id, action)
+            PermissionActionButtons(request: request) { choice in
+                onRespond(request.id, choice)
                 // Don't dismiss — advance to next page
                 if currentPage >= requests.count - 1 {
                     currentPage = max(0, requests.count - 2)
                 }
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 24)
         }
-        .padding(24)
-        .padding(.top, 4)
+    }
+
+    private func requestBody(_ request: PermissionRequest) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                PermissionSheetHeader(request: request)
+                CommandBox(summary: request.displaySummary, tool: request.tool, input: request.input)
+
+                if !request.reason.isEmpty {
+                    Text(request.reason)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 12)
+        }
     }
 }
 
@@ -128,9 +124,15 @@ private struct PermissionSheetHeader: View {
 
             Spacer()
 
-            Text(request.timeoutAt, style: .timer)
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if request.hasExpiry {
+                Text(request.timeoutAt, style: .timer)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("No expiry", systemImage: "infinity")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -140,21 +142,51 @@ private struct PermissionSheetHeader: View {
 private struct CommandBox: View {
     let summary: String
     let tool: String
+    let input: [String: JSONValue]
+
+    private var actionText: String {
+        if tool.lowercased() == "bash",
+           let command = input["command"]?.stringValue,
+           !command.isEmpty {
+            return command
+        }
+        return summary
+    }
+
+    private var showsSummaryHint: Bool {
+        actionText != summary
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: iconForTool(tool))
                     .font(.caption)
                 Text(displayToolLabel)
                     .font(.caption.bold())
+
+                Spacer()
+
+                if showsSummaryHint {
+                    Text("Full action")
+                        .font(.caption2)
+                }
             }
             .foregroundStyle(.tokyoComment)
 
-            Text(summary)
+            if showsSummaryHint {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.tokyoComment)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text(actionText)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.tokyoFg)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
@@ -204,8 +236,16 @@ private struct CommandBox: View {
 /// Low/Medium: Allow is prominent. High: both equal weight.
 /// Critical: Deny is prominent, Allow is deliberately plain.
 private struct PermissionActionButtons: View {
+    private struct ExtraChoice: Identifiable {
+        let id: String
+        let title: String
+        let systemImage: String
+        let role: ButtonRole?
+        let choice: PermissionResponseChoice
+    }
+
     let request: PermissionRequest
-    let onAction: (PermissionAction) -> Void
+    let onAction: (PermissionResponseChoice) -> Void
 
     @State private var isResolving = false
 
@@ -224,39 +264,135 @@ private struct PermissionActionButtons: View {
         request.risk == .low ? 80 : .infinity
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            // Deny button
-            if isCritical {
-                denyLabel
-                    .buttonStyle(.borderedProminent)
-                    .tint(.tokyoRed)
-            } else {
-                denyLabel
-                    .buttonStyle(.bordered)
-                    .tint(.tokyoRed)
+    private var options: PermissionResolutionOptions {
+        request.resolutionOptions
+            ?? PermissionResolutionOptions(
+                allowSession: true,
+                allowAlways: false,
+                alwaysDescription: nil,
+                denyAlways: true
+            )
+    }
+
+    private var extraChoices: [ExtraChoice] {
+        var choices: [ExtraChoice] = []
+
+        if options.allowSession {
+            choices.append(
+                ExtraChoice(
+                    id: "allow-session",
+                    title: "Allow this session",
+                    systemImage: "clock",
+                    role: nil,
+                    choice: PermissionResponseChoice(action: .allow, scope: .session)
+                )
+            )
+        }
+
+        if options.allowAlways {
+            let temporaryDurations: [(label: String, ms: Int)] = [
+                ("Allow for 1 hour", 60 * 60 * 1000),
+                ("Allow for 24 hours", 24 * 60 * 60 * 1000),
+                ("Allow for 7 days", 7 * 24 * 60 * 60 * 1000),
+            ]
+
+            for duration in temporaryDurations {
+                choices.append(
+                    ExtraChoice(
+                        id: "allow-temp-\(duration.ms)",
+                        title: duration.label,
+                        systemImage: "timer",
+                        role: nil,
+                        choice: PermissionResponseChoice(
+                            action: .allow,
+                            scope: .workspace,
+                            expiresInMs: duration.ms
+                        )
+                    )
+                )
             }
 
-            // Allow button
-            if isCritical {
-                allowLabel
-                    .buttonStyle(.bordered)
-                    .tint(allowTint)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.tokyoRed, lineWidth: 2)
-                    )
-            } else {
-                allowLabel
-                    .buttonStyle(.borderedProminent)
-                    .tint(allowTint)
+            choices.append(
+                ExtraChoice(
+                    id: "allow-forever",
+                    title: options.alwaysDescription ?? "Always allow in this workspace",
+                    systemImage: "checkmark.circle",
+                    role: nil,
+                    choice: PermissionResponseChoice(action: .allow, scope: .workspace)
+                )
+            )
+        }
+
+        if options.denyAlways {
+            choices.append(
+                ExtraChoice(
+                    id: "deny-forever",
+                    title: "Always deny in this workspace",
+                    systemImage: "xmark.circle",
+                    role: .destructive,
+                    choice: PermissionResponseChoice(action: .deny, scope: .workspace)
+                )
+            )
+        }
+
+        return choices
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                // Deny button (one-time)
+                if isCritical {
+                    denyLabel
+                        .buttonStyle(.borderedProminent)
+                        .tint(.tokyoRed)
+                } else {
+                    denyLabel
+                        .buttonStyle(.bordered)
+                        .tint(.tokyoRed)
+                }
+
+                // Allow button (one-time)
+                if isCritical {
+                    allowLabel
+                        .buttonStyle(.bordered)
+                        .tint(allowTint)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.tokyoRed, lineWidth: 2)
+                        )
+                } else {
+                    allowLabel
+                        .buttonStyle(.borderedProminent)
+                        .tint(allowTint)
+                }
+            }
+
+            if !extraChoices.isEmpty {
+                HStack {
+                    Menu {
+                        ForEach(extraChoices) { item in
+                            Button(role: item.role) {
+                                resolve(item.choice)
+                            } label: {
+                                Label(item.title, systemImage: item.systemImage)
+                            }
+                        }
+                    } label: {
+                        Label("More options", systemImage: "ellipsis.circle")
+                            .font(.footnote)
+                    }
+                    .disabled(isResolving)
+
+                    Spacer()
+                }
             }
         }
     }
 
     private var denyLabel: some View {
         Button {
-            resolve(.deny)
+            resolve(.denyOnce())
         } label: {
             Text("Deny")
                 .font(.subheadline.bold())
@@ -268,7 +404,7 @@ private struct PermissionActionButtons: View {
 
     private var allowLabel: some View {
         Button {
-            resolve(.allow)
+            resolve(.allowOnce())
         } label: {
             HStack(spacing: 6) {
                 if BiometricService.shared.requiresBiometric(for: request.risk) {
@@ -293,10 +429,10 @@ private struct PermissionActionButtons: View {
         }
     }
 
-    private func resolve(_ action: PermissionAction) {
+    private func resolve(_ choice: PermissionResponseChoice) {
         isResolving = true
-        let style: UIImpactFeedbackGenerator.FeedbackStyle = action == .allow ? .light : .heavy
+        let style: UIImpactFeedbackGenerator.FeedbackStyle = choice.action == .allow ? .light : .heavy
         UIImpactFeedbackGenerator(style: style).impactOccurred()
-        onAction(action)
+        onAction(choice)
     }
 }

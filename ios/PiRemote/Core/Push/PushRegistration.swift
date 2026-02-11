@@ -64,7 +64,7 @@ final class PushRegistration {
     func didRegisterForRemoteNotifications(deviceToken data: Data) {
         let token = data.map { String(format: "%02x", $0) }.joined()
         self.deviceToken = token
-        logger.info("Device token received: \(token.prefix(16))...")
+        logger.info("Device token received (chars: \(token.count))")
 
         // Forward to server
         Task {

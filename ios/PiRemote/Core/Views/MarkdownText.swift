@@ -2,6 +2,10 @@
 import SwiftUI
 import UIKit
 
+extension Notification.Name {
+    static let inviteDeepLinkTapped = Notification.Name("dev.chenda.PiRemote.inviteDeepLinkTapped")
+}
+
 // MARK: - Global Segment Cache
 
 /// Process-wide cache for parsed markdown segments.
@@ -318,10 +322,53 @@ private struct SelectableAttributedText: UIViewRepresentable {
     let attributed: AttributedString
     let themeID: ThemeID
 
-    final class Coordinator {
+    final class Coordinator: NSObject, UITextViewDelegate {
         var lastAttributed: AttributedString?
         var lastThemeID: ThemeID?
         var lastContentSizeCategory: UIContentSizeCategory?
+
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith url: URL,
+            in characterRange: NSRange,
+            interaction: UITextItemInteraction
+        ) -> Bool {
+            let normalizedURL = normalizedInteractionURL(url)
+
+            guard let scheme = normalizedURL.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+                return true
+            }
+
+            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            return false
+        }
+
+        private func normalizedInteractionURL(_ url: URL) -> URL {
+            let normalized = normalizedURLString(url.absoluteString)
+            return URL(string: normalized) ?? url
+        }
+
+        private func normalizedURLString(_ raw: String) -> String {
+            let delimiters: Set<Character> = ["`", "'", "\"", "’", "”"]
+            let encodedDelimiters = ["%60", "%27", "%22"]
+
+            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            while !value.isEmpty {
+                if let suffix = encodedDelimiters.first(where: { value.lowercased().hasSuffix($0) }) {
+                    value = String(value.dropLast(suffix.count))
+                    continue
+                }
+
+                guard let last = value.last, delimiters.contains(last) else {
+                    break
+                }
+
+                value.removeLast()
+            }
+
+            return value
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -339,6 +386,7 @@ private struct SelectableAttributedText: UIViewRepresentable {
         textView.adjustsFontForContentSizeCategory = true
         textView.textDragInteraction?.isEnabled = true
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.delegate = context.coordinator
         return textView
     }
 
@@ -599,10 +647,15 @@ enum FlatSegment: Sendable {
             result.font = .system(.body, design: .monospaced)
             result.foregroundColor = palette.cyan
             return result
-        case .link(let children, _):
+        case .link(let children, let destination):
             var result = renderInlines(children, themeID: themeID)
             result.foregroundColor = palette.blue
             result.underlineStyle = .single
+            if let destination,
+               let url = URL(string: destination),
+               url.scheme != nil {
+                result.link = url
+            }
             return result
         case .image(let alt, _):
             if alt.isEmpty { return AttributedString() }

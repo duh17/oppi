@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// Messages sent from the iOS client to the server over WebSocket.
 ///
@@ -54,7 +56,13 @@ enum ClientMessage: Sendable {
     case getCommands(requestId: String? = nil)
 
     // ── Permission gate ──
-    case permissionResponse(id: String, action: PermissionAction, requestId: String? = nil)
+    case permissionResponse(
+        id: String,
+        action: PermissionAction,
+        scope: PermissionScope? = nil,
+        expiresInMs: Int? = nil,
+        requestId: String? = nil
+    )
 
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
@@ -66,11 +74,13 @@ struct ImageAttachment: Codable, Sendable, Equatable {
     let data: String      // base64
     let mimeType: String  // image/jpeg, image/png, etc.
 
+#if canImport(UIKit)
     /// Decode base64 data to UIImage for display.
     var decodedImage: UIImage? {
         guard let imageData = Data(base64Encoded: data) else { return nil }
         return UIImage(data: imageData)
     }
+#endif
 }
 
 enum StreamingBehavior: String, Codable, Sendable {
@@ -250,10 +260,12 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Permission gate ──
-        case .permissionResponse(let id, let action, let reqId):
+        case .permissionResponse(let id, let action, let scope, let expiresInMs, let reqId):
             try c.encode("permission_response", forKey: .type)
             try c.encode(id, forKey: .id)
             try c.encode(action, forKey: .action)
+            try c.encodeIfPresent(scope, forKey: .scope)
+            try c.encodeIfPresent(expiresInMs, forKey: .expiresInMs)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Extension UI ──
@@ -269,7 +281,7 @@ extension ClientMessage: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case type, message, images, streamingBehavior, requestId, clientTurnId
-        case id, action, value, confirmed, cancelled
+        case id, action, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command
     }

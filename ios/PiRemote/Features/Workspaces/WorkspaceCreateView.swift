@@ -94,7 +94,11 @@ struct WorkspaceCreateView: View {
                             Text(option.label).tag(option.value)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
+
+                    Text(policyPresetDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let error {
@@ -127,15 +131,32 @@ struct WorkspaceCreateView: View {
 
     private var policyOptions: [(label: String, value: String)] {
         if runtime == "host" {
-            return [("Host", "host"), ("Container", "container")]
+            return [
+                ("Host Dev", "host"),
+                ("Host Standard", "host_standard"),
+                ("Host Locked", "host_locked"),
+            ]
         }
-        return [("Container", "container"), ("Host", "host")]
+        return [("Container", "container")]
+    }
+
+    private var policyPresetDescription: String {
+        switch policyPreset {
+        case "host":
+            return "Developer trust mode: low friction, broad local autonomy."
+        case "host_standard":
+            return "Approval-first host mode for regular users."
+        case "host_locked":
+            return "Strict host mode: unknown actions blocked by default."
+        default:
+            return "Container mode: isolated runtime with standard supervision."
+        }
     }
 
     private func normalizePolicyPreset(for runtime: String) {
         let allowed = Set(policyOptions.map(\.value))
         guard !allowed.contains(policyPreset) else { return }
-        policyPreset = runtime == "host" ? "host" : "container"
+        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private func loadSkills() async {

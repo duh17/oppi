@@ -46,6 +46,11 @@ final class ServerConnection {
     private static let turnSendMaxAttempts = 2
     private static let turnSendRequiredStage: TurnAckStage = .dispatched
 
+    /// Pending generic RPC requests keyed by requestId.
+    /// Used for request/response commands like `get_fork_messages`.
+    private var pendingRPCRequestsByRequestId: [String: PendingRPCRequest] = [:]
+    private static let rpcRequestTimeoutDefault: Duration = .seconds(8)
+
     /// Test seam: override outbound send path without opening a real WebSocket.
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
 
@@ -147,6 +152,7 @@ final class ServerConnection {
     func disconnectSession() {
         coalescer.flushNow()
         failPendingSendAcks(error: WebSocketError.notConnected)
+        failPendingRPCRequests(error: WebSocketError.notConnected)
         wsClient?.disconnect()
         activeSessionId = nil
         Task {
@@ -245,15 +251,12 @@ final class ServerConnection {
     }
 
     /// Respond to a permission request.
-    func respondToPermission(id: String, action: PermissionAction) async throws {
+    func respondToPermission(id: String, action: PermissionAction, scope: PermissionScope = .once, expiresInMs: Int? = nil) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.permissionResponse(id: id, action: action))
+        try await wsClient.send(.permissionResponse(id: id, action: action, scope: scope == .once ? nil : scope, expiresInMs: expiresInMs, requestId: nil))
         let outcome: PermissionOutcome = action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
-            reducer.resolvePermission(
-                id: id, outcome: outcome,
-                tool: request.tool, summary: request.displaySummary
-            )
+            reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
         }
         PermissionNotificationService.shared.cancelNotification(permissionId: id)
     }
@@ -377,6 +380,112 @@ final class ServerConnection {
                 throw error
             }
         }
+    }
+
+    private func sendRPCCommandAwaitingResult(
+        command: String,
+        timeout: Duration = ServerConnection.rpcRequestTimeoutDefault,
+        message: (String) -> ClientMessage
+    ) async throws -> JSONValue? {
+        if _sendMessageForTesting == nil, wsClient == nil {
+            throw WebSocketError.notConnected
+        }
+
+        let requestId = UUID().uuidString
+        let pending = PendingRPCRequest(command: command, requestId: requestId)
+        registerPendingRPCRequest(pending)
+
+        do {
+            try await dispatchSend(message(requestId))
+        } catch {
+            unregisterPendingRPCRequest(requestId: requestId)
+            pending.waiter.resolve(.failure(error))
+            throw error
+        }
+
+        do {
+            let response = try await waitForRPCResult(waiter: pending.waiter, command: command, timeout: timeout)
+            unregisterPendingRPCRequest(requestId: requestId)
+            return response.data
+        } catch {
+            unregisterPendingRPCRequest(requestId: requestId)
+            throw error
+        }
+    }
+
+    private func waitForRPCResult(
+        waiter: RPCResultWaiter,
+        command: String,
+        timeout: Duration
+    ) async throws -> RPCResultPayload {
+        try await withThrowingTaskGroup(of: RPCResultPayload.self) { group in
+            group.addTask {
+                try await waiter.wait()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw RPCRequestError.timeout(command: command)
+            }
+
+            do {
+                guard let result = try await group.next() else {
+                    throw RPCRequestError.timeout(command: command)
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                // Same continuation-drain guard as send acks.
+                if let rpcError = error as? RPCRequestError,
+                   case .timeout = rpcError {
+                    waiter.resolve(.failure(rpcError))
+                }
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private func getForkMessages() async throws -> [ForkMessage] {
+        let data = try await sendRPCCommandAwaitingResult(command: "get_fork_messages") { requestId in
+            .getForkMessages(requestId: requestId)
+        }
+
+        guard let values = data?.objectValue?["messages"]?.arrayValue else {
+            return []
+        }
+
+        return values.compactMap { value in
+            guard let object = value.objectValue,
+                  let entryId = object["entryId"]?.stringValue,
+                  !entryId.isEmpty else {
+                return nil
+            }
+
+            return ForkMessage(
+                entryId: entryId,
+                text: object["text"]?.stringValue ?? ""
+            )
+        }
+    }
+
+    private func resolvePendingRPCResult(
+        command: String,
+        requestId: String,
+        success: Bool,
+        data: JSONValue?,
+        error: String?
+    ) -> Bool {
+        guard let pending = pendingRPCRequestsByRequestId[requestId], pending.command == command else {
+            return false
+        }
+
+        if success {
+            pending.waiter.resolve(.success(RPCResultPayload(data: data)))
+        } else {
+            pending.waiter.resolve(.failure(RPCRequestError.rejected(command: command, reason: error)))
+        }
+
+        return true
     }
 
     private func resolveTurnAck(
@@ -549,6 +658,31 @@ final class ServerConnection {
 
     func compact(instructions: String? = nil) async throws {
         try await send(.compact(customInstructions: instructions))
+    }
+
+    /// Fork from a canonical session entry ID (mirrors pi CLI behavior).
+    ///
+    /// Flow:
+    /// 1. `get_fork_messages` to resolve valid fork entry IDs
+    /// 2. Verify requested entry is in that server-authored list
+    /// 3. `fork(entryId)` with correlated requestId
+    func forkFromTimelineEntry(_ entryId: String) async throws {
+        guard UUID(uuidString: entryId) == nil else {
+            throw ForkRequestError.turnInProgress
+        }
+
+        let forkMessages = try await getForkMessages()
+        guard !forkMessages.isEmpty else {
+            throw ForkRequestError.noForkableMessages
+        }
+
+        guard forkMessages.contains(where: { $0.entryId == entryId }) else {
+            throw ForkRequestError.entryNotForkable
+        }
+
+        _ = try await sendRPCCommandAwaitingResult(command: "fork") { requestId in
+            .fork(entryId: entryId, requestId: requestId)
+        }
     }
 
     // ── Bash ──
@@ -862,6 +996,17 @@ final class ServerConnection {
             return
         }
 
+        if let requestId,
+           resolvePendingRPCResult(
+            command: command,
+            requestId: requestId,
+            success: success,
+            data: data,
+            error: error
+           ) {
+            return
+        }
+
         syncThinkingLevelFromRPC(command: command, success: success, data: data)
 
         coalescer.receive(
@@ -966,6 +1111,14 @@ private extension ServerConnection {
         }
     }
 
+    func registerPendingRPCRequest(_ pending: PendingRPCRequest) {
+        pendingRPCRequestsByRequestId[pending.requestId] = pending
+    }
+
+    func unregisterPendingRPCRequest(requestId: String) {
+        pendingRPCRequestsByRequestId.removeValue(forKey: requestId)
+    }
+
     func failPendingSendAcks(error: Error) {
         let pending = Array(pendingTurnSendsByRequestId.values)
         pendingTurnSendsByRequestId.removeAll()
@@ -973,6 +1126,15 @@ private extension ServerConnection {
 
         for send in pending {
             send.waiter.resolve(.failure(error))
+        }
+    }
+
+    func failPendingRPCRequests(error: Error) {
+        let pending = Array(pendingRPCRequestsByRequestId.values)
+        pendingRPCRequestsByRequestId.removeAll()
+
+        for request in pending {
+            request.waiter.resolve(.failure(error))
         }
     }
 
@@ -994,5 +1156,86 @@ private extension ServerConnection {
         }
 
         return false
+    }
+}
+
+struct ForkMessage: Equatable, Sendable {
+    let entryId: String
+    let text: String
+}
+
+@MainActor
+final class PendingRPCRequest {
+    let command: String
+    let requestId: String
+    let waiter = RPCResultWaiter()
+
+    init(command: String, requestId: String) {
+        self.command = command
+        self.requestId = requestId
+    }
+}
+
+struct RPCResultPayload: Sendable {
+    let data: JSONValue?
+}
+
+@MainActor
+final class RPCResultWaiter {
+    private var continuation: CheckedContinuation<RPCResultPayload, Error>?
+    private var pendingResult: Result<RPCResultPayload, Error>?
+
+    func wait() async throws -> RPCResultPayload {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RPCResultPayload, Error>) in
+            if let pendingResult {
+                continuation.resume(with: pendingResult)
+            } else {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func resolve(_ result: Result<RPCResultPayload, Error>) {
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(with: result)
+            return
+        }
+
+        pendingResult = result
+    }
+}
+
+enum RPCRequestError: LocalizedError {
+    case timeout(command: String)
+    case rejected(command: String, reason: String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout(let command):
+            return "\(command) request timed out"
+        case .rejected(let command, let reason):
+            if let reason, !reason.isEmpty {
+                return "\(command) rejected: \(reason)"
+            }
+            return "\(command) rejected"
+        }
+    }
+}
+
+enum ForkRequestError: LocalizedError, Equatable {
+    case turnInProgress
+    case noForkableMessages
+    case entryNotForkable
+
+    var errorDescription: String? {
+        switch self {
+        case .turnInProgress:
+            return "Wait for this turn to finish before forking."
+        case .noForkableMessages:
+            return "No user messages available for forking yet."
+        case .entryNotForkable:
+            return "That message cannot be forked. Pick a user message from history."
+        }
     }
 }

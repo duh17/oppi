@@ -35,6 +35,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
 final class ToolTimelineRowContentView: UIView, UIContentView {
     private static let maxValidHeight: CGFloat = 10_000
+    private static let maxShellHighlightBytes = 64 * 1024
+    private static let maxANSIHighlightBytes = 64 * 1024
 
     private let statusImageView = UIImageView()
     private let titleLabel = UILabel()
@@ -195,8 +197,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
         commandLabel.translatesAutoresizingMaskIntoConstraints = false
         commandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        commandLabel.numberOfLines = 8
-        commandLabel.lineBreakMode = .byTruncatingTail
+        commandLabel.numberOfLines = 0
+        commandLabel.lineBreakMode = .byCharWrapping
         commandLabel.textColor = UIColor(Color.tokyoFg)
 
         outputContainer.layer.cornerRadius = 6
@@ -206,8 +208,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
         outputLabel.translatesAutoresizingMaskIntoConstraints = false
         outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputLabel.numberOfLines = 20
-        outputLabel.lineBreakMode = .byTruncatingTail
+        outputLabel.numberOfLines = 0
+        outputLabel.lineBreakMode = .byCharWrapping
         outputLabel.textColor = UIColor(Color.tokyoFg)
 
         expandedContainer.layer.cornerRadius = 6
@@ -215,8 +217,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
         expandedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        expandedLabel.numberOfLines = 20
-        expandedLabel.lineBreakMode = .byTruncatingTail
+        expandedLabel.numberOfLines = 0
+        expandedLabel.lineBreakMode = .byCharWrapping
 
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
@@ -342,8 +344,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         let showLegacyExpanded = configuration.isExpanded
             && !configuration.showSeparatedCommandAndOutput
             && !(expandedText?.isEmpty ?? true)
-        expandedLabel.text = expandedText
-        expandedLabel.textColor = configuration.isError ? UIColor(Color.tokyoRed) : UIColor(Color.tokyoFg)
+        let outputColor = configuration.isError ? UIColor(Color.tokyoRed) : UIColor(Color.tokyoFg)
+        if let expandedText, showLegacyExpanded {
+            let presentation = Self.makeANSIOutputPresentation(
+                expandedText,
+                isError: configuration.isError
+            )
+            expandedLabel.attributedText = presentation.attributedText
+            expandedLabel.text = presentation.plainText
+            expandedLabel.textColor = outputColor
+        } else {
+            expandedLabel.attributedText = nil
+            expandedLabel.text = nil
+            expandedLabel.textColor = outputColor
+        }
         expandedContainer.isHidden = !showLegacyExpanded
 
         let commandText = configuration.expandedCommandText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -351,10 +365,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             && configuration.showSeparatedCommandAndOutput
             && !(commandText?.isEmpty ?? true)
         if let commandText, showCommand {
-            commandLabel.attributedText = ToolTimelineRowContentView.shellHighlighted(commandText)
+            if commandText.utf8.count <= Self.maxShellHighlightBytes {
+                commandLabel.attributedText = ToolTimelineRowContentView.shellHighlighted(commandText)
+                commandLabel.textColor = UIColor(Color.tokyoFg)
+            } else {
+                commandLabel.attributedText = nil
+                commandLabel.text = commandText
+                commandLabel.textColor = UIColor(Color.tokyoFg)
+            }
         } else {
             commandLabel.attributedText = nil
             commandLabel.text = nil
+            commandLabel.textColor = UIColor(Color.tokyoFg)
         }
         commandContainer.isHidden = !showCommand
 
@@ -363,18 +385,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             && configuration.showSeparatedCommandAndOutput
             && !(outputText?.isEmpty ?? true)
         if let outputText, showOutput {
-            if configuration.isError {
-                outputLabel.attributedText = nil
-                outputLabel.text = outputText
-                outputLabel.textColor = UIColor(Color.tokyoRed)
-            } else {
-                outputLabel.attributedText = ToolTimelineRowContentView.ansiHighlighted(outputText)
-                outputLabel.textColor = UIColor(Color.tokyoFg)
-            }
+            let presentation = Self.makeANSIOutputPresentation(
+                outputText,
+                isError: configuration.isError
+            )
+            outputLabel.attributedText = presentation.attributedText
+            outputLabel.text = presentation.plainText
+            outputLabel.textColor = outputColor
         } else {
             outputLabel.attributedText = nil
             outputLabel.text = nil
-            outputLabel.textColor = UIColor(Color.tokyoFg)
+            outputLabel.textColor = outputColor
         }
         outputContainer.isHidden = !showOutput
 
@@ -486,13 +507,42 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    struct ANSIOutputPresentation {
+        let attributedText: NSAttributedString?
+        let plainText: String?
+    }
+
+    static func makeANSIOutputPresentation(
+        _ text: String,
+        isError: Bool,
+        maxHighlightBytes: Int = maxANSIHighlightBytes
+    ) -> ANSIOutputPresentation {
+        if text.utf8.count <= maxHighlightBytes {
+            return ANSIOutputPresentation(
+                attributedText: ansiHighlighted(
+                    text,
+                    baseForeground: isError ? .tokyoRed : .tokyoFg
+                ),
+                plainText: nil
+            )
+        }
+
+        return ANSIOutputPresentation(
+            attributedText: nil,
+            plainText: ANSIParser.strip(text)
+        )
+    }
+
     private static func shellHighlighted(_ text: String) -> NSAttributedString {
         let highlighted = SyntaxHighlighter.highlight(text, language: .shell)
         return NSAttributedString(highlighted)
     }
 
-    private static func ansiHighlighted(_ text: String) -> NSAttributedString {
-        let highlighted = ANSIParser.attributedString(from: text)
+    private static func ansiHighlighted(
+        _ text: String,
+        baseForeground: Color = .tokyoFg
+    ) -> NSAttributedString {
+        let highlighted = ANSIParser.attributedString(from: text, baseForeground: baseForeground)
         return NSAttributedString(highlighted)
     }
 

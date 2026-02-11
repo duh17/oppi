@@ -246,6 +246,35 @@ struct ServerMessageTests {
         #expect(perm.tool == "bash")
         #expect(perm.risk == .critical)
         #expect(perm.displaySummary == "bash: rm -rf /")
+        #expect(perm.expires)
+    }
+
+    @Test func decodesPermissionRequestWithoutExpiry() throws {
+        let json = """
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"expires":false}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .permissionRequest(let perm) = msg else {
+            Issue.record("Expected .permissionRequest")
+            return
+        }
+        #expect(!perm.expires)
+        #expect(!perm.hasExpiry)
+    }
+
+    @Test func decodesPermissionRequestResolutionOptions() throws {
+        let json = """
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"resolutionOptions":{"allowSession":true,"allowAlways":true,"alwaysDescription":"Allow all git commands","denyAlways":true}}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .permissionRequest(let perm) = msg else {
+            Issue.record("Expected .permissionRequest")
+            return
+        }
+        #expect(perm.resolutionOptions?.allowSession == true)
+        #expect(perm.resolutionOptions?.allowAlways == true)
+        #expect(perm.resolutionOptions?.alwaysDescription == "Allow all git commands")
+        #expect(perm.resolutionOptions?.denyAlways == true)
     }
 
     @Test func decodesPermissionExpired() throws {

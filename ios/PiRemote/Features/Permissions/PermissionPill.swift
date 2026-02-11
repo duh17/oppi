@@ -117,10 +117,16 @@ struct PermissionPill: View {
 
             Spacer(minLength: 4)
 
-            // Countdown
-            Text(request.timeoutAt, style: .timer)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tokyoComment)
+            // Countdown / expiry label
+            if request.hasExpiry {
+                Text(request.timeoutAt, style: .timer)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tokyoComment)
+            } else {
+                Label("No expiry", systemImage: "infinity")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+            }
 
             // Multi-pending badge
             if totalCount > 1 {

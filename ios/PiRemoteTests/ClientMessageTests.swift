@@ -30,6 +30,18 @@ struct ClientMessageTests {
         #expect(json["action"] as? String == "allow")
     }
 
+    @Test func encodesPermissionResponseWithScopeAndExpiry() throws {
+        let msg = ClientMessage.permissionResponse(
+            id: "perm2",
+            action: .allow,
+            scope: .workspace,
+            expiresInMs: 3_600_000
+        )
+        let json = try decode(msg)
+        #expect(json["scope"] as? String == "workspace")
+        #expect(json["expiresInMs"] as? Int == 3_600_000)
+    }
+
     @Test func encodesExtensionUIResponse() throws {
         let msg = ClientMessage.extensionUIResponse(id: "ext1", value: "option_a")
         let json = try decode(msg)
