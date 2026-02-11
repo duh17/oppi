@@ -422,6 +422,10 @@ struct APIClientTests {
               "revisionCount": 3,
               "baselineText": "old",
               "currentText": "new",
+              "diffLines": [
+                { "kind": "removed", "text": "old" },
+                { "kind": "added", "text": "new" }
+              ],
               "addedLines": 10,
               "removedLines": 4,
               "cacheKey": "s1:Sources/App.swift:tc-3"
@@ -439,6 +443,11 @@ struct APIClientTests {
         #expect(response.revisionCount == 3)
         #expect(response.baselineText == "old")
         #expect(response.currentText == "new")
+        #expect(response.diffLines.count == 2)
+        #expect(response.diffLines[0].kind == .removed)
+        #expect(response.diffLines[0].text == "old")
+        #expect(response.diffLines[1].kind == .added)
+        #expect(response.diffLines[1].text == "new")
         #expect(response.addedLines == 10)
         #expect(response.removedLines == 4)
         #expect(response.cacheKey == "s1:Sources/App.swift:tc-3")

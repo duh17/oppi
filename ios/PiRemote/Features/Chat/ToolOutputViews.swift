@@ -184,12 +184,15 @@ private struct ToolOutputMedia: View {
                     Text(displayText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoRed)
+                        .textSelection(.enabled)
                 } else if let ansiAttributed {
                     Text(ansiAttributed)
+                        .textSelection(.enabled)
                 } else {
                     Text(displayText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.tokyoFg)
+                        .textSelection(.enabled)
                 }
             }
 
@@ -252,6 +255,7 @@ private struct StructuredToolOutputView: View {
         Text(prettyJSON)
             .font(.caption.monospaced())
             .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
+            .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.tokyoBgDark)
@@ -439,6 +443,7 @@ struct AsyncDiffView: View {
     let newText: String
     let filePath: String?
     var showHeader: Bool = true
+    var precomputedLines: [DiffLine]? = nil
 
     @State private var ready = false
 
@@ -448,18 +453,21 @@ struct AsyncDiffView: View {
                 oldText: oldText,
                 newText: newText,
                 filePath: filePath,
-                showHeader: showHeader
+                showHeader: showHeader,
+                precomputedLines: precomputedLines
             )
         } else {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Computing diff…")
+                Text(precomputedLines == nil ? "Computing diff…" : "Loading diff…")
                     .font(.caption)
                     .foregroundStyle(.tokyoComment)
             }
             .padding(8)
             .task {
-                try? await Task.sleep(for: .milliseconds(16))
+                if precomputedLines == nil {
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
                 ready = true
             }
         }

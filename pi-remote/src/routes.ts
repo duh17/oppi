@@ -33,8 +33,12 @@ import {
   readSessionTraceFromFiles,
   findToolOutput,
 } from "./trace.js";
-import { collectFileMutations } from "./overall-diff.js";
-import type { FileMutation } from "./overall-diff.js";
+import {
+  collectFileMutations,
+  reconstructBaselineFromCurrent,
+  computeDiffLines,
+  computeLineDiffStatsFromLines,
+} from "./overall-diff.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
 import type {
@@ -1011,13 +1015,15 @@ export class RouteHandler {
 
     const currentText = this.readCurrentFileText(session, user.id, reqPath);
     const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
-    const stats = computeLineDiffStats(baselineText, currentText);
+    const diffLines = computeDiffLines(baselineText, currentText);
+    const stats = computeLineDiffStatsFromLines(diffLines);
 
     this.json(res, {
       path: reqPath,
       revisionCount: mutations.length,
       baselineText,
       currentText,
+      diffLines,
       addedLines: stats.added,
       removedLines: stats.removed,
       cacheKey: `${sessionId}:${reqPath}:${mutations[mutations.length - 1]?.id ?? "none"}`,
@@ -1303,64 +1309,6 @@ export class RouteHandler {
 }
 
 // ─── Helpers ───
-
-function reconstructBaselineFromCurrent(
-  currentText: string,
-  mutations: FileMutation[],
-): string {
-  let baseline = currentText;
-
-  for (let i = mutations.length - 1; i >= 0; i -= 1) {
-    const mutation = mutations[i];
-    if (mutation.kind === "write") {
-      // Full prior snapshot is unavailable; reset to empty baseline for writes.
-      baseline = "";
-      continue;
-    }
-
-    if (!mutation.newText) continue;
-
-    const idx = baseline.indexOf(mutation.newText);
-    if (idx < 0) continue;
-    baseline =
-      baseline.slice(0, idx) + mutation.oldText + baseline.slice(idx + mutation.newText.length);
-  }
-
-  return baseline;
-}
-
-function computeLineDiffStats(oldText: string, newText: string): { added: number; removed: number } {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
-  const m = oldLines.length;
-  const n = newLines.length;
-
-  if (m === 0) return { added: n === 1 && newLines[0] === "" ? 0 : n, removed: 0 };
-  if (n === 0) return { added: 0, removed: m === 1 && oldLines[0] === "" ? 0 : m };
-
-  const maxCells = 2_000_000;
-  if (m * n > maxCells) {
-    return {
-      added: Math.max(0, n - m),
-      removed: Math.max(0, m - n),
-    };
-  }
-
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-
-  for (let i = 1; i <= m; i += 1) {
-    for (let j = 1; j <= n; j += 1) {
-      if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-  }
-
-  const lcs = dp[m][n];
-  return { added: n - lcs, removed: m - lcs };
-}
 
 /** Minimal MIME type guesser for file serving. */
 function guessMime(filePath: string): string {

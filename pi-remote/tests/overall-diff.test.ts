@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TraceEvent } from "../src/trace.js";
-import { collectFileMutations } from "../src/overall-diff.js";
+import { collectFileMutations, computeDiffLines } from "../src/overall-diff.js";
 
 describe("overall-diff helpers", () => {
   it("collects edit/write mutations for the requested path", () => {
@@ -58,5 +58,52 @@ describe("overall-diff helpers", () => {
     ];
 
     expect(collectFileMutations(trace, "file.txt")).toEqual([]);
+  });
+
+  it("computes line-by-line diff output", () => {
+    expect(computeDiffLines("A\nB\nC", "A\nX\nC")).toEqual([
+      { kind: "context", text: "A" },
+      { kind: "removed", text: "B" },
+      { kind: "added", text: "X" },
+      { kind: "context", text: "C" },
+    ]);
+  });
+
+  it("handles repeated blocks deterministically", () => {
+    const oldText = ["header", "dup", "dup", "tail"].join("\n");
+    const newText = ["header", "dup", "changed", "tail"].join("\n");
+
+    expect(computeDiffLines(oldText, newText)).toEqual([
+      { kind: "context", text: "header" },
+      { kind: "context", text: "dup" },
+      { kind: "removed", text: "dup" },
+      { kind: "added", text: "changed" },
+      { kind: "context", text: "tail" },
+    ]);
+  });
+
+  it("represents moved lines as remove+add for reviewer clarity", () => {
+    const oldText = ["A", "B", "C", "D"].join("\n");
+    const newText = ["A", "C", "B", "D"].join("\n");
+
+    const diff = computeDiffLines(oldText, newText);
+
+    expect(diff.some((line) => line.kind === "context" && line.text === "A")).toBe(true);
+    expect(diff.some((line) => line.kind === "context" && line.text === "D")).toBe(true);
+    expect(diff.some((line) => line.kind === "removed" && line.text === "B")).toBe(true);
+    expect(diff.some((line) => line.kind === "added" && line.text === "B")).toBe(true);
+  });
+
+  it("handles large inputs without dropping line information", () => {
+    const oldLines = Array.from({ length: 2500 }, (_, i) => `line-${i}`);
+    const newLines = [...oldLines];
+    newLines[1250] = "line-1250-updated";
+
+    const diff = computeDiffLines(oldLines.join("\n"), newLines.join("\n"));
+
+    expect(diff.some((line) => line.kind === "removed" && line.text === "line-1250")).toBe(true);
+    expect(diff.some((line) => line.kind === "added" && line.text === "line-1250-updated")).toBe(
+      true,
+    );
   });
 });

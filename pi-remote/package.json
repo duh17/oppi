@@ -22,7 +22,9 @@
     "check": "tsc --noEmit && eslint src/ && prettier --check src/"
   },
   "dependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "chalk": "^5.3.0",
+    "diff-match-patch": "^1.0.5",
     "minimatch": "^10.1.2",
     "nanoid": "^5.0.7",
     "qrcode": "^1.5.4",

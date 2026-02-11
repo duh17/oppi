@@ -17,12 +17,18 @@ struct DiffContentView: View {
     @Environment(\.theme) private var theme
     @State private var showFullScreen = false
 
-    init(oldText: String, newText: String, filePath: String? = nil, showHeader: Bool = true) {
+    init(
+        oldText: String,
+        newText: String,
+        filePath: String? = nil,
+        showHeader: Bool = true,
+        precomputedLines: [DiffLine]? = nil
+    ) {
         self.oldText = oldText
         self.newText = newText
         self.filePath = filePath
         self.showHeader = showHeader
-        self.diffLines = DiffEngine.compute(old: oldText, new: newText)
+        self.diffLines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
     }
 
     private var language: SyntaxLanguage {
@@ -33,6 +39,7 @@ struct DiffContentView: View {
 
     var body: some View {
         let lines = diffLines
+        let numberedLines = makeNumberedLines(lines)
 
         VStack(alignment: .leading, spacing: 0) {
             if showHeader {
@@ -41,8 +48,8 @@ struct DiffContentView: View {
 
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        diffRow(line)
+                    ForEach(Array(numberedLines.enumerated()), id: \.offset) { _, numbered in
+                        diffRow(numbered)
                     }
                 }
             }
@@ -70,7 +77,10 @@ struct DiffContentView: View {
         }
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .diff(
-                oldText: oldText, newText: newText, filePath: filePath
+                oldText: oldText,
+                newText: newText,
+                filePath: filePath,
+                precomputedLines: diffLines
             ))
         }
     }
@@ -120,7 +130,8 @@ struct DiffContentView: View {
     // MARK: - Diff Row
 
     @ViewBuilder
-    private func diffRow(_ line: DiffLine) -> some View {
+    private func diffRow(_ numbered: NumberedDiffLine) -> some View {
+        let line = numbered.line
         let lang = language
 
         HStack(alignment: .top, spacing: 0) {
@@ -129,11 +140,22 @@ struct DiffContentView: View {
                 .fill(accentColor(for: line.kind))
                 .frame(width: 3)
 
-            // Gutter prefix (+, -, space)
+            // Prefix (+, -, space)
             Text(line.kind.prefix)
                 .font(.system(size: theme.code.fontSize, design: .monospaced).bold())
                 .foregroundStyle(prefixColor(for: line.kind))
                 .frame(width: 16, alignment: .center)
+
+            // Old/New line numbers
+            Text(numbered.oldLine.map(String.init) ?? "")
+                .font(.system(size: theme.code.fontSize, design: .monospaced))
+                .foregroundStyle(theme.text.tertiary)
+                .frame(width: 36, alignment: .trailing)
+            Text(numbered.newLine.map(String.init) ?? "")
+                .font(.system(size: theme.code.fontSize, design: .monospaced))
+                .foregroundStyle(theme.text.tertiary)
+                .frame(width: 36, alignment: .trailing)
+                .padding(.trailing, 6)
 
             // Code text
             ScrollView(.horizontal, showsIndicators: false) {
@@ -158,6 +180,36 @@ struct DiffContentView: View {
         }
         .padding(.vertical, 1)
         .background(rowBackground(for: line.kind))
+    }
+
+    private struct NumberedDiffLine {
+        let line: DiffLine
+        let oldLine: Int?
+        let newLine: Int?
+    }
+
+    private func makeNumberedLines(_ lines: [DiffLine]) -> [NumberedDiffLine] {
+        var oldNumber = 1
+        var newNumber = 1
+        var numbered: [NumberedDiffLine] = []
+        numbered.reserveCapacity(lines.count)
+
+        for line in lines {
+            switch line.kind {
+            case .context:
+                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: newNumber))
+                oldNumber += 1
+                newNumber += 1
+            case .removed:
+                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: nil))
+                oldNumber += 1
+            case .added:
+                numbered.append(NumberedDiffLine(line: line, oldLine: nil, newLine: newNumber))
+                newNumber += 1
+            }
+        }
+
+        return numbered
     }
 
     // MARK: - Colors

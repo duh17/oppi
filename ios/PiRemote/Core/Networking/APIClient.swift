@@ -271,10 +271,22 @@ actor APIClient {
     // MARK: - Tool Output & Files
 
     struct SessionOverallDiffResponse: Decodable, Sendable, Equatable {
+        struct DiffLine: Decodable, Sendable, Equatable {
+            enum Kind: String, Decodable, Sendable {
+                case context
+                case added
+                case removed
+            }
+
+            let kind: Kind
+            let text: String
+        }
+
         let path: String
         let revisionCount: Int
         let baselineText: String
         let currentText: String
+        let diffLines: [DiffLine]
         let addedLines: Int
         let removedLines: Int
         let cacheKey: String

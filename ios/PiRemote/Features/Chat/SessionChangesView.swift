@@ -192,6 +192,13 @@ private enum SessionFileChangeKind: String, Sendable {
         case .write: return "Write"
         }
     }
+
+    var detailActionLabel: String {
+        switch self {
+        case .edit: return "Modify existing file"
+        case .write: return "Create or overwrite file"
+        }
+    }
 }
 
 private struct SessionFileChangeEntry: Identifiable, Sendable {
@@ -232,6 +239,7 @@ private struct SessionFileChangeGroup: Identifiable, Sendable {
 private struct SessionOverallFileDiff: Sendable {
     let oldText: String
     let newText: String
+    let diffLines: [DiffLine]
 }
 
 // MARK: - File Change Views
@@ -310,7 +318,19 @@ private struct FileChangeGroupView: View {
 
     private var overallDiff: SessionOverallFileDiff? {
         guard let remoteDiff else { return nil }
-        return SessionOverallFileDiff(oldText: remoteDiff.baselineText, newText: remoteDiff.currentText)
+        return SessionOverallFileDiff(
+            oldText: remoteDiff.baselineText,
+            newText: remoteDiff.currentText,
+            diffLines: remoteDiff.diffLines.map { line in
+                let kind: DiffLine.Kind
+                switch line.kind {
+                case .context: kind = .context
+                case .added: kind = .added
+                case .removed: kind = .removed
+                }
+                return DiffLine(kind: kind, text: line.text)
+            }
+        )
     }
 
     private var overallDiffStats: (added: Int, removed: Int)? {
@@ -526,7 +546,8 @@ private struct OverallFileDiffDetailView: View {
                     oldText: overallDiff.oldText,
                     newText: overallDiff.newText,
                     filePath: filePath,
-                    showHeader: true
+                    showHeader: true,
+                    precomputedLines: overallDiff.diffLines
                 )
             }
         }
@@ -545,8 +566,8 @@ private struct FileChangeEntryDetailView: View {
     var body: some View {
         List {
             Section("Change") {
-                LabeledContent("Type") {
-                    Text(entry.kind.label)
+                LabeledContent("Action") {
+                    Text(entry.kind.detailActionLabel)
                         .foregroundStyle(.tokyoFg)
                 }
                 LabeledContent("Path") {
@@ -577,7 +598,7 @@ private struct FileChangeEntryDetailView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.tokyoBg)
-        .navigationTitle(entry.kind == .edit ? "Edit Diff" : "Write Content")
+        .navigationTitle(entry.kind == .edit ? "Change Detail" : "Write Detail")
         .navigationBarTitleDisplayMode(.inline)
     }
 

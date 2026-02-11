@@ -8,7 +8,7 @@ import SwiftUI
 /// - `.diff`: unified diff with add/remove coloring
 enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
-    case diff(oldText: String, newText: String, filePath: String?)
+    case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
 }
 
 struct FullScreenCodeView: View {
@@ -53,7 +53,7 @@ struct FullScreenCodeView: View {
                     .font(.caption2)
                     .foregroundStyle(.tokyoComment)
             }
-        case .diff(_, _, let filePath):
+        case .diff(_, _, let filePath, _):
             VStack(spacing: 1) {
                 if let path = filePath {
                     Text(path.shortenedPath)
@@ -75,7 +75,7 @@ struct FullScreenCodeView: View {
         switch content {
         case .code(let text, _, _, _):
             CopyIconButton(text: text)
-        case .diff(_, let newText, _):
+        case .diff(_, let newText, _, _):
             CopyIconButton(text: newText)
         }
     }
@@ -87,8 +87,13 @@ struct FullScreenCodeView: View {
         switch content {
         case .code(let text, let language, _, let startLine):
             FullScreenCodeBody(content: text, language: language, startLine: startLine)
-        case .diff(let oldText, let newText, let filePath):
-            FullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath)
+        case .diff(let oldText, let newText, let filePath, let precomputedLines):
+            FullScreenDiffBody(
+                oldText: oldText,
+                newText: newText,
+                filePath: filePath,
+                precomputedLines: precomputedLines
+            )
         }
     }
 }
@@ -164,9 +169,10 @@ private struct FullScreenDiffBody: View {
     let oldText: String
     let newText: String
     let filePath: String?
+    let precomputedLines: [DiffLine]?
 
     private var diffLines: [DiffLine] {
-        DiffEngine.compute(old: oldText, new: newText)
+        precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
     }
 
     private var language: SyntaxLanguage {
@@ -179,6 +185,7 @@ private struct FullScreenDiffBody: View {
 
     var body: some View {
         let lines = diffLines
+        let numberedLines = makeNumberedLines(lines)
         let stats = DiffEngine.stats(lines)
         let lang = language
 
@@ -207,8 +214,8 @@ private struct FullScreenDiffBody: View {
             // Diff rows — no height cap
             ScrollView([.vertical, .horizontal]) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        diffRow(line, lang: lang)
+                    ForEach(Array(numberedLines.enumerated()), id: \.offset) { _, numbered in
+                        diffRow(numbered, lang: lang)
                     }
                 }
             }
@@ -216,7 +223,9 @@ private struct FullScreenDiffBody: View {
     }
 
     @ViewBuilder
-    private func diffRow(_ line: DiffLine, lang: SyntaxLanguage) -> some View {
+    private func diffRow(_ numbered: NumberedDiffLine, lang: SyntaxLanguage) -> some View {
+        let line = numbered.line
+
         HStack(alignment: .top, spacing: 0) {
             // Left accent bar
             Rectangle()
@@ -228,6 +237,17 @@ private struct FullScreenDiffBody: View {
                 .font(.system(size: 12, design: .monospaced).bold())
                 .foregroundStyle(prefixColor(for: line.kind))
                 .frame(width: 18, alignment: .center)
+
+            // Old/New line numbers
+            Text(numbered.oldLine.map(String.init) ?? "")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.text.tertiary)
+                .frame(width: 44, alignment: .trailing)
+            Text(numbered.newLine.map(String.init) ?? "")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.text.tertiary)
+                .frame(width: 44, alignment: .trailing)
+                .padding(.trailing, 8)
 
             // Code text
             if lang != .unknown, line.kind == .context {
@@ -247,6 +267,36 @@ private struct FullScreenDiffBody: View {
         }
         .padding(.vertical, 1)
         .background(rowBackground(for: line.kind))
+    }
+
+    private struct NumberedDiffLine {
+        let line: DiffLine
+        let oldLine: Int?
+        let newLine: Int?
+    }
+
+    private func makeNumberedLines(_ lines: [DiffLine]) -> [NumberedDiffLine] {
+        var oldNumber = 1
+        var newNumber = 1
+        var numbered: [NumberedDiffLine] = []
+        numbered.reserveCapacity(lines.count)
+
+        for line in lines {
+            switch line.kind {
+            case .context:
+                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: newNumber))
+                oldNumber += 1
+                newNumber += 1
+            case .removed:
+                numbered.append(NumberedDiffLine(line: line, oldLine: oldNumber, newLine: nil))
+                oldNumber += 1
+            case .added:
+                numbered.append(NumberedDiffLine(line: line, oldLine: nil, newLine: newNumber))
+                newNumber += 1
+            }
+        }
+
+        return numbered
     }
 
     private func accentColor(for kind: DiffLine.Kind) -> Color {

@@ -132,6 +132,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         currentText: string;
         addedLines: number;
         removedLines: number;
+        diffLines: Array<{ kind: string; text: string }>;
       };
 
       expect(body.path).toBe("file.txt");
@@ -140,6 +141,10 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
       expect(body.currentText).toBe("B");
       expect(body.addedLines).toBe(1);
       expect(body.removedLines).toBe(1);
+      expect(body.diffLines).toEqual([
+        { kind: "removed", text: "A" },
+        { kind: "added", text: "B" },
+      ]);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }
@@ -301,7 +306,7 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
       expect(body.baselineText).toBe("");
       expect(body.currentText).toBe("hello");
       expect(body.addedLines).toBe(1);
-      expect(body.removedLines).toBe(1);
+      expect(body.removedLines).toBe(0);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }
