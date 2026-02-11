@@ -268,6 +268,113 @@ struct ToolTimelineRowContentViewTests {
     }
 }
 
+@Suite("AssistantTimelineRowContentView")
+struct AssistantTimelineRowContentViewTests {
+    @MainActor
+    @Test func enablesLinkDataDetectors() throws {
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration())
+        let textView = try #require(view.subviews.compactMap { $0 as? UITextView }.first)
+
+        #expect(textView.dataDetectorTypes.contains(.link))
+    }
+
+    @MainActor
+    @Test func injectsCustomSchemeLinkAttribute() throws {
+        let customURL = "oppi://pair?invite=test_payload"
+        let text = "Use \(customURL) to connect"
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+        let textView = try #require(view.subviews.compactMap { $0 as? UITextView }.first)
+
+        let nsText = text as NSString
+        let range = nsText.range(of: customURL)
+        #expect(range.location != NSNotFound)
+
+        let linkedValue = textView.attributedText.attribute(.link, at: range.location, effectiveRange: nil)
+        let linkedURL = try #require(linkedValue as? URL)
+        #expect(linkedURL.absoluteString == customURL)
+    }
+
+    @MainActor
+    @Test func excludesTrailingBacktickFromCustomSchemeLinkAttribute() throws {
+        let customURL = "oppi://pair?invite=test_payload"
+        let text = "Use `\(customURL)` to connect"
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+        let textView = try #require(view.subviews.compactMap { $0 as? UITextView }.first)
+
+        let nsText = text as NSString
+        let range = nsText.range(of: customURL)
+        #expect(range.location != NSNotFound)
+
+        let linkedValue = textView.attributedText.attribute(.link, at: range.location, effectiveRange: nil)
+        let linkedURL = try #require(linkedValue as? URL)
+        #expect(linkedURL.absoluteString == customURL)
+
+        let trailingBacktickIndex = range.location + range.length
+        let trailingBacktickLink = textView.attributedText.attribute(.link, at: trailingBacktickIndex, effectiveRange: nil)
+        #expect(trailingBacktickLink == nil)
+    }
+
+    @MainActor
+    @Test func interceptsInviteLinksAndRoutesInternally() throws {
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration())
+        let url = try #require(URL(string: "oppi://connect?v=2&invite=test-payload"))
+
+        final class URLCapture: @unchecked Sendable {
+            var value: URL?
+        }
+        let observed = URLCapture()
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: .inviteDeepLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            observed.value = notification.object as? URL
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let shouldOpenExternally = view.textView(
+            UITextView(),
+            shouldInteractWith: url,
+            in: NSRange(location: 0, length: 0),
+            interaction: .invokeDefaultAction
+        )
+
+        #expect(!shouldOpenExternally)
+        #expect(observed.value == url)
+    }
+
+    @MainActor
+    @Test func allowsHttpLinksToOpenWithSystemDefault() throws {
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration())
+        let url = try #require(URL(string: "https://example.com/docs"))
+
+        final class URLCapture: @unchecked Sendable {
+            var value: URL?
+        }
+        let observed = URLCapture()
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: .inviteDeepLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            observed.value = notification.object as? URL
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let shouldOpenExternally = view.textView(
+            UITextView(),
+            shouldInteractWith: url,
+            in: NSRange(location: 0, length: 0),
+            interaction: .invokeDefaultAction
+        )
+
+        #expect(shouldOpenExternally)
+        #expect(observed.value == nil)
+    }
+}
+
 private actor FetchProbe {
     private var startedCount = 0
     private var canceledCount = 0
@@ -425,6 +532,18 @@ private func makeToolConfiguration(
         isExpanded: isExpanded,
         isDone: isDone,
         isError: isError
+    )
+}
+
+private func makeAssistantConfiguration(
+    text: String = "Assistant response with https://example.com"
+) -> AssistantTimelineRowConfiguration {
+    AssistantTimelineRowConfiguration(
+        text: text,
+        isStreaming: false,
+        canFork: false,
+        onFork: nil,
+        themeID: .tokyoNight
     )
 }
 

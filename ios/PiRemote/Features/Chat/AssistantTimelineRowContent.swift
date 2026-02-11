@@ -26,6 +26,11 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
     private let messageTextView = UITextView()
     private let cursorView = UIView()
 
+    private static let customLinkRegex = try? NSRegularExpression(
+        pattern: #"(?i)\b(?:pi|oppi)://[^\s<>\"'`]+"#,
+        options: []
+    )
+
     private var currentConfiguration: AssistantTimelineRowConfiguration
 
     init(configuration: AssistantTimelineRowConfiguration) {
@@ -68,6 +73,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         messageTextView.textColor = UIColor(Color.tokyoFg)
         messageTextView.font = .preferredFont(forTextStyle: .body)
         messageTextView.adjustsFontForContentSizeCategory = true
+        messageTextView.dataDetectorTypes = [.link]
+        messageTextView.delegate = self
 
         cursorView.translatesAutoresizingMaskIntoConstraints = false
         cursorView.backgroundColor = UIColor(Color.tokyoPurple)
@@ -100,9 +107,17 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.purple)
         messageTextView.textColor = UIColor(palette.fg)
+        messageTextView.tintColor = UIColor(palette.blue)
+        messageTextView.linkTextAttributes = [
+            .foregroundColor: UIColor(palette.blue),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
         cursorView.backgroundColor = UIColor(palette.purple)
 
-        messageTextView.text = configuration.text
+        messageTextView.attributedText = linkedText(
+            for: configuration.text,
+            baseColor: UIColor(palette.fg)
+        )
 
         if configuration.isStreaming {
             cursorView.isHidden = false
@@ -111,6 +126,77 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
             cursorView.isHidden = true
             cursorView.layer.removeAnimation(forKey: "opacityPulse")
         }
+    }
+
+    private func linkedText(for text: String, baseColor: UIColor) -> NSAttributedString {
+        let font = messageTextView.font ?? .preferredFont(forTextStyle: .body)
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: baseColor,
+            ]
+        )
+
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        guard fullRange.length > 0 else {
+            return attributed
+        }
+
+        let nsText = text as NSString
+
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            detector.enumerateMatches(in: text, options: [], range: fullRange) { [weak self] match, _, _ in
+                guard
+                    let self,
+                    let match,
+                    let normalized = self.normalizedLink(in: nsText, range: match.range)
+                else {
+                    return
+                }
+                attributed.addAttribute(.link, value: normalized.url, range: normalized.range)
+            }
+        }
+
+        if let customLinkRegex = Self.customLinkRegex {
+            for match in customLinkRegex.matches(in: text, options: [], range: fullRange) {
+                guard let normalized = normalizedLink(in: nsText, range: match.range) else {
+                    continue
+                }
+                attributed.addAttribute(.link, value: normalized.url, range: normalized.range)
+            }
+        }
+
+        return attributed
+    }
+
+    private func normalizedLink(in nsText: NSString, range: NSRange) -> (url: URL, range: NSRange)? {
+        guard range.location != NSNotFound, range.length > 0 else {
+            return nil
+        }
+
+        var adjustedLength = range.length
+        while adjustedLength > 0 {
+            let lastCharacterRange = NSRange(location: range.location + adjustedLength - 1, length: 1)
+            let character = nsText.substring(with: lastCharacterRange)
+            if character == "`" {
+                adjustedLength -= 1
+                continue
+            }
+            break
+        }
+
+        guard adjustedLength > 0 else {
+            return nil
+        }
+
+        let adjustedRange = NSRange(location: range.location, length: adjustedLength)
+        let rawURL = nsText.substring(with: adjustedRange)
+        guard let url = URL(string: rawURL) else {
+            return nil
+        }
+
+        return (url: url, range: adjustedRange)
     }
 
     private func startCursorAnimationIfNeeded() {
@@ -135,6 +221,26 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         feedback.impactOccurred(intensity: 0.82)
     }
 
+}
+
+extension AssistantTimelineRowContentView: UITextViewDelegate {
+    func textView(
+        _ textView: UITextView,
+        shouldInteractWith url: URL,
+        in characterRange: NSRange,
+        interaction: UITextItemInteraction
+    ) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return true
+        }
+
+        if scheme == "pi" || scheme == "oppi" {
+            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: url)
+            return false
+        }
+
+        return true
+    }
 }
 
 extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
