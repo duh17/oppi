@@ -176,6 +176,34 @@ describe("GET /permissions/pending", () => {
     expect((filtered.body.pending as { id: string }[])[0].id).toBe("perm-2");
   });
 
+  it("keeps non-expiring pending permissions in snapshot", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-10T10:00:00.000Z"));
+
+    const now = Date.now();
+    const nonExpiring = makePending({
+      id: "perm-indefinite",
+      timeoutAt: now - 1,
+      expires: false,
+    });
+    const expiring = makePending({
+      id: "perm-expiring",
+      timeoutAt: now + 60_000,
+      expires: true,
+    });
+
+    const { routes, user } = makeHarness({ pending: [nonExpiring, expiring] });
+    const result = await callPendingEndpoint(routes, user, new URL("http://localhost/permissions/pending"));
+
+    expect(result.statusCode).toBe(200);
+    const pending = result.body.pending as { id: string; expires?: boolean }[];
+    expect(pending).toHaveLength(2);
+    expect(pending[0].id).toBe("perm-indefinite");
+    expect(pending[0].expires).toBe(false);
+
+    vi.useRealTimers();
+  });
+
   it("tracks rapid add/expire/cancel cycles deterministically", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-02-10T10:00:00.000Z"));

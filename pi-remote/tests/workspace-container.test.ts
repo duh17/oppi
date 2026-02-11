@@ -70,8 +70,8 @@ describe("SandboxManager workspace container tracking", () => {
   it("stopAll clears all tracked workspace containers", async () => {
     // Manually inject tracking entries (simulating ensureWorkspaceContainer).
     const running = (sandbox as unknown as { running: Map<string, { containerId: string }> }).running;
-    running.set("u1/w1", { containerId: "pi-remote-ws-u1-w1" });
-    running.set("u1/w2", { containerId: "pi-remote-ws-u1-w2" });
+    running.set("w1", { containerId: "pi-remote-ws-w1" });
+    running.set("w2", { containerId: "pi-remote-ws-w2" });
 
     expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(true);
     expect(sandbox.isRunningWorkspace("u1", "w2")).toBe(true);
@@ -85,8 +85,8 @@ describe("SandboxManager workspace container tracking", () => {
 
   it("stopWorkspaceContainer removes only the targeted workspace", async () => {
     const running = (sandbox as unknown as { running: Map<string, { containerId: string }> }).running;
-    running.set("u1/w1", { containerId: "pi-remote-ws-u1-w1" });
-    running.set("u1/w2", { containerId: "pi-remote-ws-u1-w2" });
+    running.set("w1", { containerId: "pi-remote-ws-w1" });
+    running.set("w2", { containerId: "pi-remote-ws-w2" });
 
     await sandbox.stopWorkspaceContainer("u1", "w1");
 
@@ -100,24 +100,68 @@ describe("SandboxManager workspace container tracking", () => {
       if (typeof cmd === "string" && cmd === "container list") {
         return [
           "CONTAINER ID  IMAGE  COMMAND  CREATED  STATUS  PORTS  NAMES",
-          "pi-remote-ws-u1-w1 test-image:latest  sh  2m ago  Up  -  pi-remote-ws-u1-w1",
-          "pi-remote-ws-u1-orphan test-image:latest  sh  5m ago  Up  -  pi-remote-ws-u1-orphan",
+          "pi-remote-ws-w1 test-image:latest  sh  2m ago  Up  -  pi-remote-ws-w1",
+          "pi-remote-ws-orphan test-image:latest  sh  5m ago  Up  -  pi-remote-ws-orphan",
         ].join("\n");
       }
       return "";
     });
 
-    // Only track w1, so w1-orphan should be stopped.
+    // Only track w1, so orphan should be stopped.
     const running = (sandbox as unknown as { running: Map<string, { containerId: string }> }).running;
-    running.set("u1/w1", { containerId: "pi-remote-ws-u1-w1" });
+    running.set("w1", { containerId: "pi-remote-ws-w1" });
 
     await sandbox.cleanupOrphanedContainers();
 
     // Should have tried to stop the orphan.
     const stopCalls = mockedExecSync.mock.calls.filter(
-      (call) => typeof call[0] === "string" && (call[0] as string).includes("container stop pi-remote-ws-u1-orphan"),
+      (call) => typeof call[0] === "string" && (call[0] as string).includes("container stop pi-remote-ws-orphan"),
     );
     expect(stopCalls.length).toBeGreaterThan(0);
+  });
+
+  it("reattaches a running legacy workspace container after restart", () => {
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (typeof cmd === "string" && cmd === "container list") {
+        return [
+          "CONTAINER ID  IMAGE  COMMAND  CREATED  STATUS  PORTS  NAMES",
+          "pi-remote-ws-u1-w1 test-image:latest  sh  2m ago  Up  -  pi-remote-ws-u1-w1",
+        ].join("\n");
+      }
+      return "";
+    });
+
+    const ensureWorkspaceContainer = (
+      sandbox as unknown as {
+        ensureWorkspaceContainer: (
+          userId: string,
+          workspaceId: string,
+          workMount: string,
+          workspaceRootMount: string,
+        ) => string;
+      }
+    ).ensureWorkspaceContainer;
+
+    const containerId = ensureWorkspaceContainer.call(
+      sandbox,
+      "u1",
+      "w1",
+      "/tmp/work",
+      "/tmp/workspace",
+    );
+    expect(containerId).toBe("pi-remote-ws-u1-w1");
+    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(true);
+  });
+
+  it("stopWorkspaceContainer tries canonical and legacy names when untracked", async () => {
+    await sandbox.stopWorkspaceContainer("u1", "w1");
+
+    const commands = mockedExecSync.mock.calls
+      .map((call) => (typeof call[0] === "string" ? call[0] : ""))
+      .join("\n");
+
+    expect(commands).toContain("container stop pi-remote-ws-w1");
+    expect(commands).toContain("container stop pi-remote-ws-u1-w1");
   });
 
   it("cleanupOrphanedContainers also catches legacy session containers", async () => {

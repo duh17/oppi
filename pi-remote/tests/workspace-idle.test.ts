@@ -28,13 +28,13 @@ function createWorkspaceIdleScheduler(opts: {
   const active = new Map<string, ActiveEntry>();
   const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  function wsKey(userId: string, workspaceId: string): string {
-    return `${userId}/${workspaceId}`;
+  function wsKey(_userId: string, workspaceId: string): string {
+    return workspaceId;
   }
 
-  function hasActiveContainerSession(userId: string, workspaceId: string): boolean {
+  function hasActiveContainerSession(_userId: string, workspaceId: string): boolean {
     for (const entry of active.values()) {
-      if (entry.runtime === "container" && entry.userId === userId && entry.workspaceId === workspaceId) {
+      if (entry.runtime === "container" && entry.workspaceId === workspaceId) {
         return true;
       }
     }
@@ -67,7 +67,7 @@ function createWorkspaceIdleScheduler(opts: {
 
   return {
     addSession(entry: ActiveEntry): void {
-      const key = `${entry.userId}/${entry.sessionId}`;
+      const key = entry.sessionId;
       active.set(key, entry);
 
       if (entry.runtime === "container") {
@@ -76,7 +76,7 @@ function createWorkspaceIdleScheduler(opts: {
     },
 
     removeSession(entry: ActiveEntry): void {
-      const key = `${entry.userId}/${entry.sessionId}`;
+      const key = entry.sessionId;
       active.delete(key);
 
       if (entry.runtime === "container" && !hasActiveContainerSession(entry.userId, entry.workspaceId)) {

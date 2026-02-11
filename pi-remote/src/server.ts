@@ -30,7 +30,15 @@ import { SkillRegistry, UserSkillStore } from "./skills.js";
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import { AuthProxy } from "./auth-proxy.js";
 
-import type { User, Session, Workspace, ClientMessage, ServerMessage, ApiError } from "./types.js";
+import type {
+  User,
+  Session,
+  Workspace,
+  ClientMessage,
+  ServerMessage,
+  ApiError,
+  ServerConfig,
+} from "./types.js";
 
 // ─── Logging ───
 
@@ -42,6 +50,113 @@ function ts(): string {
   const s = String(d.getSeconds()).padStart(2, "0");
   const ms = String(d.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
+}
+
+function hasAuthHeader(header: string | string[] | undefined): boolean {
+  if (typeof header === "string") {
+    return header.trim().length > 0;
+  }
+  if (Array.isArray(header)) {
+    return header.some((value) => value.trim().length > 0);
+  }
+  return false;
+}
+
+export function formatUnauthorizedAuthLog(opts: {
+  transport: "http" | "ws";
+  path: string;
+  method?: string;
+  authorization: string | string[] | undefined;
+}): string {
+  const authPresent = hasAuthHeader(opts.authorization);
+
+  if (opts.transport === "ws") {
+    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+  }
+
+  const method = opts.method || "GET";
+  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+}
+
+export function formatPermissionRequestLog(opts: {
+  requestId: string;
+  userId: string;
+  sessionId: string;
+  tool: string;
+  risk: string;
+  displaySummary: string;
+}): string {
+  return `${ts()} [gate] Permission request ${opts.requestId} → ${opts.userId} (session=${opts.sessionId}, tool=${opts.tool}, risk=${opts.risk}, summaryChars=${opts.displaySummary.length})`;
+}
+
+function normalizeBindHost(host: string): string {
+  const trimmed = host.trim().toLowerCase();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function isLoopbackBindHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function isWildcardBindHost(host: string): boolean {
+  return host === "0.0.0.0" || host === "::";
+}
+
+/**
+ * Startup-only warnings for insecure server bind + transport posture.
+ *
+ * These warnings are intentionally advisory (non-blocking) so operators can
+ * run permissive local/dev setups while still seeing risk posture at boot.
+ */
+export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
+  const warnings: string[] = [];
+  const security = config.security;
+  const identity = config.identity;
+  const invite = config.invite;
+  const host = normalizeBindHost(config.host);
+  const loopbackOnly = isLoopbackBindHost(host);
+  const wildcardBind = isWildcardBindHost(host);
+
+  if (wildcardBind) {
+    warnings.push(
+      `host=${config.host} listens on all interfaces; ensure access is constrained by tailnet ACLs/firewall rules.`,
+    );
+  }
+
+  if (!loopbackOnly && security && !security.requireTlsOutsideTailnet) {
+    warnings.push(
+      "security.requireTlsOutsideTailnet=false while binding beyond loopback; public-network clients can fall back to cleartext HTTP/WS.",
+    );
+  }
+
+  if (security?.profile === "legacy") {
+    warnings.push(
+      "security.profile=legacy keeps compatibility transport posture; prefer tailscale-permissive or strict.",
+    );
+  }
+
+  if (security && !security.requirePinnedServerIdentity) {
+    warnings.push(
+      "security.requirePinnedServerIdentity=false disables pinned identity mismatch enforcement on clients.",
+    );
+  }
+
+  if (identity && !identity.enabled) {
+    warnings.push(
+      "identity.enabled=false disables signed bootstrap trust metadata and weakens fake-server resistance.",
+    );
+  }
+
+  if (invite && invite.maxAgeSeconds > 3600) {
+    warnings.push(
+      `invite.maxAgeSeconds=${invite.maxAgeSeconds} increases replay window; prefer short-lived invites (<=600s).`,
+    );
+  }
+
+  return warnings;
 }
 
 type LiveActivityStatus = "busy" | "stopping" | "ready" | "stopped" | "error";
@@ -220,13 +335,15 @@ export class Server {
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
-    this.policy = new PolicyEngine("host"); // Default: restrictive. Per-session overrides via gate.setSessionPolicy().
+    this.policy = new PolicyEngine("host"); // Default host policy (developer trust). Per-session overrides via gate.setSessionPolicy().
 
     // v2 policy infrastructure
     const ruleStore = new RuleStore(join(dataDir, "rules.json"));
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
-    this.gate = new GateServer(this.policy, ruleStore, auditLog);
+    this.gate = new GateServer(this.policy, ruleStore, auditLog, {
+      approvalTimeoutMs: config.approvalTimeoutMs,
+    });
     this.authProxy = new AuthProxy();
     this.sandbox = new SandboxManager({
       legacyExtensionsEnabled: config.legacyExtensionsEnabled !== false,
@@ -336,6 +453,12 @@ export class Server {
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
+    if (this.storage.hasMultipleUsers()) {
+      throw new Error(
+        "Single-user mode violation: multiple users found in users.json. Keep exactly one owner.",
+      );
+    }
+
     // Best-effort cleanup from previous crashes before accepting connections.
     await this.sandbox.cleanupOrphanedContainers();
 
@@ -363,6 +486,11 @@ export class Server {
     void this.refreshModelCatalog(true);
 
     const config = this.storage.getConfig();
+    const securityWarnings = formatStartupSecurityWarnings(config);
+    for (const warning of securityWarnings) {
+      console.warn(`[startup][security] ${warning}`);
+    }
+
     return new Promise((resolve) => {
       this.httpServer.listen(config.port, config.host, () => {
         console.log(`🚀 pi-remote listening on ${config.host}:${config.port}`);
@@ -399,6 +527,7 @@ export class Server {
       risk: pending.risk,
       reason: pending.reason,
       timeoutAt: pending.timeoutAt,
+      expires: pending.expires ?? true,
       resolutionOptions: pending.resolutionOptions,
     };
 
@@ -409,7 +538,14 @@ export class Server {
       priority: pending.risk === "low" ? 5 : 10,
     });
     console.log(
-      `${ts()} [gate] Permission request ${pending.id} → ${pending.userId}: ${pending.displaySummary}`,
+      formatPermissionRequestLog({
+        requestId: pending.id,
+        userId: pending.userId,
+        sessionId: pending.sessionId,
+        tool: pending.tool,
+        risk: pending.risk,
+        displaySummary: pending.displaySummary,
+      }),
     );
   }
 
@@ -468,6 +604,7 @@ export class Server {
             risk: msg.risk,
             reason: msg.reason,
             timeoutAt: msg.timeoutAt,
+            expires: msg.expires,
           })
           .then((ok) => {
             if (!ok) {
@@ -856,12 +993,12 @@ export class Server {
   }
 
   private findSessionById(sessionId: string): Session | undefined {
-    for (const user of this.storage.listUsers()) {
-      const sessions = this.storage.listUserSessions(user.id);
-      const match = sessions.find((s) => s.id === sessionId);
-      if (match) return this.ensureSessionContextWindow(match);
-    }
-    return undefined;
+    const owner = this.storage.getOwnerUser();
+    if (!owner) return undefined;
+
+    const sessions = this.storage.listUserSessions(owner.id);
+    const match = sessions.find((s) => s.id === sessionId);
+    return match ? this.ensureSessionContextWindow(match) : undefined;
   }
 
   private ensureSessionContextWindow(session: Session): Session {
@@ -894,11 +1031,21 @@ export class Server {
   // ─── Auth ───
 
   private authenticate(req: IncomingMessage): User | null {
+    // Fail closed on invalid single-user state.
+    if (this.storage.hasMultipleUsers()) {
+      return null;
+    }
+
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) return null;
-    const user = this.storage.getUserByToken(auth.slice(7));
-    if (user) this.storage.updateUserLastSeen(user.id);
-    return user || null;
+
+    const token = auth.slice(7);
+    const owner = this.storage.getOwnerUser();
+    if (!owner) return null;
+    if (owner.token !== token) return null;
+
+    this.storage.updateUserLastSeen(owner.id);
+    return owner;
   }
 
   // ─── HTTP Router ───
@@ -925,8 +1072,14 @@ export class Server {
 
     const user = this.authenticate(req);
     if (!user) {
-      const authPresent = typeof req.headers.authorization === "string";
-      console.log(`${ts()} [auth] 401 ${method} ${path} — auth: ${authPresent ? "present" : "missing"}`);
+      console.log(
+        formatUnauthorizedAuthLog({
+          transport: "http",
+          method,
+          path,
+          authorization: req.headers.authorization,
+        }),
+      );
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -964,9 +1117,12 @@ export class Server {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const user = this.authenticate(req);
     if (!user) {
-      const authPresent = typeof req.headers.authorization === "string";
       console.log(
-        `${ts()} [auth] 401 WS upgrade ${url.pathname} — auth: ${authPresent ? "present" : "missing"}`,
+        formatUnauthorizedAuthLog({
+          transport: "ws",
+          path: url.pathname,
+          authorization: req.headers.authorization,
+        }),
       );
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
@@ -1123,6 +1279,7 @@ export class Server {
           risk: pending.risk,
           reason: pending.reason,
           timeoutAt: pending.timeoutAt,
+          expires: pending.expires ?? true,
           resolutionOptions: pending.resolutionOptions,
         });
       }
@@ -1356,7 +1513,7 @@ export class Server {
 
       case "permission_response": {
         const scope = msg.scope || "once";
-        const resolved = this.gate.resolveDecision(msg.id, msg.action, scope);
+        const resolved = this.gate.resolveDecision(msg.id, msg.action, scope, msg.expiresInMs);
         if (!resolved) {
           send({ type: "error", error: `Permission request not found: ${msg.id}` });
         }

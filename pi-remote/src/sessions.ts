@@ -218,6 +218,20 @@ export class SessionManager extends EventEmitter {
   private starting: Map<string, Promise<Session>> = new Map();
 
   /**
+   * Single-user runtime key.
+   */
+  private sessionKey(_userId: string, sessionId: string): string {
+    return sessionId;
+  }
+
+  /**
+   * Single-user workspace idle key.
+   */
+  private workspaceIdleKey(workspaceId: string): string {
+    return workspaceId;
+  }
+
+  /**
    * Start a new session — spawns pi on the host or in a container.
    */
   async startSession(
@@ -226,7 +240,7 @@ export class SessionManager extends EventEmitter {
     userName?: string,
     workspace?: Workspace,
   ): Promise<Session> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
 
     const existing = this.active.get(key);
     if (existing) {
@@ -265,7 +279,7 @@ export class SessionManager extends EventEmitter {
     userName?: string,
     workspace?: Workspace,
   ): Promise<Session> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
 
     const session = this.storage.getSession(userId, sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
@@ -282,7 +296,7 @@ export class SessionManager extends EventEmitter {
 
         try {
           if (runtime === "container") {
-            this.clearWorkspaceIdleTimer(identity.userId, identity.workspaceId);
+            this.clearWorkspaceIdleTimer(identity.workspaceId);
           }
 
           const proc =
@@ -588,7 +602,7 @@ export class SessionManager extends EventEmitter {
    * Called by server.ts when phone responds to a UI dialog.
    */
   respondToUIRequest(userId: string, sessionId: string, response: ExtensionUIResponse): boolean {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) return false;
 
@@ -734,7 +748,7 @@ export class SessionManager extends EventEmitter {
       timestamp?: number;
     },
   ): Promise<void> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -814,7 +828,7 @@ export class SessionManager extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -859,7 +873,7 @@ export class SessionManager extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -916,7 +930,7 @@ export class SessionManager extends EventEmitter {
     userId: string,
     sessionId: string,
   ): Promise<{ sessionFile?: string; sessionId?: string } | null> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) return null;
 
@@ -1059,7 +1073,7 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Command not allowed: ${cmdType}`);
     }
 
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -1158,7 +1172,7 @@ export class SessionManager extends EventEmitter {
    * stays alive and ready for the next prompt.
    */
   async sendAbort(userId: string, sessionId: string): Promise<void> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
 
     await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
       const active = this.active.get(key);
@@ -1412,10 +1426,7 @@ export class SessionManager extends EventEmitter {
       sessionId: active.session.id,
     });
 
-    if (
-      active.runtime === "container" &&
-      !this.hasActiveContainerSession(active.session.userId, active.workspaceId)
-    ) {
+    if (active.runtime === "container" && !this.hasActiveContainerSession(active.workspaceId)) {
       this.scheduleWorkspaceIdleStop(active.session.userId, active.workspaceId);
     }
   }
@@ -1423,7 +1434,7 @@ export class SessionManager extends EventEmitter {
   // ─── Subscribe / Broadcast ───
 
   subscribe(userId: string, sessionId: string, callback: (msg: ServerMessage) => void): () => void {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
     const active = this.active.get(key);
     if (active) {
       active.subscribers.add(callback);
@@ -1674,7 +1685,7 @@ export class SessionManager extends EventEmitter {
   }
 
   async stopSession(userId: string, sessionId: string): Promise<void> {
-    const key = `${userId}/${sessionId}`;
+    const key = this.sessionKey(userId, sessionId);
 
     await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
       const active = this.active.get(key);
@@ -1707,8 +1718,11 @@ export class SessionManager extends EventEmitter {
     const keys = Array.from(this.active.keys());
     await Promise.all(
       keys.map((key) => {
-        const [userId, sessionId] = key.split("/");
-        return this.stopSession(userId, sessionId);
+        const active = this.active.get(key);
+        if (!active) {
+          return Promise.resolve();
+        }
+        return this.stopSession(active.session.userId, active.session.id);
       }),
     );
 
@@ -1723,20 +1737,20 @@ export class SessionManager extends EventEmitter {
   // ─── State Queries ───
 
   isActive(userId: string, sessionId: string): boolean {
-    return this.active.has(`${userId}/${sessionId}`);
+    return this.active.has(this.sessionKey(userId, sessionId));
   }
 
   getActiveSession(userId: string, sessionId: string): Session | undefined {
-    return this.active.get(`${userId}/${sessionId}`)?.session;
+    return this.active.get(this.sessionKey(userId, sessionId))?.session;
   }
 
   getCurrentSeq(userId: string, sessionId: string): number {
-    const active = this.active.get(`${userId}/${sessionId}`);
+    const active = this.active.get(this.sessionKey(userId, sessionId));
     return active?.seq ?? 0;
   }
 
   getCatchUp(userId: string, sessionId: string, sinceSeq: number): SessionCatchUpResponse | null {
-    const active = this.active.get(`${userId}/${sessionId}`);
+    const active = this.active.get(this.sessionKey(userId, sessionId));
     if (!active) {
       return null;
     }
@@ -1753,7 +1767,7 @@ export class SessionManager extends EventEmitter {
   }
 
   hasPendingUIRequest(userId: string, sessionId: string, requestId: string): boolean {
-    const active = this.active.get(`${userId}/${sessionId}`);
+    const active = this.active.get(this.sessionKey(userId, sessionId));
     return active?.pendingUIRequests.has(requestId) ?? false;
   }
 
@@ -1765,8 +1779,9 @@ export class SessionManager extends EventEmitter {
     const timeoutMs = this.runtimeManager.getLimits().sessionIdleTimeoutMs;
     const timer = setTimeout(() => {
       console.log(`${ts()} [session] idle timeout: ${key}`);
-      const [userId, sessionId] = key.split("/");
-      this.stopSession(userId, sessionId);
+      const active = this.active.get(key);
+      if (!active) return;
+      void this.stopSession(active.session.userId, active.session.id);
     }, timeoutMs);
 
     this.idleTimers.set(key, timer);
@@ -1780,12 +1795,12 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private workspaceKey(userId: string, workspaceId: string): string {
-    return `${userId}/${workspaceId}`;
+  private workspaceKey(workspaceId: string): string {
+    return this.workspaceIdleKey(workspaceId);
   }
 
-  private clearWorkspaceIdleTimer(userId: string, workspaceId: string): void {
-    const key = this.workspaceKey(userId, workspaceId);
+  private clearWorkspaceIdleTimer(workspaceId: string): void {
+    const key = this.workspaceKey(workspaceId);
     const timer = this.workspaceIdleTimers.get(key);
     if (timer) {
       clearTimeout(timer);
@@ -1793,13 +1808,9 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private hasActiveContainerSession(userId: string, workspaceId: string): boolean {
+  private hasActiveContainerSession(workspaceId: string): boolean {
     for (const active of this.active.values()) {
-      if (
-        active.runtime === "container" &&
-        active.session.userId === userId &&
-        active.workspaceId === workspaceId
-      ) {
+      if (active.runtime === "container" && active.workspaceId === workspaceId) {
         return true;
       }
     }
@@ -1807,13 +1818,13 @@ export class SessionManager extends EventEmitter {
   }
 
   private scheduleWorkspaceIdleStop(userId: string, workspaceId: string): void {
-    this.clearWorkspaceIdleTimer(userId, workspaceId);
+    this.clearWorkspaceIdleTimer(workspaceId);
 
-    const key = this.workspaceKey(userId, workspaceId);
+    const key = this.workspaceKey(workspaceId);
     const timeoutMs = this.runtimeManager.getLimits().workspaceIdleTimeoutMs;
 
     const timer = setTimeout(() => {
-      if (this.hasActiveContainerSession(userId, workspaceId)) {
+      if (this.hasActiveContainerSession(workspaceId)) {
         return;
       }
 

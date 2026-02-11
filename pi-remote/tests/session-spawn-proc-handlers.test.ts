@@ -10,11 +10,11 @@ describe("session-spawn setupProcHandlers", () => {
     const session = makeSession();
 
     await awaitProcessReady(
-      setupProcHandlers("u1/s1", session, proc as unknown as ChildProcess, deps),
+      setupProcHandlers("s1", session, proc as unknown as ChildProcess, deps),
       proc,
     );
 
-    expect(deps.onRpcLine).toHaveBeenCalledWith("u1/s1", '{"type":"agent_start"}');
+    expect(deps.onRpcLine).toHaveBeenCalledWith("s1", '{"type":"agent_start"}');
   });
 
   it("forwards exit to onSessionEnd as completed", async () => {
@@ -23,12 +23,12 @@ describe("session-spawn setupProcHandlers", () => {
     const session = makeSession();
 
     await awaitProcessReady(
-      setupProcHandlers("u1/s1", session, proc as unknown as ChildProcess, deps),
+      setupProcHandlers("s1", session, proc as unknown as ChildProcess, deps),
       proc,
     );
 
     proc.emit("exit", 0);
-    expect(deps.onSessionEnd).toHaveBeenCalledWith("u1/s1", "completed");
+    expect(deps.onSessionEnd).toHaveBeenCalledWith("s1", "completed");
   });
 
   it("forwards process errors to onSessionEnd as error", async () => {
@@ -37,12 +37,12 @@ describe("session-spawn setupProcHandlers", () => {
     const session = makeSession();
 
     await awaitProcessReady(
-      setupProcHandlers("u1/s1", session, proc as unknown as ChildProcess, deps),
+      setupProcHandlers("s1", session, proc as unknown as ChildProcess, deps),
       proc,
     );
 
     proc.emit("error", new Error("boom"));
-    expect(deps.onSessionEnd).toHaveBeenCalledWith("u1/s1", "error");
+    expect(deps.onSessionEnd).toHaveBeenCalledWith("s1", "error");
   });
 
   it("fails fast when process stdout is unavailable", async () => {
@@ -56,6 +56,6 @@ describe("session-spawn setupProcHandlers", () => {
       on: vi.fn(),
     } as unknown as ChildProcess;
 
-    await expect(setupProcHandlers("u1/s1", session, proc, deps)).rejects.toThrow("has no stdout");
+    await expect(setupProcHandlers("s1", session, proc, deps)).rejects.toThrow("has no stdout");
   });
 });

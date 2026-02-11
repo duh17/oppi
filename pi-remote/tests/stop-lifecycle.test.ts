@@ -108,7 +108,7 @@ function makeManagerHarness(status: Session["status"] = "busy"): {
     eventRing: new EventRing(),
   };
 
-  const key = `${session.userId}/${session.id}`;
+  const key = session.id;
   ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
 
   const events: ServerMessage[] = [];
@@ -171,7 +171,7 @@ describe("stop lifecycle", () => {
 
   it("confirms graceful stop after tool loop drains to agent_end", async () => {
     const { manager, events, active } = makeManagerHarness("busy");
-    const key = "u1/s1";
+    const key = "s1";
 
     await manager.sendAbort("u1", "s1");
 

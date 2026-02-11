@@ -60,6 +60,7 @@ export interface PendingDecision {
   reason: string;
   createdAt: number;
   timeoutAt: number;
+  expires?: boolean;
   resolutionOptions: ResolutionOptions;
   resolve: (response: GateResponse) => void;
 }
@@ -93,9 +94,15 @@ type ExtensionMessage = GuardReadyMsg | GateCheckMsg | HeartbeatMsg;
 
 const HEARTBEAT_TIMEOUT_MS = 45_000; // Extension sends every 15s, we expect within 45s
 const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
+const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
+const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
 const TCP_HOST = "0.0.0.0"; // Listen on all interfaces (containers connect via host-gateway)
 
 // ─── Gate Server ───
+
+export interface GateServerOptions {
+  approvalTimeoutMs?: number;
+}
 
 export class GateServer extends EventEmitter {
   private defaultPolicy: PolicyEngine;
@@ -105,12 +112,24 @@ export class GateServer extends EventEmitter {
   private pendingTimeouts: Map<string, NodeJS.Timeout> = new Map();
   readonly ruleStore: RuleStore;
   readonly auditLog: AuditLog;
+  private readonly approvalTimeoutMs: number;
 
-  constructor(defaultPolicy: PolicyEngine, ruleStore: RuleStore, auditLog: AuditLog) {
+  constructor(
+    defaultPolicy: PolicyEngine,
+    ruleStore: RuleStore,
+    auditLog: AuditLog,
+    options: GateServerOptions = {},
+  ) {
     super();
     this.defaultPolicy = defaultPolicy;
     this.ruleStore = ruleStore;
     this.auditLog = auditLog;
+
+    const configuredTimeout = options.approvalTimeoutMs;
+    this.approvalTimeoutMs =
+      typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout >= 0
+        ? Math.floor(configuredTimeout)
+        : DEFAULT_APPROVAL_TIMEOUT_MS;
   }
 
   /**
@@ -218,6 +237,7 @@ export class GateServer extends EventEmitter {
     requestId: string,
     action: "allow" | "deny",
     scope: "once" | "session" | "workspace" | "global" = "once",
+    expiresInMs?: number,
   ): boolean {
     const pending = this.pending.get(requestId);
     if (!pending) return false;
@@ -229,6 +249,15 @@ export class GateServer extends EventEmitter {
       toolCallId: pending.toolCallId,
     };
     let learnedRuleId: string | undefined;
+
+    const normalizedExpiryMs =
+      typeof expiresInMs === "number" && Number.isFinite(expiresInMs) && expiresInMs > 0
+        ? Math.min(Math.floor(expiresInMs), MAX_RULE_TTL_MS)
+        : undefined;
+    const expiresAt =
+      scope !== "once" && normalizedExpiryMs !== undefined
+        ? Date.now() + normalizedExpiryMs
+        : undefined;
 
     // Create learned rule if scope != "once"
     if (scope !== "once") {
@@ -245,9 +274,15 @@ export class GateServer extends EventEmitter {
           : policy.suggestDenyRule(req, scope, context);
 
       if (suggest) {
-        const rule = this.ruleStore.add(suggest);
+        const rule = this.ruleStore.add({
+          ...suggest,
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+        });
         learnedRuleId = rule.id;
-        console.log(`[gate] Learned rule: ${rule.description} (scope=${scope}, id=${rule.id})`);
+        const expiryLabel = expiresAt ? `, expiresAt=${new Date(expiresAt).toISOString()}` : "";
+        console.log(
+          `[gate] Learned rule: ${rule.description} (scope=${scope}, id=${rule.id}${expiryLabel})`,
+        );
 
         // Browser domain + global allow → also add to shared allowlist
         if (action === "allow" && scope === "global" && rule.match?.domain) {
@@ -274,7 +309,12 @@ export class GateServer extends EventEmitter {
       decision: action,
       resolvedBy: "user",
       layer: "user_response",
-      userChoice: { action, scope, learnedRuleId },
+      userChoice: {
+        action,
+        scope,
+        learnedRuleId,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+      },
     });
 
     pending.resolve({ action, reason: action === "deny" ? "Denied by user" : undefined });
@@ -286,6 +326,7 @@ export class GateServer extends EventEmitter {
       userId: pending.userId,
       action,
       scope,
+      expiresAt,
     });
 
     console.log(`[gate] Decision resolved: ${requestId} → ${action} (scope=${scope})`);
@@ -483,6 +524,13 @@ export class GateServer extends EventEmitter {
     const resolutionOptions = policy.getResolutionOptions(req, decision);
 
     const response = await new Promise<GateResponse>((resolve) => {
+      const createdAt = Date.now();
+      const expires = this.approvalTimeoutMs > 0;
+      const timeoutAt =
+        expires
+          ? createdAt + this.approvalTimeoutMs
+          : createdAt + NO_TIMEOUT_PLACEHOLDER_MS;
+
       const pending: PendingDecision = {
         id: requestId,
         sessionId: guard.sessionId,
@@ -494,34 +542,36 @@ export class GateServer extends EventEmitter {
         displaySummary,
         risk: decision.risk,
         reason: decision.reason,
-        createdAt: Date.now(),
-        timeoutAt: Date.now() + DEFAULT_APPROVAL_TIMEOUT_MS,
+        createdAt,
+        timeoutAt,
+        expires,
         resolutionOptions,
         resolve,
       };
 
       this.pending.set(requestId, pending);
 
-      // Set timeout
-      const timeout = setTimeout(() => {
-        if (this.pending.has(requestId)) {
-          this.auditLog.record({
-            sessionId: guard.sessionId,
-            workspaceId: guard.workspaceId,
-            userId: guard.userId,
-            tool: msg.tool,
-            displaySummary,
-            risk: decision.risk,
-            decision: "deny",
-            resolvedBy: "timeout",
-            layer: "timeout",
-          });
-          resolve({ action: "deny", reason: "Approval timeout (2 min)" });
-          this.cleanupPending(requestId);
-          this.emit("approval_timeout", { requestId, sessionId: guard.sessionId });
-        }
-      }, DEFAULT_APPROVAL_TIMEOUT_MS);
-      this.pendingTimeouts.set(requestId, timeout);
+      if (this.approvalTimeoutMs > 0) {
+        const timeout = setTimeout(() => {
+          if (this.pending.has(requestId)) {
+            this.auditLog.record({
+              sessionId: guard.sessionId,
+              workspaceId: guard.workspaceId,
+              userId: guard.userId,
+              tool: msg.tool,
+              displaySummary,
+              risk: decision.risk,
+              decision: "deny",
+              resolvedBy: "timeout",
+              layer: "timeout",
+            });
+            resolve({ action: "deny", reason: "Approval timeout" });
+            this.cleanupPending(requestId);
+            this.emit("approval_timeout", { requestId, sessionId: guard.sessionId });
+          }
+        }, this.approvalTimeoutMs);
+        this.pendingTimeouts.set(requestId, timeout);
+      }
 
       // Emit event for server to forward to phone
       this.emit("approval_needed", pending);

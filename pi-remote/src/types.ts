@@ -32,7 +32,7 @@ export interface Workspace {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string; // "host" | "container"
+  policyPreset: string; // "container" | "host" | "host_standard" | "host_locked"
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
   allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
 
@@ -142,10 +142,9 @@ export interface ServerIdentityConfig {
 }
 
 export interface ServerInviteConfig {
-  format: "v1-unsigned" | "v2-signed";
+  format: "v2-signed";
   maxAgeSeconds: number;
   singleUse: boolean;
-  allowLegacyV1Unsigned: boolean;
 }
 
 export interface ServerConfig {
@@ -160,6 +159,8 @@ export interface ServerConfig {
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
+  /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
+  approvalTimeoutMs?: number;
   /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
   legacyExtensionsEnabled?: boolean;
 
@@ -346,6 +347,8 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
       id: string;
       action: "allow" | "deny";
       scope?: "once" | "session" | "workspace" | "global";
+      /** Optional TTL for learned rule persistence (milliseconds). Ignored for scope="once". */
+      expiresInMs?: number;
       requestId?: string;
     }
   // ── Extension UI dialog responses ──
@@ -493,6 +496,7 @@ export type ServerMessage = // ── Connection ──
       risk: "low" | "medium" | "high" | "critical";
       reason: string;
       timeoutAt: number;
+      expires?: boolean;
       resolutionOptions?: {
         allowSession: boolean;
         allowAlways: boolean;

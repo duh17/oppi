@@ -103,6 +103,7 @@ export function resolveRuntimeLimits(config: ServerConfig): RuntimeLimits {
 
 /** Identifies a session within its workspace. */
 export interface WorkspaceSessionIdentity {
+  /** @deprecated Single-user mode ignores userId for runtime keys. */
   userId: string;
   workspaceId: string;
   sessionId: string;
@@ -140,15 +141,15 @@ export class WorkspaceRuntimeError extends Error {
 export class WorkspaceRuntime {
   private limits: RuntimeLimits;
 
-  /** Per-workspace mutexes (keyed by "userId/workspaceId"). */
+  /** Per-workspace mutexes (keyed by workspaceId). */
   private workspaceMutexes: Map<string, Mutex> = new Map();
 
-  /** Per-session mutexes (keyed by "userId/sessionId"). */
+  /** Per-session mutexes (keyed by sessionId). */
   private sessionMutexes: Map<string, Mutex> = new Map();
 
   /**
    * Active (reserved + ready) session count per workspace.
-   * Keyed by "userId/workspaceId".
+   * Keyed by workspaceId.
    */
   private workspaceSlots: Map<string, Set<string>> = new Map();
 
@@ -168,8 +169,8 @@ export class WorkspaceRuntime {
    * Execute fn under the per-session mutex.
    * Prevents concurrent start/stop/resume on the same session.
    */
-  async withSessionLock<T>(userId: string, sessionId: string, fn: () => Promise<T>): Promise<T> {
-    const key = `${userId}/${sessionId}`;
+  async withSessionLock<T>(_userId: string, sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const key = sessionId;
     let mutex = this.sessionMutexes.get(key);
     if (!mutex) {
       mutex = new Mutex();
@@ -184,11 +185,11 @@ export class WorkspaceRuntime {
    * session spawn that needs workspace running).
    */
   async withWorkspaceLock<T>(
-    userId: string,
+    _userId: string,
     workspaceId: string,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const key = `${userId}/${workspaceId}`;
+    const key = workspaceId;
     let mutex = this.workspaceMutexes.get(key);
     if (!mutex) {
       mutex = new Mutex();
@@ -206,7 +207,7 @@ export class WorkspaceRuntime {
    * @throws WorkspaceRuntimeError if limits are exceeded or session already reserved.
    */
   reserveSessionStart(identity: WorkspaceSessionIdentity): void {
-    const wsKey = `${identity.userId}/${identity.workspaceId}`;
+    const wsKey = identity.workspaceId;
 
     // Check if already reserved (shouldn't happen in normal flow)
     const slots = this.workspaceSlots.get(wsKey);
@@ -257,7 +258,7 @@ export class WorkspaceRuntime {
    * Must be called when a session stops, errors, or fails to start.
    */
   releaseSession(identity: WorkspaceSessionIdentity): void {
-    const wsKey = `${identity.userId}/${identity.workspaceId}`;
+    const wsKey = identity.workspaceId;
     const slots = this.workspaceSlots.get(wsKey);
     if (slots) {
       slots.delete(identity.sessionId);
@@ -270,9 +271,8 @@ export class WorkspaceRuntime {
   // ─── Queries ───
 
   /** Count active sessions in a specific workspace. */
-  getWorkspaceSessionCount(userId: string, workspaceId: string): number {
-    const key = `${userId}/${workspaceId}`;
-    return this.workspaceSlots.get(key)?.size ?? 0;
+  getWorkspaceSessionCount(_userId: string, workspaceId: string): number {
+    return this.workspaceSlots.get(workspaceId)?.size ?? 0;
   }
 
   /** Count all active sessions across all workspaces. */

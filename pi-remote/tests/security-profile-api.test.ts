@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { EventEmitter } from "node:events";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import { Storage } from "../src/storage.js";
 import type { User } from "../src/types.js";
@@ -36,6 +37,19 @@ function makeUser(): User {
   };
 }
 
+function makeJsonRequest(payload: unknown): never {
+  const req = new EventEmitter() as unknown as {
+    emit: (event: string, ...args: unknown[]) => boolean;
+  };
+
+  queueMicrotask(() => {
+    req.emit("data", Buffer.from(JSON.stringify(payload)));
+    req.emit("end");
+  });
+
+  return req as never;
+}
+
 describe("GET /security/profile", () => {
   let tempDir: string;
 
@@ -64,7 +78,6 @@ describe("GET /security/profile", () => {
     config.invite = {
       ...config.invite!,
       format: "v2-signed",
-      allowLegacyV1Unsigned: false,
       maxAgeSeconds: 90,
     };
 
@@ -94,7 +107,7 @@ describe("GET /security/profile", () => {
       allowInsecureHttpInTailnet: boolean;
       requirePinnedServerIdentity: boolean;
       identity: { enabled: boolean; keyId: string; fingerprint: string };
-      invite: { format: string; allowLegacyV1Unsigned: boolean; maxAgeSeconds: number };
+      invite: { format: string; maxAgeSeconds: number };
     };
 
     expect(body.profile).toBe("strict");
@@ -105,7 +118,6 @@ describe("GET /security/profile", () => {
     expect(body.identity.keyId).toBe("srv-test");
     expect(body.identity.fingerprint).toBe("sha256:test");
     expect(body.invite.format).toBe("v2-signed");
-    expect(body.invite.allowLegacyV1Unsigned).toBe(false);
     expect(body.invite.maxAgeSeconds).toBe(90);
   });
 
@@ -155,5 +167,119 @@ describe("GET /security/profile", () => {
       identity?: { fingerprint?: string };
     };
     expect(updateArg.identity?.fingerprint).toBe(body.identity.fingerprint);
+  });
+});
+
+describe("PUT /security/profile", () => {
+  it("updates security toggles and invite max age", async () => {
+    const config = Storage.getDefaultConfig(join(tmpdir(), "pi-remote-security-profile-put"));
+    config.security = {
+      profile: "tailscale-permissive",
+      requireTlsOutsideTailnet: true,
+      allowInsecureHttpInTailnet: true,
+      requirePinnedServerIdentity: true,
+    };
+    config.invite = {
+      ...config.invite!,
+      format: "v2-signed",
+      singleUse: false,
+      maxAgeSeconds: 600,
+    };
+    config.identity = {
+      ...config.identity!,
+      enabled: false,
+    };
+
+    const updateConfig = vi.fn(
+      (updates: {
+        security?: {
+          profile: string;
+          requireTlsOutsideTailnet: boolean;
+          allowInsecureHttpInTailnet: boolean;
+          requirePinnedServerIdentity: boolean;
+        };
+        invite?: { format: string; singleUse: boolean; maxAgeSeconds: number };
+      }) => {
+        if (updates.security) {
+          config.security = {
+            profile: updates.security.profile as "legacy" | "tailscale-permissive" | "strict",
+            requireTlsOutsideTailnet: updates.security.requireTlsOutsideTailnet,
+            allowInsecureHttpInTailnet: updates.security.allowInsecureHttpInTailnet,
+            requirePinnedServerIdentity: updates.security.requirePinnedServerIdentity,
+          };
+        }
+        if (updates.invite) {
+          config.invite = {
+            format: "v2-signed",
+            singleUse: updates.invite.singleUse,
+            maxAgeSeconds: updates.invite.maxAgeSeconds,
+          };
+        }
+      },
+    );
+
+    const ctx = {
+      storage: {
+        getConfig: vi.fn(() => config),
+        updateConfig,
+      },
+    } as unknown as RouteContext;
+
+    const routes = new RouteHandler(ctx);
+    const res = makeResponse();
+
+    await routes.dispatch(
+      "PUT",
+      "/security/profile",
+      new URL("http://localhost/security/profile"),
+      makeUser(),
+      makeJsonRequest({
+        profile: "strict",
+        requireTlsOutsideTailnet: true,
+        allowInsecureHttpInTailnet: false,
+        requirePinnedServerIdentity: true,
+        invite: { maxAgeSeconds: 300 },
+      }),
+      res as never,
+    );
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      profile: string;
+      allowInsecureHttpInTailnet: boolean;
+      invite: { maxAgeSeconds: number };
+    };
+
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+    expect(body.profile).toBe("strict");
+    expect(body.allowInsecureHttpInTailnet).toBe(false);
+    expect(body.invite.maxAgeSeconds).toBe(300);
+  });
+
+  it("rejects invalid invite maxAgeSeconds", async () => {
+    const config = Storage.getDefaultConfig(join(tmpdir(), "pi-remote-security-profile-put-invalid"));
+
+    const ctx = {
+      storage: {
+        getConfig: vi.fn(() => config),
+        updateConfig: vi.fn(),
+      },
+    } as unknown as RouteContext;
+
+    const routes = new RouteHandler(ctx);
+    const res = makeResponse();
+
+    await routes.dispatch(
+      "PUT",
+      "/security/profile",
+      new URL("http://localhost/security/profile"),
+      makeUser(),
+      makeJsonRequest({ invite: { maxAgeSeconds: 0 } }),
+      res as never,
+    );
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { error: string };
+    expect(body.error).toContain("invite.maxAgeSeconds");
   });
 });

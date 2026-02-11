@@ -12,7 +12,7 @@ and adversarial bypass paths for Pi Remote v0.
 
 | Boundary | Description |
 |---|---|
-| B1 Bootstrap invite | QR/onboarding payload from server to phone (`v1`/`v2` invite) |
+| B1 Bootstrap invite | QR/onboarding payload from server to phone (signed `v2` invite only) |
 | B2 Server identity | `/security/profile` + pinned fingerprint continuity |
 | B3 Transport channel | HTTP/WS policy by host class (tailnet/local/public) |
 | B4 Approval/policy gate | Tool-call allow/ask/deny evaluation and bypass resistance |
@@ -27,7 +27,7 @@ Status legend: `PASS`, `PARTIAL`, `BLOCK`.
 |---|---|---|---|---|---|---|
 | S1 | Invite tamper reject | B1 | `pi-remote/tests/security-invite.test.ts` (`fails verification if payload is tampered`) | `ios/PiRemoteTests/ModelCodableTests.swift` (`decodeInvitePayloadRejectsTamperedSignedEnvelope`) | `test-security-adversarial.ts` (`tampered payload is rejected`) | PASS |
 | S2 | Invite expiry/replay reject | B1 | Freshness check validated in adversarial script (server is issuer-only for invite parse) | `ModelCodableTests` (`decodeInvitePayloadRejectsExpiredSignedEnvelope`, `...FutureIssuedAtBeyondClockSkew`) | `test-security-adversarial.ts` (`replay invite freshness check detects expiry`) | PASS |
-| S3 | Strict profile downgrade reject (`v1-unsigned`) | B1/B2 | `config-validation.test.ts` now warns when strict allows legacy unsigned invites | iOS enforces server profile metadata during onboarding/launch | Adversarial script runs strict profile posture | BLOCK (warning only; no hard reject yet) |
+| S3 | Unsigned invite downgrade reject (`v1-unsigned`) | B1/B2 | `config-validation.test.ts` rejects non-`v2-signed` invite format | iOS accepts signed v2 invites only during onboarding/launch | Adversarial script runs strict profile posture | PASS |
 | S4 | Pinned fingerprint mismatch hard-block | B2 | `/security/profile` identity hydration tests (`security-profile-api.test.ts`) | Launch path contains hard-block logic in `PiRemoteApp.swift`; onboarding mismatch handling in `OnboardingView.swift` | `test-security-adversarial.ts` mismatch class (`profile mismatch class detected`) | PARTIAL (needs dedicated iOS regression test) |
 | S5 | Transport policy rejection outside tailnet | B3 | Server profile API tests for policy contract | `ios/PiRemoteTests/ConnectionSecurityPolicyTests.swift` | Covered by policy-host classification paths | PASS |
 | S6 | Token/push/log redaction assertions | B6 | `pi-remote/tests/push-redaction.test.ts` (high-risk summary redaction + low-risk passthrough) | Lock-screen redaction path implemented in `PermissionNotificationService.swift` | N/A | PARTIAL (logging redaction matrix still incomplete) |
@@ -46,7 +46,6 @@ Status legend: `PASS`, `PARTIAL`, `BLOCK`.
 
 | ID | Severity | Finding | Repro/Evidence | Fix status | Owner |
 |---|---|---|---|---|---|
-| F-001 | High | Strict profile still permits legacy unsigned invite mode via config flag (warning only) | `config-validation.test.ts` warning path for `allowLegacyV1Unsigned=true` | Open | `TODO-3a69f8b5` |
 | F-002 | Medium | Pinned fingerprint mismatch path lacks dedicated iOS regression test (logic exists) | Launch/onboarding logic in `PiRemoteApp.swift` + `OnboardingView.swift`; no direct unit test yet | Open | `TODO-150764f5` |
 | F-003 | Medium | Redaction assertions strong for push payloads, but full client-log redaction matrix is not yet automated | `push-redaction.test.ts` passes; diagnostics ingest path needs explicit token-pattern assertions | Open | `TODO-a146a5aa` |
 | F-004 | Medium | Biometric trust-reset flow remains manual verification only | Onboarding biometric branch exists; no deterministic unit test over LAContext flow | Open | `TODO-150764f5` |
@@ -55,7 +54,6 @@ Status legend: `PASS`, `PARTIAL`, `BLOCK`.
 
 | Risk | Current mitigation | Residual owner |
 |---|---|---|
-| Compatibility downgrade during migration | Signed invite v2 default + strict-profile warning surfaced | `TODO-3a69f8b5` |
 | Sensitive strings in client diagnostics payloads | Entry limits + truncation; no semantic token scrub yet | `TODO-a146a5aa` |
 | Device-auth UX edge cases (biometric cancel/retry) | Runtime gating present; tests/manual playbook incomplete | `TODO-150764f5` |
 
@@ -75,10 +73,9 @@ Status legend: `PASS`, `PARTIAL`, `BLOCK`.
 **Scope:** P0 security umbrella for pi-remote + iOS (`TODO-2a12a17c`)
 
 ### Blockers to clear
-1. Enforce v2-only bootstrap in strict/default posture (remove legacy fallback acceptance).
-2. Add explicit iOS regression for pinned-fingerprint mismatch hard-block path.
-3. Complete logging redaction assertions for diagnostics ingress.
-4. Execute and record biometric trust-reset manual runbook.
+1. Add explicit iOS regression for pinned-fingerprint mismatch hard-block path.
+2. Complete logging redaction assertions for diagnostics ingress.
+3. Execute and record biometric trust-reset manual runbook.
 
 ## Verification commands
 

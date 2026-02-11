@@ -314,6 +314,7 @@ export class UserStreamMux {
             risk: pending.risk,
             reason: pending.reason,
             timeoutAt: pending.timeoutAt,
+            expires: pending.expires ?? true,
             resolutionOptions: pending.resolutionOptions,
           });
         }
@@ -375,7 +376,7 @@ export class UserStreamMux {
 
             case "permission_response": {
               const scope = msg.scope || "once";
-              const resolved = this.ctx.gate.resolveDecision(msg.id, msg.action, scope);
+              const resolved = this.ctx.gate.resolveDecision(msg.id, msg.action, scope, msg.expiresInMs);
               if (!resolved) {
                 send({ type: "error", error: `Permission request not found: ${msg.id}` });
                 return;

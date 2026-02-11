@@ -100,7 +100,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     eventRing: new EventRing(),
   };
 
-  const key = `${session.userId}/${session.id}`;
+  const key = session.id;
   ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
 
   const events: ServerMessage[] = [];
@@ -178,7 +178,7 @@ describe("turn delivery idempotency", () => {
 
   it("absorbs duplicate retry storms without duplicate persistence", async () => {
     const { manager, events, stdinWrite, addSessionMessage } = makeManagerHarness("ready");
-    const key = "u1/s1";
+    const key = "s1";
 
     await manager.sendPrompt("u1", "s1", "hello", {
       clientTurnId: "turn-1",
@@ -235,7 +235,7 @@ describe("turn delivery idempotency", () => {
 
   it("replays latest stage on duplicate retries after turn start", async () => {
     const { manager, events, stdinWrite } = makeManagerHarness("ready");
-    const key = "u1/s1";
+    const key = "s1";
 
     await manager.sendPrompt("u1", "s1", "hello", {
       clientTurnId: "turn-1",

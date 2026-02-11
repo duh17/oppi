@@ -37,6 +37,7 @@ export interface PermissionPushPayload {
   risk: string;
   reason: string;
   timeoutAt: number;
+  expires?: boolean;
 }
 
 export interface SessionEventPushPayload {
@@ -55,6 +56,10 @@ const APNS_HOSTS = {
 
 // JWT is valid for 1 hour; refresh at 50 minutes to avoid edge cases.
 const JWT_REFRESH_MS = 50 * 60 * 1000;
+
+export function redactTokenForLog(token: string): string {
+  return `<redacted:${token.length} chars>`;
+}
 
 export class APNsClient {
   private config: APNsConfig;
@@ -106,7 +111,7 @@ export class APNsClient {
     return this.send(deviceToken, apnsPayload, {
       pushType: "alert",
       priority: payload.risk === "low" ? 5 : 10,
-      expiration: Math.floor(payload.timeoutAt / 1000),
+      expiration: payload.expires === false ? undefined : Math.floor(payload.timeoutAt / 1000),
     });
   }
 
@@ -256,12 +261,12 @@ export class APNsClient {
             reason = parsed.reason || responseBody;
           } catch {}
           console.error(
-            `[apns] Push failed (${responseStatus}): ${reason} [token: ${deviceToken.slice(0, 8)}...]`,
+            `[apns] Push failed (${responseStatus}): ${reason} [token: ${redactTokenForLog(deviceToken)}]`,
           );
 
           // Handle specific APNs errors
           if (responseStatus === 410 || reason === "Unregistered") {
-            console.warn(`[apns] Device token expired/unregistered: ${deviceToken.slice(0, 8)}...`);
+            console.warn(`[apns] Device token expired/unregistered: ${redactTokenForLog(deviceToken)}`);
             // Caller should remove this token
           }
 

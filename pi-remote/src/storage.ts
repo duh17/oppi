@@ -5,12 +5,22 @@
  * ~/.config/pi-remote/
  * ├── config.json       # Server config
  * ├── users.json        # User accounts & tokens
- * └── sessions/
- *     └── <userId>/
- *         └── <sessionId>.json  # Session state & messages
+ * ├── sessions/
+ * │   └── <sessionId>.json      # Flat owner layout (single-user mode)
+ * └── workspaces/
+ *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { nanoid } from "nanoid";
@@ -35,10 +45,7 @@ const SECURITY_PROFILES: ReadonlySet<SecurityProfile> = new Set([
   "tailscale-permissive",
   "strict",
 ]);
-const INVITE_FORMATS: ReadonlySet<ServerInviteConfig["format"]> = new Set([
-  "v1-unsigned",
-  "v2-signed",
-]);
+const INVITE_FORMATS: ReadonlySet<ServerInviteConfig["format"]> = new Set(["v2-signed"]);
 
 export interface ConfigValidationResult {
   valid: boolean;
@@ -76,7 +83,6 @@ function defaultInviteConfig(): ServerInviteConfig {
     format: "v2-signed",
     maxAgeSeconds: 600,
     singleUse: false,
-    allowLegacyV1Unsigned: false,
   };
 }
 
@@ -92,6 +98,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 3,
     maxSessionsGlobal: 5,
+    approvalTimeoutMs: 120 * 1000,
     legacyExtensionsEnabled: true,
     security: defaultSecurityConfig(),
     identity: defaultIdentityConfig(dataDir),
@@ -134,6 +141,7 @@ function normalizeConfig(
     "workspaceIdleTimeoutMs",
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
+    "approvalTimeoutMs",
     "legacyExtensionsEnabled",
     "security",
     "identity",
@@ -262,6 +270,11 @@ function normalizeConfig(
   const maxSessionsGlobal = readNumber("maxSessionsGlobal", { min: 1 });
   if (maxSessionsGlobal !== undefined) {
     config.maxSessionsGlobal = maxSessionsGlobal;
+  }
+
+  const approvalTimeoutMs = readNumber("approvalTimeoutMs", { min: 0 });
+  if (approvalTimeoutMs !== undefined) {
+    config.approvalTimeoutMs = approvalTimeoutMs;
   }
 
   const legacyExtensionsEnabled = readBoolean("legacyExtensionsEnabled");
@@ -411,7 +424,7 @@ function normalizeConfig(
       changed = true;
       config.invite = inviteDefaults;
     } else {
-      const allowed = new Set(["format", "maxAgeSeconds", "singleUse", "allowLegacyV1Unsigned"]);
+      const allowed = new Set(["format", "maxAgeSeconds", "singleUse"]);
       if (strictUnknown) {
         for (const key of Object.keys(rawInvite)) {
           if (!allowed.has(key)) {
@@ -424,7 +437,10 @@ function normalizeConfig(
 
       if (!("format" in rawInvite)) {
         changed = true;
-      } else if (typeof rawInvite.format !== "string" || !INVITE_FORMATS.has(rawInvite.format as ServerInviteConfig["format"])) {
+      } else if (
+        typeof rawInvite.format !== "string" ||
+        !INVITE_FORMATS.has(rawInvite.format as ServerInviteConfig["format"])
+      ) {
         errors.push(`config.invite.format: expected one of ${Array.from(INVITE_FORMATS).join(", ")}`);
         changed = true;
       } else {
@@ -444,43 +460,16 @@ function normalizeConfig(
         invite.maxAgeSeconds = rawInvite.maxAgeSeconds;
       }
 
-      const inviteBool = (key: keyof Pick<ServerInviteConfig, "singleUse" | "allowLegacyV1Unsigned">): void => {
-        if (!(key in rawInvite)) {
-          changed = true;
-          return;
-        }
-        const value = rawInvite[key];
-        if (typeof value !== "boolean") {
-          errors.push(`config.invite.${key}: expected boolean`);
-          changed = true;
-          return;
-        }
-        invite[key] = value;
-      };
-
-      inviteBool("singleUse");
-      inviteBool("allowLegacyV1Unsigned");
+      if (!("singleUse" in rawInvite)) {
+        changed = true;
+      } else if (typeof rawInvite.singleUse !== "boolean") {
+        errors.push("config.invite.singleUse: expected boolean");
+        changed = true;
+      } else {
+        invite.singleUse = rawInvite.singleUse;
+      }
 
       config.invite = invite;
-    }
-  }
-
-  const profile = config.security?.profile ?? "legacy";
-  if (profile !== "legacy" && config.invite) {
-    if (config.invite.format === "v1-unsigned") {
-      errors.push(
-        'config.invite.format: "v1-unsigned" is only allowed when config.security.profile="legacy"',
-      );
-      config.invite.format = "v2-signed";
-      changed = true;
-    }
-
-    if (config.invite.allowLegacyV1Unsigned) {
-      errors.push(
-        `config.invite.allowLegacyV1Unsigned: must be false when config.security.profile="${profile}"`,
-      );
-      config.invite.allowLegacyV1Unsigned = false;
-      changed = true;
     }
   }
 
@@ -533,6 +522,7 @@ export class Storage {
     this.ensureDirectories();
     this.config = this.loadConfig();
     this.loadUsers();
+    this.migrateOwnerLayoutToFlat();
   }
 
   private ensureDirectories(): void {
@@ -688,6 +678,14 @@ export class Storage {
   }
 
   createUser(name: string): User {
+    // Single-user pairing model: one owner identity per server.
+    const existingOwner = this.getOwnerUser();
+    if (existingOwner) {
+      throw new Error(
+        `Single-user mode: owner already paired (${existingOwner.name}, id=${existingOwner.id})`,
+      );
+    }
+
     const id = nanoid(8);
     const token = `sk_${nanoid(24)}`;
 
@@ -701,9 +699,6 @@ export class Storage {
     this.users.set(id, user);
     this.tokenToUser.set(token, user);
     this.saveUsers();
-
-    // Create user's session directory
-    mkdirSync(join(this.sessionsDir, id), { recursive: true });
 
     return user;
   }
@@ -720,6 +715,120 @@ export class Storage {
     return Array.from(this.users.values());
   }
 
+  getOwnerUser(): User | undefined {
+    return this.listUsers()[0];
+  }
+
+  hasMultipleUsers(): boolean {
+    return this.users.size > 1;
+  }
+
+  /**
+   * Single-user mode normalizer.
+   *
+   * - When an owner exists, all user-scoped storage resolves to that owner id.
+   * - Before pairing (no owner yet), preserve caller-provided ids for tests/bootstrap.
+   */
+  private normalizeUserId(userId: string): string {
+    const owner = this.getOwnerUser();
+    return owner?.id ?? userId;
+  }
+
+  private useFlatOwnerLayout(): boolean {
+    return this.getOwnerUser() !== undefined && !this.hasMultipleUsers();
+  }
+
+  private scoreRecordFreshness(path: string, kind: "session" | "workspace"): number {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+      if (kind === "session" && isRecord(raw) && isRecord(raw.session)) {
+        const lastActivity = raw.session.lastActivity;
+        if (typeof lastActivity === "number" && Number.isFinite(lastActivity)) {
+          return lastActivity;
+        }
+      }
+      if (kind === "workspace" && isRecord(raw)) {
+        const updatedAt = raw.updatedAt;
+        if (typeof updatedAt === "number" && Number.isFinite(updatedAt)) {
+          return updatedAt;
+        }
+      }
+    } catch {
+      // Fall through to fs metadata.
+    }
+
+    try {
+      return statSync(path).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  private moveOwnerScopedDirToFlat(
+    baseDir: string,
+    ownerId: string,
+    kind: "session" | "workspace",
+  ): number {
+    const legacyDir = join(baseDir, ownerId);
+    if (!existsSync(legacyDir)) {
+      return 0;
+    }
+
+    let migrated = 0;
+    for (const file of readdirSync(legacyDir)) {
+      if (!file.endsWith(".json")) continue;
+
+      const legacyPath = join(legacyDir, file);
+      const flatPath = join(baseDir, file);
+
+      if (!existsSync(flatPath)) {
+        renameSync(legacyPath, flatPath);
+        migrated += 1;
+        continue;
+      }
+
+      const legacyFreshness = this.scoreRecordFreshness(legacyPath, kind);
+      const flatFreshness = this.scoreRecordFreshness(flatPath, kind);
+      if (legacyFreshness > flatFreshness) {
+        const content = readFileSync(legacyPath, "utf-8");
+        writeFileSync(flatPath, content, { mode: 0o600 });
+        migrated += 1;
+      }
+
+      rmSync(legacyPath, { force: true });
+    }
+
+    if (existsSync(legacyDir) && readdirSync(legacyDir).length === 0) {
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
+
+    return migrated;
+  }
+
+  private migrateOwnerLayoutToFlat(): void {
+    if (!this.useFlatOwnerLayout()) {
+      return;
+    }
+
+    const owner = this.getOwnerUser();
+    if (!owner) {
+      return;
+    }
+
+    const migratedSessions = this.moveOwnerScopedDirToFlat(this.sessionsDir, owner.id, "session");
+    const migratedWorkspaces = this.moveOwnerScopedDirToFlat(
+      this.workspacesDir,
+      owner.id,
+      "workspace",
+    );
+    const total = migratedSessions + migratedWorkspaces;
+    if (total > 0) {
+      console.log(
+        `[storage] Migrated ${total} owner record(s) to flat layout (${migratedSessions} sessions, ${migratedWorkspaces} workspaces)`,
+      );
+    }
+  }
+
   removeUser(id: string): boolean {
     const user = this.users.get(id);
     if (!user) return false;
@@ -728,10 +837,15 @@ export class Storage {
     this.tokenToUser.delete(user.token);
     this.saveUsers();
 
-    // Remove user's sessions
+    // Remove user's sessions/workspaces
     const userSessionsDir = join(this.sessionsDir, id);
     if (existsSync(userSessionsDir)) {
       rmSync(userSessionsDir, { recursive: true });
+    }
+
+    const userWorkspacesDir = join(this.workspacesDir, id);
+    if (existsSync(userWorkspacesDir)) {
+      rmSync(userWorkspacesDir, { recursive: true });
     }
 
     return true;
@@ -753,7 +867,8 @@ export class Storage {
   }
 
   updateUserLastSeen(userId: string): void {
-    const user = this.users.get(userId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const user = this.users.get(normalizedUserId);
     if (user) {
       user.lastSeen = Date.now();
       this.saveUsers();
@@ -763,7 +878,8 @@ export class Storage {
   // ─── Device Tokens ───
 
   addDeviceToken(userId: string, token: string): void {
-    const user = this.users.get(userId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const user = this.users.get(normalizedUserId);
     if (!user) return;
 
     if (!user.deviceTokens) user.deviceTokens = [];
@@ -775,7 +891,8 @@ export class Storage {
   }
 
   removeDeviceToken(userId: string, token: string): void {
-    const user = this.users.get(userId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const user = this.users.get(normalizedUserId);
     if (!user?.deviceTokens) return;
 
     user.deviceTokens = user.deviceTokens.filter((t) => t !== token);
@@ -793,11 +910,13 @@ export class Storage {
   }
 
   getDeviceTokens(userId: string): string[] {
-    return this.users.get(userId)?.deviceTokens || [];
+    const normalizedUserId = this.normalizeUserId(userId);
+    return this.users.get(normalizedUserId)?.deviceTokens || [];
   }
 
   setLiveActivityToken(userId: string, token: string | null): void {
-    const user = this.users.get(userId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const user = this.users.get(normalizedUserId);
     if (!user) return;
 
     user.liveActivityToken = token || undefined;
@@ -805,21 +924,35 @@ export class Storage {
   }
 
   getLiveActivityToken(userId: string): string | undefined {
-    return this.users.get(userId)?.liveActivityToken;
+    const normalizedUserId = this.normalizeUserId(userId);
+    return this.users.get(normalizedUserId)?.liveActivityToken;
   }
 
   // ─── Sessions ───
 
-  private getSessionPath(userId: string, sessionId: string): string {
+  private getFlatSessionPath(sessionId: string): string {
+    return join(this.sessionsDir, `${sessionId}.json`);
+  }
+
+  private getLegacySessionPath(userId: string, sessionId: string): string {
     return join(this.sessionsDir, userId, `${sessionId}.json`);
+  }
+
+  private getSessionPath(userId: string, sessionId: string): string {
+    const normalizedUserId = this.normalizeUserId(userId);
+    if (this.useFlatOwnerLayout()) {
+      return this.getFlatSessionPath(sessionId);
+    }
+    return this.getLegacySessionPath(normalizedUserId, sessionId);
   }
 
   createSession(userId: string, name?: string, model?: string): Session {
     const id = nanoid(8);
+    const normalizedUserId = this.normalizeUserId(userId);
 
     const session: Session = {
       id,
-      userId,
+      userId: normalizedUserId,
       name,
       status: "starting",
       createdAt: Date.now(),
@@ -835,11 +968,14 @@ export class Storage {
   }
 
   saveSession(session: Session): void {
-    const path = this.getSessionPath(session.userId, session.id);
-    const dir = join(this.sessionsDir, session.userId);
+    const normalizedUserId = this.normalizeUserId(session.userId);
+    session.userId = normalizedUserId;
+
+    const path = this.getSessionPath(normalizedUserId, session.id);
+    const dir = dirname(path);
 
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
     // Load existing to preserve messages
@@ -853,15 +989,19 @@ export class Storage {
       }
     }
 
-    writeFileSync(path, JSON.stringify({ session, messages }, null, 2));
+    const payload = JSON.stringify({ session, messages }, null, 2);
+    writeFileSync(path, payload, { mode: 0o600 });
   }
 
   getSession(userId: string, sessionId: string): Session | undefined {
-    const path = this.getSessionPath(userId, sessionId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getSessionPath(normalizedUserId, sessionId);
     if (!existsSync(path)) return undefined;
 
     try {
       const data = JSON.parse(readFileSync(path, "utf-8"));
+      if (!data.session) return undefined;
+      data.session.userId = normalizedUserId;
       return data.session;
     } catch {
       return undefined;
@@ -869,21 +1009,26 @@ export class Storage {
   }
 
   listUserSessions(userId: string): Session[] {
-    const userDir = join(this.sessionsDir, userId);
-    if (!existsSync(userDir)) return [];
+    const normalizedUserId = this.normalizeUserId(userId);
+    const baseDir = this.useFlatOwnerLayout()
+      ? this.sessionsDir
+      : join(this.sessionsDir, normalizedUserId);
+    if (!existsSync(baseDir)) return [];
 
     const sessions: Session[] = [];
 
-    for (const file of readdirSync(userDir)) {
+    for (const file of readdirSync(baseDir)) {
       if (!file.endsWith(".json")) continue;
 
       try {
-        const data = JSON.parse(readFileSync(join(userDir, file), "utf-8"));
-        if (data.session) {
-          sessions.push(data.session);
-        }
+        const data = JSON.parse(readFileSync(join(baseDir, file), "utf-8"));
+        const session = data.session as Session | undefined;
+        if (!session) continue;
+
+        session.userId = normalizedUserId;
+        sessions.push(session);
       } catch (err) {
-        console.error(`[storage] Corrupt session file ${join(userDir, file)}, skipping:`, err);
+        console.error(`[storage] Corrupt session file ${join(baseDir, file)}, skipping:`, err);
       }
     }
 
@@ -892,7 +1037,8 @@ export class Storage {
   }
 
   getSessionMessages(userId: string, sessionId: string): SessionMessage[] {
-    const path = this.getSessionPath(userId, sessionId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getSessionPath(normalizedUserId, sessionId);
     if (!existsSync(path)) return [];
 
     try {
@@ -908,7 +1054,13 @@ export class Storage {
     sessionId: string,
     message: Omit<SessionMessage, "id" | "sessionId">,
   ): SessionMessage {
-    const path = this.getSessionPath(userId, sessionId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getSessionPath(normalizedUserId, sessionId);
+
+    const writeDir = dirname(path);
+    if (!existsSync(writeDir)) {
+      mkdirSync(writeDir, { recursive: true, mode: 0o700 });
+    }
 
     let data = { session: null as Session | null, messages: [] as SessionMessage[] };
     if (existsSync(path)) {
@@ -929,6 +1081,7 @@ export class Storage {
 
     // Update session stats
     if (data.session) {
+      data.session.userId = normalizedUserId;
       data.session.messageCount = data.messages.length;
       data.session.lastActivity = Date.now();
       data.session.lastMessage = message.content.slice(0, 100);
@@ -942,12 +1095,15 @@ export class Storage {
       }
     }
 
-    writeFileSync(path, JSON.stringify(data, null, 2));
+    const payload = JSON.stringify(data, null, 2);
+    writeFileSync(path, payload, { mode: 0o600 });
+
     return fullMessage;
   }
 
   deleteSession(userId: string, sessionId: string): boolean {
-    const path = this.getSessionPath(userId, sessionId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getSessionPath(normalizedUserId, sessionId);
     if (!existsSync(path)) return false;
 
     rmSync(path);
@@ -956,13 +1112,26 @@ export class Storage {
 
   // ─── Workspaces ───
 
-  private getWorkspacePath(userId: string, workspaceId: string): string {
+  private getFlatWorkspacePath(workspaceId: string): string {
+    return join(this.workspacesDir, `${workspaceId}.json`);
+  }
+
+  private getLegacyWorkspacePath(userId: string, workspaceId: string): string {
     return join(this.workspacesDir, userId, `${workspaceId}.json`);
+  }
+
+  private getWorkspacePath(userId: string, workspaceId: string): string {
+    const normalizedUserId = this.normalizeUserId(userId);
+    if (this.useFlatOwnerLayout()) {
+      return this.getFlatWorkspacePath(workspaceId);
+    }
+    return this.getLegacyWorkspacePath(normalizedUserId, workspaceId);
   }
 
   createWorkspace(userId: string, req: CreateWorkspaceRequest): Workspace {
     const id = nanoid(8);
     const now = Date.now();
+    const normalizedUserId = this.normalizeUserId(userId);
 
     const policyPreset = req.policyPreset || "container";
     const runtime =
@@ -972,7 +1141,7 @@ export class Storage {
 
     const workspace: Workspace = {
       id,
-      userId,
+      userId: normalizedUserId,
       name: req.name,
       description: req.description,
       icon: req.icon,
@@ -995,13 +1164,17 @@ export class Storage {
   }
 
   saveWorkspace(workspace: Workspace): void {
-    const dir = join(this.workspacesDir, workspace.userId);
+    const normalizedUserId = this.normalizeUserId(workspace.userId);
+    workspace.userId = normalizedUserId;
+
+    const path = this.getWorkspacePath(normalizedUserId, workspace.id);
+    const dir = dirname(path);
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    const path = this.getWorkspacePath(workspace.userId, workspace.id);
-    writeFileSync(path, JSON.stringify(workspace, null, 2));
+    const payload = JSON.stringify(workspace, null, 2);
+    writeFileSync(path, payload, { mode: 0o600 });
   }
 
   /**
@@ -1024,11 +1197,13 @@ export class Storage {
   }
 
   getWorkspace(userId: string, workspaceId: string): Workspace | undefined {
-    const path = this.getWorkspacePath(userId, workspaceId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getWorkspacePath(normalizedUserId, workspaceId);
     if (!existsSync(path)) return undefined;
 
     try {
       const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
+      ws.userId = normalizedUserId;
       ws.runtime = this.inferWorkspaceRuntime(ws);
       ws.extensions = normalizeExtensionList(ws.extensions);
       ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
@@ -1039,7 +1214,10 @@ export class Storage {
   }
 
   listWorkspaces(userId: string): Workspace[] {
-    const dir = join(this.workspacesDir, userId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const dir = this.useFlatOwnerLayout()
+      ? this.workspacesDir
+      : join(this.workspacesDir, normalizedUserId);
     if (!existsSync(dir)) return [];
 
     const workspaces: Workspace[] = [];
@@ -1048,6 +1226,7 @@ export class Storage {
       if (!file.endsWith(".json")) continue;
       try {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
+        ws.userId = normalizedUserId;
         ws.runtime = this.inferWorkspaceRuntime(ws);
         ws.extensions = normalizeExtensionList(ws.extensions);
         ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
@@ -1100,7 +1279,8 @@ export class Storage {
   }
 
   deleteWorkspace(userId: string, workspaceId: string): boolean {
-    const path = this.getWorkspacePath(userId, workspaceId);
+    const normalizedUserId = this.normalizeUserId(userId);
+    const path = this.getWorkspacePath(normalizedUserId, workspaceId);
     if (!existsSync(path)) return false;
 
     rmSync(path);

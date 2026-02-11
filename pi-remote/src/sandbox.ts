@@ -132,7 +132,7 @@ export class SandboxManager {
   readonly config: SandboxConfig;
   private skillRegistry: SkillRegistry | null = null;
   private authProxy: AuthProxy | null = null;
-  /** Running workspace containers keyed by `${userId}/${workspaceId}`. */
+  /** Running workspace containers keyed by workspaceId (single-user mode). */
   private running: Map<string, { containerId: string }> = new Map();
 
   constructor(config?: Partial<SandboxConfig>) {
@@ -154,11 +154,15 @@ export class SandboxManager {
     return this.config.sandboxBaseDir;
   }
 
-  private workspaceKey(userId: string, workspaceId: string): string {
-    return `${userId}/${workspaceId}`;
+  private workspaceKey(_userId: string, workspaceId: string): string {
+    return workspaceId;
   }
 
-  private workspaceContainerId(userId: string, workspaceId: string): string {
+  private workspaceContainerId(_userId: string, workspaceId: string): string {
+    return `${WORKSPACE_CONTAINER_PREFIX}${workspaceId}`;
+  }
+
+  private legacyWorkspaceContainerId(userId: string, workspaceId: string): string {
     return `${WORKSPACE_CONTAINER_PREFIX}${userId}-${workspaceId}`;
   }
 
@@ -580,10 +584,19 @@ export class SandboxManager {
 
     const containerId = this.workspaceContainerId(userId, workspaceId);
 
-    // Reuse existing running container after server restart
+    // Reuse existing running canonical container after server restart.
     if (this.isContainerRunning(containerId)) {
       this.running.set(key, { containerId });
       return containerId;
+    }
+
+    // Backward compatibility: previous builds named workspace containers
+    // with `${userId}-${workspaceId}`. Reattach instead of double-spawning.
+    const legacyContainerId = this.legacyWorkspaceContainerId(userId, workspaceId);
+    if (this.isContainerRunning(legacyContainerId)) {
+      this.running.set(key, { containerId: legacyContainerId });
+      console.log(`[sandbox] Reusing legacy workspace container ${legacyContainerId}`);
+      return legacyContainerId;
     }
 
     const memoryMount = this.resolveMemoryMount(userId, workspace);
@@ -645,9 +658,21 @@ export class SandboxManager {
   async stopWorkspaceContainer(userId: string, workspaceId: string): Promise<void> {
     const key = this.workspaceKey(userId, workspaceId);
     const tracked = this.running.get(key);
-    const containerId = tracked?.containerId ?? this.workspaceContainerId(userId, workspaceId);
 
-    this.stopContainerById(containerId);
+    if (tracked) {
+      this.stopContainerById(tracked.containerId);
+      this.running.delete(key);
+      return;
+    }
+
+    const canonicalContainerId = this.workspaceContainerId(userId, workspaceId);
+    const legacyContainerId = this.legacyWorkspaceContainerId(userId, workspaceId);
+
+    this.stopContainerById(canonicalContainerId);
+    if (legacyContainerId !== canonicalContainerId) {
+      this.stopContainerById(legacyContainerId);
+    }
+
     this.running.delete(key);
   }
 

@@ -109,7 +109,6 @@ async function main(): Promise<void> {
       invite: {
         ...cfg.invite!,
         format: "v2-signed",
-        allowLegacyV1Unsigned: false,
         maxAgeSeconds: 60,
       },
     });

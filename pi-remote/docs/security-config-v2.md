@@ -25,8 +25,7 @@ This doc defines:
 1. **Server-authored policy**: connection policy is configured on server, not guessed by client.
 2. **Bootstrap authenticity**: client can verify invite came from server identity key.
 3. **Pinning**: client stores server identity and detects identity drift.
-4. **Compatibility**: v1 invites can coexist during migration window.
-5. **Operator UX**: Ghostty-style config discoverability + validation.
+4. **Operator UX**: Ghostty-style config discoverability + validation.
 
 Non-goals (v2):
 - Full PKI deployment
@@ -72,8 +71,7 @@ Non-goals (v2):
   "invite": {
     "format": "v2-signed",
     "maxAgeSeconds": 600,
-    "singleUse": false,
-    "allowLegacyV1Unsigned": false
+    "singleUse": false
   }
 }
 ```
@@ -98,11 +96,7 @@ If true, once identity is pinned on client, fingerprint mismatch is hard-fail un
 Defines server signing identity for invites and trust handshakes.
 
 #### `invite.format`
-- `v1-unsigned` (legacy)
-- `v2-signed` (recommended)
-
-#### `invite.allowLegacyV1Unsigned`
-Compatibility switch for explicit legacy mode only. Must be `false` for non-legacy security profiles.
+- `v2-signed` (required)
 
 ---
 
@@ -166,7 +160,6 @@ Response:
   },
   "invite": {
     "format": "v2-signed",
-    "allowLegacyV1Unsigned": false,
     "maxAgeSeconds": 600
   }
 }
@@ -207,9 +200,9 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 - Persist `keyId`, `fingerprint` in config.
 - Expose `/security/profile`.
 
-### Phase 2 — Signed invites (v2-first)
-- `invite` command emits v2 by default.
-- v1 emission is only allowed when `security.profile=legacy` **and** `invite.allowLegacyV1Unsigned=true`.
+### Phase 2 — Signed invites (v2-only)
+- `invite` command emits signed v2 invites only.
+- Unsigned v1 payloads are rejected by config validation.
 - iOS accepts signed v2 invites only.
 
 ### Phase 3 — Client pinning and enforcement
@@ -217,14 +210,9 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 - Mismatch flow: block by default; explicit “reset trust” path.
 - Enforce server-authored transport profile checks.
 
-### Phase 4 — Tighten defaults
-- `invite.allowLegacyV1Unsigned=false` by default.
-- Non-legacy profiles reject unsigned invites.
+### Phase 4 — Hardened defaults
+- `invite.format = v2-signed` (required).
 - transport outside tailnet must be TLS.
-
-### Phase 5 — Deprecation cleanup
-- Keep legacy parser/emission paths only behind explicit legacy profile.
-- Remove compatibility toggles no longer needed.
 
 ---
 
@@ -232,9 +220,8 @@ Used by iOS for sanity checks and post-bootstrap trust confirmation.
 
 | Server | iOS | Result |
 |---|---|---|
-| legacy profile + explicit v1 enable | old iOS | works (legacy only) |
-| non-legacy profile + v2 signed invite | new iOS | works |
-| non-legacy profile + unsigned invite config | any iOS | blocked by server config validation |
+| any profile + v2 signed invite | current iOS | works |
+| any profile + unsigned invite config | any iOS | blocked by server config validation |
 | strict profile + v2-only | old iOS | blocked (expected) |
 
 ---
@@ -267,9 +254,52 @@ For current dogfood:
 - `allowInsecureHttpInTailnet = true`
 - `requirePinnedServerIdentity = true`
 - `invite.format = v2-signed`
-- `invite.allowLegacyV1Unsigned = false`
 
-Legacy fallback (only for emergency compatibility):
-- set `security.profile = legacy`
-- set `invite.allowLegacyV1Unsigned = true`
-- explicitly opt into `invite.format = v1-unsigned`
+---
+
+## Startup warning contract (implemented)
+
+At server boot, `pi-remote` emits non-blocking security warnings when posture is permissive/risky:
+
+- wildcard bind (`host=0.0.0.0` / `::`)
+- `security.requireTlsOutsideTailnet=false` while binding beyond loopback
+- `security.profile=legacy`
+- `security.requirePinnedServerIdentity=false`
+- `identity.enabled=false`
+- unusually long invite TTL (`invite.maxAgeSeconds > 3600`)
+
+Warnings are advisory (not hard failures) so local dev remains possible, while insecure production posture is visible immediately.
+
+---
+
+## At-rest protection assumptions (P0)
+
+### iOS client
+- Server credentials are stored in Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`).
+
+### Server host
+- `~/.config/pi-remote` and nested runtime directories are owner-only (`0700` directories).
+- Persisted metadata (`config.json`, `users.json`, session/workspace JSON) is written with owner-only file permissions (`0600`).
+- Server signing key (`identity.privateKeyPath`) is persisted as `0600`.
+
+### Operator baseline
+- File permissions are necessary but not sufficient.
+- Recommended baseline:
+  1. FileVault enabled on macOS host.
+  2. Dedicated user account for pi-remote runtime.
+  3. Do not share host login/session while server is running.
+
+---
+
+## Threat model and residual risk (P0)
+
+### Addressed in this track
+- Invite tampering/replay and unsigned-downgrade attempts.
+- Fake-server bootstrap via signed invite + fingerprint pinning.
+- Post-pairing insecure transport downgrade outside tailnet when disallowed by policy.
+
+### Residual risk
+1. **Host compromise**: attacker with host-level access can still read local state and keys.
+2. **Bearer token leakage**: replay remains possible until token revocation/rotation.
+3. **Network policy drift**: wildcard binds still depend on operator ACL/firewall correctness.
+4. **Tailnet trust assumption**: confidentiality for HTTP/WS inside tailnet relies on WireGuard + tailnet policy hygiene.

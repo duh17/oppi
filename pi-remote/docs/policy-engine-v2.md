@@ -1,5 +1,7 @@
 # Policy Engine v2 — IAM for Agent Supervision
 
+For the plain-language product contract, see `pi-remote/docs/llm-iam-principles.md`.
+
 ## Problem
 
 The current permission system is binary: allow or deny, one shot. When you approve a browser nav to `x.com`, that approval evaporates. Next time the agent hits `x.com`, you're tapping your phone again. And there's no way to see what you've approved, what rules are in effect, or how decisions were made.

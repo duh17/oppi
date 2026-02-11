@@ -4,10 +4,7 @@
  *
  * Commands:
  *   serve           Start the server
- *   setup           Initial setup
- *   invite <name>   Create user and show QR code
- *   users           List users
- *   users remove    Remove a user
+ *   pair [name]     Pair iOS client with server owner token
  *   status          Show server status
  *   config          Show/validate server config
  */
@@ -153,6 +150,14 @@ async function cmdServe(storage: Storage): Promise<void> {
     console.log("");
   }
 
+  if (storage.hasMultipleUsers()) {
+    console.log(chalk.red("  Error: multi-user data detected but server is in single-user mode."));
+    console.log(chalk.dim("  Keep only one owner in users.json before starting the server."));
+    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
+    console.log("");
+    process.exit(1);
+  }
+
   // Load APNs config from config file if present
   const apnsConfig = loadAPNsConfig(storage);
   const server = new Server(storage, apnsConfig);
@@ -211,12 +216,12 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log(`  Data:      ${chalk.dim(storage.getDataDir())}`);
   console.log("");
 
-  const users = storage.listUsers();
-  if (users.length === 0) {
-    console.log(chalk.yellow("  No users configured."));
-    console.log(chalk.dim("  Run 'pi-remote invite <name>' to create an invite."));
+  const owner = storage.getOwnerUser();
+  if (!owner) {
+    console.log(chalk.yellow("  Server not paired yet."));
+    console.log(chalk.dim("  Run 'pi-remote pair [name]' to generate pairing QR."));
   } else {
-    console.log(`  Users: ${users.map((u) => u.name).join(", ")}`);
+    console.log(`  Owner: ${owner.name}`);
   }
 
   console.log("");
@@ -225,26 +230,28 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log("");
 }
 
-async function cmdInvite(
+async function cmdPair(
   storage: Storage,
-  name: string,
+  requestedName: string | undefined,
   saveFile?: string,
   hostOverride?: string,
 ): Promise<void> {
   printHeader();
 
-  if (!name) {
-    console.log(chalk.red("  Error: Name required"));
-    console.log(chalk.dim("  Usage: pi-remote invite <name> [--host <host>]"));
+  if (storage.hasMultipleUsers()) {
+    console.log(chalk.red("  Error: multi-user data detected but server is in single-user mode."));
+    console.log(chalk.dim("  Keep exactly one owner in users.json, then run pair again."));
+    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
     console.log("");
     process.exit(1);
   }
 
+  const ownerName = requestedName?.trim() || "Owner";
   const config = storage.getConfig();
   const inviteHost = resolveInviteHost(hostOverride);
 
   if (!inviteHost) {
-    console.log(chalk.red("  Error: Could not determine invite host"));
+    console.log(chalk.red("  Error: Could not determine pairing host"));
     console.log(chalk.dim("  Pass --host <hostname-or-ip>, e.g. --host mac-studio.local"));
     console.log("");
     process.exit(1);
@@ -256,14 +263,24 @@ async function cmdInvite(
     console.log(chalk.dim(`  (using local-network host: ${inviteHost})`));
   }
 
-  // Reuse existing user or create new one
-  const existing = storage.listUsers().find((u) => u.name.toLowerCase() === name.toLowerCase());
-  const user = existing ?? storage.createUser(name);
-  if (existing) {
-    console.log(chalk.dim(`  (showing QR for existing user "${name}")`));
+  // Reuse existing owner identity or create one.
+  const existingOwner = storage.getOwnerUser();
+  const user = existingOwner ?? storage.createUser(ownerName);
+  if (existingOwner) {
+    console.log(chalk.dim(`  (owner already paired: ${existingOwner.name})`));
+    if (
+      requestedName?.trim() &&
+      requestedName.trim().toLowerCase() !== existingOwner.name.toLowerCase()
+    ) {
+      console.log(
+        chalk.dim(
+          `  (ignoring requested name "${requestedName.trim()}"; keeping existing owner name)`,
+        ),
+      );
+    }
   }
 
-  // Build invite payload (v1 legacy or v2 signed)
+  // Build signed v2 pairing payload.
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
@@ -271,73 +288,42 @@ async function cmdInvite(
     name: shortHostLabel(inviteHost),
   };
 
-  const inviteFormat = config.invite?.format || "v2-signed";
-  const securityProfile = config.security?.profile || "legacy";
-  const allowLegacyUnsigned =
-    securityProfile === "legacy" && (config.invite?.allowLegacyV1Unsigned ?? false);
-
-  if (inviteFormat === "v1-unsigned" && !allowLegacyUnsigned) {
-    console.log(
-      chalk.red(
-        `  Error: invite.format=v1-unsigned is not allowed for security profile "${securityProfile}".`,
-      ),
-    );
-    console.log(chalk.dim("  Set invite.format to v2-signed (recommended)."));
+  const identityConfig = config.identity;
+  if (!identityConfig) {
+    console.log(chalk.red("  Error: config.identity is missing; cannot issue pairing QR."));
+    console.log(chalk.dim("  Run 'pi-remote config validate' to repair config."));
     console.log("");
     process.exit(1);
   }
 
-  let inviteJson: string;
-  let inviteUrl: string;
-
-  if (inviteFormat === "v2-signed") {
-    const identityConfig = config.identity;
-    if (!identityConfig) {
-      console.log(chalk.red("  Error: config.identity is missing; cannot issue signed invite."));
-      console.log(chalk.dim("  Run 'pi-remote config validate' to repair config."));
-      console.log("");
-      process.exit(1);
-    }
-
-    const identity = ensureIdentityMaterial(identityConfig);
-    if (identityConfig.fingerprint !== identity.fingerprint) {
-      storage.updateConfig({ identity: { ...identityConfig, fingerprint: identity.fingerprint } });
-    }
-
-    const payload: InviteV2Payload = {
-      host: inviteData.host,
-      port: inviteData.port,
-      token: inviteData.token,
-      name: inviteData.name,
-      fingerprint: identity.fingerprint,
-      securityProfile: config.security?.profile || "legacy",
-    };
-
-    const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
-    const envelope: InviteV2Envelope = createSignedInviteV2(identity, payload, maxAgeSeconds);
-    inviteJson = JSON.stringify(envelope);
-    inviteUrl = `pi://connect?${new URLSearchParams({
-      v: "2",
-      invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
-    }).toString()}`;
-
-    console.log(chalk.dim(`  (invite format: v2-signed, expires in ${maxAgeSeconds}s)`));
-  } else {
-    // v1 legacy payload
-    inviteJson = JSON.stringify(inviteData);
-    inviteUrl = `pi://connect?${new URLSearchParams({
-      host: inviteData.host,
-      port: inviteData.port.toString(),
-      token: inviteData.token,
-      name: inviteData.name,
-    }).toString()}`;
-    console.log(chalk.dim("  (invite format: v1-unsigned, legacy compatibility)"));
+  const identity = ensureIdentityMaterial(identityConfig);
+  if (identityConfig.fingerprint !== identity.fingerprint) {
+    storage.updateConfig({ identity: { ...identityConfig, fingerprint: identity.fingerprint } });
   }
 
+  const payload: InviteV2Payload = {
+    host: inviteData.host,
+    port: inviteData.port,
+    token: inviteData.token,
+    name: inviteData.name,
+    fingerprint: identity.fingerprint,
+    securityProfile: config.security?.profile || "legacy",
+  };
+
+  const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
+  const envelope: InviteV2Envelope = createSignedInviteV2(identity, payload, maxAgeSeconds);
+  const inviteJson = JSON.stringify(envelope);
+  const inviteUrl = `pi://connect?${new URLSearchParams({
+    v: "2",
+    invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
+  }).toString()}`;
+
+  console.log(chalk.dim(`  (pairing format: v2-signed, expires in ${maxAgeSeconds}s)`));
+
   // Display
-  console.log(`  📱 Invite for ${chalk.bold(name)}`);
+  console.log(`  📱 Pair server owner ${chalk.bold(user.name)}`);
   console.log("");
-  console.log("  Scan this QR code with the Pi app:");
+  console.log("  Scan this QR code in Oppi:");
   console.log("");
 
   qrcode.generate(inviteJson, { small: true }, (qr) => {
@@ -366,70 +352,16 @@ async function cmdInvite(
     console.log("");
   }
 
-  console.log(chalk.dim("  Token (for manual setup):"));
+  console.log(chalk.dim("  Owner token (manual setup fallback):"));
   console.log(`  ${chalk.dim(user.token)}`);
   console.log("");
 }
 
-function cmdUsers(storage: Storage, action?: string, target?: string): void {
+function cmdUsers(): void {
   printHeader();
-
-  const users = storage.listUsers();
-
-  if (action === "remove" && target) {
-    const user = users.find(
-      (u) => u.name.toLowerCase() === target.toLowerCase() || u.id === target,
-    );
-    if (!user) {
-      console.log(chalk.red(`  User not found: ${target}`));
-      process.exit(1);
-    }
-
-    storage.removeUser(user.id);
-    console.log(chalk.green(`  ✓ Removed user: ${user.name}`));
-    console.log("");
-    return;
-  }
-
-  if (action === "regenerate" && target) {
-    const user = users.find(
-      (u) => u.name.toLowerCase() === target.toLowerCase() || u.id === target,
-    );
-    if (!user) {
-      console.log(chalk.red(`  User not found: ${target}`));
-      process.exit(1);
-    }
-
-    const updated = storage.regenerateToken(user.id);
-    if (updated) {
-      console.log(chalk.green(`  ✓ New token for ${user.name}:`));
-      console.log(`    ${updated.token}`);
-      console.log("");
-      console.log(chalk.dim("  Run 'pi-remote invite <name>' to show new QR code"));
-    }
-    console.log("");
-    return;
-  }
-
-  if (users.length === 0) {
-    console.log(chalk.dim("  No users configured."));
-    console.log(chalk.dim("  Run 'pi-remote invite <name>' to create one."));
-    console.log("");
-    return;
-  }
-
-  console.log(`  ${chalk.bold("Users")} (${users.length}):`);
+  console.log(chalk.yellow("  'users' command is disabled in single-user mode."));
+  console.log(chalk.dim("  Use 'pi-remote pair [name]' to inspect/reissue the owner pairing QR."));
   console.log("");
-
-  for (const user of users) {
-    const lastSeen = user.lastSeen ? new Date(user.lastSeen).toLocaleString() : "never";
-    const sessions = storage.listUserSessions(user.id);
-    console.log(`  ${chalk.cyan("•")} ${chalk.bold(user.name)}`);
-    console.log(`    ID:       ${chalk.dim(user.id)}`);
-    console.log(`    Sessions: ${sessions.length}`);
-    console.log(`    Last seen: ${chalk.dim(lastSeen)}`);
-    console.log("");
-  }
 }
 
 function cmdStatus(storage: Storage): void {
@@ -468,15 +400,20 @@ function cmdStatus(storage: Storage): void {
   console.log("");
 
   const users = storage.listUsers();
-  console.log("  " + chalk.bold("Users"));
+  console.log("  " + chalk.bold("Owner Pairing"));
   console.log("");
+
   if (users.length === 0) {
-    console.log(chalk.dim("  None configured"));
+    console.log(chalk.dim("  Not paired"));
+    console.log(chalk.dim("  Run 'pi-remote pair [name]'"));
+  } else if (users.length === 1) {
+    const owner = users[0];
+    const sessions = storage.listUserSessions(owner.id);
+    console.log(`  Owner:    ${chalk.cyan(owner.name)}`);
+    console.log(`  Sessions: ${sessions.length}`);
   } else {
-    for (const user of users) {
-      const sessions = storage.listUserSessions(user.id);
-      console.log(`  ${chalk.cyan("•")} ${user.name}: ${sessions.length} sessions`);
-    }
+    console.log(chalk.red(`  Invalid state: ${users.length} users found (single-user mode expects 1)`));
+    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
   }
   console.log("");
 }
@@ -540,10 +477,7 @@ function cmdHelp(): void {
   console.log("  " + chalk.bold("Commands:"));
   console.log("");
   console.log(`    ${chalk.cyan("serve")}              Start the server`);
-  console.log(`    ${chalk.cyan("invite")} <name>      Create invite QR for a user`);
-  console.log(`    ${chalk.cyan("users")}              List all users`);
-  console.log(`    ${chalk.cyan("users remove")} <n>   Remove a user`);
-  console.log(`    ${chalk.cyan("users regenerate")} <n>  New token for user`);
+  console.log(`    ${chalk.cyan("pair")} [name]        Generate pairing QR for server owner`);
   console.log(`    ${chalk.cyan("status")}             Show server status`);
   console.log(`    ${chalk.cyan("config show")}        Show current server config`);
   console.log(`    ${chalk.cyan("config validate")}    Validate server config`);
@@ -551,17 +485,16 @@ function cmdHelp(): void {
   console.log("");
   console.log("  " + chalk.bold("Options:"));
   console.log("");
-  console.log(`    ${chalk.dim("--save <file>")}      Save invite QR as PNG`);
-  console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in invite QR`);
+  console.log(`    ${chalk.dim("--save <file>")}      Save pairing QR as PNG`);
+  console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
   console.log(`    ${chalk.dim("--port <n>")}         Override port (default: 7749)`);
   console.log(`    ${chalk.dim("--config-file <p>")}  Config path for 'config validate'`);
   console.log("");
   console.log("  " + chalk.bold("Examples:"));
   console.log("");
   console.log(`    ${chalk.dim("pi-remote serve")}`);
-  console.log(`    ${chalk.dim('pi-remote invite "Wife" --save wife-invite.png')}`);
-  console.log(`    ${chalk.dim('pi-remote invite "Wife" --host mac-studio.local')}`);
-  console.log(`    ${chalk.dim("pi-remote users remove Wife")}`);
+  console.log(`    ${chalk.dim('pi-remote pair "Chen" --save owner-pair.png')}`);
+  console.log(`    ${chalk.dim('pi-remote pair "Chen" --host mac-studio.local')}`);
   console.log(`    ${chalk.dim("pi-remote config show")}`);
   console.log(`    ${chalk.dim("pi-remote config validate")}`);
   console.log("");
@@ -600,12 +533,17 @@ async function main(): Promise<void> {
       await cmdServe(storage);
       break;
 
+    case "pair":
+      await cmdPair(storage, positional[0], flags.save, flags.host);
+      break;
+
     case "invite":
-      await cmdInvite(storage, positional[0], flags.save, flags.host);
+      console.log(chalk.yellow("'invite' is deprecated; use 'pair'"));
+      await cmdPair(storage, positional[0], flags.save, flags.host);
       break;
 
     case "users":
-      cmdUsers(storage, positional[0], positional[1]);
+      cmdUsers();
       break;
 
     case "status":

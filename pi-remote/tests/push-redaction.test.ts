@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { APNsClient, NoopAPNsClient, createPushClient } from "../src/push.js";
+import { APNsClient, NoopAPNsClient, createPushClient, redactTokenForLog } from "../src/push.js";
 
 interface CapturedSend {
   deviceToken: string;
@@ -87,6 +87,40 @@ describe("APNs permission redaction", () => {
     const sent = sends[0];
     expect(payloadSummary(sent.payload)).toBe("read ./README.md");
     expect(payloadAlertBody(sent.payload)).toContain("read ./README.md");
+  });
+
+  it("omits APNs expiration for non-expiring permissions", async () => {
+    const { client, sends } = makeClientHarness();
+
+    const ok = await client.sendPermissionPush("deadbeef", {
+      permissionId: "perm-3",
+      sessionId: "s3",
+      sessionName: "Session 3",
+      tool: "bash",
+      displaySummary: "git push origin main",
+      risk: "high",
+      reason: "git push",
+      timeoutAt: Date.now() + 60_000,
+      expires: false,
+    });
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+
+    const sent = sends[0];
+    expect(sent.opts.expiration).toBeUndefined();
+  });
+});
+
+describe("APNs token log redaction", () => {
+  it("removes token material from APNs log labels", () => {
+    const token = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    const redacted = redactTokenForLog(token);
+
+    expect(redacted).toBe("<redacted:64 chars>");
+    expect(redacted).not.toContain(token);
+    expect(redacted).not.toContain(token.slice(0, 8));
+    expect(redacted).not.toContain(token.slice(-8));
   });
 });
 

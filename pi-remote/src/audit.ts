@@ -19,6 +19,7 @@ export interface UserChoice {
   action: "allow" | "deny";
   scope: "once" | "session" | "workspace" | "global";
   learnedRuleId?: string;
+  expiresAt?: number;
 }
 
 export interface AuditEntry {

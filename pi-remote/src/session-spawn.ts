@@ -107,7 +107,7 @@ export async function spawnPiHost(
   workspace: Workspace | undefined,
   deps: SpawnDeps,
 ): Promise<ChildProcess> {
-  const key = `${session.userId}/${session.id}`;
+  const key = session.id;
 
   // Create gate TCP socket (extension connects via localhost)
   const gatePort = await deps.gate.createSessionSocket(
@@ -117,7 +117,7 @@ export async function spawnPiHost(
   );
 
   // Configure per-session policy based on workspace settings.
-  // Host sessions default to the restrictive "host" preset.
+  // Host sessions default to "host" (developer trust mode) unless workspace overrides.
   const presetName = workspace?.policyPreset || "host";
   const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
 
@@ -243,7 +243,7 @@ export async function spawnPiContainer(
   workspace: Workspace | undefined,
   deps: SpawnDeps,
 ): Promise<ChildProcess> {
-  const key = `${session.userId}/${session.id}`;
+  const key = session.id;
 
   // Best-effort migration from legacy session-scoped sandbox to workspace-scoped layout.
   deps.sandbox.migrateLegacySessionLayout(session.userId, workspaceId, session.id);

@@ -44,11 +44,11 @@ function sendAndWait(sock: Socket, msg: Record<string, unknown>): Promise<Record
   });
 }
 
-function createGate(preset: string = "container"): GateServer {
+function createGate(preset: string = "container", approvalTimeoutMs?: number): GateServer {
   const policy = new PolicyEngine(preset);
   const ruleStore = new RuleStore(join(testDir, "rules.json"));
   const auditLog = new AuditLog(join(testDir, "audit.jsonl"));
-  return new GateServer(policy, ruleStore, auditLog);
+  return new GateServer(policy, ruleStore, auditLog, { approvalTimeoutMs });
 }
 
 async function setupGuardedSession(): Promise<void> {
@@ -131,6 +131,66 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
   });
 
+  it("uses configurable approval timeout when set", async () => {
+    gate = createGate("host", 25);
+    const activeGate = gate;
+
+    activeGate.on("approval_needed", (pending: { id: string }) => {
+      // Intentionally slower than timeout.
+      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    await new Promise(r => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "git push origin main" },
+      toolCallId: "tc_timeout",
+    });
+
+    expect(result.action).toBe("deny");
+    expect(result.reason).toBe("Approval timeout");
+  });
+
+  it("disables approval expiry when approvalTimeoutMs=0", async () => {
+    gate = createGate("host", 0);
+    const activeGate = gate;
+
+    activeGate.on("approval_needed", (pending: { id: string }) => {
+      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    await new Promise(r => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "git push origin main" },
+      toolCallId: "tc_no_timeout",
+    });
+
+    expect(result.action).toBe("allow");
+  });
+
   it("asks for chained git push in host mode", async () => {
     gate = createGate("host");
     const activeGate = gate;
@@ -165,6 +225,93 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
     expect(approvalCount).toBe(1);
     expect(lastReason).toBe("Git push");
+  });
+
+  it("stores workspace rules with TTL from permission responses", async () => {
+    gate = createGate("host");
+    const activeGate = gate;
+    let approvalAt = 0;
+
+    activeGate.on("approval_needed", (pending: { id: string }) => {
+      approvalAt = Date.now();
+      activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID, "w1");
+    await new Promise((r) => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "git push origin main" },
+      toolCallId: "tc_ttl_workspace",
+    });
+
+    expect(result.action).toBe("allow");
+
+    const learned = activeGate
+      .ruleStore
+      .getAll()
+      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
+
+    expect(learned).toBeTruthy();
+    expect(typeof learned?.expiresAt).toBe("number");
+
+    const ttlMs = (learned?.expiresAt ?? 0) - approvalAt;
+    expect(ttlMs).toBeGreaterThanOrEqual(55_000);
+    expect(ttlMs).toBeLessThanOrEqual(65_000);
+  });
+
+  it("caps learned rule TTL at one year", async () => {
+    gate = createGate("host");
+    const activeGate = gate;
+    let approvalAt = 0;
+
+    activeGate.on("approval_needed", (pending: { id: string }) => {
+      approvalAt = Date.now();
+      activeGate.resolveDecision(pending.id, "allow", "workspace", 10 * 365 * 24 * 60 * 60 * 1000);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID, "w1");
+    await new Promise((r) => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "git push origin main" },
+      toolCallId: "tc_ttl_cap",
+    });
+
+    expect(result.action).toBe("allow");
+
+    const learned = activeGate
+      .ruleStore
+      .getAll()
+      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
+
+    expect(learned).toBeTruthy();
+    expect(typeof learned?.expiresAt).toBe("number");
+
+    const ttlMs = (learned?.expiresAt ?? 0) - approvalAt;
+    const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+    expect(ttlMs).toBeGreaterThanOrEqual(oneYearMs - 5_000);
+    expect(ttlMs).toBeLessThanOrEqual(oneYearMs + 5_000);
   });
 
   it("responds to heartbeat", async () => {

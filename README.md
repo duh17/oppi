@@ -49,21 +49,21 @@ npm install
 npx tsx src/index.ts serve
 ```
 
-### 2. Create Invite
+### 2. Create Pairing QR
 
 ```bash
-# Show QR code in terminal
-npx tsx src/index.ts invite "Wife"
+# Show pairing QR in terminal
+npx tsx src/index.ts pair "Chen"
 
-# Save QR as image to send
-npx tsx src/index.ts invite "Wife" --save wife-invite.png
+# Save pairing QR as image
+npx tsx src/index.ts pair "Chen" --save owner-pair.png
 ```
 
 ### 3. Connect from iPhone
 
-1. Wife opens Pi app
-2. Scans QR code
-3. Done! She can start chatting
+1. Open Oppi on iPhone
+2. Scan pairing QR
+3. Done — this phone is now paired to this server owner identity
 
 ## Documentation Map (Source of Truth)
 
@@ -159,48 +159,39 @@ This suite launches a debug-only fixture mode (`--ui-hang-harness`) with a heavy
 - `diag.stallCount` (watchdog stall counter)
 - `diag.itemCount` (rendered timeline row count)
 
-If `pi-remote invite` should use LAN instead of Tailscale:
+If `pi-remote pair` should use LAN instead of Tailscale:
 
 ```bash
 cd pi-remote
-npx tsx src/index.ts invite "Chen" --host mac-studio.local
+npx tsx src/index.ts pair "Chen" --host mac-studio.local
 ```
 
 ## Onboarding Flow
 
-### For You (One-Time Setup)
+### One-Time Pairing
 
 ```bash
-# 1. Add wife to your Tailscale network
-#    (via Tailscale admin console)
-
-# 2. Set up ACL so she can only access mac-studio
-#    (via Tailscale ACL config)
-
-# 3. Start pi-remote
+# 1. Start pi-remote
 pi-remote serve
 
-# 4. Create her invite
-pi-remote invite "Wife" --save invite.png
+# 2. Generate pairing QR for owner identity
+pi-remote pair "Chen" --save pair.png
 
-# 5. Send her the QR code (AirDrop, iMessage, etc.)
+# 3. Scan in Oppi on iPhone
 ```
 
-### For Her
+### Paired Phone
 
-1. Install Tailscale on iPhone (you help once)
-2. Install Pi app
-3. Scan the QR code you sent
-4. Start chatting!
+1. Open Oppi
+2. Scan pairing QR
+3. Start chatting
 
 ## CLI Reference
 
 ```bash
 pi-remote serve                    # Start the server
-pi-remote invite <name>            # Create invite QR
-pi-remote invite <name> --host ... # Force LAN/tailnet host in QR payload
-pi-remote users                    # List users
-pi-remote users remove <n>         # Remove a user
+pi-remote pair [name]              # Create pairing QR for owner identity
+pi-remote pair [name] --host ...   # Force LAN/tailnet host in QR payload
 pi-remote status                   # Show server status
 pi-remote config show              # Show effective config JSON
 pi-remote config validate          # Validate config schema
@@ -229,11 +220,11 @@ LOAD_TOKEN=<token> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
 
 ```
 GET    /health                     # Health check (no auth)
-GET    /me                         # Current user info
+GET    /me                         # Current owner identity info
 GET    /security/profile           # Server security posture + trust metadata
 
 # Sessions (workspace-scoped aliases also exist under /workspaces/:wid/sessions/:sid/*)
-GET    /sessions                   # List user's sessions
+GET    /sessions                   # List owner sessions
 POST   /sessions                   # Create new session (optional workspaceId)
 GET    /sessions/:id               # Get session + messages
 POST   /sessions/:id/stop          # Stop session process
@@ -300,15 +291,29 @@ Authorization: Bearer <token>
 
 ## Security
 
-- **Network**: Tailscale (WireGuard) encrypts all traffic
-- **Auth**: Bearer tokens per user
-- **Isolation**: Each user gets their own sandbox environment
-  - Separate workspace directory
-  - Separate auth credentials
-  - Separate session history
-  - Can't see other users' files or sessions
-- **Sandbox**: All pi sessions run in containers
-- **ACL**: Use Tailscale ACLs to limit which devices users can access
+### Transport + bootstrap contract
+
+- Server publishes runtime posture at `GET /security/profile` (profile, transport toggles, identity fingerprint).
+- Pairing onboarding uses signed `v2` envelopes (Ed25519, expiry, nonce, key id).
+- iOS enforces server-authored transport rules:
+  - tailnet/local HTTP/WS allowed only when profile permits
+  - non-tailnet insecure transport is blocked when `requireTlsOutsideTailnet=true` (default)
+  - pinned identity mismatch is hard-blocked when `requirePinnedServerIdentity=true` (default)
+- On startup, server logs explicit warnings for insecure posture (wildcard bind, legacy profile, disabled pinning, plaintext outside tailnet, long pairing TTL).
+
+### At-rest protection assumptions
+
+- iOS credentials are stored in Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
+- Server metadata files (`config.json`, `users.json`, session/workspace records) are written with owner-only permissions (`0600` files, `0700` directories).
+- Server identity private key is stored at `identity.privateKeyPath` with restrictive file permissions.
+- Operator hardening assumptions: FileVault enabled on macOS host and device passcode/biometric lock enabled on iOS.
+
+### Threat model + residual risk
+
+- P0 model covers pairing payload tampering/replay, unsigned-bootstrap downgrade, fake-server bootstrap, and post-pairing transport downgrade.
+- Residual risks remain for host compromise (attacker can read local data/keys), bearer-token leakage until rotation, and network exposure from misconfigured tailnet/LAN ACLs.
+
+See `pi-remote/docs/security-config-v2.md` and `pi-remote/docs/security-release-gate-v0.md` for full matrix and release-gate evidence.
 
 ## Project Structure
 
@@ -345,16 +350,14 @@ pios/
 ```
 ~/.config/pi-remote/                 # Server data
 ├── config.json                      # Server config
-├── users.json                       # User accounts + device tokens
+├── users.json                       # Owner identity + device tokens (single-user mode)
 ├── sessions/
-│   └── <userId>/
-│       └── <sessionId>.json         # Session metadata
+│   └── <sessionId>.json             # Flat owner layout (current)
 └── workspaces/
-    └── <userId>/
-        └── <workspaceId>.json       # Workspace configs
+    └── <workspaceId>.json           # Flat owner layout (current)
 
 ~/.pi-remote/sandboxes/              # Workspace-scoped sandbox runtime
-└── <userId>/
+└── <ownerId>/
     └── <workspaceId>/
         ├── workspace/               # Shared /work for all sessions in this workspace
         └── sessions/
@@ -366,8 +369,10 @@ pios/
 └── <namespace>/
 ```
 
+On startup, storage migrates legacy owner-scoped records (`sessions/<ownerId>/...`, `workspaces/<ownerId>/...`) into flat owner layout and removes migrated legacy files.
+
 Isolation model (current):
-- Per-user metadata separation in config store
+- Single-owner identity per server instance
 - Per-workspace sandbox container + shared workspace filesystem
 - Per-session Pi home/state under workspace `sessions/<sessionId>/`
 - Permission-gate decisions enforced per tool call
@@ -377,7 +382,7 @@ Isolation model (current):
 ### ✅ Implemented
 
 - [x] pi-remote server + RPC bridge
-- [x] Multi-user auth + invite flow
+- [x] Single-owner pairing auth flow
 - [x] Session lifecycle + persistence
 - [x] Permission gate (extension + TCP gate + policy engine)
 - [x] Workspace-scoped runtime + multi-session concurrency in one workspace

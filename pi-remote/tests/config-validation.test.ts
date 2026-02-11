@@ -24,7 +24,7 @@ describe("Storage config validation", () => {
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.security?.profile).toBe("tailscale-permissive");
     expect(result.config?.invite?.format).toBe("v2-signed");
-    expect(result.config?.invite?.allowLegacyV1Unsigned).toBe(false);
+    expect(result.config?.approvalTimeoutMs).toBe(120_000);
   });
 
   it("rejects unknown top-level keys in strict mode", () => {
@@ -50,6 +50,29 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("config.security.profile"))).toBe(true);
+  });
+
+  it("accepts approvalTimeoutMs = 0 for non-expiring approvals", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      approvalTimeoutMs: 0,
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.config?.approvalTimeoutMs).toBe(0);
+  });
+
+  it("rejects negative approvalTimeoutMs", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      approvalTimeoutMs: -1,
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(true);
   });
 
   it("backfills v2 security fields for legacy config in non-strict normalization", () => {
@@ -98,7 +121,6 @@ describe("Storage config validation", () => {
     expect(config.security?.profile).toBe("tailscale-permissive");
     expect(config.identity?.algorithm).toBe("ed25519");
     expect(config.invite?.format).toBe("v2-signed");
-    expect(config.invite?.allowLegacyV1Unsigned).toBe(false);
 
     const rewritten = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")) as {
       configVersion?: number;
@@ -113,38 +135,32 @@ describe("Storage config validation", () => {
     expect(rewritten.invite?.format).toBe("v2-signed");
   });
 
-  it("rejects legacy unsigned invite compatibility when profile is strict", () => {
-    const raw = Storage.getDefaultConfig(dir);
-    raw.security = {
-      ...raw.security!,
-      profile: "strict",
-    };
-    raw.invite = {
-      ...raw.invite!,
-      format: "v2-signed",
-      allowLegacyV1Unsigned: true,
+  it("rejects removed invite.allowLegacyV1Unsigned key in strict mode", () => {
+    const defaults = Storage.getDefaultConfig(dir);
+    const raw = {
+      ...defaults,
+      invite: {
+        ...defaults.invite!,
+        allowLegacyV1Unsigned: true,
+      },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
 
     expect(result.valid).toBe(false);
     expect(
-      result.errors.some((error) =>
-        error.includes("config.invite.allowLegacyV1Unsigned: must be false"),
-      ),
+      result.errors.some((error) => error.includes("config.invite.allowLegacyV1Unsigned: unknown key")),
     ).toBe(true);
   });
 
-  it("rejects unsigned invite format outside legacy security profile", () => {
-    const raw = Storage.getDefaultConfig(dir);
-    raw.security = {
-      ...raw.security!,
-      profile: "tailscale-permissive",
-    };
-    raw.invite = {
-      ...raw.invite!,
-      format: "v1-unsigned",
-      allowLegacyV1Unsigned: false,
+  it("rejects unsigned invite format", () => {
+    const defaults = Storage.getDefaultConfig(dir);
+    const raw = {
+      ...defaults,
+      invite: {
+        ...defaults.invite!,
+        format: "v1-unsigned",
+      },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
@@ -152,7 +168,7 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(false);
     expect(
       result.errors.some((error) =>
-        error.includes("config.invite.format: \"v1-unsigned\" is only allowed"),
+        error.includes("config.invite.format: expected one of v2-signed"),
       ),
     ).toBe(true);
   });
