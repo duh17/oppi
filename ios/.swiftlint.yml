@@ -16,6 +16,15 @@ disabled_rules:
   - identifier_name          # Short names (i, c, n) are fine in loops/closures
   - implicit_optional_initialization
 
+  # NetNewsWire-style relaxations for large, evolving SwiftUI codebases
+  - file_length
+  - line_length
+  - function_body_length
+  - type_body_length
+  - cyclomatic_complexity
+  - function_parameter_count
+  - nesting
+
 # Opt-in rules worth enabling
 opt_in_rules:
   - closure_end_indentation
@@ -44,35 +53,11 @@ opt_in_rules:
   - toggle_bool
   - unneeded_parentheses_in_closure_argument
   - unowned_variable_capture
+
+# Analyzer-only rules (run under `swiftlint analyze`)
+analyzer_rules:
   - unused_declaration
   - unused_import
-
-# Tuned thresholds — practical for the current codebase
-line_length:
-  warning: 140
-  error: 250
-  ignores_comments: true
-  ignores_urls: true
-
-file_length:
-  warning: 500
-  error: 1000
-
-type_body_length:
-  warning: 350
-  error: 700
-
-function_body_length:
-  warning: 80
-  error: 150
-
-cyclomatic_complexity:
-  warning: 15
-  error: 30
-
-function_parameter_count:
-  warning: 6
-  error: 8
 
 # Force casts/tries — warn (sometimes necessary for Codable/UIKit)
 force_cast:
@@ -91,7 +76,3 @@ enum_case_associated_values_count:
   warning: 7
   error: 10
 
-# Nesting
-nesting:
-  type_level: 2
-  function_level: 3

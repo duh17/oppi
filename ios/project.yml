@@ -10,6 +10,7 @@ options:
   bundleIdPrefix: dev.chenda
   deploymentTarget:
     iOS: "26.0"
+    macOS: "15.0"
   xcodeVersion: "26.2"
   generateEmptyDirectories: true
 settings:
@@ -87,6 +88,68 @@ targets:
         product: Sentry
       - target: PiRemoteActivityExtension
         embed: true
+
+  OppiMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: OppiMac
+        type: group
+      - path: PiRemote/Core/Extensions/Date+Relative.swift
+        group: PiRemote/Core/Extensions
+      - path: PiRemote/Core/Security/ConnectionSecurityPolicy.swift
+        group: PiRemote/Core/Security
+      - path: PiRemote/Core/Models/ExtensionInfo.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/JSONValue.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/ClientMessage.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/Permission.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/ServerMessage.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/Session.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/SkillDetail.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/SkillInfo.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/TraceEvent.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/User.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Models/Workspace.swift
+        group: PiRemote/Core/Models
+      - path: PiRemote/Core/Networking/APIClient.swift
+        group: PiRemote/Core/Networking
+      - path: PiRemote/Core/Networking/WebSocketClient.swift
+        group: PiRemote/Core/Networking
+      - path: PiRemote/Core/Services/ClientLogBuffer.swift
+        group: PiRemote/Core/Services
+      - path: PiRemote/Core/Services/SentryService.swift
+        group: PiRemote/Core/Services
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac
+        PRODUCT_NAME: OppiMac
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+    info:
+      path: OppiMac/Resources/Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        LSApplicationCategoryType: "public.app-category.developer-tools"
+        SentryDSN: "$(SENTRY_DSN)"
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+
   PiRemoteActivityExtension:
     type: app-extension
     platform: iOS
@@ -105,6 +168,20 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: PiRemote
         INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  OppiMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: OppiMacTests
+        type: group
+    dependencies:
+      - target: OppiMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMacTests
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_ALLOWED: "NO"
 
   PiRemoteTests:
     type: bundle.unit-test
@@ -135,6 +212,15 @@ targets:
         CODE_SIGNING_ALLOWED: "NO"
 
 schemes:
+  OppiMac:
+    build:
+      targets:
+        OppiMac: all
+        OppiMacTests: [test]
+    test:
+      targets:
+        - OppiMacTests
+
   PiRemote:
     build:
       targets:
