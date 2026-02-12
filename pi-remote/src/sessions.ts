@@ -917,6 +917,8 @@ export class SessionManager extends EventEmitter {
       if (this.applyPiStateSnapshot(active.session, data)) {
         this.persistSessionNow(key, active.session);
       }
+
+      await this.applyRememberedThinkingLevel(key, active);
     } catch {
       // Non-fatal; history falls back to stored SessionMessage list.
     }
@@ -945,6 +947,69 @@ export class SessionManager extends EventEmitter {
       };
     } catch {
       return null;
+    }
+  }
+
+  private getRememberedThinkingLevel(userId: string, modelId: string | undefined): string | undefined {
+    const normalizedModelId = modelId?.trim();
+    if (!normalizedModelId) {
+      return undefined;
+    }
+
+    const storageWithPrefs = this.storage as unknown as {
+      getModelThinkingLevelPreference?: (userId: string, modelId: string) => string | undefined;
+    };
+
+    return storageWithPrefs.getModelThinkingLevelPreference?.(userId, normalizedModelId);
+  }
+
+  private persistThinkingPreference(session: Session): void {
+    const modelId = session.model?.trim();
+    const level = session.thinkingLevel?.trim();
+    if (!modelId || !level) {
+      return;
+    }
+
+    const storageWithPrefs = this.storage as unknown as {
+      setModelThinkingLevelPreference?: (userId: string, modelId: string, level: string) => void;
+    };
+
+    storageWithPrefs.setModelThinkingLevelPreference?.(session.userId, modelId, level);
+  }
+
+  private async applyRememberedThinkingLevel(key: string, active: ActiveSession): Promise<boolean> {
+    const preferred = this.getRememberedThinkingLevel(active.session.userId, active.session.model);
+    if (!preferred) {
+      return false;
+    }
+
+    if (active.session.thinkingLevel === preferred) {
+      return false;
+    }
+
+    try {
+      await this.sendRpcCommandAsync(
+        key,
+        { type: "set_thinking_level", level: preferred },
+        8_000,
+      );
+
+      try {
+        const state = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+        if (this.applyPiStateSnapshot(active.session, state)) {
+          this.persistSessionNow(key, active.session);
+        }
+      } catch {
+        active.session.thinkingLevel = preferred;
+        this.persistSessionNow(key, active.session);
+      }
+
+      this.persistThinkingPreference(active.session);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`${ts()} [session:${active.session.id}] failed to apply remembered thinking level: ${message}`);
+      return false;
     }
   }
 
@@ -1024,9 +1089,18 @@ export class SessionManager extends EventEmitter {
       changed = true;
     }
 
-    if (typeof state.thinkingLevel === "string" && state.thinkingLevel !== session.thinkingLevel) {
-      session.thinkingLevel = state.thinkingLevel;
+    const observedThinkingLevel =
+      typeof state.thinkingLevel === "string" && state.thinkingLevel.trim().length > 0
+        ? state.thinkingLevel.trim()
+        : undefined;
+
+    if (observedThinkingLevel && observedThinkingLevel !== session.thinkingLevel) {
+      session.thinkingLevel = observedThinkingLevel;
       changed = true;
+    }
+
+    if (observedThinkingLevel && typeof session.model === "string" && session.model.trim().length > 0) {
+      this.persistThinkingPreference(session);
     }
 
     return changed;
@@ -1096,10 +1170,10 @@ export class SessionManager extends EventEmitter {
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
     try {
-      const data = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
+      let rpcData = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
 
       if (cmdType === "get_state") {
-        if (this.applyPiStateSnapshot(active.session, data)) {
+        if (this.applyPiStateSnapshot(active.session, rpcData)) {
           this.persistSessionNow(key, active.session);
           // Broadcast updated session so clients see model/thinking/name changes
           this.broadcast(key, { type: "state", session: active.session });
@@ -1108,16 +1182,30 @@ export class SessionManager extends EventEmitter {
 
       // Track thinking level changes so the session object stays in sync
       if (cmdType === "cycle_thinking_level" || cmdType === "set_thinking_level") {
-        const level = data?.level;
-        if (typeof level === "string") {
-          active.session.thinkingLevel = level;
+        const levelFromResponse =
+          typeof rpcData?.level === "string" && rpcData.level.trim().length > 0
+            ? rpcData.level.trim()
+            : undefined;
+        const levelFromRequest =
+          cmdType === "set_thinking_level" &&
+          typeof message.level === "string" &&
+          message.level.trim().length > 0
+            ? message.level.trim()
+            : undefined;
+
+        const effectiveLevel = levelFromResponse ?? levelFromRequest;
+        if (effectiveLevel && active.session.thinkingLevel !== effectiveLevel) {
+          active.session.thinkingLevel = effectiveLevel;
+          this.persistSessionNow(key, active.session);
         }
+
+        this.persistThinkingPreference(active.session);
       }
 
       // Track model changes so the session object stays in sync
       if (cmdType === "set_model" || cmdType === "cycle_model") {
         // set_model returns the model object, cycle_model returns { model, thinkingLevel, isScoped }
-        const modelData = cmdType === "cycle_model" ? data?.model : data;
+        const modelData = cmdType === "cycle_model" ? rpcData?.model : rpcData;
         const provider = modelData?.provider;
         const modelId = modelData?.id;
         if (typeof provider === "string" && typeof modelId === "string") {
@@ -1130,9 +1218,29 @@ export class SessionManager extends EventEmitter {
             this.persistSessionNow(key, active.session);
           }
         }
+
         // cycle_model also returns thinkingLevel
-        if (cmdType === "cycle_model" && typeof data?.thinkingLevel === "string") {
-          active.session.thinkingLevel = data.thinkingLevel;
+        if (
+          cmdType === "cycle_model" &&
+          typeof rpcData?.thinkingLevel === "string" &&
+          rpcData.thinkingLevel.trim().length > 0
+        ) {
+          active.session.thinkingLevel = rpcData.thinkingLevel.trim();
+          this.persistThinkingPreference(active.session);
+        }
+
+        const appliedRememberedThinking = await this.applyRememberedThinkingLevel(key, active);
+
+        // Keep rpc_result payload consistent with server-authoritative session state.
+        if (cmdType === "cycle_model" && appliedRememberedThinking) {
+          const cycleData =
+            rpcData && typeof rpcData === "object" && !Array.isArray(rpcData)
+              ? (rpcData as Record<string, unknown>)
+              : undefined;
+          if (cycleData && active.session.thinkingLevel) {
+            cycleData.thinkingLevel = active.session.thinkingLevel;
+            rpcData = cycleData;
+          }
         }
       }
 
@@ -1142,7 +1250,7 @@ export class SessionManager extends EventEmitter {
         const requestedName =
           typeof message.name === "string" ? message.name.trim() : "";
         const responseName =
-          typeof data?.name === "string" ? data.name.trim() : "";
+          typeof rpcData?.name === "string" ? rpcData.name.trim() : "";
         const nextName = responseName.length > 0 ? responseName : requestedName;
         if (nextName.length > 0 && active.session.name !== nextName) {
           active.session.name = nextName;
@@ -1170,7 +1278,7 @@ export class SessionManager extends EventEmitter {
         command: cmdType,
         requestId,
         success: true,
-        data,
+        data: rpcData,
       });
 
       // Broadcast updated session state after model/thinking/name changes

@@ -791,6 +791,35 @@ export class Storage {
     return this.owner.liveActivityToken;
   }
 
+  // ─── Thinking Preferences ───
+
+  getModelThinkingLevelPreference(userId: string, modelId: string): string | undefined {
+    const normalizedUserId = this.normalizeUserId(userId);
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId) return undefined;
+    if (!this.owner || this.owner.id !== normalizedUserId) return undefined;
+    return this.owner.thinkingLevelByModel?.[normalizedModelId];
+  }
+
+  setModelThinkingLevelPreference(userId: string, modelId: string, level: string): void {
+    const normalizedUserId = this.normalizeUserId(userId);
+    const normalizedModelId = modelId.trim();
+    const normalizedLevel = level.trim();
+    if (!normalizedModelId || !normalizedLevel) return;
+    if (!this.owner || this.owner.id !== normalizedUserId) return;
+
+    if (!this.owner.thinkingLevelByModel) {
+      this.owner.thinkingLevelByModel = {};
+    }
+
+    if (this.owner.thinkingLevelByModel[normalizedModelId] === normalizedLevel) {
+      return;
+    }
+
+    this.owner.thinkingLevelByModel[normalizedModelId] = normalizedLevel;
+    this.saveUsers();
+  }
+
   // ─── Sessions ───
 
   private getSessionPath(_userId: string, sessionId: string): string {

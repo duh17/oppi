@@ -14,6 +14,12 @@ export interface User {
   deviceTokens?: string[];
   /** ActivityKit push token for Live Activity updates (hex string). */
   liveActivityToken?: string;
+  /**
+   * Per-model thinking preference map.
+   * Key: full model id ("provider/model")
+   * Value: thinking level ("off" | "minimal" | "low" | "medium" | "high" | "xhigh")
+   */
+  thinkingLevelByModel?: Record<string, string>;
 }
 
 // ─── Workspaces ───
