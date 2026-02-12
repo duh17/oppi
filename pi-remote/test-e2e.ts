@@ -52,6 +52,7 @@ const IMAGE_BUILD_TIMEOUT = 300_000;
 let tmpDir: string | null = null;
 let server: Server | null = null;
 let userToken = "";
+let workspaceId = "";
 let passed = 0;
 let failed = 0;
 
@@ -281,13 +282,17 @@ async function api(
   return { status: res.status, data };
 }
 
+function wsSessionPath(workspace: string, session: string): string {
+  return `/workspaces/${workspace}/sessions/${session}`;
+}
+
 // ─── WebSocket Helpers ───
 
 /** Connect WS and wait for the "connected" message (container boot happens here). */
-function connectWs(sessionId: string): Promise<{ ws: WebSocket; session: any }> {
+function connectWs(workspace: string, sessionId: string): Promise<{ ws: WebSocket; session: any }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/sessions/${sessionId}/stream`,
+      `ws://127.0.0.1:${TEST_PORT}/workspaces/${workspace}/sessions/${sessionId}/stream`,
       { headers: { Authorization: `Bearer ${userToken}` } },
     );
 
@@ -741,43 +746,60 @@ async function testHttpApi(): Promise<void> {
   const me = await api("GET", "/me");
   check("GET /me → 200 with name", me.status === 200 && me.data.name === "e2e-tester");
 
-  // Sessions — empty
-  const empty = await api("GET", "/sessions");
-  check("GET /sessions → empty", empty.data.sessions?.length === 0);
+  // Workspaces
+  const workspaces = await api("GET", "/workspaces");
+  check("GET /workspaces → 200", workspaces.status === 200);
+  check("GET /workspaces seeds defaults", (workspaces.data.workspaces?.length ?? 0) > 0);
+
+  workspaceId = workspaces.data.workspaces?.[0]?.id || "";
+  check("Resolved workspace id", workspaceId.length > 0);
+  log(`Workspace: ${workspaceId}`);
+
+  // Sessions in workspace — empty
+  const empty = await api("GET", `/workspaces/${workspaceId}/sessions`);
+  check("GET /workspaces/:wid/sessions → empty", empty.data.sessions?.length === 0);
 
   // Create session
   const model = TEST_MODEL || "lmstudio/glm-4.7-flash-mlx";
-  const created = await api("POST", "/sessions", { name: "e2e-test", model });
-  check("POST /sessions → 201", created.status === 201);
+  const created = await api("POST", `/workspaces/${workspaceId}/sessions`, { name: "e2e-test", model });
+  check("POST /workspaces/:wid/sessions → 201", created.status === 201);
   check("Response includes session id", !!created.data.session?.id);
   log(`Session: ${created.data.session?.id} (${model})`);
 
+  const sessionId = String(created.data.session?.id || "");
+
   // List
-  const list = await api("GET", "/sessions");
-  check("GET /sessions → 1 session", list.data.sessions?.length === 1);
+  const list = await api("GET", `/workspaces/${workspaceId}/sessions`);
+  check("GET /workspaces/:wid/sessions → 1 session", list.data.sessions?.length === 1);
 
   // Detail
-  const detail = await api("GET", `/sessions/${created.data.session?.id}`);
-  check("GET /sessions/:id → correct session", detail.data.session?.id === created.data.session?.id);
+  const detail = await api("GET", wsSessionPath(workspaceId, sessionId));
+  check(
+    "GET /workspaces/:wid/sessions/:id → correct session",
+    detail.data.session?.id === created.data.session?.id,
+  );
 
   // Stop (works even if session is not active yet)
-  const stopped = await api("POST", `/sessions/${created.data.session?.id}/stop`);
-  check("POST /sessions/:id/stop → 200", stopped.status === 200);
-  check("POST /sessions/:id/stop marks stopped", stopped.data.session?.status === "stopped");
+  const stopped = await api("POST", `${wsSessionPath(workspaceId, sessionId)}/stop`);
+  check("POST /workspaces/:wid/sessions/:id/stop → 200", stopped.status === 200);
+  check(
+    "POST /workspaces/:wid/sessions/:id/stop marks stopped",
+    stopped.data.session?.status === "stopped",
+  );
 }
 
 async function testAgentSession(): Promise<string> {
   phase("Phase 3 — Agent Session (real container + LLM)");
 
   // Get the session we created in Phase 2
-  const sessions = await api("GET", "/sessions");
+  const sessions = await api("GET", `/workspaces/${workspaceId}/sessions`);
   const sessionId = sessions.data.sessions?.[0]?.id;
   if (!sessionId) throw new Error("No session found — Phase 2 may have failed");
 
   // Connect WebSocket (this boots the container)
   log("Connecting WebSocket — booting container…");
   const { ws, session } = await withTimeout(
-    connectWs(sessionId),
+    connectWs(workspaceId, sessionId),
     CONTAINER_TIMEOUT,
     "container boot",
   );
@@ -897,8 +919,8 @@ async function testAgentSession(): Promise<string> {
 
   // ── Trace endpoint — verify JSONL was captured ──
   log("\n── Trace endpoint ──\n");
-  const trace = await api("GET", `/sessions/${sessionId}/trace`);
-  check("GET /sessions/:id/trace → 200", trace.status === 200);
+  const trace = await api("GET", `${wsSessionPath(workspaceId, sessionId)}?view=full`);
+  check("GET /workspaces/:wid/sessions/:id?view=full → 200", trace.status === 200);
   check("Trace has events", Array.isArray(trace.data.trace) && trace.data.trace.length > 0,
     `got ${trace.data.trace?.length ?? 0} events`,
   );
@@ -915,16 +937,16 @@ async function testAgentSession(): Promise<string> {
 async function testCleanup(sessionId: string): Promise<void> {
   phase("Phase 4 — Session Cleanup");
 
-  const del = await api("DELETE", `/sessions/${sessionId}`);
-  check("DELETE /sessions/:id → 200", del.status === 200);
+  const del = await api("DELETE", wsSessionPath(workspaceId, sessionId));
+  check("DELETE /workspaces/:wid/sessions/:id → 200", del.status === 200);
 
   // Wait for async cleanup (pi process exit, gate teardown) to settle
   // before making the next request. DELETE returns 200 immediately but
   // the container teardown continues asynchronously.
   await new Promise(r => setTimeout(r, 1000));
 
-  const list = await api("GET", "/sessions");
-  check("Sessions empty after delete", list.data.sessions?.length === 0);
+  const list = await api("GET", `/workspaces/${workspaceId}/sessions`);
+  check("Workspace sessions empty after delete", list.data.sessions?.length === 0);
 }
 
 // ─── Main ───

@@ -49,42 +49,66 @@ fi
 
 auth() { curl -sf -H "Authorization: Bearer $TOKEN" "$@"; }
 
-# ─── Resolve session ID ─────────────────────────────────────────
+# ─── Resolve session/workspace IDs ──────────────────────────────
 
 SESSION_ID="${1:-}"
+WORKSPACE_ID=""
 TMPDIR_WORK=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_WORK"' EXIT
 
 if [[ "$SESSION_ID" == "latest" || -z "$SESSION_ID" ]]; then
   heading "Recent sessions"
 
-  if auth "$SERVER_URL/sessions" > "$TMPDIR_WORK/sessions.json" 2>/dev/null; then
-    python3 - "$TMPDIR_WORK/sessions.json" <<'PYEOF'
-import json, sys, datetime
-d = json.load(open(sys.argv[1]))
-for i, s in enumerate(d.get('sessions', [])[:8]):
-    ts = datetime.datetime.fromtimestamp(s['lastActivity']/1000).strftime('%m-%d %H:%M')
-    status = s['status']
+  if [[ -d "$SESSIONS_DIR" ]]; then
+    python3 - "$SESSIONS_DIR" "$TMPDIR_WORK/sessions-index.json" <<'PYEOF'
+import datetime, glob, json, os, sys
+sessions_dir, index_path = sys.argv[1], sys.argv[2]
+rows = []
+for path in glob.glob(os.path.join(sessions_dir, "*.json")):
+    try:
+        d = json.load(open(path))
+    except Exception:
+        continue
+    s = d.get("session", d)
+    sid = s.get("id") or os.path.splitext(os.path.basename(path))[0]
+    wid = s.get("workspaceId") or ""
+    if not sid:
+        continue
+    rows.append({
+        "id": sid,
+        "workspaceId": wid,
+        "status": s.get("status", "?"),
+        "messageCount": s.get("messageCount", 0),
+        "cost": s.get("cost", 0),
+        "lastActivity": s.get("lastActivity", 0),
+        "workspaceName": s.get("workspaceName", "?"),
+    })
+rows.sort(key=lambda r: r.get("lastActivity", 0), reverse=True)
+rows = rows[:8]
+json.dump(rows, open(index_path, "w"))
+for i, s in enumerate(rows, start=1):
+    ts = datetime.datetime.fromtimestamp((s.get("lastActivity", 0) or 0)/1000).strftime('%m-%d %H:%M')
+    status = s.get("status", "?")
     color = '\033[32m' if status in ('ready','idle') else '\033[33m' if status == 'busy' else '\033[90m'
-    print(f'  {i+1}) {s["id"]}  {color}{status:8}\033[0m  msgs={s["messageCount"]:3d}  ${s.get("cost",0):6.2f}  {ts}  {s.get("workspaceName","?")}')
+    print(f"  {i}) {s['id']}  {color}{status:8}\033[0m  msgs={int(s.get('messageCount',0)):3d}  ${float(s.get('cost',0)):6.2f}  {ts}  {s.get('workspaceName','?')} ({s.get('workspaceId','?')})")
 PYEOF
 
     if [[ "$SESSION_ID" == "latest" ]]; then
-      SESSION_ID=$(python3 -c "import json; print(json.load(open('$TMPDIR_WORK/sessions.json'))['sessions'][0]['id'])")
+      SESSION_ID=$(python3 -c "import json; rows=json.load(open('$TMPDIR_WORK/sessions-index.json')); print(rows[0]['id'] if rows else '')")
+      WORKSPACE_ID=$(python3 -c "import json; rows=json.load(open('$TMPDIR_WORK/sessions-index.json')); print(rows[0].get('workspaceId','') if rows else '')")
     else
       echo ""
       read -rp "Session ID or number [1]: " choice
       choice="${choice:-1}"
       if [[ "$choice" =~ ^[0-9]+$ && "$choice" -le 8 ]]; then
-        SESSION_ID=$(python3 -c "import json; print(json.load(open('$TMPDIR_WORK/sessions.json'))['sessions'][$((choice-1))]['id'])")
+        SESSION_ID=$(python3 -c "import json; rows=json.load(open('$TMPDIR_WORK/sessions-index.json')); i=$((choice-1)); print(rows[i]['id'] if i < len(rows) else '')")
+        WORKSPACE_ID=$(python3 -c "import json; rows=json.load(open('$TMPDIR_WORK/sessions-index.json')); i=$((choice-1)); print(rows[i].get('workspaceId','') if i < len(rows) else '')")
       else
         SESSION_ID="$choice"
       fi
     fi
   else
-    err "Server not reachable at $SERVER_URL"
-    python3 "$HOME/.claude/skills/pi-remote-session/scripts/session-lookup.py" list --limit 5
-    echo ""
+    err "Local sessions directory not found: $SESSIONS_DIR"
     read -rp "Session ID: " SESSION_ID
     [[ -z "$SESSION_ID" ]] && exit 0
   fi
@@ -95,13 +119,54 @@ if [[ -z "$SESSION_ID" ]]; then
   exit 1
 fi
 
+# Resolve workspace from local metadata first.
+if [[ -z "$WORKSPACE_ID" ]]; then
+  DISK_FILE="$SESSIONS_DIR/$SESSION_ID.json"
+  if [[ -f "$DISK_FILE" ]]; then
+    WORKSPACE_ID=$(uv run python -c "import json; d=json.load(open('$DISK_FILE')); s=d.get('session', d); print(s.get('workspaceId',''))" 2>/dev/null || true)
+  fi
+fi
+
+# Fallback: discover workspace by querying workspaces + per-workspace sessions.
+if [[ -z "$WORKSPACE_ID" ]]; then
+  WORKSPACE_ID=$(uv run python - <<'PYEOF' "$SERVER_URL" "$TOKEN" "$SESSION_ID"
+import json, sys, urllib.request
+base, token, target = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def get(path):
+    req = urllib.request.Request(f"{base}{path}", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=5) as res:
+        return json.load(res)
+
+try:
+    workspaces = get("/workspaces").get("workspaces", [])
+    for ws in workspaces:
+        wid = ws.get("id")
+        if not wid:
+            continue
+        sessions = get(f"/workspaces/{wid}/sessions").get("sessions", [])
+        if any(s.get("id") == target for s in sessions):
+            print(wid)
+            break
+except Exception:
+    pass
+PYEOF
+)
+fi
+
+if [[ -z "$WORKSPACE_ID" ]]; then
+  err "Could not resolve workspace for session $SESSION_ID"
+  exit 1
+fi
+
 printf "\n${BOLD}Session: ${CYAN}%s${NC}\n" "$SESSION_ID"
+printf "${BOLD}Workspace: ${CYAN}%s${NC}\n" "$WORKSPACE_ID"
 
 # ─── Session metadata ───────────────────────────────────────────
 
 heading "Session metadata"
 
-if auth "$SERVER_URL/sessions/$SESSION_ID" > "$TMPDIR_WORK/session.json" 2>/dev/null; then
+if auth "$SERVER_URL/workspaces/$WORKSPACE_ID/sessions/$SESSION_ID?view=full" > "$TMPDIR_WORK/session.json" 2>/dev/null; then
   python3 - "$TMPDIR_WORK/session.json" <<'PYEOF'
 import json, sys, datetime
 d = json.load(open(sys.argv[1]))
@@ -131,7 +196,7 @@ pid = s.get('piSessionId','')
 if pid: print(f'  Pi UUID:    {pid}')
 PYEOF
 else
-  DISK_FILE="$SESSIONS_DIR/7AfAqNs9/$SESSION_ID.json"
+  DISK_FILE="$SESSIONS_DIR/$SESSION_ID.json"
   if [[ -f "$DISK_FILE" ]]; then
     dim "  (from disk — server unreachable)"
     python3 -c "
@@ -188,7 +253,7 @@ fi
 
 heading "Trace summary"
 
-if auth "$SERVER_URL/sessions/$SESSION_ID/trace" > "$TMPDIR_WORK/trace.json" 2>/dev/null; then
+if auth "$SERVER_URL/workspaces/$WORKSPACE_ID/sessions/$SESSION_ID?view=full" > "$TMPDIR_WORK/trace.json" 2>/dev/null; then
   python3 - "$TMPDIR_WORK/trace.json" <<'PYEOF'
 import json, sys
 
@@ -250,7 +315,7 @@ else
   # Try JSONL directly
   JSONL_PATH=$(python3 -c "
 import json
-d = json.load(open('$SESSIONS_DIR/7AfAqNs9/$SESSION_ID.json'))
+d = json.load(open('$SESSIONS_DIR/$SESSION_ID.json'))
 s = d.get('session', d)
 print(s.get('piSessionFile',''))
 " 2>/dev/null || true)

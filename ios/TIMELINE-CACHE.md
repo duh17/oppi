@@ -5,7 +5,7 @@ Make ChatView instant on session switch and foreground recovery by caching serve
 ## Problem
 
 Every time the user opens a session (switch, foreground, cold launch), the app:
-1. Fetches full session trace via REST (`GET /sessions/:id`)
+1. Fetches full session trace via REST (`GET /workspaces/:workspaceId/sessions/:id`)
 2. Parses JSON into `[TraceEvent]`
 3. Rebuilds entire `[ChatItem]` timeline via `reducer.loadSession()`
 

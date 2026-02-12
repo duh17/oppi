@@ -131,7 +131,7 @@ reconnect catch-up without losing tool call history.
 | Durable/ephemeral broadcast split | `src/sessions.ts` |
 | `message_end` broadcast (new durable event) | `src/sessions.ts` |
 | `currentSeq` in connected message | `src/sessions.ts` |
-| `GET /sessions/:id/events?since=` | `src/routes.ts` |
+| `GET /workspaces/:wid/sessions/:sid/events?since=` | `src/routes.ts` |
 | Type updates (seq, message_end) | `src/types.ts` |
 | EventRing unit tests | `tests/event-ring.test.ts` — NEW |
 
@@ -145,8 +145,8 @@ Expose workspace files over REST so the iOS app can browse agent output.
 | Deliverable | File |
 |-------------|------|
 | Workspace path guard + MIME handling | `src/routes.ts` (shipped) |
-| `GET /sessions/:id/files?path=` (file content) | `src/routes.ts` (shipped) |
-| Directory listing API (`/sessions/:id/files?path=<dir>`) | ⏳ pending |
+| `GET /workspaces/:wid/sessions/:sid/files?path=` (file content) | `src/routes.ts` (shipped) |
+| Directory listing API (`/workspaces/:wid/sessions/:sid/files?path=<dir>`) | ⏳ pending |
 
 ---
 

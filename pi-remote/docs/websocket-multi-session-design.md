@@ -2,10 +2,13 @@
 
 Last updated: 2026-02-09 (revised: Live Activity audit per Apple ActivityKit docs + HIG)
 
+> Historical design note: this document captures migration analysis across phases.
+> Canonical current routes are in `README.md` and `src/routes.ts`.
+
 ## Current State
 
 ### Server (`pi-remote/src/server.ts`)
-- **One WS per session:** `GET /sessions/:id/stream` → per-session WebSocket
+- **One WS per session:** `GET /workspaces/:wid/sessions/:sid/stream` → per-session WebSocket
 - **User connection tracking:** `Map<userId, Set<WebSocket>>` — multiple WS connections per user already supported
 - **Broadcast:** `broadcastToUser(userId, msg)` sends to ALL open WS connections for that user
 - **Push fallback:** When no WS connections open → APNs push notification
@@ -61,7 +64,7 @@ Phone ──── 1 WebSocket ──── Server
 
 **Server changes:**
 ```ts
-// Upgrade path changes from /sessions/:id/stream to /stream
+// Upgrade path changes from historical session-scoped stream endpoint to /stream
 // Server subscribes the WS to ALL active sessions for this user
 
 // Every ServerMessage gets sessionId
@@ -373,7 +376,7 @@ Replace per-session WS with per-user WS:
 
 ```
 GET /stream                  # New: multiplexed user stream
-GET /sessions/:id/stream     # Deprecated: keep for backward compat during migration
+GET <historical session-scoped stream endpoint>  # Deprecated during migration
 ```
 
 ### New Client Messages
@@ -591,10 +594,10 @@ Current: text frames (JSON). For text_delta streaming, this is fine.
 - iOS ignores it (still uses v1 single-session routing)
 - No protocol break
 
-### Phase 2: Add `/stream` endpoint (new, parallel to `/sessions/:id/stream`)
+### Phase 2: Add `/stream` endpoint (new, parallel to historical session-scoped stream endpoint)
 - Server supports both endpoints simultaneously
 - New iOS build uses `/stream` with subscribe/unsubscribe
-- Old iOS builds continue working on `/sessions/:id/stream`
+- Old iOS builds continue working on the historical session-scoped stream endpoint
 
 ### Phase 3: iOS multi-session UI
 - `SessionRouter` demuxes events
@@ -602,7 +605,7 @@ Current: text frames (JSON). For text_delta streaming, this is fine.
 - Tab badge shows total pending permissions
 - Notification threading enabled
 
-### Phase 4: Deprecate `/sessions/:id/stream`
+### Phase 4: Deprecate historical session-scoped stream endpoint
 - After all clients migrate to `/stream`
 - Remove per-session WS endpoint
 

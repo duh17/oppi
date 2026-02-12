@@ -106,7 +106,7 @@ The zero-knowledge model means every piece of data goes through encrypt→base64
 ### ✅ Adopt: Update Sequence Numbers
 Add a per-session monotonic `seq` to state events. Clients track their last-seen seq and can request catch-up on reconnect.
 
-**Effort:** Small server change. Add `seq: number` to session state, increment on each event, add `GET /sessions/:id/events?since=<seq>` endpoint.
+**Effort:** Small server change. Add `seq: number` to session state, increment on each event, add `GET /workspaces/:wid/sessions/:id/events?since=<seq>` endpoint.
 
 ### ✅ Adopt: Persistent vs Ephemeral Event Split
 Formally separate durable state changes (message added, status changed) from transient signals (thinking indicator, typing, presence). Only persist durables.

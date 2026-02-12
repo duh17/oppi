@@ -281,7 +281,7 @@ struct PiRemoteApp: App {
 
     private func reconnectOnLaunch() async {
         // 1. Load token from Keychain
-        // 2. GET /sessions → refresh session list
+        // 2. GET /workspaces + /workspaces/:wid/sessions → refresh session list
         // 3. Restore last-open session and connect ONE WebSocket (v1)
         // 4. Send get_state to sync pending permissions
     }
@@ -384,14 +384,14 @@ final class ServerConnection {
 **Key networking decisions:**
 - **One WebSocket at a time in v1.** Opening a new session connection first
   calls `disconnect()` on the existing one.
-- Image upload via `POST /sessions/:id/attachments` (REST), not base64 over
+- Image upload via `POST /workspaces/:workspaceId/sessions/:id/attachments` (REST), not base64 over
   WebSocket. A 4MB base64 image blocks the WS frame and prevents permission
   responses from being sent.
 - Client sends WebSocket pings every 30s (URLSessionWebSocketTask has no
   automatic ping).
 - `ServerMessage` has an `.unknown(type:)` case. Unknown server message types
   are logged and skipped, not treated as fatal decode errors.
-- On reconnect after background, fetch `GET /sessions/:id` to rebuild chat
+- On reconnect after background, fetch `GET /workspaces/:workspaceId/sessions/:id` to rebuild chat
   state (server doesn't replay missed streaming events).
 - AsyncStream `onTermination` cancels the WebSocket task to prevent leaks
   when the view pops.
@@ -988,7 +988,7 @@ Terminal-smooth rendering budget (targets):
 - After tap, enter `stopping` UI state (button disabled + spinner)
 - Exit `stopping` when `agent_end` or `session_ended` arrives
 - If still busy after ~5s, show secondary action: "Force Stop Session"
-  (REST `POST /sessions/:id/stop`)
+  (REST `POST /workspaces/:workspaceId/sessions/:id/stop`)
 - Placeholder while busy: "Agent is working..."
 - v2: show mode picker ("Send as: Steer / Follow-up") in addition to Stop
 - Busy-state race is still possible (tap send before `agent_start` arrives).
@@ -1008,10 +1008,10 @@ Terminal-smooth rendering budget (targets):
   - Dismiss when keyboard closes and the inline card is visible again
 
 **Reconnect after background:** When app returns to foreground, fetch
-`GET /sessions/:id` to rebuild chat state. Server does NOT replay missed
+`GET /workspaces/:workspaceId/sessions/:id` to rebuild chat state. Server does NOT replay missed
 streaming events.
 
-**Known v1 limitation:** `GET /sessions/:id` currently returns only
+**Known v1 limitation:** `GET /workspaces/:workspaceId/sessions/:id` currently returns only
 user/assistant/system messages, not tool-call stream events. After reconnect,
 text history is accurate but tool rows that occurred while disconnected may be
 missing. We accept this for v1 and track server-side tool-event persistence for
@@ -2126,7 +2126,7 @@ final class ServerConnection {
         guard status != .connected else { return }
         status = .reconnecting
 
-        // 1. Fetch GET /sessions to refresh list + statuses
+        // 1. Fetch GET /workspaces + /workspaces/:wid/sessions to refresh list + statuses
         // 2. Reconnect only the currently open session (v1)
         // 3. Send get_state to refresh pending permissions
         // 4. Clear stale permission cards that server no longer has
@@ -2160,7 +2160,7 @@ always visible, never in the way.
 1. Server sends `connected` with current state for the reopened session
 2. Server resends any pending `permission_request` messages
 3. Client clears local permission cards and replaces with server state
-4. Fetch `GET /sessions/:id` for text history (missed tool stream events are
+4. Fetch `GET /workspaces/:workspaceId/sessions/:id` for text history (missed tool stream events are
    a known v1 limitation)
 
 ---
@@ -2169,7 +2169,7 @@ always visible, never in the way.
 
 ### Server alignment prerequisites (before iOS build)
 - [x] Persist finalized assistant messages on `message_end` so
-      `GET /sessions/:id` can rebuild conversation after reconnect.
+      `GET /workspaces/:workspaceId/sessions/:id` can rebuild conversation after reconnect.
 - [x] Debounce session metadata disk writes (e.g., 1s) instead of syncing on
       every stream event to avoid event-loop stalls and uneven WebSocket pacing.
 - [x] Keep `SessionManager` in-memory stats aligned with persisted writes to
@@ -2263,14 +2263,15 @@ always visible, never in the way.
 |----------|-------|--------|
 | `GET /health` | 1 | ✅ Exists |
 | `GET /me` | 1 | ✅ Exists |
-| `GET /sessions` | 1 | ✅ Exists |
-| `POST /sessions` | 1 | ✅ Exists |
-| `GET /sessions/:id` | 2 | ✅ Exists |
-| `DELETE /sessions/:id` | 2 | ✅ Exists |
-| `POST /sessions/:id/stop` | 2 | ✅ Exists |
-| WebSocket streaming | 2 | ✅ Exists |
+| `GET /workspaces` | 1 | ✅ Exists |
+| `GET /workspaces/:wid/sessions` | 1 | ✅ Exists |
+| `POST /workspaces/:wid/sessions` | 1 | ✅ Exists |
+| `GET /workspaces/:wid/sessions/:id` | 2 | ✅ Exists |
+| `DELETE /workspaces/:wid/sessions/:id` | 2 | ✅ Exists |
+| `POST /workspaces/:wid/sessions/:id/stop` | 2 | ✅ Exists |
+| WebSocket streaming (`/workspaces/:wid/sessions/:id/stream`) | 2 | ✅ Exists |
 | Permission protocol | 3 | ✅ Exists |
-| `POST /sessions/:id/attachments` | 2 | ❌ NEW — REST image upload |
+| `POST /workspaces/:wid/sessions/:id/attachments` | 2 | ❌ NEW — REST image upload |
 | `POST /me/device-token` | 4 | ❌ NEW — APNs registration |
 | APNs push sender | 4 | ❌ NEW — push on permission_request |
 | `POST /me/live-activity-token` | v2 | ❌ NEW — register ActivityKit push token |

@@ -62,22 +62,28 @@ interface Session {
 - `GET /skills`
 - `POST /skills/rescan`
 
-### Session creation
+### Workspace-scoped sessions
 
-- `POST /sessions` accepts optional `workspaceId`
-- If `workspaceId` is omitted, server resolves a default workspace
+- `GET /workspaces/:wid/sessions`
+- `POST /workspaces/:wid/sessions`
+- `GET /workspaces/:wid/sessions/:sid`
+- `POST /workspaces/:wid/sessions/:sid/stop`
+- `POST /workspaces/:wid/sessions/:sid/resume`
+- `DELETE /workspaces/:wid/sessions/:sid`
 
 ---
 
 ## Runtime Reality (Today)
 
-Current runtime is still **session-scoped** at the container/process home level.
-Workspace config is already used to influence session bootstrap (skills, prompt,
-host mount, memory options), but container ownership is not yet workspace-scoped.
+Runtime is now **workspace-scoped** for container sessions:
+- One container per workspace (not per session)
+- Per-session process execs within the workspace container
+- Per-session agent homes under workspace `sessions/<sessionId>/`
+- Workspace idle timers stop containers when no active workspace sessions remain
 
-Planned evolution to workspace-owned runtime is tracked in:
+Ongoing follow-up cleanup is tracked in:
 - `WORKSPACE-CONTAINERS.md`
-- `IMPLEMENTATION.md` (Phase 0+)
+- `IMPLEMENTATION.md`
 
 ---
 

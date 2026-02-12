@@ -555,44 +555,39 @@ WS     /ws?token=...&workspace=...&session=...
 Key difference from single-process model: fork spawns a NEW pi process.
 The original session keeps running undisturbed.
 
-## Migration and Compatibility Contract (v1)
+## Compatibility Contract (current)
 
-To avoid breaking the current iOS app while refactoring server internals:
+Migration is complete for public session routes:
 
-1. Keep legacy endpoints alive during migration:
-   - `GET/POST /sessions`
-   - `GET /sessions/:id`
-   - `WS /sessions/:id/stream`
-2. Legacy session creation automatically binds to a default workspace.
-3. New workspace-scoped APIs are additive (`/workspaces/:wid/...`) until iOS flips over.
-4. After iOS ships workspace-aware flows, deprecate legacy routes in two steps:
-   - Step A: log-only deprecation warnings
-   - Step B: remove routes in a major protocol version bump
+1. Workspace-scoped routes are authoritative:
+   - `GET/POST /workspaces/:wid/sessions`
+   - `GET/DELETE /workspaces/:wid/sessions/:sid`
+   - `POST /workspaces/:wid/sessions/:sid/stop`
+   - `WS /workspaces/:wid/sessions/:sid/stream`
+2. Clients must use workspace-scoped routes before connecting.
 
-## Data Layout Migration Plan
+## Data Layout Migration Status
 
-Current runtime layout is session-scoped:
+Legacy runtime layout (pre-migration):
 
 ```
 ~/.pi-remote/sandboxes/<userId>/<sessionId>/...
 ```
 
-Target layout is workspace-scoped:
+Current runtime layout (workspace-scoped):
 
 ```
 ~/.pi-remote/sandboxes/<userId>/<workspaceId>/...
 ```
 
-Migration strategy:
+Startup migration behavior:
 
-1. On server startup, detect legacy session-scoped sandboxes.
-2. Create/resolve destination workspace for each legacy session.
-3. Move `workspace/`, `agent/sessions/`, and session metadata into the workspace home.
-4. Rebuild storage indexes (`session -> workspaceId`, path pointers).
-5. Write a migration marker to avoid repeat work.
-6. Keep rollback metadata (`.migrated-from`) for manual recovery.
+1. Detect legacy session-scoped sandboxes.
+2. Copy/migrate into workspace-scoped layout.
+3. Keep migration markers for auditability.
+4. Continue startup safely even when no legacy data exists.
 
-No session data deletion during migration; cleanup is a separate explicit maintenance task.
+No session data is deleted during migration unless explicitly cleaned up.
 
 ## Concurrency Invariants
 

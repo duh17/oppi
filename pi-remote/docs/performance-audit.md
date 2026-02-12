@@ -88,7 +88,7 @@ Total: **5-15 seconds** from WS connect to "ready" on container mode.
 
 **Location:** `trace.ts` → `readSessionTrace()`, called by `handleGetSession()`
 
-**Problem:** On every `GET /sessions/:id` request (iOS foreground resume, reconnect), the server:
+**Problem:** On every `GET /workspaces/:wid/sessions/:id` request (iOS foreground resume, reconnect), the server:
 1. Reads ALL `.jsonl` files for the session (can be 1-10MB for long sessions)
 2. Parses every line as JSON
 3. Builds parent chain, walks tree
@@ -139,7 +139,7 @@ Two full read-parse-serialize-write cycles for the same file, back to back.
 **Location:** `ChatSessionManager.swift` → `loadHistory()`, `ServerConnection.swift` → `reconnectIfNeeded()`
 
 **Problem:** Every time the user brings the app to foreground:
-1. REST call: `GET /sessions/:id` (server parses full JSONL — see S4)
+1. REST call: `GET /workspaces/:wid/sessions/:id` (server parses full JSONL — see S4)
 2. Server sends full trace array (potentially MBs)
 3. iOS decodes JSON response
 4. `TimelineReducer.loadSession()` rebuilds entire timeline
@@ -212,7 +212,7 @@ The coalescer batches at 33ms, but the entire batch processing (decode + route +
 1. LRU eviction: Keep last N tool outputs in memory, evict oldest.
 2. Lazy loading: Store toolCallId → file offset, load on demand
    from TimelineCache when user expands a tool call row.
-   The REST endpoint GET /sessions/:id/tool-output/:toolCallId
+   The REST endpoint GET /workspaces/:wid/sessions/:id/tool-output/:toolCallId
    already exists for this purpose.
 ```
 
@@ -330,7 +330,7 @@ Server: handleUpgrade → handleWebSocket
   send state (live)                                             ~1ms
   send pending permissions                                     ~1ms
 iOS: receive connected → scheduleHistoryReload
-  REST: GET /sessions/:id                                      ~100-500ms ← S4
+  REST: GET /workspaces/:wid/sessions/:id                      ~100-500ms ← S4
   loadSession (full rebuild)                                   ~50-200ms ← C2
                                                     ─────────────
 Total container: ~5.5-16s
@@ -374,7 +374,7 @@ Total host: ~1.2-4s
 
 ### Sprint 3: Trace Delta API (S4 + C1)
 - Server caches built trace in memory per session
-- `GET /sessions/:id?since=<eventId>` returns only new events
+- `GET /workspaces/:wid/sessions/:id/events?since=<seq>` returns only new events
 - iOS uses ETag/sequence for skip-if-unchanged
 - Eliminates full JSONL re-parse on foreground
 

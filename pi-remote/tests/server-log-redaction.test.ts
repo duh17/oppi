@@ -6,11 +6,11 @@ describe("auth log redaction", () => {
     const line = formatUnauthorizedAuthLog({
       transport: "http",
       method: "POST",
-      path: "/sessions",
+      path: "/workspaces/ws1/sessions",
       authorization: "Bearer sk_live_super_secret_token",
     });
 
-    expect(line).toContain("[auth] 401 POST /sessions");
+    expect(line).toContain("[auth] 401 POST /workspaces/ws1/sessions");
     expect(line).toContain("auth: present");
     expect(line).not.toContain("Bearer ");
     expect(line).not.toContain("sk_live_super_secret_token");

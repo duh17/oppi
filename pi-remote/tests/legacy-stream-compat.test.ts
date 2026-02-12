@@ -71,7 +71,7 @@ async function flushQueue(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe("legacy per-session websocket stream", () => {
+describe("single-session websocket stream behavior", () => {
   it("keeps single-session prompt flow unchanged", async () => {
     const user = makeUser();
     const session = makeSession("s1", user.id);

@@ -234,7 +234,7 @@ Never use Liquid Glass for scrollable content (chat bubbles, list rows, feed ent
 - `ToolEventMapper` generates client-side tool event IDs because v1 server messages have no tool call ID. If server adds IDs later, the mapper becomes a passthrough.
 - `DeltaCoalescer` batches `textDelta`/`thinkingDelta` at 33ms but delivers tool/permission/error events immediately (terminal-like feedback).
 - `ToolOutputStore` is separate from `ChatItem` to keep `Equatable` diffs cheap. Full output fetched on-demand when user expands a tool call.
-- Image upload uses REST (`POST /sessions/:id/attachments`), not base64 over WebSocket.
-- On background → foreground, the app calls `GET /sessions/:id` to rebuild chat state. The server does not replay missed streaming events.
+- Image upload (when enabled) must use workspace-scoped REST routes (`POST /workspaces/:workspaceId/sessions/:id/attachments`), not base64 over WebSocket.
+- On background → foreground, the app calls `GET /workspaces/:workspaceId/sessions/:id` to rebuild chat state. The server does not replay missed streaming events.
 - Just because unit tests pass doesn't mean a given bug is fixed. It may not have a test. It may require manual testing on device.
 - The Xcode project file is generated — never edit `PiRemote.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.

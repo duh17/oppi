@@ -11,12 +11,12 @@
  * Usage:
  *   npx tsx test-load-ws.ts
  *   npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
- *   npx tsx test-load-ws.ts --token <token> --session <sessionId>
+ *   npx tsx test-load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
  *
  * Environment variables (equivalent):
  *   LOAD_HOST, LOAD_PORT
  *   LOAD_HTTP_WORKERS, LOAD_HTTP_DURATION_MS
- *   LOAD_TOKEN, LOAD_SESSION_ID
+ *   LOAD_TOKEN, LOAD_WORKSPACE_ID, LOAD_SESSION_ID
  *   LOAD_WS_CLIENTS, LOAD_WS_CONNECTIONS_PER_CLIENT, LOAD_WS_REQUESTS_PER_CONNECTION
  *   LOAD_WS_DROP_RATE, LOAD_WS_TIMEOUT_MS
  */
@@ -32,6 +32,7 @@ interface BenchConfig {
   httpDurationMs: number;
 
   token?: string;
+  workspaceId?: string;
   sessionId?: string;
 
   wsClients: number;
@@ -419,12 +420,13 @@ function requestStateRoundTrip(
 
 async function runWsWorker(workerId: number, config: BenchConfig): Promise<WsWorkerResult> {
   const token = config.token;
+  const workspaceId = config.workspaceId;
   const sessionId = config.sessionId;
-  if (!token || !sessionId) {
-    throw new Error("ws worker missing token/sessionId");
+  if (!token || !workspaceId || !sessionId) {
+    throw new Error("ws worker missing token/workspaceId/sessionId");
   }
 
-  const wsUrl = `ws://${config.host}:${config.port}/sessions/${sessionId}/stream`;
+  const wsUrl = `ws://${config.host}:${config.port}/workspaces/${workspaceId}/sessions/${sessionId}/stream`;
 
   const result: WsWorkerResult = {
     connectOk: 0,
@@ -504,14 +506,16 @@ async function runWsWorker(workerId: number, config: BenchConfig): Promise<WsWor
 }
 
 async function runWsBenchmark(config: BenchConfig): Promise<void> {
-  if (!config.token || !config.sessionId) {
+  if (!config.token || !config.workspaceId || !config.sessionId) {
     console.log("\n━━ WS benchmark skipped ━━");
-    console.log("Set --token/--session (or LOAD_TOKEN/LOAD_SESSION_ID) to run WS churn benchmark.");
+    console.log(
+      "Set --token/--workspace/--session (or LOAD_TOKEN/LOAD_WORKSPACE_ID/LOAD_SESSION_ID) to run WS churn benchmark.",
+    );
     return;
   }
 
   console.log("\n━━ WebSocket get_state benchmark (with forced drops) ━━");
-  console.log(`session=${config.sessionId}`);
+  console.log(`workspace=${config.workspaceId}, session=${config.sessionId}`);
   console.log(
     `clients=${config.wsClients}, connections/client=${config.wsConnectionsPerClient}, `
       + `requests/connection=${config.wsRequestsPerConnection}, dropRate=${config.wsDropRate}`,
@@ -587,6 +591,7 @@ Options:
   --http-duration-ms <ms>                (default: 5000)
 
   --token <bearer-token>                 (optional, enables WS benchmark)
+  --workspace <workspace-id>             (optional, enables WS benchmark)
   --session <session-id>                 (optional, enables WS benchmark)
 
   --ws-clients <n>                       (default: 8)
@@ -597,7 +602,7 @@ Options:
 
 Examples:
   npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
-  npx tsx test-load-ws.ts --token <token> --session <sessionId>
+  npx tsx test-load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
 `);
 }
 
@@ -615,6 +620,7 @@ async function main(): Promise<void> {
     httpDurationMs: parseNumber("http-duration-ms", "LOAD_HTTP_DURATION_MS", 5000),
 
     token: argOrEnv("token", "LOAD_TOKEN"),
+    workspaceId: argOrEnv("workspace", "LOAD_WORKSPACE_ID"),
     sessionId: argOrEnv("session", "LOAD_SESSION_ID"),
 
     wsClients: parseNumber("ws-clients", "LOAD_WS_CLIENTS", 8),

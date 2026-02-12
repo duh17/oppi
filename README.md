@@ -148,13 +148,13 @@ Fast local rerun (skip XcodeGen when project files are unchanged):
 ./ios/scripts/test-ui-reliability.sh --skip-generate
 ```
 
-Manual real-device gate (connected iPhone):
+Simulator-only gate:
 
 ```bash
-./ios/scripts/test-ui-reliability.sh --device <iphone-udid>
+./ios/scripts/test-ui-reliability.sh --destination "platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro"
 ```
 
-This suite launches a debug-only fixture mode (`--ui-hang-harness`) with a heavy chat timeline + synthetic stream churn and asserts accessibility diagnostics:
+This suite launches a debug-only fixture mode (`--ui-hang-harness`) with a heavy chat timeline + synthetic stream churn and asserts accessibility diagnostics. The harness is disabled on physical devices even if launch args/env vars are present:
 - `diag.heartbeat` (main-thread watchdog heartbeat)
 - `diag.stallCount` (watchdog stall counter)
 - `diag.itemCount` (rendered timeline row count)
@@ -210,8 +210,8 @@ npx tsx test-e2e.ts
 # - WS connect + get_state RTT under forced-drop churn
 npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
 
-# WS churn mode (requires auth + session)
-LOAD_TOKEN=<token> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
+# WS churn mode (requires auth + workspace + session)
+LOAD_TOKEN=<token> LOAD_WORKSPACE_ID=<workspaceId> LOAD_SESSION_ID=<sessionId> npx tsx test-load-ws.ts
 ```
 
 ## API
@@ -223,22 +223,26 @@ GET    /health                     # Health check (no auth)
 GET    /me                         # Current owner identity info
 GET    /security/profile           # Server security posture + trust metadata
 
-# Sessions (workspace-scoped aliases also exist under /workspaces/:wid/sessions/:sid/*)
-GET    /sessions                   # List owner sessions
-POST   /sessions                   # Create new session (optional workspaceId)
-GET    /sessions/:id               # Get session + messages
-POST   /sessions/:id/stop          # Stop session process
-GET    /sessions/:id/trace         # Parse pi JSONL trace
-GET    /sessions/:id/events?since=<seq>   # Durable event catch-up replay
-GET    /sessions/:id/files?path=<path>    # Read single workspace file
-DELETE /sessions/:id               # Stop + delete session metadata
-
 # Workspaces
 GET    /workspaces                 # List workspaces
 POST   /workspaces                 # Create workspace
 GET    /workspaces/:id             # Get workspace
 PUT    /workspaces/:id             # Update workspace
 DELETE /workspaces/:id             # Delete workspace
+GET    /workspaces/:id/graph       # Fork/session lineage graph
+
+# Workspace sessions (authoritative)
+GET    /workspaces/:wid/sessions                          # List sessions
+POST   /workspaces/:wid/sessions                          # Create session
+GET    /workspaces/:wid/sessions/:sid                     # Get session + trace
+POST   /workspaces/:wid/sessions/:sid/stop               # Stop session process
+POST   /workspaces/:wid/sessions/:sid/resume             # Resume stopped session
+GET    /workspaces/:wid/sessions/:sid/events?since=<seq> # Durable event catch-up replay
+GET    /workspaces/:wid/sessions/:sid/files?path=<path>  # Read workspace file
+GET    /workspaces/:wid/sessions/:sid/tool-output/:tid   # Full tool output blob
+GET    /workspaces/:wid/sessions/:sid/overall-diff?path=<path>
+DELETE /workspaces/:wid/sessions/:sid                    # Stop + delete metadata
+POST   /workspaces/:wid/sessions/:sid/client-logs        # Upload client diagnostics
 
 # Built-in skills (host-discovered)
 GET    /skills
@@ -257,9 +261,8 @@ DELETE /me/skills/:name
 ### WebSocket
 
 ```
-Session stream (preferred): ws://host:7749/workspaces/:wid/sessions/:sid/stream
-Session stream (legacy):    ws://host:7749/sessions/:id/stream
-User stream mux:            ws://host:7749/stream
+Session stream:           ws://host:7749/workspaces/:wid/sessions/:sid/stream
+User stream mux:          ws://host:7749/stream
 Authorization: Bearer <token>
 
 # Client → Server
