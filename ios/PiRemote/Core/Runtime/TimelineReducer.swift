@@ -309,9 +309,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return nil
 
         case .compaction:
+            let compactionMessage = event.text?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = compactionMessage.flatMap { $0.isEmpty ? nil : $0 } ?? "Context compacted"
             upsertHistoryItem(.systemEvent(
                 id: event.id,
-                message: "Context compacted"
+                message: message
             ))
             return nil
         }
@@ -382,6 +385,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
+    }
+
+    private static func formatTokenCount(_ value: Int) -> String {
+        NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
     }
 
     // MARK: - Process Agent Events
@@ -600,14 +607,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let label = reason == "overflow" ? "Context overflow — compacting..." : "Compacting context..."
             items.append(.systemEvent(id: UUID().uuidString, message: label))
 
-        case .compactionEnd(_, let aborted, let willRetry, let summary):
+        case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore):
             if aborted {
                 items.append(.systemEvent(id: UUID().uuidString, message: "Compaction cancelled"))
             } else if willRetry {
                 items.append(.systemEvent(id: UUID().uuidString, message: "Context compacted — retrying..."))
             } else {
-                let msg = summary.map { "Context compacted: \(String($0.prefix(100)))" } ?? "Context compacted"
-                items.append(.systemEvent(id: UUID().uuidString, message: msg))
+                let tokenBadge: String
+                if let tokensBefore, tokensBefore > 0 {
+                    tokenBadge = " (\(Self.formatTokenCount(tokensBefore)) tokens)"
+                } else {
+                    tokenBadge = ""
+                }
+
+                let cleanedSummary = summary?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                let message: String
+                if let cleanedSummary, !cleanedSummary.isEmpty {
+                    message = "Context compacted\(tokenBadge): \(cleanedSummary)"
+                } else {
+                    message = "Context compacted\(tokenBadge)"
+                }
+
+                items.append(.systemEvent(id: UUID().uuidString, message: message))
             }
 
         // Retry

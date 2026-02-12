@@ -903,8 +903,16 @@ final class ServerConnection {
         case .compactionStart(let reason):
             coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
 
-        case .compactionEnd(let aborted, let willRetry, let summary, _):
-            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary))
+        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
+            coalescer.receive(
+                .compactionEnd(
+                    sessionId: sessionId,
+                    aborted: aborted,
+                    willRetry: willRetry,
+                    summary: summary,
+                    tokensBefore: tokensBefore
+                )
+            )
 
         // Retry events → pipeline
         case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):

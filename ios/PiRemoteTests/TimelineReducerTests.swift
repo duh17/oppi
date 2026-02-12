@@ -846,6 +846,48 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func loadSessionCompactionPrefersTraceSummaryText() {
+        let reducer = TimelineReducer()
+        let events = [
+            TraceEvent(id: "c1", type: .compaction, timestamp: "2025-01-01T00:00:01.000Z",
+                       text: "Context compacted (12,345 tokens): ## Goal\n1. Keep calm",
+                       tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil),
+        ]
+        reducer.loadSession(events)
+
+        #expect(reducer.items.count == 1)
+        guard case .systemEvent(_, let message) = reducer.items[0] else {
+            Issue.record("Expected systemEvent for compaction type")
+            return
+        }
+        #expect(message == "Context compacted (12,345 tokens): ## Goal\n1. Keep calm")
+    }
+
+    @MainActor
+    @Test func streamingCompactionEndRetainsFullSummaryAndTokenCount() {
+        let reducer = TimelineReducer()
+        let summary = "## Goal\n1. Continue UIKit-native timeline migration\n2. Keep it calm"
+
+        reducer.process(
+            .compactionEnd(
+                sessionId: "s1",
+                aborted: false,
+                willRetry: false,
+                summary: summary,
+                tokensBefore: 123_456
+            )
+        )
+
+        #expect(reducer.items.count == 1)
+        guard case .systemEvent(_, let message) = reducer.items[0] else {
+            Issue.record("Expected systemEvent for compaction_end")
+            return
+        }
+        #expect(message == "Context compacted (123,456 tokens): \(summary)")
+    }
+
+    @MainActor
     @Test func loadSessionToolResultErrorFlag() {
         let reducer = TimelineReducer()
         let events = [
