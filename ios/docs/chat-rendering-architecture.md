@@ -1,5 +1,8 @@
 # Chat Rendering Architecture
 
+> Historical architecture note from pre-UIKit row migration.
+> For active rendering paths, use `docs/chat-renderer-active-path-checklist.md`.
+
 **Date:** February 2026
 
 ## Event Flow

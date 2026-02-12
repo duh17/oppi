@@ -98,8 +98,14 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var toolArgsStore: ToolArgsStore?
         private var connection: ServerConnection?
         private var audioPlayer: AudioPlayerService?
+        private weak var collectionView: UICollectionView?
         private var theme: AppTheme = .tokyoNight
         private var currentThemeID: ThemeID = .tokyoNight
+
+        /// Near-bottom hysteresis to avoid follow/unfollow flicker while
+        /// streaming text grows the tail between throttled auto-scroll pulses.
+        private let nearBottomEnterThreshold: CGFloat = 24
+        private let nearBottomExitThreshold: CGFloat = 72
 
         private var currentIDs: [String] = []
         private var currentItemByID: [String: ChatItem] = [:]
@@ -108,12 +114,21 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var previousHiddenCount = 0
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
+        private var lastObservedContentOffsetY: CGFloat?
         private var toolOutputLoadState = ToolOutputLoadState()
+        private var pendingToolOutputRetryWorkByID: [String: DispatchWorkItem] = [:]
+
+        private static let toolOutputRetryMaxAttempts = 6
+        private static let toolOutputRetryBaseDelay: TimeInterval = 0.45
+        private static let toolOutputRetryMaxDelay: TimeInterval = 2.0
 
         var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)?
         private(set) var _toolOutputCanceledCountForTesting = 0
         private(set) var _toolOutputStaleDiscardCountForTesting = 0
         private(set) var _toolOutputAppliedCountForTesting = 0
+        private(set) var _toolExpansionFallbackCountForTesting = 0
+        private(set) var _audioStateRefreshCountForTesting = 0
+        private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
 
         var _toolOutputLoadTaskCountForTesting: Int {
             toolOutputLoadState.taskCount
@@ -125,32 +140,51 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
         func _triggerLoadFullToolOutputForTesting(
             itemID: String,
+            tool: String,
             outputByteCount: Int,
             in collectionView: UICollectionView
         ) {
-            loadFullToolOutputIfNeeded(itemID: itemID, outputByteCount: outputByteCount, in: collectionView)
+            loadFullToolOutputIfNeeded(
+                itemID: itemID,
+                tool: tool,
+                outputByteCount: outputByteCount,
+                in: collectionView
+            )
         }
 
         deinit {
+            let observedAudioPlayer = audioPlayer
             let canceled = toolOutputLoadState.cancelAll()
             _toolOutputCanceledCountForTesting += canceled
+            cancelAllToolOutputRetryWork()
+            NotificationCenter.default.removeObserver(
+                self,
+                name: AudioPlayerService.stateDidChangeNotification,
+                object: observedAudioPlayer
+            )
         }
 
         func configureDataSource(collectionView: UICollectionView) {
+            self.collectionView = collectionView
+
             let chatRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, itemID in
                 let configureStartNs = ChatTimelinePerf.timestampNs()
                 guard let self,
                       let item = self.currentItemByID[itemID],
-                      let reducer = self.reducer,
                       let toolOutputStore = self.toolOutputStore,
-                      let toolArgsStore = self.toolArgsStore,
-                      let connection = self.connection,
-                      let audioPlayer = self.audioPlayer
+                      self.reducer != nil,
+                      self.toolArgsStore != nil,
+                      self.connection != nil,
+                      self.audioPlayer != nil
                 else {
-                    cell.contentConfiguration = UIHostingConfiguration {
-                        Color.clear.frame(height: 1)
-                    }
-                    .margins(.all, 0)
+                    var fallback = UIListContentConfiguration.subtitleCell()
+                    fallback.text = "⚠️ Timeline row unavailable"
+                    fallback.secondaryText = "Native timeline dependencies missing."
+                    fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+                    fallback.textProperties.color = UIColor(Color.tokyoOrange)
+                    fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+                    fallback.secondaryTextProperties.color = UIColor(Color.tokyoComment)
+                    cell.contentConfiguration = fallback
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     ChatTimelinePerf.recordCellConfigure(
                         rowType: "placeholder",
@@ -159,68 +193,73 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     return
                 }
 
-                if let userConfiguration = self.nativeUserConfiguration(itemID: itemID, item: item) {
-                    cell.contentConfiguration = userConfiguration
+                let applyNativeRow: (_ configuration: any UIContentConfiguration, _ rowType: String) -> Void = { configuration, rowType in
+                    cell.contentConfiguration = configuration
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     ChatTimelinePerf.recordCellConfigure(
-                        rowType: "user_native",
+                        rowType: rowType,
                         durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
                     )
-                    return
                 }
 
-                if let assistantConfiguration = self.nativeAssistantConfiguration(itemID: itemID, item: item) {
-                    cell.contentConfiguration = assistantConfiguration
+                let applyNativeFrictionRow: (_ title: String, _ detail: String, _ rowType: String) -> Void = { title, detail, rowType in
+                    var fallback = UIListContentConfiguration.subtitleCell()
+                    fallback.text = title
+                    fallback.secondaryText = detail
+                    fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+                    fallback.textProperties.color = UIColor(Color.tokyoOrange)
+                    fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+                    fallback.secondaryTextProperties.color = UIColor(Color.tokyoComment)
+                    cell.contentConfiguration = fallback
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     ChatTimelinePerf.recordCellConfigure(
-                        rowType: "assistant_native",
+                        rowType: rowType,
                         durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
                     )
-                    return
                 }
 
-                if let thinkingConfiguration = self.nativeThinkingConfiguration(itemID: itemID, item: item) {
-                    cell.contentConfiguration = thinkingConfiguration
-                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: "thinking_native",
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
-                    return
+                // Resolve native configuration for each item type.
+                let rowLabel: String
+                let nativeConfig: (any UIContentConfiguration)?
+
+                switch item {
+                case .userMessage:
+                    rowLabel = "user"
+                    nativeConfig = self.nativeUserConfiguration(itemID: itemID, item: item)
+                case .assistantMessage:
+                    rowLabel = "assistant"
+                    nativeConfig = self.nativeAssistantConfiguration(itemID: itemID, item: item)
+                case .thinking:
+                    rowLabel = "thinking"
+                    nativeConfig = self.nativeThinkingConfiguration(itemID: itemID, item: item)
+                case .toolCall:
+                    rowLabel = "tool"
+                    nativeConfig = self.nativeToolConfiguration(itemID: itemID, item: item)
+                case .audioClip:
+                    rowLabel = "audio"
+                    nativeConfig = self.nativeAudioConfiguration(item: item)
+                case .permission, .permissionResolved:
+                    rowLabel = "permission"
+                    nativeConfig = self.nativePermissionConfiguration(item: item)
+                case .systemEvent(_, let message):
+                    rowLabel = Self.compactionPresentation(from: message) == nil ? "system" : "compaction"
+                    nativeConfig = self.nativeSystemEventConfiguration(itemID: itemID, item: item)
+                case .error:
+                    rowLabel = "error"
+                    nativeConfig = self.nativeErrorConfiguration(item: item)
                 }
 
-                if let toolConfiguration = self.nativeToolConfiguration(itemID: itemID, item: item) {
-                    cell.contentConfiguration = toolConfiguration
-                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: "tool_native",
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+                if let nativeConfig {
+                    applyNativeRow(nativeConfig, "\(rowLabel)_native")
+                } else {
+                    // Defensive failsafe — should not fire for any current item type.
+                    Self.reportNativeRendererGap("Native \(rowLabel) configuration missing.")
+                    applyNativeFrictionRow(
+                        "⚠️ Native \(rowLabel) row unavailable",
+                        "Native \(rowLabel) renderer gap.",
+                        "\(rowLabel)_native_failsafe"
                     )
-                    return
                 }
-
-                cell.contentConfiguration = UIHostingConfiguration {
-                    ChatItemRow(
-                        item: item,
-                        isStreaming: itemID == self.streamingAssistantID,
-                        workspaceId: self.workspaceId,
-                        sessionId: self.sessionId,
-                        onFork: self.onFork,
-                        onOpenFile: self.onOpenFile
-                    )
-                    .environment(reducer)
-                    .environment(toolOutputStore)
-                    .environment(toolArgsStore)
-                    .environment(connection)
-                    .environment(audioPlayer)
-                    .environment(\.theme, self.theme)
-                }
-                .margins(.all, 0)
-                cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: self.rowTypeName(for: itemID),
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
             }
 
             let loadMoreRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, _ in
@@ -232,14 +271,13 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     )
                     return
                 }
-                cell.contentConfiguration = UIHostingConfiguration {
-                    TimelineLoadMoreRow(
-                        hiddenCount: self.hiddenCount,
-                        renderWindowStep: self.renderWindowStep,
-                        onTap: { self.onShowEarlier?() }
-                    )
-                }
-                .margins(.all, 0)
+
+                cell.contentConfiguration = LoadMoreTimelineRowConfiguration(
+                    hiddenCount: self.hiddenCount,
+                    renderWindowStep: self.renderWindowStep,
+                    onTap: { [weak self] in self?.onShowEarlier?() },
+                    themeID: self.currentThemeID
+                )
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                 ChatTimelinePerf.recordCellConfigure(
                     rowType: "load_more",
@@ -247,12 +285,17 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 )
             }
 
-            let workingRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { cell, _, _ in
+            let workingRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, _ in
                 let configureStartNs = ChatTimelinePerf.timestampNs()
-                cell.contentConfiguration = UIHostingConfiguration {
-                    TimelineWorkingIndicatorRow()
+                guard let self else {
+                    ChatTimelinePerf.recordCellConfigure(
+                        rowType: "working_indicator",
+                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+                    )
+                    return
                 }
-                .margins(.all, 0)
+
+                cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(themeID: self.currentThemeID)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                 ChatTimelinePerf.recordCellConfigure(
                     rowType: "working_indicator",
@@ -372,6 +415,263 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return .apply
         }
 
+        private static func reportNativeRendererGap(_ message: String) {
+            #if DEBUG
+                NSLog("⚠️ [TimelineNativeGap] %@", message)
+            #endif
+        }
+
+        struct CompactionPresentation: Equatable {
+            enum Phase: Equatable {
+                case inProgress
+                case completed
+                case retrying
+                case cancelled
+            }
+
+            let phase: Phase
+            let detail: String?
+            let tokensBefore: Int?
+
+            var canExpand: Bool {
+                guard let detail else { return false }
+                let cleaned = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleaned.isEmpty else { return false }
+                return cleaned.count > 140 || cleaned.contains("\n")
+            }
+        }
+
+        static func compactionPresentation(from rawMessage: String) -> CompactionPresentation? {
+            let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty else { return nil }
+
+            if message.hasPrefix("Context overflow — compacting")
+                || message.hasPrefix("Compacting context") {
+                return CompactionPresentation(phase: .inProgress, detail: nil, tokensBefore: nil)
+            }
+
+            if message.hasPrefix("Compaction cancelled") {
+                return CompactionPresentation(phase: .cancelled, detail: nil, tokensBefore: nil)
+            }
+
+            if message.hasPrefix("Context compacted — retrying") {
+                return CompactionPresentation(phase: .retrying, detail: nil, tokensBefore: nil)
+            }
+
+            guard message.hasPrefix("Context compacted") else {
+                return nil
+            }
+
+            let detail = compactionDetail(from: message)
+            let tokensBefore = compactionTokensBefore(from: message)
+
+            return CompactionPresentation(
+                phase: .completed,
+                detail: detail,
+                tokensBefore: tokensBefore
+            )
+        }
+
+        private static func compactionDetail(from message: String) -> String? {
+            guard let separator = message.firstIndex(of: ":") else {
+                return nil
+            }
+
+            let start = message.index(after: separator)
+            let detail = message[start...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return detail.isEmpty ? nil : detail
+        }
+
+        private static func compactionTokensBefore(from message: String) -> Int? {
+            guard let compactedRange = message.range(of: "Context compacted") else {
+                return nil
+            }
+
+            let suffix = message[compactedRange.upperBound...]
+            guard let openParen = suffix.firstIndex(of: "("),
+                  let closeParen = suffix[openParen...].firstIndex(of: ")") else {
+                return nil
+            }
+
+            let inside = suffix[suffix.index(after: openParen)..<closeParen]
+            guard String(inside).localizedCaseInsensitiveContains("token") else {
+                return nil
+            }
+
+            let digits = inside.filter { $0.isNumber }
+            guard !digits.isEmpty else {
+                return nil
+            }
+
+            return Int(String(digits))
+        }
+
+        static func shouldWarnInlineMediaForToolOutput(
+            normalizedTool: String,
+            outputPreview: String,
+            fullOutput: String
+        ) -> Bool {
+            let tool = ToolCallFormatting.normalized(normalizedTool)
+
+            // Diagnostic heuristic only.
+            // Tool rows always render natively; this controls warning affordances.
+            // Skip parity tools where textual content may legitimately include
+            // `data:image/...` literals (e.g. source files read via `read`).
+            switch tool {
+            case "bash", "read", "write", "edit", "todo":
+                return false
+            default:
+                break
+            }
+
+            let outputSample = fullOutput.isEmpty ? outputPreview : fullOutput
+            guard !outputSample.isEmpty else {
+                return false
+            }
+
+            return containsInlineMediaDataURI(outputSample)
+        }
+
+        private static func containsInlineMediaDataURI(_ text: String) -> Bool {
+            text.range(of: "data:image/", options: .caseInsensitive) != nil
+                || text.range(of: "data:audio/", options: .caseInsensitive) != nil
+        }
+
+        static func readOutputFileType(
+            args: [String: JSONValue]?,
+            argsSummary: String
+        ) -> FileType? {
+            let filePath = ToolCallFormatting.filePath(from: args)
+                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                ?? inferredPathFromSummary(argsSummary)
+            guard let filePath, !filePath.isEmpty else {
+                return nil
+            }
+            return FileType.detect(from: filePath)
+        }
+
+        private static func inferredPathFromSummary(_ argsSummary: String) -> String? {
+            let trimmed = argsSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+
+            // Some streamed tool summaries arrive as raw path strings
+            // (e.g. `Chat/File.swift:440-499`) without `path:` keys.
+            let withoutToolPrefix: String
+            if trimmed.hasPrefix("read ") {
+                withoutToolPrefix = String(trimmed.dropFirst(5))
+            } else if trimmed.hasPrefix("write ") {
+                withoutToolPrefix = String(trimmed.dropFirst(6))
+            } else if trimmed.hasPrefix("edit ") {
+                withoutToolPrefix = String(trimmed.dropFirst(5))
+            } else {
+                withoutToolPrefix = trimmed
+            }
+
+            let candidate = withoutToolPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !candidate.isEmpty else { return nil }
+
+            // Strip read-style line range suffix so extension detection works:
+            // `file.swift:120-180` -> `file.swift`
+            if let range = candidate.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) {
+                return String(candidate[..<range.lowerBound])
+            }
+
+            return candidate
+        }
+
+        static func readOutputLanguage(
+            args: [String: JSONValue]?,
+            argsSummary: String
+        ) -> SyntaxLanguage? {
+            guard let fileType = readOutputFileType(args: args, argsSummary: argsSummary) else {
+                return nil
+            }
+
+            switch fileType {
+            case .code(let language):
+                return language
+            case .json:
+                return .json
+            case .markdown, .image, .audio, .plain:
+                return nil
+            }
+        }
+
+        private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
+            if let currentAudioPlayer = self.audioPlayer,
+               currentAudioPlayer === audioPlayer {
+                return
+            }
+
+            NotificationCenter.default.removeObserver(
+                self,
+                name: AudioPlayerService.stateDidChangeNotification,
+                object: self.audioPlayer
+            )
+
+            self.audioPlayer = audioPlayer
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleAudioStateChangeNotification(_:)),
+                name: AudioPlayerService.stateDidChangeNotification,
+                object: audioPlayer
+            )
+        }
+
+        @objc
+        private func handleAudioStateChangeNotification(_ notification: Notification) {
+            guard let collectionView else { return }
+
+            let changedIDs = Set(Self.audioStateItemIDs(from: notification.userInfo))
+            let targetIDs: [String]
+            if changedIDs.isEmpty {
+                targetIDs = currentAudioItemIDs()
+            } else {
+                targetIDs = currentIDs.filter { changedIDs.contains($0) && isAudioClipItem(id: $0) }
+            }
+
+            guard !targetIDs.isEmpty else { return }
+
+            _audioStateRefreshCountForTesting += 1
+            _audioStateRefreshedItemIDsForTesting = targetIDs
+            reconfigureItems(targetIDs, in: collectionView)
+        }
+
+        private func currentAudioItemIDs() -> [String] {
+            currentIDs.filter { isAudioClipItem(id: $0) }
+        }
+
+        private func isAudioClipItem(id: String) -> Bool {
+            guard let item = currentItemByID[id] else { return false }
+            if case .audioClip = item {
+                return true
+            }
+            return false
+        }
+
+        private static func audioStateItemIDs(from userInfo: [AnyHashable: Any]?) -> [String] {
+            guard let userInfo else { return [] }
+
+            let keys = [
+                AudioPlayerService.previousPlayingItemIDUserInfoKey,
+                AudioPlayerService.playingItemIDUserInfoKey,
+                AudioPlayerService.previousLoadingItemIDUserInfoKey,
+                AudioPlayerService.loadingItemIDUserInfoKey,
+            ]
+
+            var ids: [String] = []
+            ids.reserveCapacity(keys.count)
+            for key in keys {
+                guard let value = userInfo[key] as? String,
+                      !value.isEmpty else {
+                    continue
+                }
+                ids.append(value)
+            }
+
+            return ids
+        }
+
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             hiddenCount = configuration.hiddenCount
             renderWindowStep = configuration.renderWindowStep
@@ -379,6 +679,10 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
             if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
                 cancelAllToolOutputLoadTasks()
+                lastObservedContentOffsetY = nil
+                configuration.scrollController.setUserInteracting(false)
+                configuration.scrollController.setDetachedStreamingHintVisible(false)
+                configuration.scrollController.setJumpToBottomHintVisible(false)
             }
             sessionId = configuration.sessionId
             workspaceId = configuration.workspaceId
@@ -391,7 +695,8 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             toolOutputStore = configuration.toolOutputStore
             toolArgsStore = configuration.toolArgsStore
             connection = configuration.connection
-            audioPlayer = configuration.audioPlayer
+            self.collectionView = collectionView
+            bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
             theme = configuration.theme
             currentThemeID = configuration.themeID
 
@@ -476,10 +781,37 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 lastHandledScrollCommandNonce = scrollCommand.nonce
             }
             updateScrollState(collectionView)
+            updateDetachedStreamingHintVisibility()
         }
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            scrollController?.setUserInteracting(true)
+            lastObservedContentOffsetY = scrollView.contentOffset.y
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            if !decelerate {
+                scrollController?.setUserInteracting(false)
+            }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            scrollController?.setUserInteracting(false)
+        }
+
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
+
+            if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
+                let deltaY = scrollView.contentOffset.y - previousOffset
+                if deltaY < -0.5 {
+                    scrollController?.detachFromBottomForUserScroll()
+                }
+            }
+
+            lastObservedContentOffsetY = scrollView.contentOffset.y
             updateScrollState(collectionView)
+            updateDetachedStreamingHintVisibility()
         }
         @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended else { return }
@@ -507,32 +839,47 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 return
             }
 
-            let cell = collectionView.cellForItem(at: indexPath)
-            let isNativeToolCell = cell?.contentConfiguration is ToolTimelineRowConfiguration
-            let isNativeThinkingCell = cell?.contentConfiguration is ThinkingTimelineRowConfiguration
             switch item {
-            case .toolCall(_, _, _, _, let outputByteCount, _, _):
-                guard isNativeToolCell else { return }
+            case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
+                // Do not gate on current cell.contentConfiguration type.
+                // During high-frequency streaming updates the visible cell can be
+                // transiently reconfigured while still representing the same
+                // tool item, and strict type checks can drop taps.
                 let wasExpanded = reducer.expandedItemIDs.contains(itemID)
                 if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
+                    cancelToolOutputRetryWork(for: itemID)
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
                     loadFullToolOutputIfNeeded(
                         itemID: itemID,
+                        tool: tool,
                         outputByteCount: outputByteCount,
                         in: collectionView
                     )
                 }
                 animateNativeToolExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
             case .thinking(_, _, _, let isDone):
-                guard isDone,
-                      isNativeThinkingCell,
-                      !reducer.expandedItemIDs.contains(itemID) else {
+                guard isDone else {
                     return
                 }
-                reducer.expandedItemIDs.insert(itemID)
-                reconfigureItems([itemID], in: collectionView)
+                // Thought rows auto-expand by default and are not interactive.
+                // Keep tap as no-op so accidental touches don't churn reconfigures.
+                return
+
+            case .systemEvent(let systemID, let message):
+                guard let compaction = Self.compactionPresentation(from: message),
+                      compaction.canExpand else {
+                    return
+                }
+
+                if reducer.expandedItemIDs.contains(systemID) {
+                    reducer.expandedItemIDs.remove(systemID)
+                } else {
+                    reducer.expandedItemIDs.insert(systemID)
+                }
+
+                reconfigureItems([systemID], in: collectionView)
 
             default:
                 break
@@ -553,50 +900,14 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return changed
         }
 
-        private func rowTypeName(for itemID: String) -> String {
-            if itemID == ChatTimelineCollectionView.loadMoreID {
-                return "load_more"
-            }
-            if itemID == ChatTimelineCollectionView.workingIndicatorID {
-                return "working_indicator"
-            }
-
-            guard let item = currentItemByID[itemID] else {
-                return "unknown"
-            }
-
-            switch item {
-            case .userMessage:
-                return "user"
-            case .assistantMessage:
-                return "assistant"
-            case .audioClip:
-                return "audio"
-            case .thinking:
-                return "thinking"
-            case .toolCall:
-                return "tool"
-            case .permission:
-                return "permission"
-            case .permissionResolved:
-                return "permission_resolved"
-            case .systemEvent:
-                return "system"
-            case .error:
-                return "error"
-            }
-        }
-
         private func nativeAssistantConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
             guard case .assistantMessage(_, let text, _) = item else { return nil }
 
             let isStreaming = itemID == streamingAssistantID
-            if AssistantMarkdownFallbackHeuristics.shouldFallbackToSwiftUI(text, isStreaming: isStreaming) {
-                return nil
-            }
 
-            // Fork targets are canonical user entry IDs from get_fork_messages.
-            // Assistant rows are display nodes and may have synthetic IDs.
+            // Unified native markdown renderer — handles all content (plain
+            // text, rich markdown, code blocks, tables) via
+            // AssistantMarkdownContentView.
             return AssistantTimelineRowConfiguration(
                 text: text,
                 isStreaming: isStreaming,
@@ -608,7 +919,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
         private func nativeUserConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
             guard case .userMessage(_, let text, let images, _) = item else { return nil }
-            guard images.isEmpty else { return nil }
 
             let canFork = UUID(uuidString: itemID) == nil && onFork != nil
             let forkAction: (() -> Void)?
@@ -620,8 +930,10 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 forkAction = nil
             }
 
+            // Unified native user row — handles both text-only and image messages.
             return UserTimelineRowConfiguration(
                 text: text,
+                images: images,
                 canFork: canFork,
                 onFork: forkAction,
                 themeID: currentThemeID
@@ -629,34 +941,115 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         }
 
         private func nativeThinkingConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
-            guard case .thinking(_, _, _, let isDone) = item else { return nil }
-            if reducer?.expandedItemIDs.contains(itemID) == true {
+            guard case .thinking(_, let preview, _, let isDone) = item else { return nil }
+
+            // Thought content should be visible by default once complete.
+            let isExpanded = isDone
+            return ThinkingTimelineRowConfiguration(
+                isDone: isDone,
+                isExpanded: isExpanded,
+                previewText: preview,
+                fullText: toolOutputStore?.fullOutput(for: itemID),
+                themeID: currentThemeID
+            )
+        }
+
+        private func nativeAudioConfiguration(item: ChatItem) -> AudioClipTimelineRowConfiguration? {
+            guard case .audioClip(let id, let title, let fileURL, _) = item,
+                  let audioPlayer else {
                 return nil
             }
 
-            return ThinkingTimelineRowConfiguration(isDone: isDone, themeID: currentThemeID)
+            return AudioClipTimelineRowConfiguration(
+                id: id,
+                title: title,
+                fileURL: fileURL,
+                audioPlayer: audioPlayer,
+                themeID: currentThemeID
+            )
         }
 
-        private func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
-            guard case .toolCall(_, let tool, let argsSummary, let outputPreview, let outputByteCount, let isError, let isDone) = item else {
+        private func nativePermissionConfiguration(item: ChatItem) -> PermissionTimelineRowConfiguration? {
+            switch item {
+            case .permission(let request):
+                return PermissionTimelineRowConfiguration(
+                    outcome: .expired,
+                    tool: request.tool,
+                    summary: request.displaySummary,
+                    themeID: currentThemeID
+                )
+
+            case .permissionResolved(_, let outcome, let tool, let summary):
+                return PermissionTimelineRowConfiguration(
+                    outcome: outcome,
+                    tool: tool,
+                    summary: summary,
+                    themeID: currentThemeID
+                )
+
+            default:
+                return nil
+            }
+        }
+
+        private func nativeSystemEventConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
+            guard case .systemEvent(_, let message) = item else { return nil }
+
+            if let compaction = Self.compactionPresentation(from: message) {
+                let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
+                return CompactionTimelineRowConfiguration(
+                    presentation: compaction,
+                    isExpanded: isExpanded,
+                    themeID: currentThemeID
+                )
+            }
+
+            return SystemTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        }
+
+        private func nativeErrorConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
+            guard case .error(_, let message) = item else { return nil }
+            return ErrorTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        }
+
+        func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
+            guard case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
                 return nil
             }
 
             let args = toolArgsStore?.args(for: itemID)
             let normalizedTool = ToolCallFormatting.normalized(tool)
             let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-
-            // Keep file tools on SwiftUI path for reliable tappable file links
-            // and rich expanded file rendering parity.
-            if normalizedTool == "read" || normalizedTool == "write" || normalizedTool == "edit" {
-                return nil
-            }
+            let fullOutput = toolOutputStore?.fullOutput(for: itemID) ?? ""
+            let hasInlineMediaDataURI = Self.shouldWarnInlineMediaForToolOutput(
+                normalizedTool: normalizedTool,
+                outputPreview: outputPreview,
+                fullOutput: fullOutput
+            )
+            let outputForFormatting = fullOutput.isEmpty ? outputPreview : fullOutput
+            let todoMutationDiff = normalizedTool == "todo"
+                ? ToolCallFormatting.todoMutationDiffPresentation(
+                    args: args,
+                    argsSummary: argsSummary
+                )
+                : nil
+            let todoPresentation = normalizedTool == "todo"
+                ? ToolCallFormatting.todoOutputPresentation(
+                    args: args,
+                    argsSummary: argsSummary,
+                    output: outputForFormatting
+                )
+                : nil
 
             var title: String
             var preview: String?
             var toolNamePrefix: String?
             var toolNameColor = UIColor(Color.tokyoCyan)
             var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
+            var languageBadge: String?
+            var editAdded: Int?
+            var editRemoved: Int?
+            var editTrailingFallback: String?
 
             switch normalizedTool {
             case "bash":
@@ -664,15 +1057,46 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if isExpanded {
-                    title = "$ bash"
+                    title = "bash"
                 } else {
-                    title = compactCommand.isEmpty ? "$ bash" : "$ \(compactCommand)"
+                    title = compactCommand.isEmpty ? "bash" : compactCommand
                     titleLineBreakMode = .byTruncatingMiddle
                 }
                 toolNamePrefix = "$"
                 toolNameColor = UIColor(Color.tokyoGreen)
-                if isDone {
-                    preview = ToolCallFormatting.tailLines(outputPreview, count: 1)
+
+            case "read", "write", "edit":
+                let displayPath = ToolCallFormatting.displayFilePath(
+                    tool: normalizedTool,
+                    args: args,
+                    argsSummary: argsSummary
+                )
+                title = displayPath.isEmpty
+                    ? normalizedTool
+                    : displayPath
+                toolNamePrefix = normalizedTool
+                toolNameColor = UIColor(Color.tokyoCyan)
+                titleLineBreakMode = .byTruncatingMiddle
+
+                if normalizedTool == "read" {
+                    if let fileType = Self.readOutputFileType(args: args, argsSummary: argsSummary),
+                       fileType == .markdown {
+                        languageBadge = fileType.displayLabel
+                    } else {
+                        languageBadge = Self.readOutputLanguage(
+                            args: args,
+                            argsSummary: argsSummary
+                        )?.displayName
+                    }
+                }
+
+                if normalizedTool == "edit" {
+                    if let stats = ToolCallFormatting.editDiffStats(from: args) {
+                        editAdded = stats.added
+                        editRemoved = stats.removed
+                    } else {
+                        editTrailingFallback = "modified"
+                    }
                 }
 
             case "todo":
@@ -680,6 +1104,15 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 title = summary.isEmpty ? "todo" : "todo \(summary)"
                 toolNamePrefix = "todo"
                 toolNameColor = UIColor(Color.tokyoPurple)
+                if let todoMutationDiff {
+                    editAdded = todoMutationDiff.addedLineCount
+                    editRemoved = todoMutationDiff.removedLineCount
+                    preview = todoMutationDiff.preview
+                } else if let todoPresentation,
+                          let todoPreview = ToolCallFormatting.headLines(todoPresentation.text, count: 2),
+                          !todoPreview.isEmpty {
+                    preview = todoPreview
+                }
 
             default:
                 title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
@@ -690,14 +1123,23 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
+            // Keep collapsed tool rows single-line and visually consistent.
+            preview = nil
+
             if title.count > 240 {
                 title = String(title.prefix(239)) + "…"
             }
 
-            let fullOutput = toolOutputStore?.fullOutput(for: itemID) ?? ""
             var expandedText: String?
+            var expandedTextUsesMarkdown = false
+            var expandedDiffLines: [DiffLine]?
+            var expandedDiffPath: String?
             var expandedCommandText: String?
             var expandedOutputText: String?
+            var expandedOutputLanguage: SyntaxLanguage?
+            var expandedCodeStartLine: Int?
+            var expandedCodeFilePath: String?
+            var prefersUnwrappedOutput = false
             var showSeparatedCommandAndOutput = false
             var copyCommandText: String?
             var copyOutputText: String?
@@ -712,7 +1154,76 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     copyCommandText = command.isEmpty ? nil : command
                     expandedCommandText = command.isEmpty ? nil : command
                     expandedOutputText = outputTrimmed.isEmpty ? nil : outputTrimmed
+                    prefersUnwrappedOutput = true
                     showSeparatedCommandAndOutput = true
+
+                case "read":
+                    if !outputTrimmed.isEmpty {
+                        expandedText = outputTrimmed
+                        let readFileType = Self.readOutputFileType(
+                            args: args,
+                            argsSummary: argsSummary
+                        )
+                        expandedOutputLanguage = Self.readOutputLanguage(
+                            args: args,
+                            argsSummary: argsSummary
+                        )
+                        if readFileType == .markdown {
+                            expandedTextUsesMarkdown = true
+                            expandedCodeStartLine = nil
+                        } else {
+                            expandedCodeStartLine = ToolCallFormatting.readStartLine(from: args)
+                        }
+                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
+                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                    } else if toolOutputLoadState.isLoading(itemID) {
+                        expandedText = "Loading read output…"
+                    } else if isDone {
+                        expandedText = "Waiting for output…"
+                    }
+
+                case "write":
+                    if !outputTrimmed.isEmpty {
+                        expandedText = outputTrimmed
+                        expandedOutputLanguage = Self.readOutputLanguage(
+                            args: args,
+                            argsSummary: argsSummary
+                        )
+                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
+                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                    }
+
+                case "edit":
+                    if !isError,
+                       let editText = ToolCallFormatting.editOldAndNewText(from: args) {
+                        let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
+                        expandedDiffLines = lines
+                        expandedDiffPath = ToolCallFormatting.displayFilePath(
+                            tool: normalizedTool,
+                            args: args,
+                            argsSummary: argsSummary
+                        )
+                        copyOutputText = DiffEngine.formatUnified(lines)
+                    } else if !outputTrimmed.isEmpty {
+                        expandedText = outputTrimmed
+                        expandedOutputLanguage = Self.readOutputLanguage(
+                            args: args,
+                            argsSummary: argsSummary
+                        )
+                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
+                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                    }
+
+                case "todo":
+                    if let todoMutationDiff {
+                        expandedDiffLines = todoMutationDiff.diffLines
+                        copyOutputText = todoMutationDiff.unifiedText
+                    } else if let todoPresentation {
+                        expandedText = todoPresentation.text
+                        expandedTextUsesMarkdown = todoPresentation.usesMarkdown
+                    } else if !outputTrimmed.isEmpty {
+                        expandedText = outputTrimmed
+                    }
 
                 default:
                     if !outputTrimmed.isEmpty {
@@ -721,25 +1232,49 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
-            let trailing = outputByteCount > 0
-                ? ToolCallFormatting.formatBytes(outputByteCount)
-                : nil
+            let trailing: String?
+            if let editTrailingFallback {
+                trailing = editTrailingFallback
+            } else if normalizedTool == "todo",
+                      todoMutationDiff == nil,
+                      let todoTrailing = todoPresentation?.trailing,
+                      !todoTrailing.isEmpty {
+                trailing = todoTrailing
+            } else {
+                trailing = nil
+            }
+
+            if hasInlineMediaDataURI {
+                if let existingBadge = languageBadge, !existingBadge.isEmpty {
+                    languageBadge = "\(existingBadge) • ⚠︎media"
+                } else {
+                    languageBadge = "⚠︎media"
+                }
+            }
 
             return ToolTimelineRowConfiguration(
                 title: title,
                 preview: preview,
                 expandedText: expandedText,
+                expandedTextUsesMarkdown: expandedTextUsesMarkdown,
+                expandedDiffLines: expandedDiffLines,
+                expandedDiffPath: expandedDiffPath,
                 expandedCommandText: expandedCommandText,
                 expandedOutputText: expandedOutputText,
+                expandedOutputLanguage: expandedOutputLanguage,
+                expandedCodeStartLine: expandedCodeStartLine,
+                expandedCodeFilePath: expandedCodeFilePath,
+                prefersUnwrappedOutput: prefersUnwrappedOutput,
                 showSeparatedCommandAndOutput: showSeparatedCommandAndOutput,
                 copyCommandText: copyCommandText,
                 copyOutputText: copyOutputText,
+                languageBadge: languageBadge,
                 trailing: trailing,
                 titleLineBreakMode: titleLineBreakMode,
                 toolNamePrefix: toolNamePrefix,
                 toolNameColor: toolNameColor,
-                editAdded: nil,
-                editRemoved: nil,
+                editAdded: editAdded,
+                editRemoved: editRemoved,
                 isExpanded: isExpanded,
                 isDone: isDone,
                 isError: isError
@@ -748,11 +1283,15 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
         private func loadFullToolOutputIfNeeded(
             itemID: String,
+            tool: String,
             outputByteCount: Int,
-            in collectionView: UICollectionView
+            in collectionView: UICollectionView,
+            attempt: Int = 0
         ) {
-            guard outputByteCount > 0,
-                  let toolOutputStore,
+            _ = tool
+            _ = outputByteCount
+
+            guard let toolOutputStore,
                   toolOutputStore.fullOutput(for: itemID).isEmpty,
                   !toolOutputLoadState.isLoading(itemID) else {
                 return
@@ -806,9 +1345,20 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                         case .canceled, .apply:
                             break
                         }
+
+                        if disposition == .emptyOutput {
+                            self.scheduleToolOutputRetryIfNeeded(
+                                itemID: itemID,
+                                tool: tool,
+                                outputByteCount: outputByteCount,
+                                in: collectionView,
+                                attempt: attempt
+                            )
+                        }
                         return
                     }
 
+                    self.cancelToolOutputRetryWork(for: itemID)
                     self.toolOutputStore?.append(output, to: itemID)
                     self._toolOutputAppliedCountForTesting += 1
 
@@ -821,40 +1371,100 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             toolOutputLoadState.start(itemID: itemID, task: task)
         }
 
+        private func scheduleToolOutputRetryIfNeeded(
+            itemID: String,
+            tool: String,
+            outputByteCount: Int,
+            in collectionView: UICollectionView?,
+            attempt: Int
+        ) {
+            guard ToolCallFormatting.isReadTool(tool) else { return }
+            guard attempt < Self.toolOutputRetryMaxAttempts else { return }
+            guard reducer?.expandedItemIDs.contains(itemID) == true else { return }
+            guard let collectionView else { return }
+
+            cancelToolOutputRetryWork(for: itemID)
+
+            let nextAttempt = attempt + 1
+            let delay = min(
+                Self.toolOutputRetryMaxDelay,
+                Self.toolOutputRetryBaseDelay * pow(1.6, Double(attempt))
+            )
+
+            let retryWork = DispatchWorkItem { [weak self, weak collectionView] in
+                guard let self,
+                      let collectionView,
+                      self.reducer?.expandedItemIDs.contains(itemID) == true,
+                      self.currentItemByID[itemID] != nil else {
+                    return
+                }
+
+                self.loadFullToolOutputIfNeeded(
+                    itemID: itemID,
+                    tool: tool,
+                    outputByteCount: outputByteCount,
+                    in: collectionView,
+                    attempt: nextAttempt
+                )
+            }
+
+            pendingToolOutputRetryWorkByID[itemID] = retryWork
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retryWork)
+        }
+
+        private func cancelToolOutputRetryWork(for itemID: String) {
+            pendingToolOutputRetryWorkByID.removeValue(forKey: itemID)?.cancel()
+        }
+
+        private func cancelAllToolOutputRetryWork() {
+            for (_, work) in pendingToolOutputRetryWorkByID {
+                work.cancel()
+            }
+            pendingToolOutputRetryWorkByID.removeAll(keepingCapacity: false)
+        }
+
         private func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
             let canceled = toolOutputLoadState.cancel(for: itemIDs)
             _toolOutputCanceledCountForTesting += canceled
+            for itemID in itemIDs {
+                cancelToolOutputRetryWork(for: itemID)
+            }
         }
 
         private func cancelAllToolOutputLoadTasks() {
             let canceled = toolOutputLoadState.cancelAll()
             _toolOutputCanceledCountForTesting += canceled
+            cancelAllToolOutputRetryWork()
         }
 
         private func animateNativeToolExpansion(
             itemID: String,
             item: ChatItem,
-            isExpanding: Bool,
+            isExpanding _: Bool,
             in collectionView: UICollectionView
         ) {
             guard let index = currentIDs.firstIndex(of: itemID),
                   let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)),
                   let configuration = nativeToolConfiguration(itemID: itemID, item: item)
             else {
+                // Defensive fallback: should be rare for tap-selected visible
+                // rows. Track it so tests can catch regressions.
+                _toolExpansionFallbackCountForTesting += 1
                 reconfigureItems([itemID], in: collectionView)
                 return
             }
             collectionView.layoutIfNeeded()
             cell.contentConfiguration = configuration
-            let duration = isExpanding ? ToolRowExpansionAnimation.expandDuration : ToolRowExpansionAnimation.collapseDuration
-            let timing = isExpanding ? CAMediaTimingFunction(name: .easeInEaseOut) : CAMediaTimingFunction(name: .easeOut)
+
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(duration)
-            CATransaction.setAnimationTimingFunction(timing)
-            CATransaction.setCompletionBlock { ChatTimelinePerf.endLayoutPass(layoutToken) }
-            collectionView.performBatchUpdates { collectionView.collectionViewLayout.invalidateLayout() }
-            CATransaction.commit()
+            UIView.performWithoutAnimation {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                collectionView.collectionViewLayout.invalidateLayout()
+                collectionView.layoutIfNeeded()
+                CATransaction.commit()
+            }
+            ChatTimelinePerf.endLayoutPass(layoutToken)
         }
 
         private func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
@@ -895,7 +1505,31 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
             ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated)
             collectionView.scrollToItem(at: indexPath, at: position, animated: command.animated)
+
+            // `scrollToItem(animated: false)` can update contentOffset on the next
+            // runloop tick without always triggering immediate delegate callbacks.
+            // Re-sample scroll state asynchronously so diagnostics (near-bottom,
+            // top visible id) converge deterministically for harness assertions.
+            if !command.animated {
+                DispatchQueue.main.async { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    collectionView.layoutIfNeeded()
+                    self.updateScrollState(collectionView)
+                    self.updateDetachedStreamingHintVisibility()
+                }
+            }
+
             return true
+        }
+
+        private func updateDetachedStreamingHintVisibility() {
+            guard let scrollController else { return }
+
+            let isDetached = !scrollController.isCurrentlyNearBottom
+            let showsStreamingState = streamingAssistantID != nil && isDetached
+
+            scrollController.setDetachedStreamingHintVisible(showsStreamingState)
+            scrollController.setJumpToBottomHintVisible(isDetached)
         }
 
         private func updateScrollState(_ collectionView: UICollectionView) {
@@ -908,7 +1542,10 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             let bottomY = collectionView.contentOffset.y + insets.top + visibleHeight
             let contentHeight = collectionView.contentSize.height
             let distanceFromBottom = max(0, contentHeight - bottomY)
-            scrollController.updateNearBottom(distanceFromBottom <= 24)
+            let nearBottomThreshold = scrollController.isCurrentlyNearBottom
+                ? nearBottomExitThreshold
+                : nearBottomEnterThreshold
+            scrollController.updateNearBottom(distanceFromBottom <= nearBottomThreshold)
 
             let firstVisible = collectionView.indexPathsForVisibleItems
                 .min { lhs, rhs in lhs.item < rhs.item }
@@ -934,56 +1571,424 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 }
 
 // swiftlint:enable type_body_length
-private struct TimelineLoadMoreRow: View {
+
+// MARK: - Load More Row
+
+struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
     let hiddenCount: Int
     let renderWindowStep: Int
     let onTap: () -> Void
+    let themeID: ThemeID
 
-    var body: some View {
-        Button(action: onTap) {
-            Text("Show \(min(renderWindowStep, hiddenCount)) earlier messages (\(hiddenCount) hidden)")
-                .font(.caption.monospaced())
-                .foregroundStyle(.tokyoBlue)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 6)
-        }
-        .buttonStyle(.plain)
+    func makeContentView() -> any UIView & UIContentView {
+        LoadMoreTimelineRowContentView(configuration: self)
+    }
+
+    func updated(for state: any UIConfigurationState) -> Self {
+        self
     }
 }
 
-private struct TimelineWorkingIndicatorRow: View {
-    @State private var phase: CGFloat = 0
+final class LoadMoreTimelineRowContentView: UIView, UIContentView {
+    private let button = UIButton(type: .system)
+    private var currentConfiguration: LoadMoreTimelineRowConfiguration
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("π")
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-                .foregroundStyle(.tokyoPurple)
-
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .fill(Color.tokyoComment)
-                        .frame(width: 6, height: 6)
-                        .opacity(dotOpacity(index: i))
-                }
-            }
-            .padding(.top, 8)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
-                    phase = 1
-                }
-            }
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 2)
+    init(configuration: LoadMoreTimelineRowConfiguration) {
+        self.currentConfiguration = configuration
+        super.init(frame: .zero)
+        setupViews()
+        apply(configuration: configuration)
     }
 
-    private func dotOpacity(index: Int) -> Double {
-        let offset = Double(index) / 3.0
-        let adjusted = (phase + offset).truncatingRemainder(dividingBy: 1.0)
-        return 0.52 + 0.18 * max(0, 1 - abs(adjusted - 0.5) * 2.6)
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    var configuration: UIContentConfiguration {
+        get { currentConfiguration }
+        set {
+            guard let config = newValue as? LoadMoreTimelineRowConfiguration else { return }
+            apply(configuration: config)
+        }
+    }
+
+    private func setupViews() {
+        backgroundColor = .clear
+
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.titleLabel?.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        button.contentHorizontalAlignment = .center
+        button.contentVerticalAlignment = .center
+        button.addTarget(self, action: #selector(handleTap), for: .touchUpInside)
+
+        addSubview(button)
+
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            button.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            button.centerXAnchor.constraint(equalTo: centerXAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+    }
+
+    private func apply(configuration: LoadMoreTimelineRowConfiguration) {
+        currentConfiguration = configuration
+
+        let revealCount = min(configuration.renderWindowStep, configuration.hiddenCount)
+        button.setTitle(
+            "Show \(revealCount) earlier messages (\(configuration.hiddenCount) hidden)",
+            for: .normal
+        )
+        button.setTitleColor(UIColor(configuration.themeID.palette.blue), for: .normal)
+    }
+
+    @objc
+    private func handleTap() {
+        currentConfiguration.onTap()
+    }
+}
+
+// MARK: - Working Indicator Row
+
+struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
+    let themeID: ThemeID
+
+    func makeContentView() -> any UIView & UIContentView {
+        WorkingIndicatorTimelineRowContentView(configuration: self)
+    }
+
+    func updated(for state: any UIConfigurationState) -> Self {
+        self
+    }
+}
+
+final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
+    private let rootStack = UIStackView()
+    private let symbolLabel = UILabel()
+    private let dotsStack = UIStackView()
+    private var dotViews: [UIView] = []
+
+    private var isAnimatingDots = false
+    private var currentConfiguration: WorkingIndicatorTimelineRowConfiguration
+
+    init(configuration: WorkingIndicatorTimelineRowConfiguration) {
+        self.currentConfiguration = configuration
+        super.init(frame: .zero)
+        setupViews()
+        apply(configuration: configuration)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    var configuration: UIContentConfiguration {
+        get { currentConfiguration }
+        set {
+            guard let config = newValue as? WorkingIndicatorTimelineRowConfiguration else { return }
+            apply(configuration: config)
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+
+        if window != nil {
+            startDotAnimationsIfNeeded()
+        } else {
+            stopDotAnimations()
+        }
+    }
+
+    private func setupViews() {
+        backgroundColor = .clear
+
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        rootStack.axis = .horizontal
+        rootStack.alignment = .center
+        rootStack.spacing = 8
+
+        symbolLabel.translatesAutoresizingMaskIntoConstraints = false
+        symbolLabel.text = "π"
+        symbolLabel.font = .monospacedSystemFont(ofSize: 16, weight: .semibold)
+
+        dotsStack.translatesAutoresizingMaskIntoConstraints = false
+        dotsStack.axis = .horizontal
+        dotsStack.alignment = .center
+        dotsStack.spacing = 4
+
+        for _ in 0..<3 {
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.layer.cornerRadius = 3
+            dot.alpha = 0.6
+
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 6),
+                dot.heightAnchor.constraint(equalToConstant: 6),
+            ])
+
+            dotViews.append(dot)
+            dotsStack.addArrangedSubview(dot)
+        }
+
+        let spacer = UIView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+
+        rootStack.addArrangedSubview(symbolLabel)
+        rootStack.addArrangedSubview(dotsStack)
+        rootStack.addArrangedSubview(spacer)
+
+        addSubview(rootStack)
+
+        NSLayoutConstraint.activate([
+            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rootStack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            rootStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+    }
+
+    private func apply(configuration: WorkingIndicatorTimelineRowConfiguration) {
+        currentConfiguration = configuration
+
+        let palette = configuration.themeID.palette
+        symbolLabel.textColor = UIColor(palette.purple)
+        for dot in dotViews {
+            dot.backgroundColor = UIColor(palette.comment)
+        }
+
+        if window != nil {
+            startDotAnimationsIfNeeded()
+        }
+    }
+
+    private func startDotAnimationsIfNeeded() {
+        guard !isAnimatingDots else { return }
+        isAnimatingDots = true
+
+        for dot in dotViews {
+            dot.alpha = 0.58
+        }
+
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            return
+        }
+
+        let baseTime = CACurrentMediaTime()
+        for (index, dot) in dotViews.enumerated() {
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = 0.46
+            animation.toValue = 0.72
+            animation.duration = 1.6
+            animation.autoreverses = true
+            animation.repeatCount = .infinity
+            animation.beginTime = baseTime + Double(index) * 0.22
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            dot.layer.add(animation, forKey: "pulse")
+        }
+    }
+
+    private func stopDotAnimations() {
+        guard isAnimatingDots else { return }
+        isAnimatingDots = false
+
+        for dot in dotViews {
+            dot.layer.removeAnimation(forKey: "pulse")
+            dot.alpha = 0.58
+        }
+    }
+}
+
+// MARK: - Audio Clip Row
+
+struct AudioClipTimelineRowConfiguration: UIContentConfiguration {
+    let id: String
+    let title: String
+    let fileURL: URL
+    let audioPlayer: AudioPlayerService
+    let themeID: ThemeID
+
+    func makeContentView() -> any UIView & UIContentView {
+        AudioClipTimelineRowContentView(configuration: self)
+    }
+
+    func updated(for state: any UIConfigurationState) -> Self {
+        self
+    }
+}
+
+private enum AudioClipButtonState {
+    case idle
+    case loading
+    case playing
+}
+
+final class AudioClipTimelineRowContentView: UIView, UIContentView {
+    private let containerView = UIView()
+    private let rootStack = UIStackView()
+    private let iconImageView = UIImageView()
+    private let labelsStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let fileNameLabel = UILabel()
+    private let playButton = UIButton(type: .system)
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+
+    private var currentConfiguration: AudioClipTimelineRowConfiguration
+
+    init(configuration: AudioClipTimelineRowConfiguration) {
+        self.currentConfiguration = configuration
+        super.init(frame: .zero)
+        setupViews()
+        apply(configuration: configuration)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    var configuration: UIContentConfiguration {
+        get { currentConfiguration }
+        set {
+            guard let config = newValue as? AudioClipTimelineRowConfiguration else { return }
+            apply(configuration: config)
+        }
+    }
+
+    private func setupViews() {
+        backgroundColor = .clear
+
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.layer.cornerRadius = 8
+
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        rootStack.axis = .horizontal
+        rootStack.alignment = .center
+        rootStack.spacing = 10
+
+        iconImageView.translatesAutoresizingMaskIntoConstraints = false
+        iconImageView.contentMode = .scaleAspectFit
+        iconImageView.image = UIImage(systemName: "waveform")
+
+        labelsStack.translatesAutoresizingMaskIntoConstraints = false
+        labelsStack.axis = .vertical
+        labelsStack.alignment = .leading
+        labelsStack.spacing = 2
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .preferredFont(forTextStyle: .caption1)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.numberOfLines = 1
+
+        fileNameLabel.translatesAutoresizingMaskIntoConstraints = false
+        fileNameLabel.font = .preferredFont(forTextStyle: .caption2)
+        fileNameLabel.lineBreakMode = .byTruncatingTail
+        fileNameLabel.numberOfLines = 1
+
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.contentHorizontalAlignment = .center
+        playButton.contentVerticalAlignment = .center
+        playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
+
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.hidesWhenStopped = true
+
+        addSubview(containerView)
+        containerView.addSubview(rootStack)
+
+        labelsStack.addArrangedSubview(titleLabel)
+        labelsStack.addArrangedSubview(fileNameLabel)
+
+        rootStack.addArrangedSubview(iconImageView)
+        rootStack.addArrangedSubview(labelsStack)
+        rootStack.addArrangedSubview(UIView())
+        rootStack.addArrangedSubview(playButton)
+
+        playButton.addSubview(loadingIndicator)
+
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            containerView.topAnchor.constraint(equalTo: topAnchor),
+            containerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            rootStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
+            rootStack.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
+            rootStack.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
+            rootStack.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -8),
+
+            iconImageView.widthAnchor.constraint(equalToConstant: 14),
+            iconImageView.heightAnchor.constraint(equalToConstant: 14),
+
+            playButton.widthAnchor.constraint(equalToConstant: 44),
+            playButton.heightAnchor.constraint(equalToConstant: 44),
+
+            loadingIndicator.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
+        ])
+    }
+
+    private func apply(configuration: AudioClipTimelineRowConfiguration) {
+        currentConfiguration = configuration
+
+        let palette = configuration.themeID.palette
+        containerView.backgroundColor = UIColor(palette.bgDark)
+
+        iconImageView.tintColor = UIColor(palette.purple)
+        titleLabel.textColor = UIColor(palette.fg)
+        fileNameLabel.textColor = UIColor(palette.comment)
+
+        titleLabel.text = configuration.title
+        fileNameLabel.text = configuration.fileURL.lastPathComponent
+
+        loadingIndicator.color = UIColor(palette.purple)
+        updatePlayButton(state: buttonState(for: configuration), palette: palette)
+    }
+
+    private func buttonState(for configuration: AudioClipTimelineRowConfiguration) -> AudioClipButtonState {
+        if configuration.audioPlayer.loadingItemID == configuration.id {
+            return .loading
+        }
+
+        if configuration.audioPlayer.playingItemID == configuration.id {
+            return .playing
+        }
+
+        return .idle
+    }
+
+    private func updatePlayButton(state: AudioClipButtonState, palette: ThemePalette) {
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        playButton.setPreferredSymbolConfiguration(symbolConfig, forImageIn: .normal)
+
+        switch state {
+        case .idle:
+            loadingIndicator.stopAnimating()
+            playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+            playButton.tintColor = UIColor(palette.comment)
+
+        case .loading:
+            playButton.setImage(nil, for: .normal)
+            playButton.tintColor = UIColor(palette.purple)
+            loadingIndicator.startAnimating()
+
+        case .playing:
+            loadingIndicator.stopAnimating()
+            playButton.setImage(UIImage(systemName: "stop.fill"), for: .normal)
+            playButton.tintColor = UIColor(palette.purple)
+        }
+    }
+
+    @objc
+    private func togglePlayback() {
+        currentConfiguration.audioPlayer.toggleFilePlayback(
+            fileURL: currentConfiguration.fileURL,
+            itemID: currentConfiguration.id
+        )
+        apply(configuration: currentConfiguration)
     }
 }

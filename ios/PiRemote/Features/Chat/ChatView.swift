@@ -26,6 +26,7 @@ struct ChatView: View {
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var copiedSessionID = false
+    @State private var forkedSessionToOpen: ForkRoute?
 #if DEBUG
     @State private var showSessionActions = false
     @State private var uploadingClientLogs = false
@@ -35,6 +36,10 @@ struct ChatView: View {
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
+    }
+
+    private struct ForkRoute: Identifiable, Hashable {
+        let id: String
     }
 
     private var session: Session? {
@@ -130,6 +135,9 @@ struct ChatView: View {
         .background(Color.tokyoBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $forkedSessionToOpen) { route in
+            Self(sessionId: route.id)
+        }
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -571,9 +579,24 @@ struct ChatView: View {
     }
 
     private func forkFromMessage(_ entryId: String) {
+        guard let workspaceId = session?.workspaceId, !workspaceId.isEmpty else {
+            reducer.process(.error(sessionId: sessionId, message: "Missing workspace context for fork."))
+            return
+        }
+
         Task {
             do {
-                try await connection.forkFromTimelineEntry(entryId)
+                let forked = try await connection.forkIntoNewSessionFromTimelineEntry(
+                    entryId,
+                    sourceSessionId: sessionId,
+                    workspaceId: workspaceId
+                )
+
+                let title = forked.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayName = title.flatMap { $0.isEmpty ? nil : $0 } ?? "Session \(forked.id.prefix(8))"
+                reducer.appendSystemEvent("Fork created as new session: \(displayName)")
+
+                forkedSessionToOpen = ForkRoute(id: forked.id)
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
             }
@@ -675,6 +698,58 @@ private struct WorkingIndicator: View {
         let offset = Double(index) / 3.0
         let adjusted = (phase + offset).truncatingRemainder(dividingBy: 1.0)
         return 0.3 + 0.7 * max(0, 1 - abs(adjusted - 0.5) * 4)
+    }
+}
+
+private struct JumpToBottomHintButton: View {
+    let isStreaming: Bool
+    let onTap: () -> Void
+
+    @State private var pulse = false
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack(alignment: .topTrailing) {
+                Circle()
+                    .fill(Color.tokyoBgHighlight.opacity(0.95))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Circle()
+                            .stroke((isStreaming ? Color.tokyoBlue : Color.tokyoComment).opacity(0.34), lineWidth: 1)
+                    )
+
+                Image(systemName: "arrow.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(isStreaming ? .tokyoBlue : .tokyoFg)
+
+                if isStreaming {
+                    Circle()
+                        .fill(Color.tokyoBlue)
+                        .frame(width: 6, height: 6)
+                        .scaleEffect(pulse ? 1.0 : 0.72)
+                        .opacity(pulse ? 1.0 : 0.55)
+                        .offset(x: -2, y: 2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .accessibilityLabel(isStreaming ? "Jump to latest streaming message" : "Jump to latest message")
+        .onAppear {
+            guard isStreaming else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .onChange(of: isStreaming) { _, streaming in
+            if streaming {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            } else {
+                pulse = false
+            }
+        }
     }
 }
 
@@ -806,6 +881,17 @@ private struct ChatTimelineView: View {
                 ChatEmptyState()
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if scrollController.isJumpToBottomHintVisible {
+                JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
+                    jumpToLatest()
+                }
+                .padding(.trailing, 14)
+                .padding(.bottom, 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
         .onChange(of: reducer.renderVersion) { _, _ in
             scrollController._diagnosticItemCount = visibleItems.count
             scrollController.handleRenderVersionChange(
@@ -848,6 +934,13 @@ private struct ChatTimelineView: View {
         .sheet(item: $fileToOpen) { file in
             RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)
         }
+    }
+
+    private func jumpToLatest() {
+        guard let bottomItemID else { return }
+        scrollController.setDetachedStreamingHintVisible(false)
+        scrollController.setJumpToBottomHintVisible(false)
+        issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
     }
 
     private func issueScrollCommand(id: String, anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {

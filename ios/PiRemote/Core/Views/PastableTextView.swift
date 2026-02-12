@@ -16,6 +16,23 @@ private func applyStabilityInputTraits(to textView: UITextView) {
     assistant.trailingBarButtonGroups = []
 }
 
+@MainActor
+private func requestSystemDictation(for textView: UITextView) {
+    // UIKit does not expose a direct public "start dictation now" method.
+    // This hints to the system that dictation is expected and ensures the
+    // text view is active so keyboard dictation can start immediately when
+    // supported by the current keyboard/input mode.
+    if #available(iOS 16.4, *) {
+        UITextInputContext.current()?.isDictationInputExpected = true
+    }
+
+    if !textView.isFirstResponder {
+        textView.becomeFirstResponder()
+    }
+
+    textView.reloadInputViews()
+}
+
 /// Clamp raw inline composer content height to min/max line bounds.
 ///
 /// - Parameters:
@@ -36,6 +53,43 @@ func inlineComposerHeight(
     let minHeight = ceil(safeLineHeight + safeInsets)
     let maxHeight = ceil((safeLineHeight * CGFloat(safeMaxLines)) + safeInsets)
     return min(max(ceil(rawContentHeight), minHeight), maxHeight)
+}
+
+/// Heuristic fast path for very large inline composer text.
+///
+/// For text far beyond visible inline capacity, measuring exact wrapped height
+/// requires expensive TextKit layout. Since inline composer height is clamped
+/// to `maxLines` anyway, we can safely jump straight to max height.
+func inlineComposerShouldFastPathToMaxHeight(
+    textLength: Int,
+    containerWidth: CGFloat,
+    lineHeight: CGFloat,
+    maxLines: Int
+) -> Bool {
+    let safeTextLength = max(textLength, 0)
+
+    let safeContainerWidth: CGFloat
+    if containerWidth.isFinite {
+        safeContainerWidth = max(containerWidth, 1)
+    } else {
+        safeContainerWidth = 1
+    }
+
+    let safeLineHeight: CGFloat
+    if lineHeight.isFinite {
+        safeLineHeight = max(lineHeight, 1)
+    } else {
+        safeLineHeight = 1
+    }
+
+    let safeMaxLines = max(maxLines, 1)
+
+    let estimatedCharacterWidth = max(safeLineHeight * 0.5, 1)
+    let estimatedCharsPerLine = max(floor(safeContainerWidth / estimatedCharacterWidth), 1)
+    let visibleCapacity = estimatedCharsPerLine * CGFloat(safeMaxLines)
+    let overflowThreshold = max(visibleCapacity * 2, CGFloat(safeMaxLines) * 40)
+
+    return CGFloat(safeTextLength) > overflowThreshold
 }
 
 /// A UITextView wrapper that supports pasting images from the clipboard.
@@ -60,6 +114,7 @@ struct PastableTextView: UIViewRepresentable {
     let onDictationStateChange: ((Bool) -> Void)?
     let focusRequestID: Int
     let blurRequestID: Int
+    let dictationRequestID: Int
     let accessibilityIdentifier: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
@@ -70,7 +125,8 @@ struct PastableTextView: UIViewRepresentable {
         textView.textColor = textColor
         textView.tintColor = tintColor
         textView.backgroundColor = .clear
-        textView.textContainerInset = UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        textView.clipsToBounds = true
+        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.textContainer.lineFragmentPadding = 0
 
         // Keep scrolling enabled at all times.
@@ -124,6 +180,14 @@ struct PastableTextView: UIViewRepresentable {
             }
         }
 
+        if dictationRequestID != context.coordinator.lastDictationRequestID {
+            context.coordinator.lastDictationRequestID = dictationRequestID
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                requestSystemDictation(for: textView)
+            }
+        }
+
         // Keep update path side-effect light: no intrinsic invalidation,
         // no dynamic scroll toggling, no text-container mutation.
     }
@@ -131,7 +195,15 @@ struct PastableTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: PastableUITextView, context: Context) -> CGSize? {
         let proposedWidth = proposal.width ?? textView.bounds.width
         let fallbackWidth = textView.window?.windowScene?.screen.bounds.width ?? 320
-        let width = max(proposedWidth > 0 ? proposedWidth : fallbackWidth, 1)
+        let safeFallbackWidth = fallbackWidth.isFinite && fallbackWidth > 0 ? fallbackWidth : 320
+        let candidateWidth = proposedWidth > 0 ? proposedWidth : safeFallbackWidth
+
+        let width: CGFloat
+        if candidateWidth.isFinite && candidateWidth > 0 && candidateWidth < 10_000 {
+            width = candidateWidth
+        } else {
+            width = safeFallbackWidth
+        }
 
         let lineHeight = textView.font?.lineHeight ?? font.lineHeight
         let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
@@ -140,6 +212,21 @@ struct PastableTextView: UIViewRepresentable {
             + (textView.textContainer.lineFragmentPadding * 2)
 
         let containerWidth = max(width - horizontalInsets, 1)
+        if inlineComposerShouldFastPathToMaxHeight(
+            textLength: textView.textStorage.length,
+            containerWidth: containerWidth,
+            lineHeight: lineHeight,
+            maxLines: maxLines
+        ) {
+            let maxInlineHeight = inlineComposerHeight(
+                rawContentHeight: .greatestFiniteMagnitude,
+                lineHeight: lineHeight,
+                verticalInsets: verticalInsets,
+                maxLines: maxLines
+            )
+            return CGSize(width: width, height: maxInlineHeight)
+        }
+
         textView.textContainer.size = CGSize(width: containerWidth, height: .greatestFiniteMagnitude)
         textView.layoutManager.ensureLayout(for: textView.textContainer)
 
@@ -176,6 +263,7 @@ struct PastableTextView: UIViewRepresentable {
 
         var lastFocusRequestID = 0
         var lastBlurRequestID = 0
+        var lastDictationRequestID = 0
         private var lastOverflowState = false
         private var lastDictationState = false
         private var lastReportedLineCount = 1

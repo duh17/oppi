@@ -1,10 +1,9 @@
-import SwiftUI
 import UIKit
 
-/// Native UIKit assistant row used by the chat timeline migration.
+/// Native UIKit assistant row — unified renderer for all assistant content.
 ///
-/// This renderer is optimized for plain-text assistant content. Rich markdown
-/// content is routed through the existing SwiftUI markdown renderer for parity.
+/// Handles both plain text and rich markdown (headings, lists, code blocks,
+/// tables, inline formatting) via `AssistantMarkdownContentView`.
 struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let isStreaming: Bool
@@ -16,22 +15,16 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         AssistantTimelineRowContentView(configuration: self)
     }
 
-    func updated(for state: any UIConfigurationState) -> AssistantTimelineRowConfiguration {
+    func updated(for state: any UIConfigurationState) -> Self {
         self
     }
 }
 
 final class AssistantTimelineRowContentView: UIView, UIContentView {
-    private let iconLabel = UILabel()
-    private let messageTextView = UITextView()
-    private let cursorView = UIView()
+    private static let maxValidHeight: CGFloat = 10_000
 
-    private static let customLinkRegex = try? NSRegularExpression(
-        pattern: #"(?i)\b(?:pi|oppi)://[^\s<>\"'`]+"#,
-        options: []
-    )
-    private static let trailingLinkDelimiters: Set<Character> = ["`", "'", "\"", "’", "”"]
-    private static let trailingEncodedLinkDelimiters = ["%60", "%27", "%22"]
+    private let iconLabel = UILabel()
+    private let markdownView = AssistantMarkdownContentView()
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
 
@@ -55,51 +48,55 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        let fitted = super.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: horizontalFittingPriority,
+            verticalFittingPriority: verticalFittingPriority
+        )
+
+        let fallbackWidth = targetSize.width.isFinite ? targetSize.width : bounds.width
+        let width = fitted.width.isFinite && fitted.width > 0 ? fitted.width : max(1, fallbackWidth)
+
+        let rawHeight: CGFloat
+        if fitted.height.isFinite && fitted.height > 0 {
+            rawHeight = fitted.height
+        } else {
+            rawHeight = 44
+        }
+
+        return CGSize(width: width, height: min(rawHeight, Self.maxValidHeight))
+    }
+
     private func setupViews() {
         backgroundColor = .clear
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
-        iconLabel.textColor = UIColor(Color.tokyoPurple)
+        iconLabel.textColor = UIColor(ThemeID.tokyoNight.palette.purple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconLabel.isUserInteractionEnabled = true
 
-        messageTextView.translatesAutoresizingMaskIntoConstraints = false
-        messageTextView.isEditable = false
-        messageTextView.isSelectable = true
-        messageTextView.isScrollEnabled = false
-        messageTextView.backgroundColor = .clear
-        messageTextView.textContainerInset = .zero
-        messageTextView.textContainer.lineFragmentPadding = 0
-        messageTextView.textColor = UIColor(Color.tokyoFg)
-        messageTextView.font = .preferredFont(forTextStyle: .body)
-        messageTextView.adjustsFontForContentSizeCategory = true
-        messageTextView.dataDetectorTypes = [.link]
-        messageTextView.delegate = self
-
-        cursorView.translatesAutoresizingMaskIntoConstraints = false
-        cursorView.backgroundColor = UIColor(Color.tokyoPurple)
-        cursorView.layer.cornerRadius = 1
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(iconLabel)
-        addSubview(messageTextView)
-        addSubview(cursorView)
+        addSubview(markdownView)
         iconLabel.addInteraction(UIContextMenuInteraction(delegate: self))
 
         NSLayoutConstraint.activate([
             iconLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconLabel.topAnchor.constraint(equalTo: topAnchor),
+            iconLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
 
-            messageTextView.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 8),
-            messageTextView.topAnchor.constraint(equalTo: topAnchor),
-            messageTextView.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            cursorView.leadingAnchor.constraint(equalTo: messageTextView.leadingAnchor),
-            cursorView.topAnchor.constraint(equalTo: messageTextView.bottomAnchor, constant: 4),
-            cursorView.widthAnchor.constraint(equalToConstant: 8),
-            cursorView.heightAnchor.constraint(equalToConstant: 14),
-            cursorView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            markdownView.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 8),
+            markdownView.topAnchor.constraint(equalTo: topAnchor),
+            markdownView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            markdownView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -108,147 +105,12 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.purple)
-        messageTextView.textColor = UIColor(palette.fg)
-        messageTextView.tintColor = UIColor(palette.blue)
-        messageTextView.linkTextAttributes = [
-            .foregroundColor: UIColor(palette.blue),
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
-        ]
-        cursorView.backgroundColor = UIColor(palette.purple)
 
-        messageTextView.attributedText = linkedText(
-            for: configuration.text,
-            baseColor: UIColor(palette.fg)
-        )
-
-        if configuration.isStreaming {
-            cursorView.isHidden = false
-            startCursorAnimationIfNeeded()
-        } else {
-            cursorView.isHidden = true
-            cursorView.layer.removeAnimation(forKey: "opacityPulse")
-        }
-    }
-
-    private func linkedText(for text: String, baseColor: UIColor) -> NSAttributedString {
-        let font = messageTextView.font ?? .preferredFont(forTextStyle: .body)
-        let attributed = NSMutableAttributedString(
-            string: text,
-            attributes: [
-                .font: font,
-                .foregroundColor: baseColor,
-            ]
-        )
-
-        let fullRange = NSRange(location: 0, length: attributed.length)
-        guard fullRange.length > 0 else {
-            return attributed
-        }
-
-        let nsText = text as NSString
-
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
-            detector.enumerateMatches(in: text, options: [], range: fullRange) { [weak self] match, _, _ in
-                guard
-                    let self,
-                    let match,
-                    let normalized = self.normalizedLink(in: nsText, range: match.range)
-                else {
-                    return
-                }
-                attributed.addAttribute(.link, value: normalized.url, range: normalized.range)
-            }
-        }
-
-        if let customLinkRegex = Self.customLinkRegex {
-            for match in customLinkRegex.matches(in: text, options: [], range: fullRange) {
-                guard let normalized = normalizedLink(in: nsText, range: match.range) else {
-                    continue
-                }
-                attributed.addAttribute(.link, value: normalized.url, range: normalized.range)
-            }
-        }
-
-        return attributed
-    }
-
-    private func normalizedLink(in nsText: NSString, range: NSRange) -> (url: URL, range: NSRange)? {
-        guard range.location != NSNotFound, range.length > 0 else {
-            return nil
-        }
-
-        var adjustedLength = range.length
-        while adjustedLength > 0 {
-            let lastCharacterRange = NSRange(location: range.location + adjustedLength - 1, length: 1)
-            let character = nsText.substring(with: lastCharacterRange)
-            if Self.shouldTrimTrailingLinkCharacter(character) {
-                adjustedLength -= 1
-                continue
-            }
-            break
-        }
-
-        guard adjustedLength > 0 else {
-            return nil
-        }
-
-        let adjustedRange = NSRange(location: range.location, length: adjustedLength)
-        let rawURL = nsText.substring(with: adjustedRange)
-        let normalizedURLString = Self.normalizedURLString(rawURL)
-        guard let url = URL(string: normalizedURLString) else {
-            return nil
-        }
-
-        let rawLength = (rawURL as NSString).length
-        let normalizedLength = (normalizedURLString as NSString).length
-        let rangeLength = max(0, adjustedRange.length - max(0, rawLength - normalizedLength))
-        let finalRange = NSRange(location: adjustedRange.location, length: rangeLength)
-
-        return (url: url, range: finalRange)
-    }
-
-    private static func shouldTrimTrailingLinkCharacter(_ character: String) -> Bool {
-        guard character.count == 1, let scalar = character.first else {
-            return false
-        }
-        return trailingLinkDelimiters.contains(scalar)
-    }
-
-    private static func normalizedURLString(_ raw: String) -> String {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        while !value.isEmpty {
-            if let suffix = trailingEncodedLinkDelimiters.first(where: { value.lowercased().hasSuffix($0) }) {
-                value = String(value.dropLast(suffix.count))
-                continue
-            }
-
-            guard let last = value.last, trailingLinkDelimiters.contains(last) else {
-                break
-            }
-
-            value.removeLast()
-        }
-
-        return value
-    }
-
-    private static func normalizedInteractionURL(_ url: URL) -> URL {
-        let normalized = normalizedURLString(url.absoluteString)
-        return URL(string: normalized) ?? url
-    }
-
-    private func startCursorAnimationIfNeeded() {
-        guard cursorView.layer.animation(forKey: "opacityPulse") == nil else { return }
-
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 0.55
-        pulse.toValue = 0.4
-        pulse.duration = 1.4
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        cursorView.layer.add(pulse, forKey: "opacityPulse")
+        markdownView.apply(configuration: .init(
+            content: configuration.text,
+            isStreaming: configuration.isStreaming,
+            themeID: configuration.themeID
+        ))
     }
 
     private func copyToPasteboard(_ text: String) {
@@ -258,29 +120,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         UIPasteboard.general.string = trimmed
         let feedback = UIImpactFeedbackGenerator(style: .light)
         feedback.impactOccurred(intensity: 0.82)
-    }
-
-}
-
-extension AssistantTimelineRowContentView: UITextViewDelegate {
-    func textView(
-        _ textView: UITextView,
-        shouldInteractWith url: URL,
-        in characterRange: NSRange,
-        interaction: UITextItemInteraction
-    ) -> Bool {
-        let normalizedURL = Self.normalizedInteractionURL(url)
-
-        guard let scheme = normalizedURL.scheme?.lowercased() else {
-            return true
-        }
-
-        if scheme == "pi" || scheme == "oppi" {
-            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            return false
-        }
-
-        return true
     }
 }
 
@@ -326,4 +165,3 @@ extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
         }
     }
 }
-

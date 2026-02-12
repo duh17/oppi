@@ -22,10 +22,21 @@ final class ChatScrollController {
     /// Last completed auto-scroll timestamp.
     private var lastAutoScrollAt: ContinuousClock.Instant?
 
-    /// Guardrail for very large timelines where repeated ScrollViewReader
-    /// `scrollTo` can wedge SwiftUI's lazy layout pass.
+    /// Guardrail for very large timelines where repeated `scrollTo` calls can
+    /// still trigger expensive layout work.
     private let heavyTimelineThreshold = 120
-    /// In heavy timelines, back off auto-scroll cadence to reduce layout churn.
+
+    /// Streaming should feel responsive enough to follow live tokens.
+    private let streamingAutoScrollDelay: Duration = .milliseconds(33)
+
+    /// Non-streaming updates can be less aggressive to reduce needless churn.
+    private let nonStreamingAutoScrollDelay: Duration = .milliseconds(60)
+
+    /// In heavy timelines, keep streaming smooth but bounded.
+    private let heavyTimelineStreamingAutoScrollDelay: Duration = .milliseconds(80)
+    private let heavyTimelineStreamingMinInterval: Duration = .milliseconds(120)
+
+    /// In heavy timelines, non-streaming auto-scrolls remain conservative.
     private let heavyTimelineAutoScrollMinInterval: Duration = .milliseconds(320)
 
     /// During keyboard show/hide/frame-change animations, suppress automatic
@@ -36,6 +47,13 @@ final class ChatScrollController {
 
     /// Set by outline view to scroll to a specific item.
     var scrollTargetID: String?
+
+    /// Shows a subtle "live updates" hint while streaming continues off-screen
+    /// (user detached from bottom).
+    var isDetachedStreamingHintVisible = false
+
+    /// Shows a compact jump-to-bottom affordance whenever user is detached.
+    var isJumpToBottomHintVisible = false
 
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
@@ -121,6 +139,38 @@ final class ChatScrollController {
         anchor.isNearBottom = isNearBottom
     }
 
+    /// CollectionView backend marks active user drag/deceleration windows.
+    /// Auto-follow is suppressed while this flag is true.
+    func setUserInteracting(_ isInteracting: Bool) {
+        guard anchor.isUserInteracting != isInteracting else { return }
+        anchor.isUserInteracting = isInteracting
+
+        if isInteracting {
+            scrollTask?.cancel()
+            scrollTask = nil
+        }
+    }
+
+    /// User initiated a manual upward scroll. Detach from bottom immediately
+    /// so streaming auto-follow cannot pull the viewport back down mid-gesture.
+    func detachFromBottomForUserScroll() {
+        anchor.isNearBottom = false
+        scrollTask?.cancel()
+        scrollTask = nil
+    }
+
+    /// CollectionView backend updates visibility for the detached streaming hint.
+    func setDetachedStreamingHintVisible(_ isVisible: Bool) {
+        guard isDetachedStreamingHintVisible != isVisible else { return }
+        isDetachedStreamingHintVisible = isVisible
+    }
+
+    /// CollectionView backend updates visibility for jump-to-bottom affordance.
+    func setJumpToBottomHintVisible(_ isVisible: Bool) {
+        guard isJumpToBottomHintVisible != isVisible else { return }
+        isJumpToBottomHintVisible = isVisible
+    }
+
     /// CollectionView backend updates this from visible index tracking.
     func updateTopVisibleItemId(_ itemId: String?) {
         guard anchor.topVisibleItemId != itemId else { return }
@@ -141,14 +191,16 @@ final class ChatScrollController {
         performScrollToBottom: @escaping (String) -> Void
     ) {
         guard anchor.isNearBottom else { return }
+        guard !anchor.isUserInteracting else { return }
         guard !isKeyboardTransitionActive else { return }
 
         let isHeavyTimeline = _diagnosticItemCount >= heavyTimelineThreshold
+        let isStreaming = streamingID != nil
 
         // Guardrail: in very large timelines, non-streaming auto-scrolls are
         // usually redundant (the user is already at the tail) and can trigger
         // expensive placement cascades.
-        if isHeavyTimeline, streamingID == nil {
+        if isHeavyTimeline, !isStreaming {
             return
         }
 
@@ -156,18 +208,28 @@ final class ChatScrollController {
 
         if isHeavyTimeline,
            let lastAutoScrollAt,
-           ContinuousClock.now - lastAutoScrollAt < heavyTimelineAutoScrollMinInterval {
+           ContinuousClock.now - lastAutoScrollAt < (
+               isStreaming ? heavyTimelineStreamingMinInterval : heavyTimelineAutoScrollMinInterval
+           ) {
             return
         }
 
         guard let targetID = streamingID ?? bottomItemID else { return }
-        let throttleDelay: Duration = isHeavyTimeline ? .milliseconds(180) : .milliseconds(60)
+
+        let throttleDelay: Duration
+        if isHeavyTimeline {
+            throttleDelay = isStreaming ? heavyTimelineStreamingAutoScrollDelay : nonStreamingAutoScrollDelay
+        } else {
+            throttleDelay = isStreaming ? streamingAutoScrollDelay : nonStreamingAutoScrollDelay
+        }
 
         scrollTask = Task { @MainActor in
             try? await Task.sleep(for: throttleDelay)
             scrollTask = nil
             guard !Task.isCancelled else { return }
             guard anchor.isNearBottom else { return }
+            guard !anchor.isUserInteracting else { return }
+            guard !isKeyboardTransitionActive else { return }
 
             performScrollToBottom(targetID)
             lastAutoScrollAt = ContinuousClock.now
@@ -236,6 +298,9 @@ final class ChatScrollController {
         scrollTask = nil
         lastAutoScrollAt = nil
         keyboardTransitionUntil = nil
+        anchor.isUserInteracting = false
+        isDetachedStreamingHintVisible = false
+        isJumpToBottomHintVisible = false
     }
 }
 
@@ -252,6 +317,7 @@ final class ChatScrollController {
 /// but property changes are invisible to SwiftUI's observation system.
 private final class ScrollAnchorState {
     var isNearBottom = true
+    var isUserInteracting = false
     /// ID of the topmost visible item, updated via `scrollPosition(id:)`.
     /// Non-reactive: mutations do NOT trigger SwiftUI body re-evaluation.
     var topVisibleItemId: String?

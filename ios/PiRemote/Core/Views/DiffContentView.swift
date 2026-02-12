@@ -159,11 +159,10 @@ struct DiffContentView: View {
 
             // Code text
             ScrollView(.horizontal, showsIndicators: false) {
-                // Keep changed lines high-contrast and deterministic.
-                // Syntax token colors can reduce readability on tinted add/remove
-                // backgrounds (especially comment-heavy edits), so only context
-                // lines use token-level highlighting.
-                if lang != .unknown, line.kind == .context {
+                // Syntax highlight all lines — the subtle tinted backgrounds
+                // provide enough add/remove context while token colors keep
+                // the code readable (same approach as GitHub/VS Code diffs).
+                if lang != .unknown {
                     Text(SyntaxHighlighter.highlightLine(line.text, language: lang))
                         .font(.system(size: theme.code.fontSize, design: .monospaced))
                         .textSelection(.enabled)

@@ -1,5 +1,8 @@
 # Chat Rendering Analysis
 
+> Historical snapshot from pre-UIKit row migration.
+> Active renderer routing is documented in `docs/chat-renderer-active-path-checklist.md`.
+
 **Date:** February 2026
 **Context:** Pi Remote iOS app chat view rendering quality and performance
 

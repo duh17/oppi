@@ -1,5 +1,8 @@
 # Oppi iOS Chat — Full UIKit Migration Spike
 
+> Historical migration spike document.
+> Migration is complete; active state lives in `docs/chat-renderer-active-path-checklist.md`.
+
 Date: 2026-02-10
 Owner: iOS chat durability lane (`TODO-f0126679`)
 

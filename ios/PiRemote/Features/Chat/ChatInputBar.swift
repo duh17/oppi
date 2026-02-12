@@ -3,22 +3,15 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// Chat input bar with text input, image attachments, bash mode, and steer/stop controls.
+/// Chat input bar with iMessage-like layout.
 ///
-/// **Layout**: `[ + button ][ $ indicator (bash) ][ TextField ][ send/stop ]`
+/// **Layout**: `[ + ] [ composer capsule: $, text field, expand, send-or-stop ]`
 ///
-/// The `+` button opens a menu with Photo Library and Camera options.
-/// Selected images appear as a horizontal thumbnail strip above the text field.
-///
-/// **Idle**: Send button routes through `onSend` (prompt).
-/// **Busy**: TextField stays enabled for steering messages. Purple send
-/// button appears when text is entered, routed through `onSend` (caller
-/// decides prompt vs steer). Stop button always visible.
-/// After 5s of stopping, shows Force Stop option.
-///
-/// Bash mode: when input starts with "$ ", the bar shows a green shell
-/// prompt and routes the command through `onBash` instead of `onSend`.
-/// Bash is disabled while busy — agent owns the workspace.
+/// - `+` opens attachments menu (photo library/camera)
+/// - composer stays full-width and grows with multiline input
+/// - send is the primary action when idle
+/// - during active turn: empty input shows stop; typed steering shows send
+/// - expand stays on the trailing side without taking text width
 struct ChatInputBar: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
@@ -42,6 +35,11 @@ struct ChatInputBar: View {
 
     private let inlineMaxLines = 8
     private let expandVisibilityLineThreshold = 5
+    private let attachButtonDiameter: CGFloat = 44
+    private let primaryActionDiameter: CGFloat = 44
+    private let actionVisualDiameter: CGFloat = 32
+    private let expandVisualDiameter: CGFloat = 28
+    private let composerHorizontalPadding: CGFloat = 12
 
     /// Whether the current input is a bash command (starts with "$ ").
     private var isBashMode: Bool {
@@ -73,6 +71,24 @@ struct ChatInputBar: View {
         return .tokyoComment.opacity(0.35)
     }
 
+    private var sendActionFillColor: Color {
+        if isSending {
+            return isBusy ? .tokyoPurple : accentColor
+        }
+        return canSend ? (isBusy ? .tokyoPurple : accentColor) : .tokyoBgHighlight
+    }
+
+    private var sendActionStrokeColor: Color {
+        if isSending {
+            return sendActionFillColor.opacity(0.9)
+        }
+        return canSend ? sendActionFillColor.opacity(0.9) : .tokyoComment.opacity(0.35)
+    }
+
+    private var sendActionForegroundColor: Color {
+        (canSend || isSending) ? .white : .tokyoComment
+    }
+
     private var autocompleteContext: ComposerAutocompleteContext {
         guard !isBusy, !isBashMode else {
             return .none
@@ -92,9 +108,17 @@ struct ChatInputBar: View {
         inlineVisualLineCount >= expandVisibilityLineThreshold
     }
 
-    /// Keep expand centered on the same trailing column as the send button.
-    private var expandButtonTrailingPadding: CGFloat {
-        12 + ((36 - 28) / 2)
+    /// Keep expand icon centered with the primary trailing action button.
+    private var expandTrailingPadding: CGFloat {
+        composerHorizontalPadding + ((primaryActionDiameter - expandVisualDiameter) / 2)
+    }
+
+    private var supplementalLeadingPadding: CGFloat {
+        attachButtonDiameter + 8
+    }
+
+    private var supplementalTrailingPadding: CGFloat {
+        0
     }
 
     /// Text binding for the input field.
@@ -122,92 +146,39 @@ struct ChatInputBar: View {
                 forceStopButton
             }
 
-            VStack(spacing: 0) {
-                // Image thumbnail strip
-                if !pendingImages.isEmpty {
-                    imageStrip
-                }
-
-                if !slashSuggestions.isEmpty {
-                    SlashCommandSuggestionList(suggestions: slashSuggestions, onSelect: insertSlashCommand)
-                        .padding(.horizontal, 12)
-                        .padding(.top, pendingImages.isEmpty ? 10 : 6)
-                        .padding(.bottom, 6)
-                }
-
-                if let sendProgressText {
-                    HStack(spacing: 6) {
-                        if isSending {
-                            ProgressView()
-                                .controlSize(.mini)
-                        } else {
-                            Image(systemName: "checkmark.circle")
-                                .font(.caption2)
-                        }
-                        Text(sendProgressText)
-                            .font(.caption.monospaced())
-                    }
-                    .foregroundStyle(.tokyoComment)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.top, pendingImages.isEmpty ? 10 : 6)
-                    .padding(.bottom, 2)
-                }
-
-                // Input row
-                HStack(alignment: .center, spacing: 8) {
-                    attachButton
-
-                    if isBashMode {
-                        Text("$")
-                            .font(.system(.body, design: .monospaced).bold())
-                            .foregroundStyle(.tokyoGreen)
-                    }
-
-                    ZStack(alignment: .leading) {
-                        // Placeholder
-                        if text.isEmpty {
-                            Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundStyle(.tokyoComment)
-                                .padding(.vertical, 4)
-                                .allowsHitTesting(false)
-                        }
-
-                        PastableTextView(
-                            text: textFieldBinding,
-                            placeholder: "",
-                            font: .monospacedSystemFont(ofSize: 17, weight: .regular),
-                            textColor: UIColor(Color.tokyoFg),
-                            tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
-                            maxLines: inlineMaxLines,
-                            onPasteImages: handlePastedImages,
-                            onOverflowChange: nil,
-                            onLineCountChange: handleInlineLineCountChange,
-                            onFocusChange: nil,
-                            onDictationStateChange: nil,
-                            focusRequestID: 0,
-                            blurRequestID: 0,
-                            accessibilityIdentifier: "chat.input"
-                        )
-                    }
-
-                    actionButtons
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+            if !pendingImages.isEmpty {
+                imageStrip
+                    .padding(.leading, supplementalLeadingPadding)
+                    .padding(.trailing, supplementalTrailingPadding)
             }
-            .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 20))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(borderColor, lineWidth: 1)
-            )
-            .overlay(alignment: .topTrailing) {
-                if showsExpandButton {
-                    expandButton
-                        .padding(.top, 6)
-                        .padding(.trailing, expandButtonTrailingPadding)
+
+            if !slashSuggestions.isEmpty {
+                SlashCommandSuggestionList(suggestions: slashSuggestions, onSelect: insertSlashCommand)
+                    .padding(.leading, supplementalLeadingPadding)
+                    .padding(.trailing, supplementalTrailingPadding)
+            }
+
+            if let sendProgressText {
+                HStack(spacing: 6) {
+                    if isSending {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "checkmark.circle")
+                            .font(.caption2)
+                    }
+                    Text(sendProgressText)
+                        .font(.caption.monospaced())
                 }
+                .foregroundStyle(.tokyoComment)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, supplementalLeadingPadding)
+                .padding(.trailing, supplementalTrailingPadding)
+            }
+
+            HStack(alignment: .center, spacing: 8) {
+                attachButton
+                composerCapsule
             }
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
@@ -236,6 +207,69 @@ struct ChatInputBar: View {
 
     // MARK: - Subviews
 
+    private var composerCapsule: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if isBashMode {
+                Text("$")
+                    .font(.system(.body, design: .monospaced).bold())
+                    .foregroundStyle(.tokyoGreen)
+            }
+
+            ZStack(alignment: .leading) {
+                if text.isEmpty {
+                    Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.tokyoComment)
+                        .padding(.vertical, 4)
+                        .allowsHitTesting(false)
+                }
+
+                PastableTextView(
+                    text: textFieldBinding,
+                    placeholder: "",
+                    font: .monospacedSystemFont(ofSize: 17, weight: .regular),
+                    textColor: UIColor(Color.tokyoFg),
+                    tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
+                    maxLines: inlineMaxLines,
+                    onPasteImages: handlePastedImages,
+                    onOverflowChange: nil,
+                    onLineCountChange: handleInlineLineCountChange,
+                    onFocusChange: nil,
+                    onDictationStateChange: nil,
+                    focusRequestID: 0,
+                    blurRequestID: 0,
+                    dictationRequestID: 0,
+                    accessibilityIdentifier: "chat.input"
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+
+            trailingActions
+        }
+        .padding(.horizontal, composerHorizontalPadding)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .overlay(alignment: .topTrailing) {
+            if showsExpandButton {
+                expandButton
+                    .padding(.top, 4)
+                    .padding(.trailing, expandTrailingPadding)
+            }
+        }
+    }
+
+    private var trailingActions: some View {
+        primaryActionButton
+    }
+
     private var attachButton: some View {
         Menu {
             PhotosPicker(
@@ -252,11 +286,17 @@ struct ChatInputBar: View {
                 Label("Camera", systemImage: "camera")
             }
         } label: {
-            Image(systemName: "plus.circle.fill")
-                .font(.title2)
-                .foregroundStyle(isBashMode ? .tokyoComment : .tokyoBlue)
-                .symbolRenderingMode(.hierarchical)
-                .frame(width: 36, height: 36)
+            ZStack {
+                Circle()
+                    .fill(Color.tokyoBgHighlight)
+                Circle()
+                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(isBashMode ? .tokyoComment : .tokyoFg)
+            }
+            .frame(width: attachButtonDiameter, height: attachButtonDiameter)
         }
         .disabled(isBashMode)
     }
@@ -288,72 +328,79 @@ struct ChatInputBar: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
         }
     }
 
     private var expandButton: some View {
         Button(action: expandComposerManually) {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.tokyoComment)
-                .frame(width: 28, height: 28)
+                .frame(width: expandVisualDiameter, height: expandVisualDiameter)
                 .background(
-                    Circle().fill(Color.tokyoBgDark.opacity(0.9))
+                    Circle().fill(Color.tokyoBgDark.opacity(0.88))
                 )
         }
         .accessibilityIdentifier("chat.expand")
     }
 
     @ViewBuilder
-    private var actionButtons: some View {
+    private var primaryActionButton: some View {
         if isBusy {
-            if isSending {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.tokyoPurple)
-                    .frame(width: 36, height: 36)
-            } else if canSend {
-                Button(action: handleSend) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.tokyoPurple)
-                }
-                .frame(width: 36, height: 36)
-                .accessibilityIdentifier("chat.send")
+            if canSend || isSending {
+                sendActionButton
+            } else {
+                stopActionButton
             }
-
-            Button(action: onStop) {
-                if isStopping {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.tokyoOrange)
-                } else {
-                    Image(systemName: "stop.fill")
-                        .foregroundStyle(.tokyoRed)
-                }
-            }
-            .disabled(isStopping)
-            .frame(width: 36, height: 36)
-            .accessibilityIdentifier("chat.stop")
         } else {
-            Button(action: handleSend) {
+            sendActionButton
+        }
+    }
+
+    private var sendActionButton: some View {
+        Button(action: handleSend) {
+            ZStack {
+                Circle().fill(sendActionFillColor)
+                Circle().stroke(sendActionStrokeColor, lineWidth: 1)
+
                 if isSending {
                     ProgressView()
-                        .controlSize(.small)
-                        .tint(accentColor)
+                        .controlSize(.mini)
+                        .tint(.white)
                 } else {
-                    Image(systemName: isBashMode ? "terminal.fill" : "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(canSend ? accentColor : .tokyoComment)
+                    Image(systemName: isBashMode ? "terminal.fill" : "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(sendActionForegroundColor)
                 }
             }
-            .disabled(!canSend || isSending)
-            .frame(width: 36, height: 36)
-            .accessibilityIdentifier("chat.send")
+            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
+        .disabled(!canSend || isSending)
+        .frame(width: primaryActionDiameter, height: primaryActionDiameter)
+        .accessibilityIdentifier("chat.send")
+    }
+
+    private var stopActionButton: some View {
+        Button(action: onStop) {
+            ZStack {
+                Circle().fill(isStopping ? Color.tokyoOrange : Color.tokyoRed)
+                Circle().stroke((isStopping ? Color.tokyoOrange : Color.tokyoRed).opacity(0.9), lineWidth: 1)
+
+                if isStopping {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.white)
+                } else {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: actionVisualDiameter + 2, height: actionVisualDiameter + 2)
+        }
+        .disabled(isStopping)
+        .frame(width: primaryActionDiameter, height: primaryActionDiameter)
+        .accessibilityIdentifier("chat.stop")
     }
 
     private var forceStopButton: some View {
@@ -397,7 +444,7 @@ struct ChatInputBar: View {
             // Keyboard stays open during send. Stability input traits
             // (autocorrect/candidates disabled) prevent UITextInput from
             // generating layout-interfering updates. Dismissing keyboard
-            // here caused a SafeArea resize → LazyVStack full placement
+            // here caused a SafeArea resize -> LazyVStack full placement
             // cascade (2s+ hang). Let .scrollDismissesKeyboard handle it.
             onSend()
         }
@@ -457,13 +504,13 @@ struct PendingImage: Identifiable, Sendable {
     let attachment: ImageAttachment
 
     /// Create from a UIImage. Resizes large images and compresses to JPEG.
-    static func from(_ image: UIImage) -> PendingImage {
+    static func from(_ image: UIImage) -> Self {
         let resized = downsample(image, maxDimension: 1568)
         let jpegData = resized.jpegData(compressionQuality: 0.85) ?? Data()
         let base64 = jpegData.base64EncodedString()
         let thumb = downsample(image, maxDimension: 112)
 
-        return PendingImage(
+        return Self(
             id: UUID().uuidString,
             thumbnail: thumb,
             attachment: ImageAttachment(data: base64, mimeType: "image/jpeg")

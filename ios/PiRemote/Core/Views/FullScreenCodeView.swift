@@ -1,14 +1,18 @@
 import SwiftUI
+import UIKit
 
-/// Full-screen code viewer — dismissible overlay for code blocks and diffs.
+/// Full-screen content viewer for tool output.
 ///
-/// Removes the inline height cap so the user can scroll through the full file.
-/// Supports two modes:
+/// Removes inline height caps so users can read long files comfortably.
+/// Supports three modes:
 /// - `.code`: syntax-highlighted source with line numbers
 /// - `.diff`: unified diff with add/remove coloring
+/// - `.markdown`: full markdown note/reader rendering
+
 enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
+    case markdown(content: String, filePath: String?)
 }
 
 struct FullScreenCodeView: View {
@@ -17,22 +21,26 @@ struct FullScreenCodeView: View {
 
     var body: some View {
         NavigationStack {
-            codeBody
-                .background(Color.tokyoBgDark)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
-                            .foregroundStyle(.tokyoCyan)
-                    }
-                    ToolbarItem(placement: .principal) {
-                        titleView
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        copyButton
-                    }
+            ZStack(alignment: .topLeading) {
+                Color.tokyoBgDark.ignoresSafeArea()
+                codeBody
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(.tokyoCyan)
                 }
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
+                ToolbarItem(placement: .principal) {
+                    titleView
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    copyButton
+                }
+            }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
         }
     }
 
@@ -65,6 +73,18 @@ struct FullScreenCodeView: View {
                     .font(.caption2)
                     .foregroundStyle(.tokyoComment)
             }
+        case .markdown(_, let filePath):
+            VStack(spacing: 1) {
+                if let path = filePath {
+                    Text(path.shortenedPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tokyoFg)
+                        .lineLimit(1)
+                }
+                Text("Markdown")
+                    .font(.caption2)
+                    .foregroundStyle(.tokyoComment)
+            }
         }
     }
 
@@ -77,6 +97,8 @@ struct FullScreenCodeView: View {
             CopyIconButton(text: text)
         case .diff(_, let newText, _, _):
             CopyIconButton(text: newText)
+        case .markdown(let text, _):
+            CopyIconButton(text: text)
         }
     }
 
@@ -94,7 +116,99 @@ struct FullScreenCodeView: View {
                 filePath: filePath,
                 precomputedLines: precomputedLines
             )
+        case .markdown(let text, _):
+            FullScreenMarkdownBody(content: text)
         }
+    }
+}
+
+// MARK: - Full Screen Markdown Body
+
+private struct FullScreenMarkdownBody: View {
+    let content: String
+
+    var body: some View {
+        NativeMarkdownReaderView(content: content)
+            .background(Color.tokyoBgDark)
+    }
+}
+
+private struct NativeMarkdownReaderView: UIViewRepresentable {
+    let content: String
+
+    func makeUIView(context: Context) -> NativeMarkdownReaderContainerView {
+        let view = NativeMarkdownReaderContainerView()
+        view.apply(content: content)
+        return view
+    }
+
+    func updateUIView(_ uiView: NativeMarkdownReaderContainerView, context: Context) {
+        uiView.apply(content: content)
+    }
+}
+
+private final class NativeMarkdownReaderContainerView: UIView {
+    private let scrollView = UIScrollView()
+    private let markdownView = AssistantMarkdownContentView()
+    private let markdownWidthConstraint: NSLayoutConstraint
+    private var lastContent: String?
+    private var lastThemeID: ThemeID?
+
+    override init(frame: CGRect) {
+        markdownWidthConstraint = markdownView.widthAnchor.constraint(
+            equalTo: scrollView.frameLayoutGuide.widthAnchor,
+            constant: -24
+        )
+
+        super.init(frame: frame)
+
+        backgroundColor = UIColor(Color.tokyoBgDark)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.backgroundColor = UIColor(Color.tokyoBgDark)
+        scrollView.alwaysBounceVertical = true
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.showsVerticalScrollIndicator = true
+
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
+        markdownView.backgroundColor = .clear
+
+        addSubview(scrollView)
+        scrollView.addSubview(markdownView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            markdownView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
+            markdownView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
+            markdownView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
+            markdownView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -10),
+            markdownWidthConstraint,
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func apply(content: String) {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        guard content != lastContent || themeID != lastThemeID else { return }
+
+        lastContent = content
+        lastThemeID = themeID
+        backgroundColor = UIColor(themeID.palette.bgDark)
+        scrollView.backgroundColor = UIColor(themeID.palette.bgDark)
+
+        markdownView.apply(configuration: .init(
+            content: content,
+            isStreaming: false,
+            themeID: themeID
+        ))
     }
 }
 
@@ -108,9 +222,25 @@ private struct FullScreenCodeBody: View {
 
     @State private var highlighted: AttributedString?
 
+    private static let highlightCache = NSCache<NSString, FullScreenHighlightCacheEntry>()
+
     private var syntaxLanguage: SyntaxLanguage {
         guard let lang = language else { return .unknown }
         return SyntaxLanguage.detect(lang)
+    }
+
+    private var highlightCacheKey: NSString {
+        var hasher = Hasher()
+        hasher.combine(language ?? "")
+        hasher.combine(content)
+        return NSString(string: String(hasher.finalize()))
+    }
+
+    private var highlightTaskID: Int {
+        var hasher = Hasher()
+        hasher.combine(language ?? "")
+        hasher.combine(content)
+        return hasher.finalize()
     }
 
     var body: some View {
@@ -150,15 +280,50 @@ private struct FullScreenCodeBody: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task(id: content.count) {
+        .background(Color.tokyoBgDark)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .task(id: highlightTaskID) {
             let lang = syntaxLanguage
-            guard lang != .unknown else { return }
+            guard lang != .unknown else {
+                highlighted = nil
+                return
+            }
+
+            let cacheKey = highlightCacheKey
+            if let cached = Self.highlightCache.object(forKey: cacheKey)?.value {
+                highlighted = cached
+                return
+            }
+
             let text = content
-            highlighted = await Task.detached(priority: .userInitiated) {
+            let highlightedText = await Task.detached(priority: .userInitiated) {
                 SyntaxHighlighter.highlight(text, language: lang)
             }.value
+            guard !Task.isCancelled else { return }
+
+            Self.highlightCache.setObject(
+                FullScreenHighlightCacheEntry(value: highlightedText),
+                forKey: cacheKey
+            )
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                highlighted = highlightedText
+            }
         }
+    }
+}
+
+private final class FullScreenHighlightCacheEntry: NSObject {
+    let value: AttributedString
+
+    init(value: AttributedString) {
+        self.value = value
     }
 }
 
@@ -219,7 +384,10 @@ private struct FullScreenDiffBody: View {
                     }
                 }
             }
+            .background(Color.tokyoBgDark)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.tokyoBgDark)
     }
 
     @ViewBuilder
@@ -351,5 +519,3 @@ private struct CopyIconButton: View {
         }
     }
 }
-
-

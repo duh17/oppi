@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import UIKit
 @testable import PiRemote
 
 @Suite("ChatScrollController")
@@ -105,6 +106,30 @@ struct ChatScrollControllerTests {
     }
 
     @MainActor
+    @Test func detachedStreamingHintVisibilityIsMutable() {
+        let controller = ChatScrollController()
+        #expect(!controller.isDetachedStreamingHintVisible)
+
+        controller.setDetachedStreamingHintVisible(true)
+        #expect(controller.isDetachedStreamingHintVisible)
+
+        controller.setDetachedStreamingHintVisible(false)
+        #expect(!controller.isDetachedStreamingHintVisible)
+    }
+
+    @MainActor
+    @Test func jumpToBottomHintVisibilityIsMutable() {
+        let controller = ChatScrollController()
+        #expect(!controller.isJumpToBottomHintVisible)
+
+        controller.setJumpToBottomHintVisible(true)
+        #expect(controller.isJumpToBottomHintVisible)
+
+        controller.setJumpToBottomHintVisible(false)
+        #expect(!controller.isJumpToBottomHintVisible)
+    }
+
+    @MainActor
     @Test func handleRenderVersionChangeUsesStreamingTarget() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
@@ -153,6 +178,172 @@ struct ChatScrollControllerTests {
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 0)
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeHeavyTimelineKeepsStreamingFollow() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+        controller._diagnosticItemCount = 240
+
+        var targets: [String] = []
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { targetID in
+            targets.append(targetID)
+        }
+
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(targets == ["stream-1"])
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeHeavyTimelineSkipsNonStreamingScroll() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+        controller._diagnosticItemCount = 240
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: nil,
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(callCount == 0)
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeSkipsDuringKeyboardTransition() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        await Task.yield()
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(140))
+        #expect(callCount == 0)
+
+        try? await Task.sleep(for: .milliseconds(520))
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(140))
+        #expect(callCount == 1)
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeRechecksKeyboardBeforeDelayedScroll() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(10))
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        await Task.yield()
+
+        try? await Task.sleep(for: .milliseconds(140))
+        #expect(callCount == 0)
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeSkipsDuringUserInteraction() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+        controller.setUserInteracting(true)
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 0)
+    }
+
+    @MainActor
+    @Test func handleRenderVersionChangeCancelsPendingScrollWhenUserStartsInteracting() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(10))
+        controller.setUserInteracting(true)
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 0)
+
+        controller.setUserInteracting(false)
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 1)
+    }
+
+    @MainActor
+    @Test func detachFromBottomForUserScrollRequiresReentry() async {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(true)
+        controller.detachFromBottomForUserScroll()
+
+        var callCount = 0
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 0)
+
+        controller.updateNearBottom(true)
+        controller.handleRenderVersionChange(
+            streamingID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in
+            callCount += 1
+        }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(callCount == 1)
     }
 
     @MainActor

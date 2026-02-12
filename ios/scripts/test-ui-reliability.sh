@@ -18,10 +18,9 @@ Usage:
 
 Options:
   --skip-generate          Skip `xcodegen generate`
-  --destination <value>    xcodebuild destination string
+  --destination <value>    xcodebuild destination string (simulator only)
   --scheme <name>          Scheme name (default: PiRemoteUIReliability)
   --only-testing <value>   xcodebuild -only-testing value
-  --device <udid>          Run on connected device (sets destination to platform=iOS,id=<udid>)
   -h, --help               Show help
 
 Environment overrides:
@@ -32,7 +31,7 @@ Environment overrides:
 Examples:
   ios/scripts/test-ui-reliability.sh
   ios/scripts/test-ui-reliability.sh --skip-generate
-  ios/scripts/test-ui-reliability.sh --device 00000000-0000-0000-0000-000000000000
+  ios/scripts/test-ui-reliability.sh --destination "platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro"
 EOF
 }
 
@@ -55,8 +54,8 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --device)
-      DESTINATION="platform=iOS,id=$2"
-      shift 2
+      echo "error: --device is not supported; UI hang harness is simulator-only." >&2
+      exit 1
       ;;
     -h|--help)
       usage
@@ -69,6 +68,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$DESTINATION" != *"Simulator"* ]]; then
+  echo "error: UI hang harness is simulator-only. Destination must target iOS Simulator." >&2
+  exit 1
+fi
 
 cd "$IOS_DIR"
 

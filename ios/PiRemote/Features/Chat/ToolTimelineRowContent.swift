@@ -1,19 +1,31 @@
 import SwiftUI
 import UIKit
 
-/// Native UIKit tool row used by timeline migration.
+/// Native UIKit tool row.
 ///
-/// Supports both collapsed and expanded presentation for non-file tools, so
-/// row expansion no longer swaps between native and SwiftUI renderers.
+/// Supports both collapsed and expanded presentation for tool rows, so row
+/// expansion uses the same native renderer in both states.
 struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let title: String
     let preview: String?
     let expandedText: String?
+    let expandedTextUsesMarkdown: Bool
+    let expandedDiffLines: [DiffLine]?
+    let expandedDiffPath: String?
     let expandedCommandText: String?
     let expandedOutputText: String?
+    let expandedOutputLanguage: SyntaxLanguage?
+    /// When set, the expanded text renders as a code viewer with line numbers
+    /// and horizontal scrolling (used for read tool output).
+    let expandedCodeStartLine: Int?
+    let expandedCodeFilePath: String?
+    /// When true, expanded separated output uses terminal-like no-wrap
+    /// rendering with horizontal scrolling.
+    let prefersUnwrappedOutput: Bool
     let showSeparatedCommandAndOutput: Bool
     let copyCommandText: String?
     let copyOutputText: String?
+    let languageBadge: String?
     let trailing: String?
     let titleLineBreakMode: NSLineBreakMode
     let toolNamePrefix: String?
@@ -24,23 +36,136 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let isError: Bool
 
+    init(
+        title: String,
+        preview: String?,
+        expandedText: String?,
+        expandedTextUsesMarkdown: Bool = false,
+        expandedDiffLines: [DiffLine]?,
+        expandedDiffPath: String?,
+        expandedCommandText: String?,
+        expandedOutputText: String?,
+        expandedOutputLanguage: SyntaxLanguage?,
+        expandedCodeStartLine: Int? = nil,
+        expandedCodeFilePath: String? = nil,
+        prefersUnwrappedOutput: Bool = false,
+        showSeparatedCommandAndOutput: Bool,
+        copyCommandText: String?,
+        copyOutputText: String?,
+        languageBadge: String?,
+        trailing: String?,
+        titleLineBreakMode: NSLineBreakMode,
+        toolNamePrefix: String?,
+        toolNameColor: UIColor,
+        editAdded: Int?,
+        editRemoved: Int?,
+        isExpanded: Bool,
+        isDone: Bool,
+        isError: Bool
+    ) {
+        self.title = title
+        self.preview = preview
+        self.expandedText = expandedText
+        self.expandedTextUsesMarkdown = expandedTextUsesMarkdown
+        self.expandedDiffLines = expandedDiffLines
+        self.expandedDiffPath = expandedDiffPath
+        self.expandedCommandText = expandedCommandText
+        self.expandedOutputText = expandedOutputText
+        self.expandedOutputLanguage = expandedOutputLanguage
+        self.expandedCodeStartLine = expandedCodeStartLine
+        self.expandedCodeFilePath = expandedCodeFilePath
+        self.prefersUnwrappedOutput = prefersUnwrappedOutput
+        self.showSeparatedCommandAndOutput = showSeparatedCommandAndOutput
+        self.copyCommandText = copyCommandText
+        self.copyOutputText = copyOutputText
+        self.languageBadge = languageBadge
+        self.trailing = trailing
+        self.titleLineBreakMode = titleLineBreakMode
+        self.toolNamePrefix = toolNamePrefix
+        self.toolNameColor = toolNameColor
+        self.editAdded = editAdded
+        self.editRemoved = editRemoved
+        self.isExpanded = isExpanded
+        self.isDone = isDone
+        self.isError = isError
+    }
+
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
     }
 
-    func updated(for state: any UIConfigurationState) -> ToolTimelineRowConfiguration {
+    func updated(for state: any UIConfigurationState) -> Self {
         self
     }
 }
 
-final class ToolTimelineRowContentView: UIView, UIContentView {
+final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
     private static let maxValidHeight: CGFloat = 10_000
     private static let maxShellHighlightBytes = 64 * 1024
     private static let maxANSIHighlightBytes = 64 * 1024
+    private static let maxSyntaxHighlightBytes = 64 * 1024
+    private static let maxRenderedCommandCharacters = 6_000
+    private static let maxRenderedOutputCharacters = 2_000
+    private static let maxRenderedDiffLines = 400
+    private static let maxRenderedDiffLineCharacters = 800
+    private static let minOutputViewportHeight: CGFloat = 56
+    private static let minDiffViewportHeight: CGFloat = 68
+    private static let maxOutputViewportHeight: CGFloat = 620
+    private static let maxDiffViewportHeight: CGFloat = 760
+    private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
+    private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
+    private static let maxDiffSyntaxHighlightBytes = 48 * 1024
+    private static let autoFollowBottomThreshold: CGFloat = 18
+    private static let genericLanguageBadgeSymbolName = "chevron.left.forwardslash.chevron.right"
+
+    @MainActor
+    private enum ExpandedViewportMode {
+        case none
+        case diff
+        case code
+        case text
+    }
+
+    @MainActor
+    private enum ViewportMode {
+        case output
+        case expandedDiff
+        case expandedCode
+        case expandedText
+
+        var minHeight: CGFloat {
+            switch self {
+            case .output, .expandedText:
+                return ToolTimelineRowContentView.minOutputViewportHeight
+            case .expandedDiff, .expandedCode:
+                return ToolTimelineRowContentView.minDiffViewportHeight
+            }
+        }
+
+        var maxHeight: CGFloat {
+            switch self {
+            case .output, .expandedText:
+                return ToolTimelineRowContentView.maxOutputViewportHeight
+            case .expandedDiff, .expandedCode:
+                return ToolTimelineRowContentView.maxDiffViewportHeight
+            }
+        }
+
+        var closeSafeAreaReserve: CGFloat {
+            switch self {
+            case .output, .expandedText:
+                return ToolTimelineRowContentView.outputViewportCloseSafeAreaReserve
+            case .expandedDiff, .expandedCode:
+                return ToolTimelineRowContentView.diffViewportCloseSafeAreaReserve
+            }
+        }
+    }
 
     private let statusImageView = UIImageView()
+    private let toolImageView = UIImageView()
     private let titleLabel = UILabel()
     private let trailingStack = UIStackView()
+    private let languageBadgeIconView = UIImageView()
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
     private let trailingLabel = UILabel()
@@ -49,13 +174,35 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     private let commandContainer = UIView()
     private let commandLabel = UILabel()
     private let outputContainer = UIView()
+    private let outputScrollView = UIScrollView()
     private let outputLabel = UILabel()
     private let expandedContainer = UIView()
+    private let expandedScrollView = UIScrollView()
     private let expandedLabel = UILabel()
+    private let expandedMarkdownView = AssistantMarkdownContentView()
     private let borderView = UIView()
 
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
+    private var outputViewportHeightConstraint: NSLayoutConstraint?
+    private var outputLabelWidthConstraint: NSLayoutConstraint?
+    private var expandedViewportHeightConstraint: NSLayoutConstraint?
+    private var expandedLabelWidthConstraint: NSLayoutConstraint?
+    private var expandedMarkdownWidthConstraint: NSLayoutConstraint?
+    private var toolLeadingConstraint: NSLayoutConstraint?
+    private var toolWidthConstraint: NSLayoutConstraint?
+    private var titleLeadingToStatusConstraint: NSLayoutConstraint?
+    private var titleLeadingToToolConstraint: NSLayoutConstraint?
+    private var outputShouldAutoFollow = true
+    private var expandedShouldAutoFollow = true
+    private var outputUsesViewport = false
+    private var outputUsesUnwrappedLayout = false
+    private var outputRenderedText: String?
+    private var expandedUsesViewport = false
+    private var expandedUsesMarkdownLayout = false
+    private var expandedViewportMode: ExpandedViewportMode = .none
+    private var expandedRenderedText: String?
+    private var expandedPinchDidTriggerFullScreen = false
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCommandDoubleTap))
@@ -75,6 +222,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleExpandedDoubleTap))
         recognizer.numberOfTapsRequired = 2
         recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+
+    private lazy var expandedPinchGesture: UIPinchGestureRecognizer = {
+        let recognizer = UIPinchGestureRecognizer(target: self, action: #selector(handleExpandedPinch(_:)))
+        recognizer.cancelsTouchesInView = false
         return recognizer
     }()
 
@@ -135,6 +288,166 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         return Self.sanitizedFittingSize(fitted, fallbackWidth: targetSize.width)
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateOutputLabelWidthIfNeeded()
+        updateExpandedLabelWidthIfNeeded()
+        updateExpandedMarkdownWidthIfNeeded()
+        updateViewportHeightsIfNeeded()
+    }
+
+    private func updateViewportHeightsIfNeeded() {
+        if outputUsesViewport,
+           let outputViewportHeightConstraint {
+            outputViewportHeightConstraint.constant = preferredViewportHeight(
+                for: outputLabel,
+                in: outputContainer,
+                mode: .output
+            )
+        }
+
+        if expandedUsesViewport,
+           let expandedViewportHeightConstraint {
+            let mode: ViewportMode
+            switch expandedViewportMode {
+            case .diff:
+                mode = .expandedDiff
+            case .code:
+                mode = .expandedCode
+            case .text, .none:
+                mode = .expandedText
+            }
+
+            let expandedContentView: UIView = expandedUsesMarkdownLayout
+                ? expandedMarkdownView
+                : expandedLabel
+
+            expandedViewportHeightConstraint.constant = preferredViewportHeight(
+                for: expandedContentView,
+                in: expandedContainer,
+                mode: mode
+            )
+        }
+    }
+
+    private func updateOutputLabelWidthIfNeeded() {
+        guard let outputLabelWidthConstraint else { return }
+
+        if outputUsesUnwrappedLayout,
+           let outputRenderedText {
+            outputLabelWidthConstraint.constant = outputLabelWidthConstant(for: outputRenderedText)
+        } else {
+            outputLabelWidthConstraint.constant = -12
+        }
+    }
+
+    private func outputLabelWidthConstant(for renderedText: String) -> CGFloat {
+        let frameWidth = max(1, outputScrollView.bounds.width)
+        let minimumContentWidth = max(1, frameWidth - 12)
+        let estimatedContentWidth = Self.estimatedMonospaceLineWidth(renderedText)
+        let contentWidth = max(minimumContentWidth, estimatedContentWidth)
+        return contentWidth - frameWidth
+    }
+
+    private func updateExpandedLabelWidthIfNeeded() {
+        guard let expandedLabelWidthConstraint else { return }
+
+        switch expandedViewportMode {
+        case .diff, .code:
+            guard let expandedRenderedText else { return }
+            expandedLabelWidthConstraint.constant = expandedLabelWidthConstant(for: expandedRenderedText)
+
+        case .text, .none:
+            expandedLabelWidthConstraint.constant = -12
+        }
+    }
+
+    private func expandedLabelWidthConstant(for renderedText: String) -> CGFloat {
+        let frameWidth = max(1, expandedScrollView.bounds.width)
+        let minimumContentWidth = max(1, frameWidth - 12)
+        let estimatedContentWidth = Self.estimatedMonospaceLineWidth(renderedText)
+        let contentWidth = max(minimumContentWidth, estimatedContentWidth)
+        return contentWidth - frameWidth
+    }
+
+    private func updateExpandedMarkdownWidthIfNeeded() {
+        guard let expandedMarkdownWidthConstraint else { return }
+        expandedMarkdownWidthConstraint.constant = -12
+    }
+
+    private static func estimatedMonospaceLineWidth(_ text: String) -> CGFloat {
+        guard !text.isEmpty else { return 1 }
+
+        let maxLineLength = text.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ).reduce(0) { max($0, $1.count) }
+
+        guard maxLineLength > 0 else { return 1 }
+
+        let font = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
+        return ceil(charWidth * CGFloat(maxLineLength)) + 12
+    }
+
+    private func preferredViewportHeight(
+        for contentView: UIView,
+        in container: UIView,
+        mode: ViewportMode
+    ) -> CGFloat {
+        // Use the best width available: container > cell > window > 375.
+        // Before the first layout pass bounds can be zero, which causes
+        // text measurement at width 1px and wildly inflated heights.
+        let cellWidth = bounds.width > 10
+            ? bounds.width
+            : (window?.bounds.width ?? 375)
+        let fallbackContainerWidth = max(100, cellWidth - 16)
+        let measuredContainerWidth = container.bounds.width > 10 ? container.bounds.width : fallbackContainerWidth
+
+        // For diff/horizontal-scroll modes, measure at the label's actual
+        // width (lines don't wrap). Using the container width would cause
+        // text wrapping in the measurement, producing a height much taller
+        // than the real rendered content.
+        let width: CGFloat
+        if mode == .expandedDiff || mode == .expandedCode,
+           let widthConstraint = expandedLabelWidthConstraint,
+           widthConstraint.constant > 1 {
+            let frameWidth = expandedScrollView.bounds.width > 10
+                ? expandedScrollView.bounds.width
+                : measuredContainerWidth
+            // Width constraint is relative to frameLayoutGuide width.
+            width = max(1, frameWidth + widthConstraint.constant)
+        } else if mode == .output,
+                  outputUsesUnwrappedLayout,
+                  let widthConstraint = outputLabelWidthConstraint,
+                  widthConstraint.constant > 1 {
+            let frameWidth = outputScrollView.bounds.width > 10
+                ? outputScrollView.bounds.width
+                : measuredContainerWidth
+            width = max(1, frameWidth + widthConstraint.constant)
+        } else {
+            width = max(1, measuredContainerWidth - 12)
+        }
+        let contentSize = contentView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingExpandedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+
+        let contentHeight = ceil(contentSize.height + 10)
+        let windowHeight = window?.bounds.height
+            ?? superview?.bounds.height
+            ?? max(bounds.height, 600)
+        let safeInsets = window?.safeAreaInsets ?? .zero
+        let availableHeight = max(
+            mode.minHeight,
+            windowHeight - safeInsets.top - safeInsets.bottom - mode.closeSafeAreaReserve
+        )
+        let maxAllowed = min(mode.maxHeight, availableHeight)
+
+        return min(maxAllowed, max(mode.minHeight, contentHeight))
+    }
+
     private static func sanitizedFittingSize(_ size: CGSize, fallbackWidth: CGFloat) -> CGSize {
         let width = size.width.isFinite && size.width > 0 ? size.width : max(1, fallbackWidth)
 
@@ -149,6 +462,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         return CGSize(width: width, height: height)
     }
 
+    private static func truncatedDisplayText(_ text: String, maxCharacters: Int, note: String) -> String {
+        guard text.count > maxCharacters else { return text }
+        return String(text.prefix(maxCharacters)) + note
+    }
+
+    private static func displayCommandText(_ text: String) -> String {
+        truncatedDisplayText(
+            text,
+            maxCharacters: maxRenderedCommandCharacters,
+            note: "\n… command truncated for display"
+        )
+    }
+
+    private static func displayOutputText(_ text: String) -> String {
+        truncatedDisplayText(
+            text,
+            maxCharacters: maxRenderedOutputCharacters,
+            note: "\n… output truncated for display. Use Copy Output for full content."
+        )
+    }
+
     private func setupViews() {
         backgroundColor = .clear
 
@@ -161,30 +495,49 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         statusImageView.translatesAutoresizingMaskIntoConstraints = false
         statusImageView.contentMode = .scaleAspectFit
 
+        toolImageView.translatesAutoresizingMaskIntoConstraints = false
+        toolImageView.contentMode = .scaleAspectFit
+        toolImageView.tintColor = UIColor(Color.tokyoCyan)
+        toolImageView.isHidden = true
+
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = UIColor(Color.tokyoFg)
         titleLabel.numberOfLines = 3
         titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         trailingStack.translatesAutoresizingMaskIntoConstraints = false
         trailingStack.axis = .horizontal
-        trailingStack.alignment = .firstBaseline
+        trailingStack.alignment = .center
         trailingStack.spacing = 4
-        trailingStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        trailingStack.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        trailingStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailingStack.setContentHuggingPriority(.required, for: .horizontal)
+
+        languageBadgeIconView.translatesAutoresizingMaskIntoConstraints = false
+        languageBadgeIconView.contentMode = .scaleAspectFit
+        languageBadgeIconView.tintColor = UIColor(Color.tokyoBlue)
+        languageBadgeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        languageBadgeIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
 
         addedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
         addedLabel.textColor = UIColor(Color.tokyoGreen)
+        addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         removedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
         removedLabel.textColor = UIColor(Color.tokyoRed)
+        removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        removedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         trailingLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         trailingLabel.textColor = UIColor(Color.tokyoComment)
         trailingLabel.numberOfLines = 1
         trailingLabel.lineBreakMode = .byTruncatingTail
+        trailingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         previewLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         previewLabel.textColor = UIColor(Color.tokyoFgDim)
@@ -202,9 +555,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         commandLabel.textColor = UIColor(Color.tokyoFg)
 
         outputContainer.layer.cornerRadius = 6
+        outputContainer.layer.masksToBounds = true
         outputContainer.backgroundColor = UIColor(Color.tokyoBgDark)
         outputContainer.layer.borderWidth = 1
         outputContainer.layer.borderColor = UIColor(Color.tokyoComment.opacity(0.2)).cgColor
+
+        outputScrollView.translatesAutoresizingMaskIntoConstraints = false
+        outputScrollView.alwaysBounceVertical = true
+        outputScrollView.alwaysBounceHorizontal = false
+        outputScrollView.showsVerticalScrollIndicator = true
+        outputScrollView.showsHorizontalScrollIndicator = false
+        outputScrollView.delegate = self
 
         outputLabel.translatesAutoresizingMaskIntoConstraints = false
         outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -213,12 +574,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         outputLabel.textColor = UIColor(Color.tokyoFg)
 
         expandedContainer.layer.cornerRadius = 6
+        expandedContainer.layer.masksToBounds = true
         expandedContainer.backgroundColor = UIColor(Color.tokyoBgDark.opacity(0.9))
+
+        expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
+        expandedScrollView.alwaysBounceVertical = true
+        expandedScrollView.alwaysBounceHorizontal = false
+        expandedScrollView.showsVerticalScrollIndicator = true
+        expandedScrollView.showsHorizontalScrollIndicator = false
+        expandedScrollView.delegate = self
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
         expandedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         expandedLabel.numberOfLines = 0
         expandedLabel.lineBreakMode = .byCharWrapping
+
+        expandedMarkdownView.translatesAutoresizingMaskIntoConstraints = false
+        expandedMarkdownView.backgroundColor = .clear
+        expandedMarkdownView.isHidden = true
 
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
@@ -226,17 +599,29 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         bodyStack.spacing = 4
         bodyStackCollapsedHeightConstraint = bodyStack.heightAnchor.constraint(equalToConstant: 0)
 
+        trailingStack.addArrangedSubview(languageBadgeIconView)
         trailingStack.addArrangedSubview(addedLabel)
         trailingStack.addArrangedSubview(removedLabel)
         trailingStack.addArrangedSubview(trailingLabel)
 
+        NSLayoutConstraint.activate([
+            languageBadgeIconView.widthAnchor.constraint(equalToConstant: 10),
+            languageBadgeIconView.heightAnchor.constraint(equalToConstant: 10),
+        ])
+
         commandContainer.addSubview(commandLabel)
-        outputContainer.addSubview(outputLabel)
-        expandedContainer.addSubview(expandedLabel)
+        outputContainer.addSubview(outputScrollView)
+        outputScrollView.addSubview(outputLabel)
+        expandedContainer.addSubview(expandedScrollView)
+        expandedScrollView.addSubview(expandedLabel)
+        expandedScrollView.addSubview(expandedMarkdownView)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(commandContainer)
         bodyStack.addArrangedSubview(outputContainer)
         bodyStack.addArrangedSubview(expandedContainer)
+
+        outputViewportHeightConstraint = outputContainer.heightAnchor.constraint(equalToConstant: Self.minOutputViewportHeight)
+        expandedViewportHeightConstraint = expandedContainer.heightAnchor.constraint(equalToConstant: Self.minDiffViewportHeight)
 
         commandContainer.isUserInteractionEnabled = true
         outputContainer.isUserInteractionEnabled = true
@@ -245,6 +630,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         commandContainer.addGestureRecognizer(commandDoubleTapGesture)
         outputContainer.addGestureRecognizer(outputDoubleTapGesture)
         expandedContainer.addGestureRecognizer(expandedDoubleTapGesture)
+        expandedContainer.addGestureRecognizer(expandedPinchGesture)
 
         commandContainer.addGestureRecognizer(commandSingleTapBlocker)
         outputContainer.addGestureRecognizer(outputSingleTapBlocker)
@@ -255,9 +641,37 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         expandedContainer.addInteraction(UIContextMenuInteraction(delegate: self))
 
         borderView.addSubview(statusImageView)
+        borderView.addSubview(toolImageView)
         borderView.addSubview(titleLabel)
         borderView.addSubview(trailingStack)
         borderView.addSubview(bodyStack)
+
+        toolLeadingConstraint = toolImageView.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 0)
+        toolWidthConstraint = toolImageView.widthAnchor.constraint(equalToConstant: 0)
+        titleLeadingToStatusConstraint = titleLabel.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 5)
+        titleLeadingToToolConstraint = titleLabel.leadingAnchor.constraint(equalTo: toolImageView.trailingAnchor, constant: 5)
+        outputLabelWidthConstraint = outputLabel.widthAnchor.constraint(
+            equalTo: outputScrollView.frameLayoutGuide.widthAnchor,
+            constant: -12
+        )
+        expandedLabelWidthConstraint = expandedLabel.widthAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
+            constant: -12
+        )
+        expandedMarkdownWidthConstraint = expandedMarkdownView.widthAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
+            constant: -12
+        )
+
+        guard let toolLeadingConstraint,
+              let toolWidthConstraint,
+              let titleLeadingToStatusConstraint,
+              let outputLabelWidthConstraint,
+              let expandedLabelWidthConstraint,
+              let expandedMarkdownWidthConstraint else {
+            assertionFailure("Expected tool-row constraints to be initialized")
+            return
+        }
 
         NSLayoutConstraint.activate([
             borderView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -266,15 +680,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             borderView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             statusImageView.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
-            statusImageView.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 7),
+            statusImageView.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
             statusImageView.widthAnchor.constraint(equalToConstant: 14),
             statusImageView.heightAnchor.constraint(equalToConstant: 14),
 
-            titleLabel.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 5),
+            toolLeadingConstraint,
+            toolImageView.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
+            toolWidthConstraint,
+            toolImageView.heightAnchor.constraint(equalToConstant: 12),
+
+            titleLeadingToStatusConstraint,
             titleLabel.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
 
             trailingStack.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            trailingStack.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            trailingStack.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
             trailingStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
 
             bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
@@ -287,19 +706,39 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             commandLabel.topAnchor.constraint(equalTo: commandContainer.topAnchor, constant: 5),
             commandLabel.bottomAnchor.constraint(equalTo: commandContainer.bottomAnchor, constant: -5),
 
-            outputLabel.leadingAnchor.constraint(equalTo: outputContainer.leadingAnchor, constant: 6),
-            outputLabel.trailingAnchor.constraint(equalTo: outputContainer.trailingAnchor, constant: -6),
-            outputLabel.topAnchor.constraint(equalTo: outputContainer.topAnchor, constant: 5),
-            outputLabel.bottomAnchor.constraint(equalTo: outputContainer.bottomAnchor, constant: -5),
+            outputScrollView.leadingAnchor.constraint(equalTo: outputContainer.leadingAnchor),
+            outputScrollView.trailingAnchor.constraint(equalTo: outputContainer.trailingAnchor),
+            outputScrollView.topAnchor.constraint(equalTo: outputContainer.topAnchor),
+            outputScrollView.bottomAnchor.constraint(equalTo: outputContainer.bottomAnchor),
 
-            expandedLabel.leadingAnchor.constraint(equalTo: expandedContainer.leadingAnchor, constant: 6),
-            expandedLabel.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -6),
-            expandedLabel.topAnchor.constraint(equalTo: expandedContainer.topAnchor, constant: 5),
-            expandedLabel.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -5),
+            outputLabel.leadingAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
+            outputLabel.trailingAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
+            outputLabel.topAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.topAnchor, constant: 5),
+            outputLabel.bottomAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
+            outputLabelWidthConstraint,
+
+            expandedScrollView.leadingAnchor.constraint(equalTo: expandedContainer.leadingAnchor),
+            expandedScrollView.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor),
+            expandedScrollView.topAnchor.constraint(equalTo: expandedContainer.topAnchor),
+            expandedScrollView.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor),
+
+            expandedLabel.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
+            expandedLabel.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
+            expandedLabel.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
+            expandedLabel.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
+            expandedLabelWidthConstraint,
+
+            expandedMarkdownView.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
+            expandedMarkdownView.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
+            expandedMarkdownView.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
+            expandedMarkdownView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
+            expandedMarkdownWidthConstraint,
         ])
     }
 
     private func apply(configuration: ToolTimelineRowConfiguration) {
+        let previousConfiguration = currentConfiguration
+        let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
 
         titleLabel.attributedText = Self.styledTitle(
@@ -307,8 +746,26 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             toolNamePrefix: configuration.toolNamePrefix,
             toolNameColor: configuration.toolNameColor
         )
+        applyToolIcon(
+            toolNamePrefix: configuration.toolNamePrefix,
+            toolNameColor: configuration.toolNameColor
+        )
         titleLabel.lineBreakMode = configuration.titleLineBreakMode
-        titleLabel.numberOfLines = configuration.titleLineBreakMode == .byTruncatingMiddle ? 1 : 3
+        if configuration.isExpanded {
+            titleLabel.numberOfLines = configuration.titleLineBreakMode == .byTruncatingMiddle ? 1 : 3
+        } else {
+            titleLabel.numberOfLines = 1
+        }
+
+        let badge = configuration.languageBadge?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let badgeSymbolName = Self.languageBadgeSymbolName(for: badge),
+           let badgeImage = UIImage(systemName: badgeSymbolName) {
+            languageBadgeIconView.image = badgeImage
+            languageBadgeIconView.isHidden = false
+        } else {
+            languageBadgeIconView.image = nil
+            languageBadgeIconView.isHidden = true
+        }
 
         if let added = configuration.editAdded, let removed = configuration.editRemoved {
             addedLabel.text = added > 0 ? "+\(added)" : nil
@@ -333,7 +790,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             trailingLabel.isHidden = configuration.trailing == nil
         }
 
-        trailingStack.isHidden = addedLabel.isHidden && removedLabel.isHidden && trailingLabel.isHidden
+        trailingStack.isHidden = languageBadgeIconView.isHidden
+            && addedLabel.isHidden
+            && removedLabel.isHidden
+            && trailingLabel.isHidden
 
         let preview = configuration.preview?.trimmingCharacters(in: .whitespacesAndNewlines)
         let showPreview = !configuration.isExpanded && !(preview?.isEmpty ?? true)
@@ -341,36 +801,197 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         previewLabel.isHidden = !showPreview
 
         let expandedText = configuration.expandedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let diffLines = configuration.expandedDiffLines
+        let showDiff = configuration.isExpanded && diffLines != nil
         let showLegacyExpanded = configuration.isExpanded
             && !configuration.showSeparatedCommandAndOutput
+            && !showDiff
             && !(expandedText?.isEmpty ?? true)
         let outputColor = configuration.isError ? UIColor(Color.tokyoRed) : UIColor(Color.tokyoFg)
-        if let expandedText, showLegacyExpanded {
-            let presentation = Self.makeANSIOutputPresentation(
-                expandedText,
-                isError: configuration.isError
+        let wasLegacyExpandedVisible = !expandedContainer.isHidden
+        if showDiff, let diffLines {
+            let diffText = Self.makeDiffAttributedText(
+                lines: diffLines,
+                filePath: configuration.expandedDiffPath
             )
-            expandedLabel.attributedText = presentation.attributedText
-            expandedLabel.text = presentation.plainText
-            expandedLabel.textColor = outputColor
+            let previousRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+            let textChanged = previousRendered != diffText.string
+
+            expandedMarkdownView.isHidden = true
+            expandedLabel.isHidden = false
+            expandedUsesMarkdownLayout = false
+
+            expandedLabel.text = nil
+            expandedLabel.attributedText = diffText
+            expandedLabel.lineBreakMode = .byClipping
+            expandedScrollView.alwaysBounceHorizontal = true
+            expandedScrollView.showsHorizontalScrollIndicator = true
+            expandedViewportMode = .diff
+            expandedRenderedText = diffText.string
+            updateExpandedLabelWidthIfNeeded()
+
+            expandedViewportHeightConstraint?.isActive = true
+            expandedContainer.isHidden = false
+            expandedUsesViewport = true
+            expandedShouldAutoFollow = false
+            if textChanged {
+                resetScrollPosition(expandedScrollView)
+            }
+        } else if let expandedText, showLegacyExpanded {
+            let displayExpandedText = Self.displayOutputText(expandedText)
+            let previousRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+
+            if let codeStartLine = configuration.expandedCodeStartLine {
+                let codeText = Self.makeCodeAttributedText(
+                    text: displayExpandedText,
+                    language: configuration.expandedOutputLanguage,
+                    startLine: codeStartLine
+                )
+                let textChanged = previousRendered != codeText.string
+
+                expandedMarkdownView.isHidden = true
+                expandedLabel.isHidden = false
+                expandedUsesMarkdownLayout = false
+
+                expandedLabel.text = nil
+                expandedLabel.attributedText = codeText
+                expandedLabel.lineBreakMode = .byClipping
+                expandedScrollView.alwaysBounceHorizontal = true
+                expandedScrollView.showsHorizontalScrollIndicator = true
+                expandedViewportMode = .code
+                expandedRenderedText = codeText.string
+                updateExpandedLabelWidthIfNeeded()
+
+                expandedViewportHeightConstraint?.isActive = true
+                expandedContainer.isHidden = false
+                expandedUsesViewport = true
+                expandedShouldAutoFollow = false
+                if textChanged {
+                    resetScrollPosition(expandedScrollView)
+                }
+            } else if configuration.expandedTextUsesMarkdown,
+                      !configuration.isError {
+                // Preserve markdown source verbatim so tables/headings/fences
+                // render correctly. Generic output truncation can cut through
+                // markdown structure and degrade rendering quality.
+                let markdownExpandedText = expandedText
+                let previousMarkdownRendered = expandedRenderedText ?? previousRendered
+                let textChanged = previousMarkdownRendered != markdownExpandedText
+
+                expandedLabel.attributedText = nil
+                expandedLabel.text = nil
+                expandedLabel.isHidden = true
+                expandedMarkdownView.isHidden = false
+                expandedUsesMarkdownLayout = true
+                expandedRenderedText = markdownExpandedText
+                updateExpandedLabelWidthIfNeeded()
+
+                expandedMarkdownView.apply(configuration: .init(
+                    content: markdownExpandedText,
+                    isStreaming: false,
+                    themeID: ThemeRuntimeState.currentThemeID()
+                ))
+
+                expandedScrollView.alwaysBounceHorizontal = false
+                expandedScrollView.showsHorizontalScrollIndicator = false
+                expandedViewportMode = .text
+
+                expandedViewportHeightConstraint?.isActive = true
+                expandedContainer.isHidden = false
+                expandedUsesViewport = true
+                if !wasLegacyExpandedVisible {
+                    expandedShouldAutoFollow = true
+                }
+                if textChanged {
+                    scheduleExpandedAutoScrollToBottomIfNeeded()
+                }
+            } else {
+                let presentation: ANSIOutputPresentation
+                if let language = configuration.expandedOutputLanguage,
+                   !configuration.isError {
+                    presentation = Self.makeSyntaxOutputPresentation(
+                        displayExpandedText,
+                        language: language
+                    )
+                } else {
+                    presentation = Self.makeANSIOutputPresentation(
+                        displayExpandedText,
+                        isError: configuration.isError
+                    )
+                }
+
+                let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
+                let textChanged = previousRendered != nextRendered
+
+                expandedMarkdownView.isHidden = true
+                expandedLabel.isHidden = false
+                expandedUsesMarkdownLayout = false
+
+                Self.applyANSIOutputPresentation(
+                    presentation,
+                    to: expandedLabel,
+                    plainTextColor: outputColor
+                )
+                expandedLabel.lineBreakMode = .byCharWrapping
+                expandedScrollView.alwaysBounceHorizontal = false
+                expandedScrollView.showsHorizontalScrollIndicator = false
+                expandedViewportMode = .text
+                expandedRenderedText = nil
+                updateExpandedLabelWidthIfNeeded()
+
+                expandedViewportHeightConstraint?.isActive = true
+                expandedContainer.isHidden = false
+                expandedUsesViewport = true
+                if !wasLegacyExpandedVisible {
+                    expandedShouldAutoFollow = true
+                }
+                if textChanged {
+                    scheduleExpandedAutoScrollToBottomIfNeeded()
+                }
+            }
         } else {
             expandedLabel.attributedText = nil
             expandedLabel.text = nil
             expandedLabel.textColor = outputColor
+            expandedLabel.lineBreakMode = .byCharWrapping
+            expandedLabel.isHidden = false
+            expandedMarkdownView.isHidden = true
+            expandedUsesMarkdownLayout = false
+            expandedScrollView.alwaysBounceHorizontal = false
+            expandedScrollView.showsHorizontalScrollIndicator = false
+            expandedViewportMode = .none
+            expandedRenderedText = nil
+            updateExpandedLabelWidthIfNeeded()
+            expandedViewportHeightConstraint?.isActive = false
+            expandedContainer.isHidden = true
+            expandedUsesViewport = false
+            expandedShouldAutoFollow = true
+            resetScrollPosition(expandedScrollView)
         }
-        expandedContainer.isHidden = !showLegacyExpanded
+
+        if !expandedContainer.isHidden {
+            animateInPlaceReveal(
+                expandedContainer,
+                shouldAnimate: isExpandingTransition && !wasLegacyExpandedVisible
+            )
+        } else {
+            resetRevealAppearance(expandedContainer)
+        }
 
         let commandText = configuration.expandedCommandText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let showCommand = configuration.isExpanded
             && configuration.showSeparatedCommandAndOutput
             && !(commandText?.isEmpty ?? true)
+        let wasCommandVisible = !commandContainer.isHidden
         if let commandText, showCommand {
-            if commandText.utf8.count <= Self.maxShellHighlightBytes {
-                commandLabel.attributedText = ToolTimelineRowContentView.shellHighlighted(commandText)
-                commandLabel.textColor = UIColor(Color.tokyoFg)
+            let displayCommandText = Self.displayCommandText(commandText)
+            if displayCommandText.utf8.count <= Self.maxShellHighlightBytes {
+                commandLabel.attributedText = Self.shellHighlighted(displayCommandText)
+                // NB: Do NOT set commandLabel.textColor here — UILabel overrides
+                // ALL per-character foreground colors in the attributed string.
             } else {
                 commandLabel.attributedText = nil
-                commandLabel.text = commandText
+                commandLabel.text = displayCommandText
                 commandLabel.textColor = UIColor(Color.tokyoFg)
             }
         } else {
@@ -379,29 +1000,91 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
             commandLabel.textColor = UIColor(Color.tokyoFg)
         }
         commandContainer.isHidden = !showCommand
+        if showCommand {
+            animateInPlaceReveal(
+                commandContainer,
+                shouldAnimate: isExpandingTransition && !wasCommandVisible
+            )
+        } else {
+            resetRevealAppearance(commandContainer)
+        }
 
         let outputText = configuration.expandedOutputText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let showOutput = configuration.isExpanded
             && configuration.showSeparatedCommandAndOutput
             && !(outputText?.isEmpty ?? true)
+        let wasOutputVisible = !outputContainer.isHidden
         if let outputText, showOutput {
+            let displayOutputText = Self.displayOutputText(outputText)
             let presentation = Self.makeANSIOutputPresentation(
-                outputText,
+                displayOutputText,
                 isError: configuration.isError
             )
-            outputLabel.attributedText = presentation.attributedText
-            outputLabel.text = presentation.plainText
-            outputLabel.textColor = outputColor
+            let previousRendered = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
+            let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
+            let textChanged = previousRendered != nextRendered
+
+            Self.applyANSIOutputPresentation(
+                presentation,
+                to: outputLabel,
+                plainTextColor: outputColor
+            )
+
+            if configuration.prefersUnwrappedOutput {
+                outputLabel.lineBreakMode = .byClipping
+                outputScrollView.alwaysBounceHorizontal = true
+                outputScrollView.showsHorizontalScrollIndicator = true
+                outputUsesUnwrappedLayout = true
+                outputRenderedText = nextRendered
+                updateOutputLabelWidthIfNeeded()
+            } else {
+                outputLabel.lineBreakMode = .byCharWrapping
+                outputScrollView.alwaysBounceHorizontal = false
+                outputScrollView.showsHorizontalScrollIndicator = false
+                outputUsesUnwrappedLayout = false
+                outputRenderedText = nil
+                updateOutputLabelWidthIfNeeded()
+            }
+
+            outputViewportHeightConstraint?.isActive = true
+            outputContainer.isHidden = false
+            outputUsesViewport = true
+            if !wasOutputVisible {
+                outputShouldAutoFollow = true
+            }
+            if textChanged {
+                scheduleOutputAutoScrollToBottomIfNeeded()
+            }
         } else {
             outputLabel.attributedText = nil
             outputLabel.text = nil
             outputLabel.textColor = outputColor
+            outputLabel.lineBreakMode = .byCharWrapping
+            outputScrollView.alwaysBounceHorizontal = false
+            outputScrollView.showsHorizontalScrollIndicator = false
+            outputUsesUnwrappedLayout = false
+            outputRenderedText = nil
+            updateOutputLabelWidthIfNeeded()
+            outputViewportHeightConstraint?.isActive = false
+            outputContainer.isHidden = true
+            outputUsesViewport = false
+            outputShouldAutoFollow = true
+            resetScrollPosition(outputScrollView)
         }
-        outputContainer.isHidden = !showOutput
 
-        let showBody = showPreview || showLegacyExpanded || showCommand || showOutput
+        if showOutput {
+            animateInPlaceReveal(
+                outputContainer,
+                shouldAnimate: isExpandingTransition && !wasOutputVisible
+            )
+        } else {
+            resetRevealAppearance(outputContainer)
+        }
+
+        let showBody = showPreview || showDiff || showLegacyExpanded || showCommand || showOutput
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
+        updateViewportHeightsIfNeeded()
 
         let symbolName: String
         let statusColor: UIColor
@@ -431,6 +1114,32 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    private func animateInPlaceReveal(_ view: UIView, shouldAnimate: Bool) {
+        guard shouldAnimate else {
+            resetRevealAppearance(view)
+            return
+        }
+
+        view.layer.removeAnimation(forKey: "tool.reveal")
+        // Keep reveal almost imperceptible: tiny in-place opacity settle only.
+        view.alpha = 0.97
+
+        UIView.animate(
+            withDuration: ToolRowExpansionAnimation.contentRevealDuration,
+            delay: ToolRowExpansionAnimation.contentRevealDelay,
+            options: [.allowUserInteraction, .curveLinear, .beginFromCurrentState]
+        ) {
+            // Pure in-place fade (no transform/translation), so panels feel
+            // like they open within the row rather than slide in.
+            view.alpha = 1
+        }
+    }
+
+    private func resetRevealAppearance(_ view: UIView) {
+        view.layer.removeAnimation(forKey: "tool.reveal")
+        view.alpha = 1
+    }
+
     @objc private func ignoreTap() {
         // Intentionally empty: consumes single taps inside copy-target areas so
         // collection-view row selection does not interfere with copy gestures.
@@ -447,8 +1156,37 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
     }
 
     @objc private func handleExpandedDoubleTap() {
+        if canShowFullScreenContent {
+            showFullScreenContent()
+            return
+        }
+
         guard let text = outputCopyText else { return }
         copy(text: text, feedbackView: expandedContainer)
+    }
+
+    @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
+        guard canShowFullScreenContent else { return }
+
+        switch recognizer.state {
+        case .began:
+            expandedPinchDidTriggerFullScreen = false
+
+        case .changed:
+            guard !expandedPinchDidTriggerFullScreen,
+                  recognizer.scale >= 1.10 else {
+                return
+            }
+
+            expandedPinchDidTriggerFullScreen = true
+            showFullScreenContent()
+
+        case .ended, .cancelled, .failed:
+            expandedPinchDidTriggerFullScreen = false
+
+        default:
+            break
+        }
     }
 
     private var commandCopyText: String? {
@@ -484,6 +1222,81 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         return nil
     }
 
+    private var supportsFullScreenPreview: Bool {
+        switch currentConfiguration.toolNamePrefix {
+        case "read", "write", "edit":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var fullScreenContent: FullScreenCodeContent? {
+        guard currentConfiguration.isExpanded,
+              supportsFullScreenPreview else {
+            return nil
+        }
+
+        if let diffLines = currentConfiguration.expandedDiffLines {
+            let newText = outputCopyText ?? DiffEngine.formatUnified(diffLines)
+            return .diff(
+                oldText: "",
+                newText: newText,
+                filePath: currentConfiguration.expandedDiffPath,
+                precomputedLines: diffLines
+            )
+        }
+
+        if currentConfiguration.expandedTextUsesMarkdown,
+           let markdown = currentConfiguration.expandedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !markdown.isEmpty {
+            return .markdown(
+                content: markdown,
+                filePath: currentConfiguration.expandedCodeFilePath
+            )
+        }
+
+        guard let text = outputCopyText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return nil
+        }
+
+        return .code(
+            content: text,
+            language: currentConfiguration.expandedOutputLanguage?.displayName,
+            filePath: currentConfiguration.expandedCodeFilePath ?? currentConfiguration.expandedDiffPath,
+            startLine: currentConfiguration.expandedCodeStartLine ?? 1
+        )
+    }
+
+    private var canShowFullScreenContent: Bool {
+        fullScreenContent != nil
+    }
+
+    private func showFullScreenContent() {
+        guard let content = fullScreenContent,
+              let presenter = nearestViewController() else {
+            return
+        }
+
+        let view = FullScreenCodeView(content: content)
+        let controller = UIHostingController(rootView: view)
+        controller.modalPresentationStyle = .fullScreen
+        controller.view.backgroundColor = UIColor(Color.tokyoBgDark)
+        presenter.present(controller, animated: true)
+    }
+
+    private func nearestViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let controller = current as? UIViewController {
+                return controller
+            }
+            responder = current.next
+        }
+        return nil
+    }
+
     private func copy(text: String, feedbackView: UIView) {
         UIPasteboard.general.string = text
 
@@ -505,6 +1318,128 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
                 feedbackView.alpha = 1
             }
         }
+    }
+
+    private func scheduleOutputAutoScrollToBottomIfNeeded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.outputShouldAutoFollow,
+                  !self.outputContainer.isHidden else {
+                return
+            }
+            self.scrollToBottom(self.outputScrollView, animated: false)
+        }
+    }
+
+    private func scheduleExpandedAutoScrollToBottomIfNeeded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.expandedShouldAutoFollow,
+                  !self.expandedContainer.isHidden else {
+                return
+            }
+            self.scrollToBottom(self.expandedScrollView, animated: false)
+        }
+    }
+
+    private func resetScrollPosition(_ scrollView: UIScrollView) {
+        let inset = scrollView.adjustedContentInset
+        scrollView.setContentOffset(
+            CGPoint(x: -inset.left, y: -inset.top),
+            animated: false
+        )
+    }
+
+    private func scrollToBottom(_ scrollView: UIScrollView, animated: Bool) {
+        let inset = scrollView.adjustedContentInset
+        let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
+        guard viewportHeight > 0 else { return }
+
+        let bottomY = max(
+            -inset.top,
+            scrollView.contentSize.height - viewportHeight + inset.bottom
+        )
+        scrollView.setContentOffset(
+            CGPoint(x: -inset.left, y: bottomY),
+            animated: animated
+        )
+    }
+
+    private func isNearBottom(_ scrollView: UIScrollView) -> Bool {
+        let inset = scrollView.adjustedContentInset
+        let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
+        guard viewportHeight > 0 else { return true }
+
+        let bottomY = scrollView.contentOffset.y + inset.top + viewportHeight
+        let distance = max(0, scrollView.contentSize.height - bottomY)
+        return distance <= Self.autoFollowBottomThreshold
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView === outputScrollView {
+            outputShouldAutoFollow = isNearBottom(outputScrollView)
+        } else if scrollView === expandedScrollView {
+            expandedShouldAutoFollow = isNearBottom(expandedScrollView)
+        }
+    }
+
+    private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
+        guard let symbolName = Self.toolSymbolName(for: toolNamePrefix),
+              let baseImage = UIImage(systemName: symbolName) else {
+            toolImageView.image = nil
+            toolImageView.isHidden = true
+            toolLeadingConstraint?.constant = 0
+            toolWidthConstraint?.constant = 0
+            titleLeadingToToolConstraint?.isActive = false
+            titleLeadingToStatusConstraint?.isActive = true
+            return
+        }
+
+        let configuredImage = baseImage.applyingSymbolConfiguration(
+            UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        )
+
+        toolImageView.image = configuredImage
+        toolImageView.tintColor = toolNameColor
+        toolImageView.isHidden = false
+        toolLeadingConstraint?.constant = 5
+        toolWidthConstraint?.constant = 12
+        titleLeadingToStatusConstraint?.isActive = false
+        titleLeadingToToolConstraint?.isActive = true
+    }
+
+    private static func toolSymbolName(for toolNamePrefix: String?) -> String? {
+        switch toolNamePrefix {
+        case "$":
+            return "dollarsign"
+        case "read":
+            return "magnifyingglass"
+        case "write":
+            return "pencil"
+        case "edit":
+            return "arrow.left.arrow.right"
+        case "todo":
+            return "checklist"
+        default:
+            return nil
+        }
+    }
+
+    private static func languageBadgeSymbolName(for badge: String?) -> String? {
+        guard let badge, !badge.isEmpty else {
+            return nil
+        }
+
+        let normalized = badge.lowercased()
+        if normalized.contains("⚠︎media") || normalized.contains("media") {
+            return "exclamationmark.triangle"
+        }
+
+        if normalized.contains("swift"), UIImage(systemName: "swift") != nil {
+            return "swift"
+        }
+
+        return Self.genericLanguageBadgeSymbolName
     }
 
     struct ANSIOutputPresentation {
@@ -533,9 +1468,397 @@ final class ToolTimelineRowContentView: UIView, UIContentView {
         )
     }
 
+    static func makeSyntaxOutputPresentation(
+        _ text: String,
+        language: SyntaxLanguage,
+        maxHighlightBytes: Int = maxSyntaxHighlightBytes
+    ) -> ANSIOutputPresentation {
+        guard language != .unknown else {
+            return ANSIOutputPresentation(attributedText: nil, plainText: text)
+        }
+
+        guard text.utf8.count <= maxHighlightBytes else {
+            return ANSIOutputPresentation(attributedText: nil, plainText: text)
+        }
+
+        return ANSIOutputPresentation(
+            attributedText: NSAttributedString(SyntaxHighlighter.highlight(text, language: language)),
+            plainText: nil
+        )
+    }
+
+    private static func applyANSIOutputPresentation(
+        _ presentation: ANSIOutputPresentation,
+        to label: UILabel,
+        plainTextColor: UIColor
+    ) {
+        if let attributed = presentation.attributedText {
+            label.attributedText = attributed
+            return
+        }
+
+        label.attributedText = nil
+        label.text = presentation.plainText
+        label.textColor = plainTextColor
+    }
+
+    private static func makeMarkdownAttributedText(_ text: String) -> NSAttributedString {
+        let markdownOptions = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+
+        let rendered: NSMutableAttributedString
+        if let markdown = try? AttributedString(markdown: text, options: markdownOptions) {
+            rendered = NSMutableAttributedString(attributedString: NSAttributedString(markdown))
+        } else {
+            rendered = NSMutableAttributedString(string: text)
+        }
+
+        let fullRange = NSRange(location: 0, length: rendered.length)
+        guard fullRange.length > 0 else { return rendered }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 1
+        paragraph.lineBreakMode = .byWordWrapping
+
+        rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
+        rendered.addAttribute(.foregroundColor, value: UIColor(Color.tokyoFg), range: fullRange)
+        rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            if value == nil {
+                rendered.addAttribute(
+                    .font,
+                    value: UIFont.systemFont(ofSize: 12, weight: .regular),
+                    range: range
+                )
+            }
+        }
+
+        return rendered
+    }
+
+    private static func makeCodeAttributedText(
+        text: String,
+        language: SyntaxLanguage?,
+        startLine: Int
+    ) -> NSAttributedString {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let safeStartLine = max(1, startLine)
+        let lastLineNumber = safeStartLine + max(0, lines.count - 1)
+        let numberDigits = max(2, String(lastLineNumber).count)
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byClipping
+        paragraph.lineSpacing = 1
+
+        let lineNumberColor = UIColor(Color.tokyoComment.opacity(0.55))
+        let separatorColor = UIColor(Color.tokyoComment.opacity(0.35))
+        let foregroundColor = UIColor(Color.tokyoFg)
+        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let lineNumberFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+
+        let lineNumAttrs: [NSAttributedString.Key: Any] = [
+            .font: lineNumberFont,
+            .foregroundColor: lineNumberColor,
+            .paragraphStyle: paragraph,
+        ]
+        let separatorAttrs: [NSAttributedString.Key: Any] = [
+            .font: codeFont,
+            .foregroundColor: separatorColor,
+            .paragraphStyle: paragraph,
+        ]
+        let codeAttrs: [NSAttributedString.Key: Any] = [
+            .font: codeFont,
+            .foregroundColor: foregroundColor,
+            .paragraphStyle: paragraph,
+        ]
+
+        let result = NSMutableAttributedString()
+        for (index, rawLine) in lines.enumerated() {
+            let lineNumber = safeStartLine + index
+            result.append(NSAttributedString(
+                string: "\(paddedLineNumber(lineNumber, digits: numberDigits)) ",
+                attributes: lineNumAttrs
+            ))
+            result.append(NSAttributedString(string: "│ ", attributes: separatorAttrs))
+
+            let displayLine = rawLine.isEmpty ? " " : rawLine
+            if let language,
+               language != .unknown,
+               displayLine.utf8.count <= Self.maxDiffSyntaxHighlightBytes {
+                let highlighted = NSMutableAttributedString(
+                    attributedString: NSAttributedString(
+                        SyntaxHighlighter.highlightLine(displayLine, language: language)
+                    )
+                )
+                let fullRange = NSRange(location: 0, length: highlighted.length)
+                highlighted.addAttributes(
+                    [.font: codeFont, .paragraphStyle: paragraph],
+                    range: fullRange
+                )
+                highlighted.enumerateAttribute(
+                    .foregroundColor,
+                    in: fullRange,
+                    options: []
+                ) { value, range, _ in
+                    if value == nil {
+                        highlighted.addAttribute(
+                            .foregroundColor,
+                            value: foregroundColor,
+                            range: range
+                        )
+                    }
+                }
+                result.append(highlighted)
+            } else {
+                result.append(NSAttributedString(string: displayLine, attributes: codeAttrs))
+            }
+
+            if index < lines.count - 1 {
+                result.append(NSAttributedString(string: "\n"))
+            }
+        }
+
+        return result
+    }
+
+    private static func makeDiffAttributedText(
+        lines: [DiffLine],
+        filePath: String?
+    ) -> NSAttributedString {
+        let renderedLines = Array(lines.prefix(Self.maxRenderedDiffLines))
+        let truncatedByLineCount = lines.count > renderedLines.count
+
+        let result = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byClipping
+        paragraph.lineSpacing = 1
+
+        let language = diffLanguage(for: filePath)
+        let numberDigits = max(2, lineNumberDigits(for: renderedLines))
+
+        if renderedLines.isEmpty {
+            result.append(
+                NSAttributedString(
+                    string: "No textual changes",
+                    attributes: [
+                        .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                        .foregroundColor: UIColor(Color.tokyoComment),
+                        .paragraphStyle: paragraph,
+                    ]
+                )
+            )
+            return result
+        }
+
+        // Pre-compute reusable attributes (avoids per-line dictionary allocations).
+        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let numFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let prefixFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
+
+        let addedBg = UIColor(Color.tokyoGreen.opacity(0.20))
+        let removedBg = UIColor(Color.tokyoRed.opacity(0.18))
+        let addedAccent = UIColor(Color.tokyoGreen)
+        let removedAccent = UIColor(Color.tokyoRed)
+        let contextDim = UIColor(Color.tokyoComment.opacity(0.45))
+        let lineNumColor = UIColor(Color.tokyoComment.opacity(0.5))
+        let fgColor = UIColor(Color.tokyoFg)
+        let fgDimColor = UIColor(Color.tokyoFgDim)
+
+        let gutterAddedAttrs: [NSAttributedString.Key: Any] = [
+            .font: prefixFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph,
+        ]
+        let gutterRemovedAttrs: [NSAttributedString.Key: Any] = [
+            .font: prefixFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph,
+        ]
+        let gutterContextAttrs: [NSAttributedString.Key: Any] = [
+            .font: prefixFont, .foregroundColor: contextDim, .paragraphStyle: paragraph,
+        ]
+        let lineNumAttrs: [NSAttributedString.Key: Any] = [
+            .font: numFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph,
+        ]
+        let codeFgAttrs: [NSAttributedString.Key: Any] = [
+            .font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph,
+        ]
+        let codeDimAttrs: [NSAttributedString.Key: Any] = [
+            .font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph,
+        ]
+
+        var oldLineNumber = 1
+        var newLineNumber = 1
+
+        for (index, line) in renderedLines.enumerated() {
+            let lineNumber: Int?
+            switch line.kind {
+            case .context:
+                lineNumber = newLineNumber
+                oldLineNumber += 1
+                newLineNumber += 1
+            case .removed:
+                lineNumber = oldLineNumber
+                oldLineNumber += 1
+            case .added:
+                lineNumber = newLineNumber
+                newLineNumber += 1
+            }
+
+            let clippedText: String
+            if line.text.count > Self.maxRenderedDiffLineCharacters {
+                clippedText = String(line.text.prefix(Self.maxRenderedDiffLineCharacters - 1)) + "…"
+            } else {
+                clippedText = line.text
+            }
+
+            let rowStart = result.length
+
+            // Gutter: ▎+  ▎-  or    (space for context).
+            switch line.kind {
+            case .added:
+                result.append(NSAttributedString(string: "▎+ ", attributes: gutterAddedAttrs))
+            case .removed:
+                result.append(NSAttributedString(string: "▎− ", attributes: gutterRemovedAttrs))
+            case .context:
+                result.append(NSAttributedString(string: "   ", attributes: gutterContextAttrs))
+            }
+
+            // Line number.
+            result.append(NSAttributedString(
+                string: "\(paddedLineNumber(lineNumber, digits: numberDigits)) ",
+                attributes: lineNumAttrs
+            ))
+
+            // Code text.
+            let displayText = clippedText.isEmpty ? " " : clippedText
+
+            if let language, language != .unknown,
+               displayText.utf8.count <= Self.maxDiffSyntaxHighlightBytes {
+                // Syntax highlight all lines — the subtle tinted backgrounds
+                // (≈20% opacity) provide enough add/remove context while
+                // token colors keep the code readable.
+                let highlighted = NSMutableAttributedString(
+                    attributedString: NSAttributedString(
+                        SyntaxHighlighter.highlight(displayText, language: language)
+                    )
+                )
+                let fullRange = NSRange(location: 0, length: highlighted.length)
+                highlighted.addAttributes(
+                    [.font: codeFont, .paragraphStyle: paragraph],
+                    range: fullRange
+                )
+                // Fill in missing foreground colors.
+                let defaultFg = line.kind == .context ? fgDimColor : fgColor
+                highlighted.enumerateAttribute(
+                    .foregroundColor, in: fullRange, options: []
+                ) { value, range, _ in
+                    if value == nil {
+                        highlighted.addAttribute(.foregroundColor, value: defaultFg, range: range)
+                    }
+                }
+                result.append(highlighted)
+            } else {
+                let attrs = line.kind == .context ? codeDimAttrs : codeFgAttrs
+                result.append(NSAttributedString(string: displayText, attributes: attrs))
+            }
+
+            // Row background for changed lines.
+            let rowEnd = result.length
+            switch line.kind {
+            case .added:
+                result.addAttribute(
+                    .backgroundColor, value: addedBg,
+                    range: NSRange(location: rowStart, length: rowEnd - rowStart)
+                )
+            case .removed:
+                result.addAttribute(
+                    .backgroundColor, value: removedBg,
+                    range: NSRange(location: rowStart, length: rowEnd - rowStart)
+                )
+            case .context:
+                break
+            }
+
+            if index < renderedLines.count - 1 {
+                result.append(NSAttributedString(string: "\n"))
+            }
+        }
+
+        if truncatedByLineCount {
+            result.append(NSAttributedString(
+                string: "\n… diff truncated for display",
+                attributes: [
+                    .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+                    .foregroundColor: UIColor(Color.tokyoComment),
+                    .paragraphStyle: paragraph,
+                ]
+            ))
+        }
+
+        return result
+    }
+
+    private static func lineNumberDigits(for lines: [DiffLine]) -> Int {
+        var oldNumber = 1
+        var newNumber = 1
+        var maxSeen = 1
+
+        for line in lines {
+            switch line.kind {
+            case .context:
+                maxSeen = max(maxSeen, oldNumber, newNumber)
+                oldNumber += 1
+                newNumber += 1
+            case .removed:
+                maxSeen = max(maxSeen, oldNumber)
+                oldNumber += 1
+            case .added:
+                maxSeen = max(maxSeen, newNumber)
+                newNumber += 1
+            }
+        }
+
+        return String(maxSeen).count
+    }
+
+    private static func paddedLineNumber(_ number: Int?, digits: Int) -> String {
+        guard let number else {
+            return String(repeating: " ", count: digits)
+        }
+
+        return String(format: "%\(digits)d", number)
+    }
+
+    private static func paddedHeader(_ value: String, digits: Int) -> String {
+        if value.count >= digits {
+            return String(value.suffix(digits))
+        }
+
+        return String(repeating: " ", count: digits - value.count) + value
+    }
+
+    private static func diffLanguage(for filePath: String?) -> SyntaxLanguage? {
+        guard let filePath, !filePath.isEmpty else { return nil }
+
+        switch FileType.detect(from: filePath) {
+        case .code(let language):
+            return language
+        case .json:
+            return .json
+        case .plain, .markdown, .image, .audio:
+            return nil
+        }
+    }
+
+    // Diff color/attribute helpers inlined into makeDiffAttributedText
+    // for performance (pre-computed dictionaries, zero per-line allocations).
+
     private static func shellHighlighted(_ text: String) -> NSAttributedString {
         let highlighted = SyntaxHighlighter.highlight(text, language: .shell)
-        return NSAttributedString(highlighted)
+        let ns = NSMutableAttributedString(highlighted)
+        // Ensure monospace font is embedded — UILabel ignores its own .font
+        // when attributedText is set.
+        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        ns.addAttribute(.font, value: font, range: NSRange(location: 0, length: ns.length))
+        return ns
     }
 
     private static func ansiHighlighted(
@@ -616,6 +1939,18 @@ extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {
                 )
             }
         } else if isOutputTarget, let output {
+            if interaction.view === expandedContainer,
+               canShowFullScreenContent {
+                actions.append(
+                    UIAction(
+                        title: "Open Full Screen",
+                        image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+                    ) { [weak self] _ in
+                        self?.showFullScreenContent()
+                    }
+                )
+            }
+
             actions.append(
                 UIAction(title: "Copy Output", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
                     guard let self else { return }

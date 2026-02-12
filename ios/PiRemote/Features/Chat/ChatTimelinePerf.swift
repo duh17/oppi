@@ -3,7 +3,7 @@ import os
 
 /// Chat timeline performance instrumentation.
 ///
-/// Phase-0 diagnostics for the UIKit migration track:
+/// Tracks:
 /// - collection apply duration
 /// - layout pass duration
 /// - cell configure duration (by row type)
@@ -20,6 +20,8 @@ enum ChatTimelinePerf {
         let cellConfigureLastMs: Int
         let cellConfigureMaxMs: Int
         let slowCellCount: Int
+        let hardGuardrailBreachCount: Int
+        let failsafeConfigureCount: Int
         let scrollCommandsPerSecond: Int
     }
 
@@ -41,6 +43,12 @@ enum ChatTimelinePerf {
     private static let slowCellThresholdMs = 8
     private static let slowScrollRateThresholdPerSecond = 30
 
+    /// Coarse, low-noise regression guardrails. Keep these high so we only
+    /// catch severe stalls, not normal simulator/debug variance.
+    private static let guardrailApplyThresholdMs = 250
+    private static let guardrailLayoutThresholdMs = 250
+    private static let guardrailCellThresholdMs = 80
+
     private static let slowLogCooldownMs: UInt64 = 2_000
 
     private static var applyLastMs = 0
@@ -50,6 +58,8 @@ enum ChatTimelinePerf {
     private static var cellConfigureLastMs = 0
     private static var cellConfigureMaxMs = 0
     private static var slowCellCount = 0
+    private static var hardGuardrailBreachCount = 0
+    private static var failsafeConfigureCount = 0
 
     private static var lastSlowMetricLogNs: UInt64 = 0
 
@@ -65,6 +75,8 @@ enum ChatTimelinePerf {
         cellConfigureLastMs = 0
         cellConfigureMaxMs = 0
         slowCellCount = 0
+        hardGuardrailBreachCount = 0
+        failsafeConfigureCount = 0
 
         lastSlowMetricLogNs = 0
 
@@ -82,6 +94,8 @@ enum ChatTimelinePerf {
             cellConfigureLastMs: cellConfigureLastMs,
             cellConfigureMaxMs: cellConfigureMaxMs,
             slowCellCount: slowCellCount,
+            hardGuardrailBreachCount: hardGuardrailBreachCount,
+            failsafeConfigureCount: failsafeConfigureCount,
             scrollCommandsPerSecond: scrollCommandsPerSecond
         )
     }
@@ -111,6 +125,10 @@ enum ChatTimelinePerf {
         let durationMs = elapsedMs(since: token.startNs)
         applyLastMs = durationMs
         applyMaxMs = max(applyMaxMs, durationMs)
+
+        if durationMs >= guardrailApplyThresholdMs {
+            hardGuardrailBreachCount &+= 1
+        }
 
         guard durationMs >= slowApplyThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
@@ -144,6 +162,10 @@ enum ChatTimelinePerf {
         layoutLastMs = durationMs
         layoutMaxMs = max(layoutMaxMs, durationMs)
 
+        if durationMs >= guardrailLayoutThresholdMs {
+            hardGuardrailBreachCount &+= 1
+        }
+
         guard durationMs >= slowLayoutThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
@@ -160,6 +182,14 @@ enum ChatTimelinePerf {
     static func recordCellConfigure(rowType: String, durationMs: Int) {
         cellConfigureLastMs = durationMs
         cellConfigureMaxMs = max(cellConfigureMaxMs, durationMs)
+
+        if rowType.hasSuffix("_failsafe") {
+            failsafeConfigureCount &+= 1
+        }
+
+        if durationMs >= guardrailCellThresholdMs {
+            hardGuardrailBreachCount &+= 1
+        }
 
         guard durationMs >= slowCellThresholdMs else { return }
         slowCellCount &+= 1

@@ -10,6 +10,8 @@ struct ToolCallFormattingTests {
     @Test func isReadTool() {
         #expect(ToolCallFormatting.isReadTool("Read"))
         #expect(ToolCallFormatting.isReadTool("read"))
+        #expect(ToolCallFormatting.isReadTool("functions.read"))
+        #expect(ToolCallFormatting.isReadTool("tools/read"))
         #expect(!ToolCallFormatting.isReadTool("Write"))
         #expect(!ToolCallFormatting.isReadTool("bash"))
     }
@@ -17,13 +19,30 @@ struct ToolCallFormattingTests {
     @Test func isWriteTool() {
         #expect(ToolCallFormatting.isWriteTool("Write"))
         #expect(ToolCallFormatting.isWriteTool("write"))
+        #expect(ToolCallFormatting.isWriteTool("functions.write"))
+        #expect(ToolCallFormatting.isWriteTool("tools/write"))
         #expect(!ToolCallFormatting.isWriteTool("Read"))
     }
 
     @Test func isEditTool() {
         #expect(ToolCallFormatting.isEditTool("Edit"))
         #expect(ToolCallFormatting.isEditTool("edit"))
+        #expect(ToolCallFormatting.isEditTool("functions.edit"))
         #expect(!ToolCallFormatting.isEditTool("Write"))
+    }
+
+    @Test func isTodoToolRecognizesNamespacedNames() {
+        #expect(ToolCallFormatting.isTodoTool("todo"))
+        #expect(ToolCallFormatting.isTodoTool("functions.todo"))
+        #expect(ToolCallFormatting.isTodoTool("tools/todo"))
+        #expect(!ToolCallFormatting.isTodoTool("bash"))
+    }
+
+    @Test func normalizedCanonicalizesNamespacedTools() {
+        #expect(ToolCallFormatting.normalized("  BASH\n") == "bash")
+        #expect(ToolCallFormatting.normalized("functions.read") == "read")
+        #expect(ToolCallFormatting.normalized("tools/write") == "write")
+        #expect(ToolCallFormatting.normalized("mcp:todo") == "todo")
     }
 
     // MARK: - Arg Extraction
@@ -138,6 +157,150 @@ struct ToolCallFormattingTests {
         #expect(result == "list-all")
     }
 
+    @Test func todoOutputPresentationFormatsSectionedList() {
+        let output = """
+        {
+          "assigned": [
+            {
+              "id": "TODO-a1",
+              "title": "Ship host-mode gate fixes",
+              "status": "in_progress"
+            }
+          ],
+          "open": [
+            {
+              "id": "TODO-b2",
+              "title": "Write migration notes",
+              "status": "open"
+            }
+          ],
+          "closed": []
+        }
+        """
+
+        let presentation = ToolCallFormatting.todoOutputPresentation(
+            args: ["action": .string("list-all")],
+            argsSummary: "",
+            output: output
+        )
+
+        #expect(presentation?.usesMarkdown == true)
+        #expect(presentation?.trailing == "A1 O1 C0")
+        #expect(presentation?.text.contains("### Assigned (1)") == true)
+        #expect(presentation?.text.contains("TODO-a1") == true)
+        #expect(presentation?.text.contains("### Open (1)") == true)
+    }
+
+    @Test func todoOutputPresentationFormatsSingleItemAndKeepsMarkdownBody() {
+        let output = """
+        {
+          "id": "TODO-abc123",
+          "title": "Polish todo output renderer",
+          "tags": ["ios", "chat"],
+          "status": "in_progress",
+          "created_at": "2026-02-12T08:30:00.000Z",
+          "body": "## Acceptance\\n- list output is readable\\n- markdown body renders"
+        }
+        """
+
+        let presentation = ToolCallFormatting.todoOutputPresentation(
+            args: ["action": .string("get")],
+            argsSummary: "",
+            output: output
+        )
+
+        #expect(presentation?.usesMarkdown == true)
+        #expect(presentation?.trailing == "in-progress")
+        #expect(presentation?.text.contains("todo get") == true)
+        #expect(presentation?.text.contains("## Acceptance") == true)
+        #expect(presentation?.text.contains("Tags:") == true)
+    }
+
+    @Test func todoOutputPresentationReturnsNilForNonJSONText() {
+        let presentation = ToolCallFormatting.todoOutputPresentation(
+            args: ["action": .string("claim")],
+            argsSummary: "",
+            output: "claimed"
+        )
+
+        #expect(presentation == nil)
+    }
+
+    @Test func todoAppendDiffPresentationUsesAddedLinesOnly() {
+        let args: [String: JSONValue] = [
+            "action": .string("append"),
+            "body": .string("First line\n- bullet item\n```swift\nprint(\"hi\")\n```")
+        ]
+
+        let presentation = ToolCallFormatting.todoAppendDiffPresentation(args: args, argsSummary: "")
+
+        #expect(presentation?.addedLineCount == 5)
+        #expect(
+            presentation?.diffLines.allSatisfy { line in
+                switch line.kind {
+                case .added: return true
+                case .context, .removed: return false
+                }
+            } == true
+        )
+        #expect(presentation?.preview == "First line\n- bullet item")
+        #expect(presentation?.unifiedText.contains("+ print(\"hi\")") == true)
+    }
+
+    @Test func todoAppendDiffPresentationReturnsNilForNonAppendAction() {
+        let args: [String: JSONValue] = [
+            "action": .string("get"),
+            "body": .string("ignored")
+        ]
+
+        let presentation = ToolCallFormatting.todoAppendDiffPresentation(args: args, argsSummary: "")
+        #expect(presentation == nil)
+    }
+
+    @Test func todoMutationDiffPresentationFormatsUpdatePayloadAsDiff() {
+        let args: [String: JSONValue] = [
+            "action": .string("update"),
+            "id": .string("TODO-463187a1"),
+            "status": .string("closed"),
+            "title": .string("Refine auto-follow scrolling during streaming"),
+            "tags": .array([.string("ios"), .string("chat-ui")]),
+            "body": .string("Done.\nValidated on simulator and device.")
+        ]
+
+        let presentation = ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: "")
+
+        #expect(presentation?.addedLineCount == 6)
+        #expect(presentation?.removedLineCount == 0)
+        #expect(presentation?.preview == "title: Refine auto-follow scrolling during streaming\nstatus: closed")
+        #expect(presentation?.unifiedText.contains("+ status: closed") == true)
+        #expect(presentation?.unifiedText.contains("+ tags: ios, chat-ui") == true)
+        #expect(presentation?.unifiedText.contains("+ body:") == true)
+    }
+
+    @Test func todoMutationDiffPresentationMarksClearedBodyAsRemoval() {
+        let args: [String: JSONValue] = [
+            "action": .string("update"),
+            "id": .string("TODO-463187a1"),
+            "body": .string("   ")
+        ]
+
+        let presentation = ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: "")
+
+        #expect(presentation?.addedLineCount == 0)
+        #expect(presentation?.removedLineCount == 1)
+        #expect(
+            presentation?.diffLines.first.map { line in
+                switch line.kind {
+                case .removed:
+                    return true
+                case .added, .context:
+                    return false
+                }
+            } == true
+        )
+        #expect(presentation?.unifiedText.contains("- body: <cleared>") == true)
+    }
+
     // MARK: - Display File Path
 
     @Test func displayFilePathShowsTailComponents() {
@@ -154,6 +317,16 @@ struct ToolCallFormattingTests {
         ]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
         #expect(result.contains(":10-29"))
+    }
+
+    @Test func displayFilePathWithLineRangeForNamespacedReadTool() {
+        let args: [String: JSONValue] = [
+            "path": .string("file.swift"),
+            "offset": .number(5),
+            "limit": .number(3),
+        ]
+        let result = ToolCallFormatting.displayFilePath(tool: "functions.read", args: args, argsSummary: "")
+        #expect(result.contains(":5-7"))
     }
 
     @Test func displayFilePathShowsTailAndLineRangeForAbsolutePath() {
@@ -230,6 +403,39 @@ struct ToolCallFormattingTests {
         let stats = ToolCallFormatting.editDiffStats(from: args)
         #expect(stats?.added == 0)
         #expect(stats?.removed == 1)
+    }
+
+    @Test func editDiffStatsUsesLCSAndDoesNotOvercountShiftedInsertions() {
+        let args: [String: JSONValue] = [
+            "oldText": .string("a\nb\nc\nd\n"),
+            "newText": .string("a\ninserted\nb\nc\nd\n"),
+        ]
+
+        let stats = ToolCallFormatting.editDiffStats(from: args)
+        #expect(stats?.added == 1)
+        #expect(stats?.removed == 0)
+    }
+
+    @Test func editOldAndNewTextSupportsAliasKeys() {
+        let args: [String: JSONValue] = [
+            "beforeText": .string("old"),
+            "after": .string("new"),
+        ]
+
+        let pair = ToolCallFormatting.editOldAndNewText(from: args)
+        #expect(pair?.oldText == "old")
+        #expect(pair?.newText == "new")
+    }
+
+    @Test func editDiffStatsSupportsSnakeCaseVariants() {
+        let args: [String: JSONValue] = [
+            "old_text": .string("a\nb\n"),
+            "new_text": .string("a\nb\nc\n"),
+        ]
+
+        let stats = ToolCallFormatting.editDiffStats(from: args)
+        #expect(stats?.added == 1)
+        #expect(stats?.removed == 0)
     }
 
     @Test func editDiffStatsNilWhenArgsMissing() {

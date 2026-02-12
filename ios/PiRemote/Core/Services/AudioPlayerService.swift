@@ -14,6 +14,12 @@ private let logger = Logger(subsystem: "dev.chenda.PiRemote", category: "AudioPl
 /// per-row play/stop/loading state.
 @MainActor @Observable
 final class AudioPlayerService: NSObject {
+    nonisolated static let stateDidChangeNotification = Notification.Name("AudioPlayerService.stateDidChange")
+    nonisolated static let previousPlayingItemIDUserInfoKey = "previousPlayingItemID"
+    nonisolated static let playingItemIDUserInfoKey = "playingItemID"
+    nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
+    nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
+
     /// ID of the ChatItem currently playing (nil when idle).
     private(set) var playingItemID: String?
 
@@ -57,8 +63,7 @@ final class AudioPlayerService: NSObject {
         player?.stop()
         player = nil
         playbackDelegate = nil
-        playingItemID = nil
-        loadingItemID = nil
+        setPlaybackState(playing: nil, loading: nil)
     }
 
     // MARK: - Private
@@ -87,19 +92,41 @@ final class AudioPlayerService: NSObject {
     private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String) {
         let delegate = PlaybackDelegate { [weak self] in
             Task { @MainActor in
-                self?.playingItemID = nil
-                self?.player = nil
-                self?.playbackDelegate = nil
+                guard let self else { return }
+                self.player = nil
+                self.playbackDelegate = nil
+                self.setPlaybackState(playing: nil, loading: nil)
             }
         }
         audioPlayer.delegate = delegate
 
         self.player = audioPlayer
         self.playbackDelegate = delegate
-        self.loadingItemID = nil
-        self.playingItemID = itemID
+        setPlaybackState(playing: itemID, loading: nil)
 
         audioPlayer.play()
+    }
+
+    private func setPlaybackState(playing: String?, loading: String?) {
+        let previousPlaying = playingItemID
+        let previousLoading = loadingItemID
+        guard previousPlaying != playing || previousLoading != loading else {
+            return
+        }
+
+        playingItemID = playing
+        loadingItemID = loading
+
+        NotificationCenter.default.post(
+            name: Self.stateDidChangeNotification,
+            object: self,
+            userInfo: [
+                Self.previousPlayingItemIDUserInfoKey: previousPlaying ?? "",
+                Self.playingItemIDUserInfoKey: playing ?? "",
+                Self.previousLoadingItemIDUserInfoKey: previousLoading ?? "",
+                Self.loadingItemIDUserInfoKey: loading ?? "",
+            ]
+        )
     }
 }
 
@@ -120,4 +147,3 @@ private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate, Sendable 
         onFinish()
     }
 }
-
