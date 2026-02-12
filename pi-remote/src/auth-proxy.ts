@@ -32,6 +32,30 @@ import { homedir } from "node:os";
 export const AUTH_PROXY_PORT = 7751;
 const ANTHROPIC_OAUTH_STUB_PREFIX = "sk-ant-oat01-proxy-";
 
+function resolveAuthProxyPort(explicitPort?: number): number {
+  if (
+    Number.isInteger(explicitPort)
+    && (explicitPort ?? 0) > 0
+    && (explicitPort ?? 0) <= 65_535
+  ) {
+    return explicitPort as number;
+  }
+
+  const raw = process.env.PI_REMOTE_AUTH_PROXY_PORT;
+  if (raw && raw.trim().length > 0) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535) {
+      return parsed;
+    }
+
+    console.warn(
+      `[auth-proxy] Invalid PI_REMOTE_AUTH_PROXY_PORT="${raw}"; using default ${AUTH_PROXY_PORT}`,
+    );
+  }
+
+  return AUTH_PROXY_PORT;
+}
+
 /**
  * OAuth beta headers required by Anthropic for Claude Code auth flow.
  * Added/merged by the proxy to guarantee required OAuth betas are present.
@@ -229,7 +253,7 @@ export class AuthProxy {
   readonly host: string;
 
   constructor(opts?: { port?: number; host?: string; authPath?: string }) {
-    this.port = opts?.port ?? AUTH_PROXY_PORT;
+    this.port = resolveAuthProxyPort(opts?.port);
     this.host = opts?.host ?? "0.0.0.0";
     this.authPath = opts?.authPath ?? join(homedir(), ".pi", "agent", "auth.json");
     this.server = createServer((req, res) => void this.handleRequest(req, res));

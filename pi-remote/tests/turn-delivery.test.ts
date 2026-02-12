@@ -57,13 +57,28 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   session: Session;
   stdinWrite: ReturnType<typeof vi.fn>;
   addSessionMessage: ReturnType<typeof vi.fn>;
+  getModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
+  setModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
 } {
   const addSessionMessage = vi.fn();
+  const thinkingLevelByModel = new Map<string, string>();
+
+  const getModelThinkingLevelPreference = vi.fn((_userId: string, modelId: string) => {
+    return thinkingLevelByModel.get(modelId);
+  });
+
+  const setModelThinkingLevelPreference = vi.fn(
+    (_userId: string, modelId: string, level: string) => {
+      thinkingLevelByModel.set(modelId, level);
+    },
+  );
 
   const storage = {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
     addSessionMessage,
+    getModelThinkingLevelPreference,
+    setModelThinkingLevelPreference,
   } as unknown as Storage;
 
   const gate = {
@@ -114,6 +129,8 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     session,
     stdinWrite,
     addSessionMessage,
+    getModelThinkingLevelPreference,
+    setModelThinkingLevelPreference,
   };
 }
 
