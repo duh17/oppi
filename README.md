@@ -192,6 +192,8 @@ pi-remote pair "Chen" --save pair.png
 pi-remote serve                    # Start the server
 pi-remote pair [name]              # Create pairing QR for owner identity
 pi-remote pair [name] --host ...   # Force LAN/tailnet host in QR payload
+pi-remote pair [name] --show-token # Print owner token in pair output (unsafe)
+pi-remote token rotate             # Rotate owner bearer token (forces re-pair)
 pi-remote status                   # Show server status
 pi-remote config show              # Show effective config JSON
 pi-remote config validate          # Validate config schema
@@ -316,7 +318,7 @@ Authorization: Bearer <token>
 - P0 model covers pairing payload tampering/replay, unsigned-bootstrap downgrade, fake-server bootstrap, and post-pairing transport downgrade.
 - Residual risks remain for host compromise (attacker can read local data/keys), bearer-token leakage until rotation, and network exposure from misconfigured tailnet/LAN ACLs.
 
-See `pi-remote/docs/security-config-v2.md` and `pi-remote/docs/security-release-gate-v0.md` for full matrix and release-gate evidence.
+See `pi-remote/docs/security-config-v2.md`, `pi-remote/docs/security-release-gate-v0.md`, and `pi-remote/docs/auth-v2-device-credentials.md` for full matrix, release-gate evidence, and token-hardening roadmap.
 
 ## Project Structure
 
