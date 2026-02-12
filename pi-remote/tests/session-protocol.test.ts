@@ -90,6 +90,93 @@ describe("session-protocol translatePiEvent", () => {
     expect(second).toEqual([{ type: "tool_output", output: "line2\n", toolCallId: "tc-1" }]);
   });
 
+  it("emits final tool_output from tool_execution_end text when no partial exists", () => {
+    const ctx = makeCtx();
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolName: "read",
+        toolCallId: "tc-final",
+        result: {
+          content: [{ type: "text", text: "full read output" }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toEqual([
+      { type: "tool_output", output: "full read output", toolCallId: "tc-final" },
+      { type: "tool_end", tool: "read", toolCallId: "tc-final" },
+    ]);
+  });
+
+  it("emits only tail delta on tool_execution_end after partial output", () => {
+    const ctx = makeCtx();
+
+    translatePiEvent(
+      {
+        type: "tool_execution_update",
+        toolCallId: "tc-tail",
+        partialResult: {
+          content: [{ type: "text", text: "line1\n" }],
+        },
+      },
+      ctx,
+    );
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolName: "read",
+        toolCallId: "tc-tail",
+        result: {
+          content: [{ type: "text", text: "line1\nline2\n" }],
+        },
+      },
+      ctx,
+    );
+
+    expect(messages).toEqual([
+      { type: "tool_output", output: "line2\n", toolCallId: "tc-tail" },
+      { type: "tool_end", tool: "read", toolCallId: "tc-tail" },
+    ]);
+  });
+
+  it("falls back to event id when toolCallId is missing", () => {
+    const ctx = makeCtx();
+
+    const start = translatePiEvent(
+      {
+        type: "tool_execution_start",
+        id: "evt-tool-1",
+        toolName: "read",
+        args: { path: "README.md" },
+      },
+      ctx,
+    );
+
+    const end = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        id: "evt-tool-1",
+        toolName: "read",
+        result: {
+          content: [{ type: "text", text: "content" }],
+        },
+      },
+      ctx,
+    );
+
+    expect(start).toEqual([
+      { type: "tool_start", tool: "read", args: { path: "README.md" }, toolCallId: "evt-tool-1" },
+    ]);
+    expect(end).toEqual([
+      { type: "tool_output", output: "content", toolCallId: "evt-tool-1" },
+      { type: "tool_end", tool: "read", toolCallId: "evt-tool-1" },
+    ]);
+  });
+
   it("emits media tool_output data URIs", () => {
     const ctx = makeCtx();
 

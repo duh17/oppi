@@ -163,6 +163,31 @@ export function extractMediaOutputs(contents: any[], toolCallId?: string): Serve
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
 export function translatePiEvent(event: any, ctx: TranslationContext): ServerMessage[] {
+  const resolveToolCallId = (): string | undefined => {
+    if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+      return event.toolCallId;
+    }
+
+    // Some pi tool events omit toolCallId but still include a stable event id.
+    // Use it so stream-time IDs match trace lookup IDs.
+    if (typeof event.id === "string" && event.id.length > 0) {
+      return event.id;
+    }
+
+    return undefined;
+  };
+
+  const computeToolDelta = (lastText: string, fullText: string): string => {
+    if (fullText.length === 0) return "";
+    if (lastText.length === 0) return fullText;
+    if (fullText === lastText) return "";
+    if (fullText.startsWith(lastText)) {
+      return fullText.slice(lastText.length);
+    }
+    // Unexpected divergence: prefer emitting full text over dropping output.
+    return fullText;
+  };
+
   switch (event.type) {
     case "agent_start":
       ctx.streamedAssistantText = "";
@@ -184,25 +209,28 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       return [];
     }
 
-    case "tool_execution_start":
+    case "tool_execution_start": {
+      const toolCallId = resolveToolCallId();
       return [
         {
           type: "tool_start",
           tool: event.toolName,
           args: event.args || {},
-          toolCallId: event.toolCallId,
+          toolCallId,
         },
       ];
+    }
 
     case "tool_execution_update": {
       const contents = event.partialResult?.content;
       if (!Array.isArray(contents) || contents.length === 0) return [];
 
-      const toolCallId: string | undefined = event.toolCallId;
+      const toolCallId = resolveToolCallId();
       const messages: ServerMessage[] = [];
 
       for (const block of contents) {
-        if (block.type === "text") {
+        const isText = block.type === "text" || block.type === "output_text";
+        if (isText && typeof block.text === "string") {
           const fullText: string = block.text;
 
           // Compute delta from last partialResult to avoid duplication.
@@ -211,7 +239,7 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
           const key = toolCallId ?? "";
           const lastText = ctx.partialResults.get(key) ?? "";
           ctx.partialResults.set(key, fullText);
-          const delta = fullText.slice(lastText.length);
+          const delta = computeToolDelta(lastText, fullText);
 
           if (delta) {
             messages.push({ type: "tool_output", output: delta, toolCallId });
@@ -224,15 +252,33 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
     }
 
     case "tool_execution_end": {
-      const toolCallId: string | undefined = event.toolCallId;
-      ctx.partialResults.delete(toolCallId ?? "");
+      const toolCallId = resolveToolCallId();
+      const key = toolCallId ?? "";
+      const lastText = ctx.partialResults.get(key) ?? "";
 
-      // Extract media from final result — some tools (like read for images)
-      // don't stream partialResults and only include content in the final result.
+      // Extract final text/media from result — some tools only include output
+      // at end (no partial updates), so emit missing delta here.
       const resultContents = event.result?.content;
-      const messages: ServerMessage[] = Array.isArray(resultContents)
-        ? extractMediaOutputs(resultContents, toolCallId)
-        : [];
+      const messages: ServerMessage[] = [];
+
+      if (Array.isArray(resultContents) && resultContents.length > 0) {
+        const finalText = resultContents
+          .map((block: Record<string, unknown>) => {
+            const type = block.type;
+            const isText = type === "text" || type === "output_text";
+            return isText && typeof block.text === "string" ? (block.text as string) : "";
+          })
+          .join("");
+
+        const delta = computeToolDelta(lastText, finalText);
+        if (delta.length > 0) {
+          messages.push({ type: "tool_output", output: delta, toolCallId });
+        }
+
+        messages.push(...extractMediaOutputs(resultContents, toolCallId));
+      }
+
+      ctx.partialResults.delete(key);
 
       messages.push({
         type: "tool_end",
