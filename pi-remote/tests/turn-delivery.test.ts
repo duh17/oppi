@@ -348,4 +348,121 @@ describe("turn delivery idempotency", () => {
     expect(stateEvent?.session.piSessionFile).toBe("/tmp/child.jsonl");
     expect(stateEvent?.session.piSessionId).toBe("pi-child-uuid");
   });
+
+  it("persists thinking preference after set_thinking_level", async () => {
+    const {
+      manager,
+      session,
+      events,
+      setModelThinkingLevelPreference,
+    } = makeManagerHarness("ready");
+
+    session.model = "anthropic/claude-sonnet-4-0";
+
+    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+      if (command.type === "set_thinking_level") {
+        return {};
+      }
+
+      throw new Error(`unexpected command: ${String(command.type)}`);
+    });
+
+    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+
+    await manager.forwardRpcCommand(
+      "u1",
+      "s1",
+      { type: "set_thinking_level", level: "high" },
+      "req-thinking-1",
+    );
+
+    expect(session.thinkingLevel).toBe("high");
+    expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
+      "u1",
+      "anthropic/claude-sonnet-4-0",
+      "high",
+    );
+
+    const stateEvent = asStateEvents(events).at(-1);
+    expect(stateEvent?.session.thinkingLevel).toBe("high");
+  });
+
+  it("applies remembered model thinking after set_model", async () => {
+    const {
+      manager,
+      session,
+      events,
+      getModelThinkingLevelPreference,
+      setModelThinkingLevelPreference,
+    } = makeManagerHarness("ready");
+
+    getModelThinkingLevelPreference.mockImplementation((_userId: string, modelId: string) => {
+      if (modelId === "anthropic/claude-sonnet-4-0") {
+        return "minimal";
+      }
+      return undefined;
+    });
+
+    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+      if (command.type === "set_model") {
+        return { provider: "anthropic", id: "claude-sonnet-4-0" };
+      }
+
+      if (command.type === "set_thinking_level") {
+        expect(command.level).toBe("minimal");
+        return {};
+      }
+
+      if (command.type === "get_state") {
+        return {
+          model: { provider: "anthropic", id: "claude-sonnet-4-0" },
+          thinkingLevel: "minimal",
+        };
+      }
+
+      throw new Error(`unexpected command: ${String(command.type)}`);
+    });
+
+    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+
+    await manager.forwardRpcCommand(
+      "u1",
+      "s1",
+      { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
+      "req-model-1",
+    );
+
+    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+      1,
+      "s1",
+      expect.objectContaining({ type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" }),
+      30_000,
+    );
+
+    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+      2,
+      "s1",
+      expect.objectContaining({ type: "set_thinking_level", level: "minimal" }),
+      8_000,
+    );
+
+    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+      3,
+      "s1",
+      expect.objectContaining({ type: "get_state" }),
+      8_000,
+    );
+
+    expect(session.model).toBe("anthropic/claude-sonnet-4-0");
+    expect(session.thinkingLevel).toBe("minimal");
+    expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
+      "u1",
+      "anthropic/claude-sonnet-4-0",
+      "minimal",
+    );
+
+    const stateEvent = asStateEvents(events).at(-1);
+    expect(stateEvent?.session.model).toBe("anthropic/claude-sonnet-4-0");
+    expect(stateEvent?.session.thinkingLevel).toBe("minimal");
+  });
 });
