@@ -1,309 +1,97 @@
-# Pi Remote — Agent Instructions
+# Pi Remote — Agent Principles
 
-## Security First
+This file defines project-level guardrails for `~/workspace/pios`.
+Keep this file concise and principle-focused.
 
-Security is the #1 priority in Pi Remote. The permission gate is the only protection layer for host-mode sessions (no container boundary). When in doubt:
+Use detailed operational workflows from:
+- `ios/AGENTS.md` (iOS architecture/patterns)
+- `README.md`, `DESIGN.md`, `IMPLEMENTATION.md`
+- `oppi-dev` skill (deploy/debug/incident loops)
 
-- **Fail closed.** If the gate extension isn't connected, deny all tool calls.
-- **Default to ask.** Host sessions use the `host` policy preset — anything not explicitly allowed requires phone approval.
-- **Never weaken the gate.** Don't add `allow` rules to reduce friction. If something needs approval, it needs approval.
-- **Hard denies are immutable.** No rule or allowlist can override a hard deny (sudo, credential exfil, system config tools).
-- **Path access is workspace-bounded.** File tools only auto-allow within configured workspace directories and `~/.pi` (read-only).
-- **Bash is read-only by default on host.** Only commands from the read-only executable allowlist pass without approval. Everything else requires the phone.
+## Mission
 
-The container preset is more permissive because the Apple container IS the security boundary. But host sessions have no such protection — the policy engine is all there is.
+Pi Remote is a mobile-supervised coding agent platform:
+- `pi-remote/`: Node.js server/runtime, policy engine, permission gate
+- `ios/`: Oppi iOS client (SwiftUI)
 
-## Overview
+## Security Invariants (non-negotiable)
 
-Pi Remote is a mobile-first agent supervision platform. An iPhone app controls pi coding agents running on a home server (mac-studio), with permission gating from the phone.
+Security is the top priority, especially in host mode.
 
-Two modules in this repo:
+- **Fail closed.** If gate extension is missing/disconnected, deny tool calls.
+- **Default to ask** in host mode unless explicitly allowed by policy.
+- **Never weaken the gate** for convenience.
+- **Hard denies are immutable** (privilege escalation, credential exfiltration, system config abuse).
+- **Workspace/path boundaries must hold.**
+- **Host bash is read-only by default.** Non-allowlisted commands require approval.
 
-| Module | Language | Location | Agent config |
-|--------|----------|----------|-------------|
-| `pi-remote` | TypeScript (Node.js) | `pi-remote/` | This file |
-| `ios` | Swift 6 (SwiftUI, iOS 26) | `ios/` | `ios/AGENTS.md` |
+When uncertain, choose the safer behavior and call it out.
 
-Read `DESIGN.md` for architecture, `IMPLEMENTATION.md` for current state and phased plan.
+## Working Model
 
-## First Message
+If user gives no concrete task:
+1. Read `README.md`
+2. Ask which module to work on (`pi-remote` or `ios`)
 
-If no concrete task given, read `README.md`, then ask which module to work on. Based on the answer:
+Then:
+- For `pi-remote`: focus on core server/policy/session/gate files.
+- For `ios`: follow `ios/AGENTS.md`.
 
-**pi-remote:** Read these in parallel:
-- `pi-remote/src/types.ts` — shared protocol types
-- `pi-remote/src/server.ts` — HTTP + WebSocket server (orchestrator, auth, legacy WS)
-- `pi-remote/src/routes.ts` — REST route handlers (dispatch + all HTTP endpoints)
-- `pi-remote/src/stream.ts` — user stream mux (event ring, subscriptions, /stream WS)
-- `pi-remote/src/sessions.ts` — pi process lifecycle (RPC, container spawn)
-- `pi-remote/src/gate.ts` — permission gate (TCP, per-session ports)
-- `pi-remote/src/policy.ts` — layered policy engine
-- `pi-remote/src/sandbox.ts` — Apple container management
-- `pi-remote/src/push.ts` — APNs push notifications
-- `pi-remote/src/storage.ts` — JSON file persistence
-- `pi-remote/src/trace.ts` — pi session JSONL reader
-- `pi-remote/extensions/permission-gate/index.ts` — pi extension
+## Architecture Principles
 
-**ios:** Read `ios/AGENTS.md` for full architecture and patterns.
+- No heavy framework abstraction in server core: prefer explicit Node primitives.
+- Preserve JSON-lines RPC semantics between server and pi.
+- Preserve layered policy semantics: hard deny → bounds → user/learned rules → default.
+- Keep permissioning behavior explainable and auditable.
+- Maintain clear separation of concerns (routes, sessions, gate, policy, storage).
 
-## pi-remote Architecture
+## Protocol Discipline
 
-```
-Phone (WebSocket) → server.ts → sessions.ts → pi (RPC over stdin/stdout)
-                                    ↓
-                               sandbox.ts (Apple containers)
-                                    ↓
-              gate.ts ← TCP ← permission-gate extension (inside container)
-                ↓
-           policy.ts (per-session layered rules → allow/ask/deny)
-                ↓           host preset: fail-closed, read-only bash, workspace-bounded
-                ↓           container preset: permissive (container = boundary)
-           push.ts (APNs → phone notification)
-```
+When changing client/server message contracts:
+1. Update `pi-remote/src/types.ts`
+2. Update iOS models (`ServerMessage.swift`, `ClientMessage.swift`)
+3. Update protocol tests on both sides
 
-Key patterns:
-- No frameworks. Raw `http.createServer` + `ws` + `net.createServer`.
-- JSON-lines protocol between server and pi (RPC mode)
-- TCP gate per session (not Unix sockets — containers need host-gateway access)
-- Layered policy evaluation: hard denies → workspace bounds → user rules → learned rules → default
-- Fail-closed: unguarded sessions block all tool calls
+No partial protocol updates.
 
-## pi-remote Source Files
+## Change Discipline
 
-```
-pi-remote/
-├── src/
-│   ├── index.ts            # CLI entrypoint (serve, invite, users, status)
-│   ├── server.ts           # HTTP + WebSocket orchestrator (auth, legacy WS, client msg)
-│   ├── routes.ts           # REST route handlers (dispatch + all HTTP endpoints)
-│   ├── stream.ts           # User stream mux (event ring, subscriptions, /stream WS)
-│   ├── sessions.ts         # Pi process lifecycle (RPC, container spawn)
-│   ├── gate.ts             # Permission gate (TCP, per-session)
-│   ├── policy.ts           # Layered policy engine (presets, heuristics)
-│   ├── rules.ts            # Learned rule store (session/workspace/global)
-│   ├── audit.ts            # Permission audit log
-│   ├── sandbox.ts          # Apple container management
-│   ├── sandbox-prompt.ts   # Sandbox system prompt builder
-│   ├── sandbox-skills.ts   # Skill sync into sandboxes
-│   ├── skills.ts           # Skill registry + user skill store
-│   ├── auth-proxy.ts       # Credential proxy (Anthropic/OpenAI)
-│   ├── host.ts             # Host filesystem discovery
-│   ├── workspace-runtime.ts # Workspace container lifecycle
-│   ├── push.ts             # APNs push notifications
-│   ├── storage.ts          # JSON file persistence
-│   ├── sync.ts             # File sync helpers
-│   ├── trace.ts            # Pi session JSONL reader
-│   └── types.ts            # Shared type definitions
-├── tests/                   # Vitest unit tests (30 files, ~470 tests)
-├── extensions/
-│   └── permission-gate/     # Pi extension (runs inside container)
-├── sandbox/
-│   └── Containerfile        # Container image definition
-├── test-e2e.ts              # Full E2E integration test
-├── test-gate-client.ts      # Manual gate test client
-├── test-load-ws.ts          # WebSocket load test harness
-├── package.json
-└── tsconfig.json
-```
-
-## Code Quality (TypeScript)
-
-- No `any` types unless absolutely necessary
-- Check `node_modules` for external API type definitions instead of guessing
-- No inline imports — no `await import("./foo.js")`, no `import("pkg").Type` in type positions. Always use standard top-level imports.
-- Never remove or downgrade code to fix type errors; upgrade the dependency instead
-- Always ask before removing functionality or code that appears intentional
+- Do not remove intentional behavior without confirming.
+- Prefer backward-compatible migrations for storage/runtime changes.
+- Keep changes scoped; avoid opportunistic refactors unless requested.
+- Surface risks, trade-offs, and verification steps clearly.
 
 ## Testing Expectations
 
 - For user-reported bugs, prefer adding a regression test with the fix.
 - This is a strong preference, not a hard blocker.
-- If a regression test is trivial and low-risk to add, include it in the same change.
-- If it is not practical, document why and include clear manual verification steps.
+- If a regression test is trivial and low-risk, include it in the same change.
+- If not practical, document why and provide manual verification steps.
 
-## Commands (pi-remote)
+## Code Quality (TypeScript)
 
-```bash
-cd pi-remote
+- Avoid `any` unless unavoidable.
+- Use top-level imports only (no inline dynamic imports for normal codepaths).
+- Verify external API types from installed packages before assuming shapes.
+- Do not “fix” type errors by removing functionality.
 
-# Type check
-npx tsc --noEmit
+## Commands (minimal)
 
-# Build
-npm run build
+- `cd pi-remote && npx tsc --noEmit`
+- `cd pi-remote && npx vitest run`
+- `cd ios && xcodebuild ... build/test` (see `ios/AGENTS.md` for exact commands)
 
-# Run server (dev)
-npx tsx src/index.ts serve
-
-# Run vitest unit tests
-npx vitest run
-
-# Run specific vitest file
-npx vitest run tests/policy.test.ts
-
-# Run integration tests (need running server)
-npx tsx test-e2e.ts
-```
-
-## iOS Quick Reference
-
-Read `ios/AGENTS.md` for full architecture, patterns, and code conventions.
-
-### Build + Test
-
-```bash
-cd ios
-xcodegen generate                # required after adding/removing files
-xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
-  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
-xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
-  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
-```
-
-### Deploy to Phone
-
-```bash
-# Build + install + launch on connected iPhone
-ios/scripts/build-install.sh --launch
-
-# Skip xcodegen (faster, use when no file additions)
-ios/scripts/build-install.sh --launch --skip-generate
-```
-
-### Device Logs
-
-```bash
-ios/scripts/collect-device-logs.sh --last 5m --include-debug --no-sudo
-```
-
-## Repeatable iOS Local Flow (tmux + deploy)
-
-From repo root:
-
-```bash
-./scripts/ios-dev-up.sh -- --device <iphone-udid>
-```
-
-Default behavior:
-- Starts/restarts `pi-remote` in tmux window `pi-remote-server`
-- Waits for server port `7749`
-- Runs `ios/scripts/build-install.sh` with `--launch` unless you pass `--no-launch`
-
-Useful variants:
-
-```bash
-# Keep existing server window, deploy only
-./scripts/ios-dev-up.sh --no-restart-server -- --device <iphone-udid>
-
-# Build/install without launching app
-./scripts/ios-dev-up.sh --no-launch -- --device <iphone-udid>
-
-# Custom tmux session/window
-./scripts/ios-dev-up.sh --session main --window pi-remote-server -- --device <iphone-udid>
-```
-
-## Wire Protocol
-
-Client-server messages defined in `pi-remote/src/types.ts`. The iOS models in `ios/PiRemote/Core/Models/ServerMessage.swift` and `ClientMessage.swift` must stay in sync.
-
-When changing the protocol:
-1. Update `pi-remote/src/types.ts`
-2. Update `ios/PiRemote/Core/Models/ServerMessage.swift` (manual `Decodable`)
-3. Update `ios/PiRemote/Core/Models/ClientMessage.swift`
-4. Update `ios/PiRemoteTests/ServerMessageTests.swift` and `ClientMessageTests.swift`
-
-## Data Directories (Runtime)
-
-```
-~/.config/pi-remote/       # Server config + state
-├── config.json
-├── users.json
-└── sessions/<userId>/*.json
-
-~/.pi-remote-sandboxes/<userId>/  # Per-user sandboxes
-├── agent/                 # Pi config (auth, models, extensions)
-├── workspace/             # Working directory
-└── sessions/              # Pi session JSONL files
-```
-
-## Debugging Pi Remote Sessions
-
-Inspect running sandboxed sessions from the host. Useful when a user reports issues from the iOS app.
-
-### Paths
-
-| What | Path |
-|------|------|
-| Server config | `~/.config/pi-remote/config.json` |
-| User list | `~/.config/pi-remote/users.json` |
-| Session state | `~/.config/pi-remote/sessions/<userId>/<sessionId>.json` |
-| JSONL trace | `~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/sessions/<workspace>/` |
-| Workspace files | `~/.pi-remote/sandboxes/<userId>/<sessionId>/workspace/` |
-| Agent config | `~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/` (auth.json, models.json, extensions/) |
-
-### REST API
-
-```bash
-# Health check
-curl http://localhost:7749/health
-
-# List sessions (needs user token from users.json)
-curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions
-
-# Session detail + trace
-curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions/<id>
-curl -H "Authorization: Bearer <token>" http://localhost:7749/sessions/<id>/trace
-```
-
-### Container + Process
-
-```bash
-# Running containers
-ps aux | grep "pi-remote-<sessionId>"
-
-# Server logs (tmux window 6 in main session)
-tmux capture-pane -t main:6 -p | tail -40
-
-# Read last trace events
-tail -5 ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/sessions/*/*.jsonl
-```
-
-### Common Issues
-
-**Expired OAuth token** — Anthropic tokens are short-lived (~8h). Sandbox auth.json is only synced at session creation.
-```bash
-# Check expiry
-python3 -c "import json,datetime; d=json.load(open('$HOME/.pi-remote/sandboxes/<userId>/<sessionId>/agent/auth.json')); print(datetime.datetime.fromtimestamp(d['anthropic']['expires']/1000))"
-
-# Fix: re-sync from host
-cp ~/.pi/agent/auth.json ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/auth.json
-```
-
-**Broken extensions** — Check symlinks and extension config:
-```bash
-ls -la ~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/extensions/
-```
-
-**Connect/disconnect cycling in server logs** — Usually the iOS app reconnecting on foreground. Check for rapid loops which may indicate auth or WebSocket handshake failures.
-
-## Commits
+## Git / Commit Rules
 
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`
-- Keep subject line under 72 chars
-- Prefix with module when relevant: `feat(server):`, `fix(ios):`, `chore(gate):`
-- Include `fixes #<number>` or `closes #<number>` when applicable
+- Keep subject under 72 chars
+- Never `git add .` / `git add -A`
+- Never destructive reset/clean/stash shortcuts
+- Never commit unless user asks
+- Track files you changed
 
-## Git Rules
+## Communication Style
 
-- Never `git add -A` or `git add .` — always add specific files
-- Never `git reset --hard`, `git checkout .`, `git clean -fd`, `git stash`
-- Never `git commit --no-verify`
-- Never commit unless asked
-- Track which files you created/modified/deleted during the session
-
-## Style
-
-- Keep answers short and concise
-- No emojis in commits, issues, PR comments, or code
-- No fluff or cheerful filler text
-- Technical prose only, be kind but direct
+- Be concise, direct, and technical.
+- No fluff.
+- Be kind and explicit about uncertainty/risk.
