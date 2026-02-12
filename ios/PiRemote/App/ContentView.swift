@@ -3,6 +3,34 @@ import SwiftUI
 struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
+    @Environment(PermissionStore.self) private var permissionStore
+    @Environment(SessionStore.self) private var sessionStore
+
+    @State private var showCrossSessionPermissionSheet = false
+
+    private var crossSessionPending: [PermissionRequest] {
+        let activeSessionId = sessionStore.activeSessionId
+        return permissionStore.pending
+            .filter { request in
+                guard let activeSessionId else {
+                    return true
+                }
+                return request.sessionId != activeSessionId
+            }
+            .sorted { lhs, rhs in
+                if lhs.risk.severity != rhs.risk.severity {
+                    return lhs.risk.severity > rhs.risk.severity
+                }
+                if lhs.timeoutAt != rhs.timeoutAt {
+                    return lhs.timeoutAt < rhs.timeoutAt
+                }
+                return lhs.id < rhs.id
+            }
+    }
+
+    private var crossSessionPrimary: PermissionRequest? {
+        crossSessionPending.first
+    }
 
     var body: some View {
         @Bindable var nav = navigation
@@ -27,6 +55,34 @@ struct ContentView: View {
                 .tabBarMinimizeBehavior(.onScrollDown)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !navigation.showOnboarding,
+               let request = crossSessionPrimary {
+                CrossSessionPermissionBanner(
+                    request: request,
+                    totalCount: crossSessionPending.count,
+                    sessionLabel: sessionLabel(for: request.sessionId),
+                    onReview: reviewCrossSessionPermissions
+                )
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .sheet(isPresented: $showCrossSessionPermissionSheet) {
+            PermissionSheet(
+                requests: crossSessionPending,
+                onRespond: handleCrossSessionPermissionChoice
+            )
+            .presentationDetents([.height(340), .medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .onChange(of: crossSessionPending.isEmpty) { _, isEmpty in
+            if isEmpty {
+                showCrossSessionPermissionSheet = false
+            }
+        }
         .sheet(item: $liveConnection.activeExtensionDialog) { request in
             ExtensionDialogSheet(request: request)
         }
@@ -47,6 +103,112 @@ struct ContentView: View {
         } message: {
             Text(connection.extensionToast ?? "")
         }
+    }
+
+    private func sessionLabel(for sessionId: String) -> String {
+        if let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
+           let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
+        return "Session \(String(sessionId.prefix(8)))"
+    }
+
+    private func reviewCrossSessionPermissions() {
+        navigation.selectedTab = .workspaces
+        showCrossSessionPermissionSheet = true
+    }
+
+    private func handleCrossSessionPermissionChoice(_ id: String, _ choice: PermissionResponseChoice) {
+        Task { @MainActor in
+            if choice.action == .allow,
+               let request = permissionStore.pending.first(where: { $0.id == id }),
+               BiometricService.shared.requiresBiometric(for: request.risk) {
+                let reason = "Approve \(request.tool): \(request.displaySummary)"
+                let authenticated = await BiometricService.shared.authenticate(reason: reason)
+                guard authenticated else {
+                    return
+                }
+            }
+
+            do {
+                try await connection.respondToPermission(
+                    id: id,
+                    action: choice.action,
+                    scope: choice.scope,
+                    expiresInMs: choice.expiresInMs
+                )
+            } catch {
+                connection.extensionToast = "Failed to respond to permission: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+private struct CrossSessionPermissionBanner: View {
+    let request: PermissionRequest
+    let totalCount: Int
+    let sessionLabel: String
+    let onReview: () -> Void
+
+    var body: some View {
+        Button(action: onReview) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: request.risk.systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.riskColor(request.risk))
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Approval needed in \(sessionLabel)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(request.displaySummary)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    if !request.reason.isEmpty {
+                        Text(request.reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    if totalCount > 1 {
+                        Text("+\(totalCount - 1)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.secondary.opacity(0.18), in: Capsule())
+                    }
+
+                    if request.hasExpiry {
+                        Text(request.timeoutAt, style: .timer)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.riskColor(request.risk).opacity(0.45), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Cross-session permission request")
+        .accessibilityHint("Opens approval sheet")
     }
 }
 

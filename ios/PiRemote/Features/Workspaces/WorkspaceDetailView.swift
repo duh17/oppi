@@ -13,6 +13,14 @@ struct WorkspaceDetailView: View {
 
     @State private var isCreating = false
     @State private var error: String?
+    @State private var lineageBySessionId: [String: SessionLineageSummary] = [:]
+
+    private struct SessionLineageSummary {
+        let parentSessionName: String?
+        let parentSessionStatus: SessionStatus?
+        let childForkCount: Int
+        let activeChildForkCount: Int
+    }
 
     // MARK: - Computed
 
@@ -24,8 +32,8 @@ struct WorkspaceDetailView: View {
         workspaceSessions
             .filter { $0.status != .stopped }
             .sorted { lhs, rhs in
-                let lhsAttn = permissionStore.pending(for: lhs.id).count > 0
-                let rhsAttn = permissionStore.pending(for: rhs.id).count > 0
+                let lhsAttn = !permissionStore.pending(for: lhs.id).isEmpty
+                let rhsAttn = !permissionStore.pending(for: rhs.id).isEmpty
                 if lhsAttn != rhsAttn { return lhsAttn }
                 return lhs.lastActivity > rhs.lastActivity
             }
@@ -49,7 +57,8 @@ struct WorkspaceDetailView: View {
                         NavigationLink(value: session.id) {
                             SessionRow(
                                 session: session,
-                                pendingCount: permissionStore.pending(for: session.id).count
+                                pendingCount: permissionStore.pending(for: session.id).count,
+                                lineageHint: lineageHint(for: session)
                             )
                         }
                         .swipeActions(edge: .trailing) {
@@ -68,7 +77,11 @@ struct WorkspaceDetailView: View {
                 Section("Stopped") {
                     ForEach(stoppedSessions) { session in
                         NavigationLink(value: session.id) {
-                            SessionRow(session: session, pendingCount: 0)
+                            SessionRow(
+                                session: session,
+                                pendingCount: 0,
+                                lineageHint: lineageHint(for: session)
+                            )
                         }
                         .swipeActions(edge: .leading) {
                             Button {
@@ -125,6 +138,9 @@ struct WorkspaceDetailView: View {
         .refreshable {
             await refreshSessions()
         }
+        .task {
+            await refreshLineage()
+        }
         .overlay {
             if isCreating {
                 ProgressView("Creating session...")
@@ -173,7 +189,132 @@ struct WorkspaceDetailView: View {
             } label: {
                 Label("Safety Profile", systemImage: "shield.lefthalf.filled")
             }
+
         }
+    }
+
+    private func lineageHint(for session: Session) -> String? {
+        guard let summary = lineageBySessionId[session.id] else { return nil }
+
+        var parts: [String] = []
+
+        if let parentName = summary.parentSessionName {
+            if let parentStatus = summary.parentSessionStatus {
+                parts.append("Parent: \(parentName) (\(statusLabel(parentStatus)))")
+            } else {
+                parts.append("Parent: \(parentName)")
+            }
+        }
+
+        if summary.childForkCount > 0 {
+            let forkLabel = summary.childForkCount == 1 ? "Forks: 1" : "Forks: \(summary.childForkCount)"
+            if summary.activeChildForkCount > 0 {
+                let activeLabel = summary.activeChildForkCount == 1 ? "1 active" : "\(summary.activeChildForkCount) active"
+                parts.append("\(forkLabel) (\(activeLabel))")
+            } else {
+                parts.append(forkLabel)
+            }
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    private func statusLabel(_ status: SessionStatus) -> String {
+        switch status {
+        case .starting: return "starting"
+        case .ready: return "ready"
+        case .busy: return "busy"
+        case .stopping: return "stopping"
+        case .stopped: return "stopped"
+        case .error: return "error"
+        }
+    }
+
+    private func sessionTitle(_ session: Session) -> String {
+        let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            return trimmed
+        }
+        return "Session \(String(session.id.prefix(8)))"
+    }
+
+    private func refreshLineage() async {
+        guard let api = connection.apiClient else { return }
+
+        let sessions = workspaceSessions
+        guard !sessions.isEmpty else {
+            lineageBySessionId = [:]
+            return
+        }
+
+        do {
+            let graph = try await api.getWorkspaceGraph(workspaceId: workspace.id)
+            lineageBySessionId = buildLineageBySessionId(graph: graph, sessions: sessions)
+        } catch {
+            // Keep latest known lineage hints if graph fetch fails.
+        }
+    }
+
+    private func buildLineageBySessionId(
+        graph: WorkspaceGraphResponse,
+        sessions: [Session]
+    ) -> [String: SessionLineageSummary] {
+        let sessionsById = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let nodesById = Dictionary(uniqueKeysWithValues: graph.sessionGraph.nodes.map { ($0.id, $0) })
+        let childNodesByParent = Dictionary(grouping: graph.sessionGraph.nodes) { node in
+            node.parentId ?? ""
+        }
+
+        func preferredSession(for node: WorkspaceGraphResponse.SessionGraph.Node) -> Session? {
+            let candidates = node.attachedSessionIds.compactMap { sessionsById[$0] }
+            return candidates.max { lhs, rhs in
+                let lhsRunning = lhs.status != .stopped
+                let rhsRunning = rhs.status != .stopped
+                if lhsRunning != rhsRunning {
+                    return !lhsRunning && rhsRunning
+                }
+                return lhs.lastActivity < rhs.lastActivity
+            }
+        }
+
+        var result: [String: SessionLineageSummary] = [:]
+
+        for node in graph.sessionGraph.nodes {
+            let parentSession: Session? = {
+                guard let parentId = node.parentId,
+                      let parentNode = nodesById[parentId] else {
+                    return nil
+                }
+                return preferredSession(for: parentNode)
+            }()
+
+            let childNodes = childNodesByParent[node.id] ?? []
+            let childSessionIds = Set(childNodes.flatMap(\.attachedSessionIds))
+
+            for sessionId in node.attachedSessionIds where sessionsById[sessionId] != nil {
+                let effectiveParent: Session? = {
+                    guard let parentSession else { return nil }
+                    return parentSession.id == sessionId ? nil : parentSession
+                }()
+
+                let childSessions = childSessionIds
+                    .filter { $0 != sessionId }
+                    .compactMap { sessionsById[$0] }
+
+                let activeChildForkCount = childSessions.filter { $0.status != .stopped }.count
+
+                let summary = SessionLineageSummary(
+                    parentSessionName: effectiveParent.map(sessionTitle),
+                    parentSessionStatus: effectiveParent?.status,
+                    childForkCount: childSessions.count,
+                    activeChildForkCount: activeChildForkCount
+                )
+
+                result[sessionId] = summary
+            }
+        }
+
+        return result
     }
 
     // MARK: - Actions
@@ -186,6 +327,7 @@ struct WorkspaceDetailView: View {
         do {
             let session = try await api.createWorkspaceSession(workspaceId: workspace.id)
             sessionStore.upsert(session)
+            await refreshLineage()
             isCreating = false
         } catch {
             self.error = error.localizedDescription
@@ -198,6 +340,7 @@ struct WorkspaceDetailView: View {
         do {
             let updated = try await api.stopWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
             sessionStore.upsert(updated)
+            await refreshLineage()
         } catch {
             self.error = "Stop failed: \(error.localizedDescription)"
         }
@@ -208,6 +351,7 @@ struct WorkspaceDetailView: View {
         do {
             let updated = try await api.resumeWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
             sessionStore.upsert(updated)
+            await refreshLineage()
         } catch {
             self.error = "Resume failed: \(error.localizedDescription)"
         }
@@ -218,6 +362,7 @@ struct WorkspaceDetailView: View {
         sessionStore.remove(id: session.id)
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
+            await refreshLineage()
         } catch {
             self.error = "Delete failed: \(error.localizedDescription)"
         }
@@ -230,6 +375,7 @@ struct WorkspaceDetailView: View {
             for session in sessions {
                 sessionStore.upsert(session)
             }
+            await refreshLineage()
         } catch {
             // Keep cached data
         }

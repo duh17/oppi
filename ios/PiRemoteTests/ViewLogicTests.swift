@@ -848,6 +848,68 @@ struct InlineComposerHeightTests {
     }
 }
 
+@Suite("inlineComposerShouldFastPathToMaxHeight")
+struct InlineComposerFastPathTests {
+
+    @Test func falseForShortText() {
+        let shouldFastPath = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 280,
+            containerWidth: 320,
+            lineHeight: 20,
+            maxLines: 8
+        )
+        #expect(shouldFastPath == false)
+    }
+
+    @Test func trueForVeryLongText() {
+        let shouldFastPath = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 800,
+            containerWidth: 320,
+            lineHeight: 20,
+            maxLines: 8
+        )
+        #expect(shouldFastPath)
+    }
+
+    @Test func guardsInvalidInputs() {
+        let small = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 39,
+            containerWidth: 0,
+            lineHeight: 0,
+            maxLines: 0
+        )
+        let large = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 41,
+            containerWidth: 0,
+            lineHeight: 0,
+            maxLines: 0
+        )
+
+        #expect(small == false)
+        #expect(large)
+    }
+
+    @Test func handlesInfiniteWidthWithoutCrashing() {
+        let shouldFastPath = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 500,
+            containerWidth: .infinity,
+            lineHeight: 20,
+            maxLines: 8
+        )
+        #expect(shouldFastPath)
+    }
+
+    @Test func handlesHugeFiniteWidthWithoutIntegerOverflow() {
+        let shouldFastPath = inlineComposerShouldFastPathToMaxHeight(
+            textLength: 10_000,
+            containerWidth: .greatestFiniteMagnitude,
+            lineHeight: 20,
+            maxLines: 8
+        )
+        #expect(shouldFastPath == false)
+    }
+}
+
 // MARK: - ComposerAutocomplete
 
 @Suite("ComposerAutocomplete")
@@ -957,5 +1019,34 @@ struct QuickReplySuggesterTests {
         let backfillCount = normalized.filter { $0.contains("backfill missing indexes") }.count
 
         #expect(backfillCount == 1)
+    }
+}
+
+// MARK: - ForegroundReconnectGate
+
+@Suite("ForegroundReconnectGate")
+struct ForegroundReconnectGateTests {
+    @Test func doesNotReconnectWithoutBackground() {
+        var gate = ForegroundReconnectGate()
+
+        #expect(gate.shouldReconnect(for: .active) == false)
+        #expect(gate.shouldReconnect(for: .inactive) == false)
+        #expect(gate.shouldReconnect(for: .active) == false)
+    }
+
+    @Test func reconnectsAfterBackgroundThenActive() {
+        var gate = ForegroundReconnectGate()
+
+        #expect(gate.shouldReconnect(for: .background) == false)
+        #expect(gate.shouldReconnect(for: .inactive) == false)
+        #expect(gate.shouldReconnect(for: .active) == true)
+    }
+
+    @Test func backgroundFlagIsConsumedAfterFirstActive() {
+        var gate = ForegroundReconnectGate()
+
+        #expect(gate.shouldReconnect(for: .background) == false)
+        #expect(gate.shouldReconnect(for: .active) == true)
+        #expect(gate.shouldReconnect(for: .active) == false)
     }
 }

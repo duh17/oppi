@@ -133,27 +133,12 @@ private struct SessionSidebarView: View {
         }
     }
 
-    private var workspaceSelection: Binding<String?> {
-        Binding(
-            get: { store.selectedWorkspaceID },
-            set: { newValue in
-                Task {
-                    await store.selectWorkspace(newValue)
-                }
-            }
-        )
-    }
+    private struct SessionTreeRowModel: Identifiable {
+        let session: Session
+        let depth: Int
+        let hasChildren: Bool
 
-    private var sessionSelection: Binding<String?> {
-        Binding(
-            get: { store.selectedSessionID },
-            set: { newValue in
-                store.selectedSessionID = newValue
-                Task {
-                    await store.loadTimelineForCurrentSelection()
-                }
-            }
-        )
+        var id: String { session.id }
     }
 
     var body: some View {
@@ -188,83 +173,122 @@ private struct SessionSidebarView: View {
                 .frame(width: 24)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Workspace")
-                        .font(.headline)
+            HStack {
+                Text("Workspaces")
+                    .font(.headline)
 
-                    Spacer()
+                Spacer()
 
-                    if store.isLoadingWorkspaces {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-
-                    Menu {
-                        Button("New Workspace") {
-                            workspaceEditorMode = .create
-                        }
-
-                        Button("Edit Selected Workspace") {
-                            if let selectedWorkspace = store.selectedWorkspace {
-                                workspaceEditorMode = .edit(selectedWorkspace)
-                            }
-                        }
-                        .disabled(store.selectedWorkspace == nil)
-
-                        Button("Delete Selected Workspace", role: .destructive) {
-                            showWorkspaceDeleteConfirmation = true
-                        }
-                        .disabled(store.selectedWorkspace == nil)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
+                if store.isLoadingWorkspaces {
+                    ProgressView()
+                        .controlSize(.small)
                 }
 
+                Menu {
+                    Button("New Workspace") {
+                        workspaceEditorMode = .create
+                    }
+
+                    Button("Edit Selected Workspace") {
+                        if let selectedWorkspace = store.selectedWorkspace {
+                            workspaceEditorMode = .edit(selectedWorkspace)
+                        }
+                    }
+                    .disabled(store.selectedWorkspace == nil)
+
+                    Button("Delete Selected Workspace", role: .destructive) {
+                        showWorkspaceDeleteConfirmation = true
+                    }
+                    .disabled(store.selectedWorkspace == nil)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+            }
+
+            List {
                 if store.workspaces.isEmpty {
                     Text("No workspaces found")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Picker("Workspace", selection: workspaceSelection) {
-                        ForEach(store.workspaces) { workspace in
-                            Text(workspace.name)
-                                .tag(Optional(workspace.id))
+                    ForEach(store.workspaces) { workspace in
+                        let isSelectedWorkspace = store.selectedWorkspaceID == workspace.id
+
+                        Button {
+                            Task {
+                                await store.selectWorkspace(workspace.id)
+                            }
+                        } label: {
+                            SidebarWorkspaceRow(
+                                workspace: workspace,
+                                isSelected: isSelectedWorkspace,
+                                sessionCount: isSelectedWorkspace ? store.sessions.count : nil
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(
+                            isSelectedWorkspace
+                                ? Color(nsColor: OppiMacTheme.current.selection).opacity(0.4)
+                                : Color.clear
+                        )
+
+                        if isSelectedWorkspace {
+                            if store.isLoadingSessions {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Loading sessions…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.leading, 24)
+                            } else {
+                                let rows = flattenedSessionRows(from: store.selectedWorkspaceSessionTree)
+
+                                if rows.isEmpty {
+                                    Text("No sessions")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.leading, 24)
+                                } else {
+                                    ForEach(rows) { row in
+                                        Button {
+                                            Task {
+                                                store.selectedSessionID = row.session.id
+                                                await store.loadTimelineForCurrentSelection()
+                                            }
+                                        } label: {
+                                            SidebarSessionTreeRow(
+                                                session: row.session,
+                                                depth: row.depth,
+                                                hasChildren: row.hasChildren,
+                                                isSelected: row.session.id == store.selectedSessionID,
+                                                pendingPermissionCount: pendingPermissionCount(for: row.session.id)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        .listRowBackground(
+                                            row.session.id == store.selectedSessionID
+                                                ? Color(nsColor: OppiMacTheme.current.selection).opacity(0.22)
+                                                : Color.clear
+                                        )
+                                    }
+                                }
+                            }
+
+                            if store.isLoadingWorkspaceGraph {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Updating session tree…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.leading, 24)
+                            }
                         }
                     }
-                    .labelsHidden()
-                    .disabled(store.isLoadingWorkspaces)
-                }
-
-                if let selectedWorkspace = store.selectedWorkspace {
-                    Text("\(selectedWorkspace.runtime.capitalized) · policy \(selectedWorkspace.policyPreset)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack {
-                Text("Sessions")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                Spacer()
-                if store.isLoadingSessions {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-            }
-
-            List(selection: sessionSelection) {
-                ForEach(store.sessions) { session in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(sessionDisplayName(session))
-                            .lineLimit(1)
-                        Text("\(session.status.rawValue.capitalized) · \(session.lastActivity.relativeString())")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(session.id)
                 }
             }
             .listStyle(.sidebar)
@@ -370,12 +394,152 @@ private struct SessionSidebarView: View {
         }
     }
 
-    private func sessionDisplayName(_ session: Session) -> String {
+    private func pendingPermissionCount(for sessionID: String) -> Int {
+        store.pendingPermissions.filter { $0.sessionId == sessionID }.count
+    }
+
+    private func flattenedSessionRows(from roots: [OppiMacSessionTreeNode]) -> [SessionTreeRowModel] {
+        var rows: [SessionTreeRowModel] = []
+        for root in roots {
+            appendSessionRows(node: root, depth: 0, output: &rows)
+        }
+        return rows
+    }
+
+    private func appendSessionRows(
+        node: OppiMacSessionTreeNode,
+        depth: Int,
+        output: inout [SessionTreeRowModel]
+    ) {
+        output.append(
+            .init(
+                session: node.session,
+                depth: depth,
+                hasChildren: !node.children.isEmpty
+            )
+        )
+
+        for child in node.children {
+            appendSessionRows(node: child, depth: depth + 1, output: &output)
+        }
+    }
+}
+
+private struct SidebarWorkspaceRow: View {
+    let workspace: Workspace
+    let isSelected: Bool
+    let sessionCount: Int?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: workspace.runtime == "host" ? "desktopcomputer" : "shippingbox")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.name)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
+
+                Text("\(workspace.runtime.capitalized) · policy \(workspace.policyPreset)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let sessionCount {
+                Text("\(sessionCount)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary.opacity(0.5), in: Capsule())
+            }
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+private struct SidebarSessionTreeRow: View {
+    let session: Session
+    let depth: Int
+    let hasChildren: Bool
+    let isSelected: Bool
+    let pendingPermissionCount: Int
+
+    private var title: String {
         if let name = session.name,
            !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return name
         }
         return session.id
+    }
+
+    private var statusText: String {
+        "\(session.status.rawValue.capitalized) · \(session.lastActivity.relativeString())"
+    }
+
+    private var statusColor: Color {
+        switch session.status {
+        case .ready:
+            return .green
+        case .busy, .starting, .stopping:
+            return .orange
+        case .stopped:
+            return .secondary
+        case .error:
+            return .red
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if depth > 0 {
+                Color.clear
+                    .frame(width: CGFloat(depth) * 16)
+            }
+
+            Image(systemName: hasChildren ? "arrow.triangle.branch" : "circle.fill")
+                .font(.system(size: hasChildren ? 11 : 6, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .lineLimit(1)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .regular)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+
+                    Text(statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if pendingPermissionCount > 0 {
+                Text("\(pendingPermissionCount)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange.opacity(0.15), in: Capsule())
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -606,30 +770,38 @@ private struct TimelineColumnView: View {
     @FocusState.Binding var focusedColumn: OppiMacStore.FocusColumn?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Text("Timeline")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Label("Timeline", systemImage: "text.alignleft")
                     .font(.title3)
                     .fontWeight(.semibold)
 
-                Text("\(store.filteredTimelineItems.count) items")
+                Text(itemCountLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Spacer()
 
                 HStack(spacing: 6) {
                     Circle()
                         .fill(streamStatusColor)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 7, height: 7)
                     Text(streamStatusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.6), in: Capsule())
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                Spacer()
-
+            HStack(spacing: 8) {
                 TextField("Search timeline", text: $store.timelineSearchQuery)
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
+                    .frame(maxWidth: 320)
 
                 Menu("Kinds") {
                     ForEach(ReviewTimelineKind.allCases) { kind in
@@ -656,6 +828,7 @@ private struct TimelineColumnView: View {
                 }
                 .help("Adjust chat text size")
 
+                Spacer()
             }
 
             if !store.selectedSessionPendingPermissions.isEmpty {
@@ -672,6 +845,24 @@ private struct TimelineColumnView: View {
                 .padding(.horizontal, 2)
             }
 
+            if store.hiddenTimelineItemCount > 0 {
+                HStack(spacing: 10) {
+                    Text("\(store.hiddenTimelineItemCount) earlier items hidden")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("Show Earlier") {
+                        store.showEarlierTimelineItems()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
             if timelineRows.isEmpty {
                 ContentUnavailableView(
                     "No timeline events",
@@ -684,6 +875,7 @@ private struct TimelineColumnView: View {
                     rows: timelineRows,
                     selectedID: store.selectedTimelineItemID,
                     textScale: CGFloat(store.timelineTextScale),
+                    autoFollowTail: true,
                     onSelectionChange: { selectedID in
                         store.selectedTimelineItemID = selectedID
                     }
@@ -691,8 +883,6 @@ private struct TimelineColumnView: View {
                 .focused($focusedColumn, equals: .timeline)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-
-            Divider()
 
             HStack(alignment: .bottom, spacing: 8) {
                 AppKitComposerTextView(
@@ -712,21 +902,34 @@ private struct TimelineColumnView: View {
                         await store.sendPromptFromComposer()
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(store.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isSendingPrompt)
 
-                Button("Stop Turn") {
+                Button("Stop") {
                     Task {
                         await store.sendStopTurn()
                     }
                 }
+                .buttonStyle(.bordered)
                 .disabled(!store.isStreamConnected)
             }
+            .padding(10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(12)
     }
 
     private var timelineRows: [OppiMacTimelineRow] {
-        OppiMacTimelineRowBuilder.build(from: store.filteredTimelineItems)
+        OppiMacTimelineRowBuilder.build(from: store.renderedTimelineItems)
+    }
+
+    private var itemCountLabel: String {
+        let visible = store.renderedTimelineItems.count
+        let total = store.filteredTimelineItems.count
+        if store.hiddenTimelineItemCount > 0 {
+            return "\(visible)/\(total) items"
+        }
+        return "\(total) items"
     }
 
     private var streamStatusText: String {
@@ -810,11 +1013,11 @@ private struct TimelineColumnView: View {
                     }
                 }
                 .padding(10)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
         .padding(10)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func permissionRiskColor(_ risk: RiskLevel) -> Color {

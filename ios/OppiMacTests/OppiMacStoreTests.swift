@@ -79,6 +79,59 @@ final class OppiMacStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.timelineTextScale, 1.15, accuracy: 0.0001)
     }
 
+    func testRenderedTimelineItemsUseWindowUntilExpanded() {
+        let store = makeStore()
+
+        store.timelineItems = (0..<420).map { index in
+            ReviewTimelineItem(
+                id: "evt-\(index)",
+                kind: .assistant,
+                timestamp: Date(timeIntervalSince1970: Double(index)),
+                title: "Assistant",
+                preview: "message \(index)",
+                detail: "message detail \(index)",
+                metadata: [:]
+            )
+        }
+
+        let initialRenderedCount = store.renderedTimelineItems.count
+        XCTAssertLessThan(initialRenderedCount, store.filteredTimelineItems.count)
+        XCTAssertEqual(
+            store.hiddenTimelineItemCount,
+            store.filteredTimelineItems.count - initialRenderedCount
+        )
+
+        store.showEarlierTimelineItems()
+        XCTAssertGreaterThan(store.renderedTimelineItems.count, initialRenderedCount)
+
+        store.timelineSearchQuery = "message 1"
+        XCTAssertEqual(store.hiddenTimelineItemCount, 0)
+        XCTAssertEqual(store.renderedTimelineItems.count, store.filteredTimelineItems.count)
+    }
+
+    func testRenderedTimelineItemsIncludeSelectedOlderItem() {
+        let store = makeStore()
+
+        store.timelineItems = (0..<500).map { index in
+            ReviewTimelineItem(
+                id: "evt-\(index)",
+                kind: .assistant,
+                timestamp: Date(timeIntervalSince1970: Double(index)),
+                title: "Assistant",
+                preview: "message \(index)",
+                detail: "message detail \(index)",
+                metadata: [:]
+            )
+        }
+        store.selectedTimelineItemID = "evt-200"
+
+        let rendered = store.renderedTimelineItems
+
+        XCTAssertTrue(rendered.contains(where: { $0.id == "evt-200" }))
+        XCTAssertEqual(rendered.last?.id, "evt-200")
+        XCTAssertLessThan(rendered.count, store.filteredTimelineItems.count)
+    }
+
     private func makeStore() -> OppiMacStore {
         let suiteName = "OppiMacStoreTests"
         let defaults = UserDefaults(suiteName: suiteName)!

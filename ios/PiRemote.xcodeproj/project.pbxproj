@@ -18,7 +18,9 @@
 		0BFB99A1627589F2A72FA04A /* ConnectionSecurityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F0F0496AE7564FC127FCA3 /* ConnectionSecurityPolicy.swift */; };
 		0CDC79210DE75AD51CDAA849 /* WorkspaceEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41138A2740BCE3047AEC3C31 /* WorkspaceEditView.swift */; };
 		0E571112E774D24AFC465706 /* AgentEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCEDBC58A51E2D1C83C9DCA9 /* AgentEvent.swift */; };
+		0FDB6BC662F59BEF1E15BA37 /* PermissionNotificationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98E7ADF89A14A1B4DAEC5CFD /* PermissionNotificationServiceTests.swift */; };
 		0FDBC0C36809E209C5901B79 /* OppiMacInspectorDocumentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA61B757EE768223196D36FE /* OppiMacInspectorDocumentBuilder.swift */; };
+		110E98A512C7BE8C0385F948 /* OppiMacSessionTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864BCD75B0A4870C8A77C79D /* OppiMacSessionTree.swift */; };
 		141D07423E047229D444399B /* SlashCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 790A1E87E8A671E35EF301AF /* SlashCommand.swift */; };
 		14309C8A93F1F4BD98C80F55 /* ExpandedComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147F9772A1FC07121F59FC25 /* ExpandedComposerView.swift */; };
 		14A7078618D926BB914D5294 /* CommonMarkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D2B54C7B82E80EB4E59B1F /* CommonMarkParser.swift */; };
@@ -31,6 +33,7 @@
 		1DC7C19A0C5B1DCD699BBE25 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 945EBDEF6049A990DFB82FCB /* AppTheme.swift */; };
 		1ECA1DCD5260377D83824B89 /* BugBashTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F4D120F241018190D2864E9 /* BugBashTests.swift */; };
 		20829BC1FFF84334B9E1C004 /* OppiMacTimelineRowBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3997CB9FF3527E2724F6D405 /* OppiMacTimelineRowBuilder.swift */; };
+		2741838255E125573F671610 /* ThinkingLevelMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A43062FC09419C9A842D348 /* ThinkingLevelMemory.swift */; };
 		27963E6DAA6946CAEBDCD913 /* PiSessionLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290C7D18A904F794098DC500 /* PiSessionLiveActivity.swift */; };
 		2C33B54BE67F9B7EF77D135E /* PermissionNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48CF794EA0D1104ED92719D /* PermissionNotificationService.swift */; };
 		2D1F1E4B820B38748096E134 /* ToolOutputStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B8690684C2F377D4CE008B /* ToolOutputStoreTests.swift */; };
@@ -41,6 +44,7 @@
 		364D6E6F594F193FABDCF505 /* WorkspacePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704293CEFCACEFEF0473464C /* WorkspacePickerView.swift */; };
 		36BEA62D9242DC24C1A0EDE9 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939BF41C9FA5D3701505F155 /* ContentView.swift */; };
 		3884B04D33C350031B59BD28 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60F4C02D84E6FEE7FA1BE86 /* Session.swift */; };
+		3AFB84BE6354BD2921C18393 /* ManualScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0150244CE8C4DA2278757E7 /* ManualScreenshotUITests.swift */; };
 		3EEBF28839A495ADD50CAF89 /* SessionChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72CEB47C8B6F1096CB0DF72D /* SessionChangesView.swift */; };
 		40D0F9F5BA0985CD615C3DF5 /* SyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501F5B7526999641A52A1592 /* SyntaxHighlighter.swift */; };
 		4185B3D24E517A80A54E77A9 /* UIHangHarnessUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 551D266BF430C128719F308F /* UIHangHarnessUITests.swift */; };
@@ -79,6 +83,7 @@
 		6A8FAA6C6211943A98123474 /* ClientLogBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65CB16E6B1DC8A3F6E471609 /* ClientLogBuffer.swift */; };
 		6A98FC10437D65B1C0AB4ED6 /* ClientMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 514F2F044A6DF4912D0266B6 /* ClientMessage.swift */; };
 		6B08610AFCFE8B18C4C0335B /* ServerConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C84A544C0BA51554BB4D5B /* ServerConnectionTests.swift */; };
+		6B71D64E67D9DC0196EAA2CA /* OppiMacSessionTreeBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B86379D28986C97677CCD5 /* OppiMacSessionTreeBuilderTests.swift */; };
 		6C0B20B360E22D65EB882B5A /* PermissionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0684DA798A5602EA50D5CB85 /* PermissionSheet.swift */; };
 		6D12EEB4952FE42AC4B179CB /* TurnSendTracking.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86FABB97F6E0A3F0032284A /* TurnSendTracking.swift */; };
 		70281981DDE69AD88F50577D /* Duration+Ms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1471F608449EA594AE3428 /* Duration+Ms.swift */; };
@@ -160,6 +165,7 @@
 		D332F1CED4167A5A37F19535 /* SentryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4EAC3FEBA2534B8ED1B97E6 /* SentryService.swift */; };
 		D4A8F119463421C535DC4DED /* JSONValueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108301BD38A4D852833168AB /* JSONValueTests.swift */; };
 		D658BD52DC1373DA79C6A6EA /* ServerConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22010943971C0EDDFC498D5A /* ServerConnection.swift */; };
+		D801646E263E65C1B40F03FE /* WorkspaceForkGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979FA721C7AB1E5D490F172B /* WorkspaceForkGraphView.swift */; };
 		D9B6DB2ED8921A2C0B631437 /* SlashCommandSuggestionList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6843AE75A2319A3D8AF1983F /* SlashCommandSuggestionList.swift */; };
 		D9BFC115C6E102D1BF6C1C55 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEF1D408FC2BE8E14D73296B /* JSONValue.swift */; };
 		DB427F7A4F45A545B1726CB9 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D434834136531787C34E9D36 /* WorkspaceStore.swift */; };
@@ -281,6 +287,7 @@
 		38C30F8070319CEE497EE9C6 /* WorkspaceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
 		3927141F5066F7F8A2466047 /* FileContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileContentView.swift; sourceTree = "<group>"; };
 		3997CB9FF3527E2724F6D405 /* OppiMacTimelineRowBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiMacTimelineRowBuilder.swift; sourceTree = "<group>"; };
+		3A43062FC09419C9A842D348 /* ThinkingLevelMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingLevelMemory.swift; sourceTree = "<group>"; };
 		3C7F9B03CAD15EC0E31B437C /* MarkdownNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownNode.swift; sourceTree = "<group>"; };
 		40473E786BBCFCBECED61FDC /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		408ADD1A4ABE340F2827A3EC /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
@@ -306,6 +313,7 @@
 		5991C08948103BD64D9C91F2 /* OppiMacStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiMacStore.swift; sourceTree = "<group>"; };
 		5D6EDA2EBAF79E0321D4E4D1 /* OppiMacStoreStreamingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiMacStoreStreamingTests.swift; sourceTree = "<group>"; };
 		5F31440508B9E88F01A4B225 /* AssistantMarkdownContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownContentView.swift; sourceTree = "<group>"; };
+		61B86379D28986C97677CCD5 /* OppiMacSessionTreeBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiMacSessionTreeBuilderTests.swift; sourceTree = "<group>"; };
 		655E683F732A6DD6D89C7B5E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		659E3FD240AECDAAEBE07498 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		65CB16E6B1DC8A3F6E471609 /* ClientLogBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientLogBuffer.swift; sourceTree = "<group>"; };
@@ -327,6 +335,7 @@
 		81C556E47EBE8E0892BA60A4 /* ChatSessionManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionManagerTests.swift; sourceTree = "<group>"; };
 		84FBDA920005635321E99D78 /* KeychainServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainServiceTests.swift; sourceTree = "<group>"; };
 		855A2B27DF58DC67A641AB7E /* OppiMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OppiMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		864BCD75B0A4870C8A77C79D /* OppiMacSessionTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiMacSessionTree.swift; sourceTree = "<group>"; };
 		86F9DD07C6E6F63A61239D31 /* WorkspaceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStoreTests.swift; sourceTree = "<group>"; };
 		87EC32C1F9BBD24AA619ACAF /* ExtensionInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionInfo.swift; sourceTree = "<group>"; };
 		87ED025A0130149955936E35 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -339,7 +348,9 @@
 		94311526F16A51F704F76BF3 /* SkillInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillInfo.swift; sourceTree = "<group>"; };
 		945EBDEF6049A990DFB82FCB /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		95BB6730161E5072C2BF9B14 /* TimelineReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerTests.swift; sourceTree = "<group>"; };
+		979FA721C7AB1E5D490F172B /* WorkspaceForkGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceForkGraphView.swift; sourceTree = "<group>"; };
 		97AF6D675618F9919DC7109F /* DeltaCoalescerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeltaCoalescerTests.swift; sourceTree = "<group>"; };
+		98E7ADF89A14A1B4DAEC5CFD /* PermissionNotificationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionNotificationServiceTests.swift; sourceTree = "<group>"; };
 		9C238BF9362AD80733909886 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		9D355D19FC094C143A378BF6 /* TraceEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TraceEvent.swift; sourceTree = "<group>"; };
 		9F4D120F241018190D2864E9 /* BugBashTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BugBashTests.swift; sourceTree = "<group>"; };
@@ -374,6 +385,7 @@
 		CD7B55F6B087CAB73261862D /* ConnectionSecurityPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSecurityPolicyTests.swift; sourceTree = "<group>"; };
 		CDDBC64524561A846EB1B5DD /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		CE0BD6E6820EB1ED75232AC6 /* PermissionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionStore.swift; sourceTree = "<group>"; };
+		D0150244CE8C4DA2278757E7 /* ManualScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualScreenshotUITests.swift; sourceTree = "<group>"; };
 		D162CF283E45E2270E7E08E4 /* CameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPicker.swift; sourceTree = "<group>"; };
 		D1AC4A0EC51061985747A96A /* ToolTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowContent.swift; sourceTree = "<group>"; };
 		D227A2B52CA57C1F3ED5F9C4 /* PiRemoteUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PiRemoteUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -456,6 +468,7 @@
 				2A2343A19E6EB27C1E490ABD /* RestorationState.swift */,
 				A4EAC3FEBA2534B8ED1B97E6 /* SentryService.swift */,
 				CDDBC64524561A846EB1B5DD /* SessionStore.swift */,
+				3A43062FC09419C9A842D348 /* ThinkingLevelMemory.swift */,
 				0D9A8D6A736B809653023FE1 /* TimelineCache.swift */,
 				D434834136531787C34E9D36 /* WorkspaceStore.swift */,
 			);
@@ -561,6 +574,7 @@
 				2AFC3E37C7B526B5A42284FB /* WorkspaceCreateView.swift */,
 				C1B3724C3B85510A88989844 /* WorkspaceDetailView.swift */,
 				41138A2740BCE3047AEC3C31 /* WorkspaceEditView.swift */,
+				979FA721C7AB1E5D490F172B /* WorkspaceForkGraphView.swift */,
 				7BA0339C652A50E194939755 /* WorkspaceHomeView.swift */,
 				38C30F8070319CEE497EE9C6 /* WorkspaceListView.swift */,
 				704293CEFCACEFEF0473464C /* WorkspacePickerView.swift */,
@@ -609,6 +623,7 @@
 				108301BD38A4D852833168AB /* JSONValueTests.swift */,
 				84FBDA920005635321E99D78 /* KeychainServiceTests.swift */,
 				B293D6E9C050AE164F00B090 /* ModelCodableTests.swift */,
+				98E7ADF89A14A1B4DAEC5CFD /* PermissionNotificationServiceTests.swift */,
 				F406BF19C47F85FCC415F11E /* ReliabilityTests.swift */,
 				AAD27CC7C00F7378A1603B1F /* RestorationStateTests.swift */,
 				02C84A544C0BA51554BB4D5B /* ServerConnectionTests.swift */,
@@ -684,6 +699,7 @@
 			isa = PBXGroup;
 			children = (
 				BA61B757EE768223196D36FE /* OppiMacInspectorDocumentBuilder.swift */,
+				864BCD75B0A4870C8A77C79D /* OppiMacSessionTree.swift */,
 				5991C08948103BD64D9C91F2 /* OppiMacStore.swift */,
 				BDBCD82ACC740800C6486316 /* OppiMacTheme.swift */,
 				3997CB9FF3527E2724F6D405 /* OppiMacTimelineRowBuilder.swift */,
@@ -819,6 +835,7 @@
 			isa = PBXGroup;
 			children = (
 				2F39B52443598D54F1EE1A81 /* OppiMacInspectorDocumentBuilderTests.swift */,
+				61B86379D28986C97677CCD5 /* OppiMacSessionTreeBuilderTests.swift */,
 				5D6EDA2EBAF79E0321D4E4D1 /* OppiMacStoreStreamingTests.swift */,
 				69F80A3B7297110194691A42 /* OppiMacStoreTests.swift */,
 				BD755206F3727CEEB06AA8AD /* OppiMacStoreWorkspaceAPITests.swift */,
@@ -851,6 +868,7 @@
 		F7C340C00CD1285BDF6500DE /* PiRemoteUITests */ = {
 			isa = PBXGroup;
 			children = (
+				D0150244CE8C4DA2278757E7 /* ManualScreenshotUITests.swift */,
 				551D266BF430C128719F308F /* UIHangHarnessUITests.swift */,
 			);
 			path = PiRemoteUITests;
@@ -1089,6 +1107,7 @@
 				D4A8F119463421C535DC4DED /* JSONValueTests.swift in Sources */,
 				FF26D315C62ED51DDD63101C /* KeychainServiceTests.swift in Sources */,
 				C9F6A96A69F5D34F201CE248 /* ModelCodableTests.swift in Sources */,
+				0FDB6BC662F59BEF1E15BA37 /* PermissionNotificationServiceTests.swift in Sources */,
 				919A2018C0F793AC0EC3B8E5 /* ReliabilityTests.swift in Sources */,
 				DDF10921F1FCE3DE9CC15873 /* RestorationStateTests.swift in Sources */,
 				6B08610AFCFE8B18C4C0335B /* ServerConnectionTests.swift in Sources */,
@@ -1112,6 +1131,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				80E0137C1C19BE86C47EE946 /* OppiMacInspectorDocumentBuilderTests.swift in Sources */,
+				6B71D64E67D9DC0196EAA2CA /* OppiMacSessionTreeBuilderTests.swift in Sources */,
 				802E5385075855A8C6BBB8DE /* OppiMacStoreStreamingTests.swift in Sources */,
 				4F5A70F3727A64C51F501EC7 /* OppiMacStoreTests.swift in Sources */,
 				E01F5C632218832A8C96935E /* OppiMacStoreWorkspaceAPITests.swift in Sources */,
@@ -1137,6 +1157,7 @@
 				45D49FA24CC0BF1339EA5C3C /* OppiMacApp.swift in Sources */,
 				0FDBC0C36809E209C5901B79 /* OppiMacInspectorDocumentBuilder.swift in Sources */,
 				43345934169E161759AC04E6 /* OppiMacRootView.swift in Sources */,
+				110E98A512C7BE8C0385F948 /* OppiMacSessionTree.swift in Sources */,
 				7CC4F3621B65394EC0CCEBF8 /* OppiMacStore.swift in Sources */,
 				DF9D6C1B0D0BF9A257B730E4 /* OppiMacTheme.swift in Sources */,
 				20829BC1FFF84334B9E1C004 /* OppiMacTimelineRowBuilder.swift in Sources */,
@@ -1242,6 +1263,7 @@
 				40D0F9F5BA0985CD615C3DF5 /* SyntaxHighlighter.swift in Sources */,
 				4A52D4E9154A3F1F7864945B /* ThemeCatalog.swift in Sources */,
 				81DDF45FD9097B21D5B5C19E /* ThemeStore.swift in Sources */,
+				2741838255E125573F671610 /* ThinkingLevelMemory.swift in Sources */,
 				AAFCC1D5AD8C13D140CA4CD5 /* ThinkingTimelineRowContent.swift in Sources */,
 				D2899DA5197EB5BBCD3C54D2 /* TimelineCache.swift in Sources */,
 				6777229DB279DB36503F5A4A /* TimelineReducer.swift in Sources */,
@@ -1259,6 +1281,7 @@
 				7B9263DDA5617367B687AA61 /* WorkspaceCreateView.swift in Sources */,
 				7F7F30C3C5576CD693546C3D /* WorkspaceDetailView.swift in Sources */,
 				0CDC79210DE75AD51CDAA849 /* WorkspaceEditView.swift in Sources */,
+				D801646E263E65C1B40F03FE /* WorkspaceForkGraphView.swift in Sources */,
 				56F2F83599540629ED1B0ACB /* WorkspaceHomeView.swift in Sources */,
 				307B06A57DD1CDF9A3DE94AA /* WorkspaceListView.swift in Sources */,
 				364D6E6F594F193FABDCF505 /* WorkspacePickerView.swift in Sources */,
@@ -1270,6 +1293,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3AFB84BE6354BD2921C18393 /* ManualScreenshotUITests.swift in Sources */,
 				4185B3D24E517A80A54E77A9 /* UIHangHarnessUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

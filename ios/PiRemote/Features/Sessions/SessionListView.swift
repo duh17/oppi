@@ -187,17 +187,7 @@ struct SessionListView: View {
     // MARK: - Actions
 
     private func refreshSessions() async {
-        guard let api = connection.apiClient else { return }
-        sessionStore.markSyncStarted()
-        do {
-            let sessions = try await api.listSessions()
-            sessionStore.applyServerSnapshot(sessions)
-            sessionStore.markSyncSucceeded()
-            Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
-        } catch {
-            sessionStore.markSyncFailed()
-            // Keep cached list on error
-        }
+        await connection.refreshSessionList(force: true)
     }
 
     private func deleteSession(_ session: Session) async {
@@ -242,6 +232,13 @@ private struct WorkspaceSectionHeader: View {
 struct SessionRow: View {
     let session: Session
     let pendingCount: Int
+    let lineageHint: String?
+
+    init(session: Session, pendingCount: Int, lineageHint: String? = nil) {
+        self.session = session
+        self.pendingCount = pendingCount
+        self.lineageHint = lineageHint
+    }
 
     private var title: String {
         session.name ?? "Session \(String(session.id.prefix(8)))"
@@ -281,7 +278,15 @@ struct SessionRow: View {
                     .fontWeight(pendingCount > 0 ? .semibold : .regular)
                     .lineLimit(1)
 
-                // Row 2: change status
+                // Row 2: lineage hint
+                if let lineageHint, !lineageHint.isEmpty {
+                    Text(lineageHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                // Row 3: change status
                 if let stats = session.changeStats {
                     HStack(spacing: 8) {
                         Text(filesTouchedSummary(stats.filesChanged))

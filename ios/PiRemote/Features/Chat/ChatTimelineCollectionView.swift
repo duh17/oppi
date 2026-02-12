@@ -1139,6 +1139,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             var expandedOutputLanguage: SyntaxLanguage?
             var expandedCodeStartLine: Int?
             var expandedCodeFilePath: String?
+            var expandedUsesReadMediaRenderer = false
             var prefersUnwrappedOutput = false
             var showSeparatedCommandAndOutput = false
             var copyCommandText: String?
@@ -1170,6 +1171,9 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                         )
                         if readFileType == .markdown {
                             expandedTextUsesMarkdown = true
+                            expandedCodeStartLine = nil
+                        } else if readFileType == .image {
+                            expandedUsesReadMediaRenderer = true
                             expandedCodeStartLine = nil
                         } else {
                             expandedCodeStartLine = ToolCallFormatting.readStartLine(from: args)
@@ -1264,6 +1268,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 expandedOutputLanguage: expandedOutputLanguage,
                 expandedCodeStartLine: expandedCodeStartLine,
                 expandedCodeFilePath: expandedCodeFilePath,
+                expandedUsesReadMediaRenderer: expandedUsesReadMediaRenderer,
                 prefersUnwrappedOutput: prefersUnwrappedOutput,
                 showSeparatedCommandAndOutput: showSeparatedCommandAndOutput,
                 copyCommandText: copyCommandText,

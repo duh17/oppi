@@ -15,10 +15,15 @@ struct PiSessionAttributes: ActivityAttributes {
 
     /// Dynamic state — updated as the session progresses.
     struct ContentState: Codable, Hashable {
-        var status: String          // "busy", "stopping", "ready", "stopped", "error"
-        var activeTool: String?     // Current tool being executed (nil when idle)
-        var pendingPermissions: Int // Count of pending permission requests
-        var lastEvent: String?      // Human-readable last action ("Editing auth.ts")
-        var elapsedSeconds: Int     // Total session time
+        var status: String                 // "busy", "stopping", "ready", "stopped", "error"
+        var activeTool: String?            // Current tool being executed (nil when idle)
+        var pendingPermissions: Int        // Count of pending permission requests
+        var pendingPermissionSession: String? // Session label for the top pending request
+        var pendingPermissionTool: String? // Tool for the top pending request
+        var pendingPermissionSummary: String? // Command/action summary for the top pending request
+        var pendingPermissionReason: String? // Policy reason for the top pending request
+        var pendingPermissionRisk: String? // low/medium/high/critical
+        var lastEvent: String?             // Human-readable last action ("Editing auth.ts")
+        var elapsedSeconds: Int            // Total session time
     }
 }

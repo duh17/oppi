@@ -319,6 +319,22 @@ final class ChatActionHandler {
 
     // MARK: - Model / Thinking / Context
 
+    func setThinking(
+        _ level: ThinkingLevel,
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionId: String
+    ) {
+        Task {
+            do {
+                try await connection.setThinkingLevel(level)
+                try? await connection.requestState()
+            } catch {
+                reducer.process(.error(sessionId: sessionId, message: "Failed to set thinking: \(error.localizedDescription)"))
+            }
+        }
+    }
+
     func cycleThinking(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task {
             do {
@@ -378,6 +394,7 @@ final class ChatActionHandler {
                 } else {
                     modelId = model.id
                 }
+
                 try await connection.setModel(provider: model.provider, modelId: modelId)
                 try? await connection.requestState()
             } catch {

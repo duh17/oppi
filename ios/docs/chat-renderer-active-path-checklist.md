@@ -22,7 +22,7 @@ Source of truth for routing: `ios/PiRemote/Features/Chat/ChatTimelineCollectionV
 | Thinking (expanded) | UIKit native | `ThinkingTimelineRowConfiguration` | Native expanded viewport (200pt cap, shrink-to-fit) + selectable text |
 | Tool: bash | UIKit native | `ToolTimelineRowConfiguration` | Keep plain terminal-like rendering |
 | Tool: read (collapsed) | UIKit native | `ToolTimelineRowConfiguration` | Native shell for compact list perf (includes namespaced forms like `functions.read`) |
-| Tool: read (expanded) | UIKit native | `ToolTimelineRowConfiguration` | Native expanded text viewport (no renderer swap on toggle) |
+| Tool: read (expanded) | UIKit native | `ToolTimelineRowConfiguration` | Native expanded viewport; image reads use media-aware hosted rendering so inline previews render instead of raw base64 text |
 | Tool: write (collapsed) | UIKit native | `ToolTimelineRowConfiguration` | Native shell for compact list perf (includes namespaced forms like `tools/write`) |
 | Tool: write (expanded) | UIKit native | `ToolTimelineRowConfiguration` | Native expanded text viewport (no renderer swap on toggle) |
 | Tool: edit (collapsed) | UIKit native | `ToolTimelineRowConfiguration` | Native shell shows diff stats / modified fallback in trailing slot |
@@ -48,11 +48,12 @@ Source of truth for routing: `ios/PiRemote/Features/Chat/ChatTimelineCollectionV
 
 ## SwiftUI status
 
-**Zero `UIHostingConfiguration` calls remain in the chat timeline.**
+`UIHostingConfiguration` is only used inside expanded read rows for
+media-aware rendering (`read` image outputs with inline previews).
 
-All row types render via native `UIContentConfiguration`. No SwiftUI bridge
-in the cell rendering hot path.
+All other row types render via native `UIContentConfiguration` with no
+SwiftUI bridge in the cell hot path.
 
 Parity gaps currently surfaced via native warning/failsafe rows:
 
-- media-rich non-bash tool outputs (inline media presentation parity pending)
+- media-rich non-bash/non-read tool outputs (inline media presentation parity pending)

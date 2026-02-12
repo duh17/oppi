@@ -4,7 +4,6 @@ import XCTest
 ///
 /// Exercises the collection-backed chat timeline harness with deterministic
 /// fixture data and synthetic streaming.
-@MainActor
 final class UIHangHarnessUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -166,6 +165,21 @@ final class UIHangHarnessUITests: XCTestCase {
 
         let perfGuardrail = pollDiagnostic("diag.perfGuardrail", timeout: 4)
         XCTAssertLessThanOrEqual(perfGuardrail - perfGuardrailBefore, 1)
+    }
+
+    @objc
+    func testHarnessScreenshotState() throws {
+        launchHarness(noStream: true)
+
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        expandAll.tap()
+
+        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
+        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        topButton.tap()
+
+        Thread.sleep(forTimeInterval: 12)
     }
 
     // MARK: - Launch

@@ -76,7 +76,7 @@ struct WorkspaceHomeView: View {
             WorkspaceCreateView()
         }
         .refreshable {
-            await refresh()
+            await refresh(force: true)
         }
         .overlay {
             if workspaces.isEmpty {
@@ -88,7 +88,7 @@ struct WorkspaceHomeView: View {
             }
         }
         .task {
-            await refresh()
+            await refresh(force: false)
         }
     }
 
@@ -108,7 +108,7 @@ struct WorkspaceHomeView: View {
 
     private func hasAttention(for workspaceId: String) -> Bool {
         sessionsFor(workspaceId).contains { session in
-            permissionStore.pending(for: session.id).count > 0
+            !permissionStore.pending(for: session.id).isEmpty
             || session.status == .error
         }
     }
@@ -117,18 +117,8 @@ struct WorkspaceHomeView: View {
         sessionsFor(workspaceId).map(\.lastActivity).max() ?? .distantPast
     }
 
-    private func refresh() async {
-        guard let api = connection.apiClient else { return }
-        await connection.workspaceStore.load(api: api)
-        sessionStore.markSyncStarted()
-        do {
-            let sessions = try await api.listSessions()
-            sessionStore.applyServerSnapshot(sessions)
-            sessionStore.markSyncSucceeded()
-        } catch {
-            sessionStore.markSyncFailed()
-            // Keep cached data
-        }
+    private func refresh(force: Bool) async {
+        await connection.refreshWorkspaceAndSessionLists(force: force)
     }
 }
 

@@ -36,8 +36,7 @@ struct WorkspaceListView: View {
             WorkspaceCreateView()
         }
         .refreshable {
-            guard let api = connection.apiClient else { return }
-            await connection.workspaceStore.load(api: api)
+            await connection.refreshWorkspaceCatalog(force: true)
         }
         .overlay {
             if workspaces.isEmpty {

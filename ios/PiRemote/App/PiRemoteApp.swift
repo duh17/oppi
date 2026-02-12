@@ -5,6 +5,31 @@ import UIKit
 
 private let appLog = Logger(subsystem: "dev.chenda.PiRemote", category: "App")
 
+/// Gate reconnect work so foreground transitions only trigger recovery
+/// after an actual background cycle (not every inactive↔active bounce).
+struct ForegroundReconnectGate {
+    private(set) var hasEnteredBackground = false
+
+    mutating func shouldReconnect(for phase: ScenePhase) -> Bool {
+        switch phase {
+        case .background:
+            hasEnteredBackground = true
+            return false
+
+        case .active:
+            let shouldReconnect = hasEnteredBackground
+            hasEnteredBackground = false
+            return shouldReconnect
+
+        case .inactive:
+            return false
+
+        @unknown default:
+            return false
+        }
+    }
+}
+
 @main
 struct PiRemoteApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -17,6 +42,7 @@ struct PiRemoteApp: App {
     @State private var lastAutoClientLogUploadMs: Int64 = 0
 #endif
     @State private var inviteBootstrapInFlight = false
+    @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -105,20 +131,27 @@ struct PiRemoteApp: App {
     }
 
     private func handleScenePhase(_ phase: ScenePhase) {
+        let shouldReconnect = foregroundReconnectGate.shouldReconnect(for: phase)
+
         switch phase {
         case .active:
 #if DEBUG
             mainThreadLagWatchdog.start()
 #endif
-            Task { await connection.reconnectIfNeeded() }
+            if shouldReconnect {
+                Task { await connection.reconnectIfNeeded() }
+            }
+
         case .background:
 #if DEBUG
             mainThreadLagWatchdog.stop()
 #endif
             connection.flushAndSuspend()
             RestorationState.save(from: connection, navigation: navigation)
+
         case .inactive:
             break
+
         @unknown default:
             break
         }
@@ -345,7 +378,7 @@ struct PiRemoteApp: App {
             let serverFingerprint = profile.identity.normalizedFingerprint
             let storedFingerprint = creds.normalizedServerFingerprint
 
-            if (profile.requirePinnedServerIdentity ?? false) {
+            if profile.requirePinnedServerIdentity ?? false {
                 if let serverFingerprint, let storedFingerprint, serverFingerprint != storedFingerprint {
                     launchOutcome = "identity_mismatch"
                     appLog.error(
@@ -428,9 +461,13 @@ struct PiRemoteApp: App {
 private enum UIHangHarnessConfig {
     static var isEnabled: Bool {
 #if DEBUG
+#if targetEnvironment(simulator)
         let processInfo = ProcessInfo.processInfo
         return processInfo.arguments.contains("--ui-hang-harness")
             || processInfo.environment["PI_UI_HANG_HARNESS"] == "1"
+#else
+        return false
+#endif
 #else
         return false
 #endif
@@ -446,7 +483,9 @@ private enum UIHangHarnessConfig {
 
     static var uiTestMode: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let environment = ProcessInfo.processInfo.environment
+        return environment["PI_UI_HANG_UI_TEST_MODE"] == "1"
+            || environment["XCTestConfigurationFilePath"] != nil
 #else
         false
 #endif
@@ -513,6 +552,148 @@ private struct UIHangHarnessView: View {
                     id: "\(session.rawValue)-a-\(turn)",
                     text: assistantText,
                     timestamp: ts.addingTimeInterval(0.2)
+                ))
+            }
+
+            if !UIHangHarnessConfig.uiTestMode {
+                let visualBaseOffset = Double((sessionIndex * 10_000) + turnsPerSession + 500)
+                let visualTS = baseDate.addingTimeInterval(visualBaseOffset)
+                let sessionPrefix = session.rawValue
+                let sessionID = "harness-\(sessionPrefix)"
+
+                items.append(.userMessage(
+                    id: "\(sessionPrefix)-visual-user-image",
+                    text: "Image attachment example for visual routing check.",
+                    images: [
+                        ImageAttachment(
+                            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5YpU8AAAAASUVORK5CYII=",
+                            mimeType: "image/png"
+                        ),
+                    ],
+                    timestamp: visualTS
+                ))
+
+                items.append(.assistantMessage(
+                    id: "\(sessionPrefix)-visual-assistant-markdown",
+                    text: """
+                    # Visual markdown sample
+
+                    - bullet one
+                    - bullet two
+
+                    ```swift
+                    print(\"markdown + syntax highlight parity\")
+                    ```
+                    """,
+                    timestamp: visualTS.addingTimeInterval(0.1)
+                ))
+
+                items.append(.thinking(
+                    id: "\(sessionPrefix)-visual-thinking",
+                    preview: "Deliberating about renderer parity and fallback policy…",
+                    hasMore: true,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-bash",
+                    tool: "bash",
+                    argsSummary: "command: git status --short",
+                    outputPreview: "M ios/PiRemote/Features/Chat/ChatTimelineCollectionView.swift",
+                    outputByteCount: 96,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-read",
+                    tool: "read",
+                    argsSummary: "path: ios/PiRemote/Features/Chat/ChatTimelineCollectionView.swift",
+                    outputPreview: "import SwiftUI\\nimport UIKit",
+                    outputByteCount: 512,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-write",
+                    tool: "write",
+                    argsSummary: "path: docs/notes.md",
+                    outputPreview: "",
+                    outputByteCount: 128,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-edit",
+                    tool: "edit",
+                    argsSummary: "path: ios/PiRemote/App/PiRemoteApp.swift",
+                    outputPreview: "",
+                    outputByteCount: 256,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-todo",
+                    tool: "todo",
+                    argsSummary: "action: list, status: in_progress",
+                    outputPreview: "- [ ] keep renderer parity checklist up to date",
+                    outputByteCount: 80,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-media",
+                    tool: "grep",
+                    argsSummary: "pattern: data:image/",
+                    outputPreview: "found data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+                    outputByteCount: 180,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.permission(
+                    PermissionRequest(
+                        id: "\(sessionPrefix)-visual-permission-pending",
+                        sessionId: sessionID,
+                        tool: "bash",
+                        input: [
+                            "command": .string("rm -rf /tmp/demo"),
+                        ],
+                        displaySummary: "command: rm -rf /tmp/demo",
+                        risk: .high,
+                        reason: "Filesystem mutation in host mode",
+                        timeoutAt: visualTS.addingTimeInterval(120),
+                        expires: true,
+                        resolutionOptions: nil
+                    )
+                ))
+
+                items.append(.permissionResolved(
+                    id: "\(sessionPrefix)-visual-permission-resolved",
+                    outcome: .allowed,
+                    tool: "read",
+                    summary: "path: ios/PiRemote/Features/Chat/ChatTimelineCollectionView.swift"
+                ))
+
+                items.append(.systemEvent(
+                    id: "\(sessionPrefix)-visual-system",
+                    message: "Context compacted for visual pass"
+                ))
+
+                items.append(.error(
+                    id: "\(sessionPrefix)-visual-error",
+                    message: "Sample error row for native renderer visual verification"
+                ))
+
+                items.append(.audioClip(
+                    id: "\(sessionPrefix)-visual-audio",
+                    title: "Harness Audio Clip",
+                    fileURL: URL(fileURLWithPath: "/tmp/\(sessionPrefix)-harness-audio.wav"),
+                    timestamp: visualTS.addingTimeInterval(0.2)
                 ))
             }
 
@@ -637,6 +818,7 @@ private struct UIHangHarnessView: View {
                     themeID: themeID
                 )
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.tokyoBg)
 
             TextField("Harness input", text: $inputText)
@@ -746,6 +928,11 @@ private struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
             diagnosticValue(id: "diag.cellMs", value: perf.cellConfigureLastMs)
+            diagnosticValue(id: "diag.applyMax", value: perf.applyMaxMs)
+            diagnosticValue(id: "diag.layoutMax", value: perf.layoutMaxMs)
+            diagnosticValue(id: "diag.cellMax", value: perf.cellConfigureMaxMs)
+            diagnosticValue(id: "diag.perfGuardrail", value: perf.hardGuardrailBreachCount)
+            diagnosticValue(id: "diag.failsafeRows", value: perf.failsafeConfigureCount)
             diagnosticValue(id: "diag.scrollRate", value: perf.scrollCommandsPerSecond)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

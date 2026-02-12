@@ -26,11 +26,22 @@ struct PiSessionLiveActivity: Widget {
 
                 DynamicIslandExpandedRegion(.center) {
                     if context.state.pendingPermissions > 0 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Text("\(context.state.pendingPermissions) pending")
-                                .font(.caption.bold())
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
+                                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                                Text(permissionHeadline(context.state))
+                                    .font(.caption.bold())
+                                    .lineLimit(1)
+                            }
+
+                            if let summary = context.state.pendingPermissionSummary,
+                               !summary.isEmpty {
+                                Text(summary)
+                                    .font(.caption2.monospaced())
+                                    .lineLimit(1)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     } else if let tool = context.state.activeTool {
                         HStack(spacing: 4) {
@@ -50,9 +61,17 @@ struct PiSessionLiveActivity: Widget {
 
                 DynamicIslandExpandedRegion(.bottom) {
                     if context.state.pendingPermissions > 0 {
-                        Text("Tap to approve")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
+                        if let reason = context.state.pendingPermissionReason,
+                           !reason.isEmpty {
+                            Text(reason)
+                                .font(.caption2)
+                                .lineLimit(1)
+                                .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                        } else {
+                            Text("Tap to review approval")
+                                .font(.caption2)
+                                .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                        }
                     } else {
                         Text(elapsedString(context.state.elapsedSeconds))
                             .font(.caption2.monospacedDigit())
@@ -68,12 +87,12 @@ struct PiSessionLiveActivity: Widget {
                 // Compact trailing — pending count or status
                 if context.state.pendingPermissions > 0 {
                     HStack(spacing: 2) {
-                        Image(systemName: "exclamationmark.triangle.fill")
+                        Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
                             .font(.caption2)
                         Text("\(context.state.pendingPermissions)")
                             .font(.caption2.bold())
                     }
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
                 } else {
                     StatusDot(status: context.state.status)
                 }
@@ -84,7 +103,7 @@ struct PiSessionLiveActivity: Widget {
                         .font(.caption2)
                     if context.state.pendingPermissions > 0 {
                         Circle()
-                            .fill(.orange)
+                            .fill(permissionRiskColor(context.state.pendingPermissionRisk))
                             .frame(width: 6, height: 6)
                             .offset(x: 6, y: -6)
                     }
@@ -111,7 +130,22 @@ private struct LockScreenView: View {
                         .lineLimit(1)
                 }
 
-                if let tool = context.state.activeTool {
+                if context.state.pendingPermissions > 0 {
+                    if let summary = context.state.pendingPermissionSummary,
+                       !summary.isEmpty {
+                        Text(summary)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let reason = context.state.pendingPermissionReason,
+                       !reason.isEmpty {
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } else if let tool = context.state.activeTool {
                     Text(tool)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
@@ -132,12 +166,20 @@ private struct LockScreenView: View {
 
                 if context.state.pendingPermissions > 0 {
                     HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
+                        Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
                             .font(.caption2)
-                        Text("\(context.state.pendingPermissions) pending")
+                        Text(permissionHeadline(context.state))
                             .font(.caption2.bold())
                     }
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+
+                    if let session = context.state.pendingPermissionSession,
+                       !session.isEmpty {
+                        Text(session)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 } else {
                     Text(elapsedString(context.state.elapsedSeconds))
                         .font(.caption2.monospacedDigit())
@@ -147,7 +189,9 @@ private struct LockScreenView: View {
         }
         .padding(16)
         .activityBackgroundTint(
-            context.state.pendingPermissions > 0 ? .orange.opacity(0.15) : .clear
+            context.state.pendingPermissions > 0
+                ? permissionRiskColor(context.state.pendingPermissionRisk).opacity(0.15)
+                : .clear
         )
     }
 }
@@ -200,6 +244,33 @@ private func statusColor(_ status: String) -> Color {
     case "error": return .red
     default: return .secondary
     }
+}
+
+private func permissionRiskColor(_ risk: String?) -> Color {
+    switch risk {
+    case "critical": return .red
+    case "high": return .orange
+    case "medium": return .yellow
+    case "low": return .green
+    default: return .orange
+    }
+}
+
+private func permissionRiskIcon(_ risk: String?) -> String {
+    switch risk {
+    case "critical": return "xmark.octagon.fill"
+    case "high": return "exclamationmark.triangle.fill"
+    case "medium": return "exclamationmark.shield"
+    case "low": return "checkmark.shield"
+    default: return "exclamationmark.triangle.fill"
+    }
+}
+
+private func permissionHeadline(_ state: PiSessionAttributes.ContentState) -> String {
+    if state.pendingPermissions <= 1 {
+        return "1 pending"
+    }
+    return "\(state.pendingPermissions) pending"
 }
 
 private func iconForTool(_ tool: String) -> String {

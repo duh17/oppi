@@ -242,6 +242,42 @@ actor APIClient {
         _ = try await request("DELETE", path: "/workspaces/\(id)")
     }
 
+    /// Fetch workspace fork/session graph with optional branch entry tree.
+    func getWorkspaceGraph(
+        workspaceId: String,
+        sessionId: String? = nil,
+        includeEntryGraph: Bool = false,
+        entrySessionId: String? = nil,
+        includePaths: Bool = false
+    ) async throws -> WorkspaceGraphResponse {
+        var query: [String] = []
+
+        if let sessionId, !sessionId.isEmpty {
+            query.append("sessionId=\(try encodeQueryPath(sessionId))")
+        }
+
+        if includeEntryGraph {
+            query.append("include=entry")
+        }
+
+        if let entrySessionId, !entrySessionId.isEmpty {
+            query.append("entrySessionId=\(try encodeQueryPath(entrySessionId))")
+        }
+
+        if includePaths {
+            query.append("includePaths=true")
+        }
+
+        let route = if query.isEmpty {
+            "/workspaces/\(workspaceId)/graph"
+        } else {
+            "/workspaces/\(workspaceId)/graph?\(query.joined(separator: "&"))"
+        }
+
+        let data = try await get(route)
+        return try JSONDecoder().decode(WorkspaceGraphResponse.self, from: data)
+    }
+
     // MARK: - Safety Policy
 
     /// Fetch a human-readable policy profile for a workspace.
@@ -347,6 +383,27 @@ actor APIClient {
     /// Resume a stopped session in its workspace.
     func resumeWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
         let data = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/resume", body: EmptyBody())
+        struct Response: Decodable { let session: Session }
+        return try JSONDecoder().decode(Response.self, from: data).session
+    }
+
+    /// Create a branched fork session from a source session entry.
+    func forkWorkspaceSession(
+        workspaceId: String,
+        sessionId: String,
+        entryId: String,
+        name: String? = nil
+    ) async throws -> Session {
+        struct Body: Encodable {
+            let entryId: String
+            let name: String?
+        }
+
+        let data = try await post(
+            "/workspaces/\(workspaceId)/sessions/\(sessionId)/fork",
+            body: Body(entryId: entryId, name: name)
+        )
+
         struct Response: Decodable { let session: Session }
         return try JSONDecoder().decode(Response.self, from: data).session
     }
@@ -758,6 +815,166 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
         ruleId = try c.decodeIfPresent(String.self, forKey: .ruleId)
         ruleSummary = try c.decodeIfPresent(String.self, forKey: .ruleSummary)
         userChoice = try c.decodeIfPresent(PolicyAuditUserChoice.self, forKey: .userChoice)
+    }
+}
+
+// MARK: - Graph Models
+
+struct WorkspaceGraphResponse: Decodable, Sendable, Equatable {
+    struct Current: Decodable, Sendable, Equatable {
+        let sessionId: String
+        let nodeId: String?
+    }
+
+    struct SessionGraph: Decodable, Sendable, Equatable {
+        struct Node: Decodable, Identifiable, Sendable, Equatable {
+            let id: String
+            let createdAt: Date
+            let parentId: String?
+            let workspaceId: String
+            let attachedSessionIds: [String]
+            let activeSessionIds: [String]
+            let sessionFile: String?
+            let parentSessionFile: String?
+
+            enum CodingKeys: String, CodingKey {
+                case id, createdAt, parentId, workspaceId, attachedSessionIds, activeSessionIds
+                case sessionFile, parentSessionFile
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = try c.decode(String.self, forKey: .id)
+                parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
+                workspaceId = try c.decode(String.self, forKey: .workspaceId)
+                attachedSessionIds = try c.decode([String].self, forKey: .attachedSessionIds)
+                activeSessionIds = try c.decode([String].self, forKey: .activeSessionIds)
+                sessionFile = try c.decodeIfPresent(String.self, forKey: .sessionFile)
+                parentSessionFile = try c.decodeIfPresent(String.self, forKey: .parentSessionFile)
+
+                let createdAtMs = try c.decode(Double.self, forKey: .createdAt)
+                createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
+            }
+        }
+
+        struct Edge: Decodable, Sendable, Equatable {
+            enum EdgeType: String, Decodable, Sendable {
+                case fork
+            }
+
+            let from: String
+            let to: String
+            let type: EdgeType
+        }
+
+        let nodes: [Node]
+        let edges: [Edge]
+        let roots: [String]
+    }
+
+    struct EntryGraph: Decodable, Sendable, Equatable {
+        struct Node: Decodable, Identifiable, Sendable, Equatable {
+            let id: String
+            let type: String
+            let parentId: String?
+            let timestamp: Date?
+            let role: String?
+            let preview: String?
+
+            enum CodingKeys: String, CodingKey {
+                case id, type, parentId, timestamp, role, preview
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = try c.decode(String.self, forKey: .id)
+                type = try c.decode(String.self, forKey: .type)
+                parentId = try c.decodeIfPresent(String.self, forKey: .parentId)
+                role = try c.decodeIfPresent(String.self, forKey: .role)
+                preview = try c.decodeIfPresent(String.self, forKey: .preview)
+
+                if let timestampMs = try c.decodeIfPresent(Double.self, forKey: .timestamp), timestampMs > 0 {
+                    timestamp = Date(timeIntervalSince1970: timestampMs / 1000)
+                } else {
+                    timestamp = nil
+                }
+            }
+        }
+
+        struct Edge: Decodable, Sendable, Equatable {
+            enum EdgeType: String, Decodable, Sendable {
+                case parent
+            }
+
+            let from: String
+            let to: String
+            let type: EdgeType
+        }
+
+        let piSessionId: String
+        let nodes: [Node]
+        let edges: [Edge]
+        let rootEntryId: String?
+        let leafEntryId: String?
+    }
+
+    let workspaceId: String
+    let generatedAt: Date
+    let current: Current?
+    let sessionGraph: SessionGraph
+    let entryGraph: EntryGraph?
+
+    enum CodingKeys: String, CodingKey {
+        case workspaceId, generatedAt, current, sessionGraph, entryGraph
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        workspaceId = try c.decode(String.self, forKey: .workspaceId)
+        current = try c.decodeIfPresent(Current.self, forKey: .current)
+        sessionGraph = try c.decode(SessionGraph.self, forKey: .sessionGraph)
+        entryGraph = try c.decodeIfPresent(EntryGraph.self, forKey: .entryGraph)
+
+        let generatedAtMs = try c.decode(Double.self, forKey: .generatedAt)
+        generatedAt = Date(timeIntervalSince1970: generatedAtMs / 1000)
+    }
+}
+
+extension WorkspaceGraphResponse {
+    init(
+        workspaceId: String,
+        generatedAt: Date,
+        current: Current?,
+        sessionGraph: SessionGraph,
+        entryGraph: EntryGraph? = nil
+    ) {
+        self.workspaceId = workspaceId
+        self.generatedAt = generatedAt
+        self.current = current
+        self.sessionGraph = sessionGraph
+        self.entryGraph = entryGraph
+    }
+}
+
+extension WorkspaceGraphResponse.SessionGraph.Node {
+    init(
+        id: String,
+        createdAt: Date,
+        parentId: String?,
+        workspaceId: String,
+        attachedSessionIds: [String],
+        activeSessionIds: [String],
+        sessionFile: String? = nil,
+        parentSessionFile: String? = nil
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.parentId = parentId
+        self.workspaceId = workspaceId
+        self.attachedSessionIds = attachedSessionIds
+        self.activeSessionIds = activeSessionIds
+        self.sessionFile = sessionFile
+        self.parentSessionFile = parentSessionFile
     }
 }
 

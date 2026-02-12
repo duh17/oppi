@@ -237,6 +237,49 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func routePermissionRequestUsesActiveSessionForNotificationDecision() {
+        let conn = makeConnection(sessionId: "stream-s1")
+        conn.sessionStore.activeSessionId = "active-s1"
+
+        let notificationService = PermissionNotificationService.shared
+        let previousAppState = notificationService._applicationStateForTesting
+        let previousDecisionHook = notificationService._onNotifyDecisionForTesting
+        let previousSkipScheduling = notificationService._skipSchedulingForTesting
+
+        notificationService._applicationStateForTesting = .active
+        notificationService._skipSchedulingForTesting = true
+
+        defer {
+            notificationService._applicationStateForTesting = previousAppState
+            notificationService._onNotifyDecisionForTesting = previousDecisionHook
+            notificationService._skipSchedulingForTesting = previousSkipScheduling
+        }
+
+        var capturedRequestSessionId: String?
+        var capturedActiveSessionId: String?
+        var capturedShouldNotify: Bool?
+        notificationService._onNotifyDecisionForTesting = { request, activeSessionId, shouldNotify in
+            capturedRequestSessionId = request.sessionId
+            capturedActiveSessionId = activeSessionId
+            capturedShouldNotify = shouldNotify
+        }
+
+        let perm = PermissionRequest(
+            id: "p2", sessionId: "other-s2", tool: "bash",
+            input: ["command": .string("git push")],
+            displaySummary: "bash: git push",
+            risk: .high, reason: "Git push",
+            timeoutAt: Date().addingTimeInterval(120)
+        )
+
+        conn.handleServerMessage(.permissionRequest(perm), sessionId: "stream-s1")
+
+        #expect(capturedRequestSessionId == "other-s2")
+        #expect(capturedActiveSessionId == "active-s1")
+        #expect(capturedShouldNotify == true)
+    }
+
+    @MainActor
     @Test func routePermissionExpired() {
         let conn = makeConnection()
         let perm = PermissionRequest(
@@ -851,6 +894,112 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func forkFromTimelineEntryParsesLegacyForkMessageIdField() async throws {
+        let conn = makeConnection()
+        var sentTypes: [String] = []
+        var forkEntryId: String?
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getForkMessages(let requestId):
+                sentTypes.append("get_fork_messages")
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "get_fork_messages",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "messages": .array([
+                                .object([
+                                    "id": .string("legacy-entry-123"),
+                                    "text": .string("Original user prompt"),
+                                ]),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            case .fork(let entryId, let requestId):
+                sentTypes.append("fork")
+                forkEntryId = entryId
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "fork",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([:]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        try await conn.forkFromTimelineEntry("legacy-entry-123")
+
+        #expect(sentTypes == ["get_fork_messages", "fork"])
+        #expect(forkEntryId == "legacy-entry-123")
+    }
+
+    @MainActor
+    @Test func forkFromTimelineEntryNormalizesTraceSyntheticIDs() async throws {
+        let conn = makeConnection()
+        var sentTypes: [String] = []
+        var forkEntryId: String?
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .getForkMessages(let requestId):
+                sentTypes.append("get_fork_messages")
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "get_fork_messages",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([
+                            "messages": .array([
+                                .object([
+                                    "entryId": .string("entry-123"),
+                                    "text": .string("Original user prompt"),
+                                ]),
+                            ]),
+                        ]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            case .fork(let entryId, let requestId):
+                sentTypes.append("fork")
+                forkEntryId = entryId
+                conn.handleServerMessage(
+                    .rpcResult(
+                        command: "fork",
+                        requestId: requestId,
+                        success: true,
+                        data: .object([:]),
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                Issue.record("Unexpected message sent: \(message.typeLabel)")
+            }
+        }
+
+        try await conn.forkFromTimelineEntry("entry-123-text-0")
+
+        #expect(sentTypes == ["get_fork_messages", "fork"])
+        #expect(forkEntryId == "entry-123")
+    }
+
+    @MainActor
     @Test func forkFromTimelineEntryRejectsNonForkableEntry() async {
         let conn = makeConnection()
         var sentTypes: [String] = []
@@ -1006,6 +1155,51 @@ private actor AckStageRecorder {
 
 @Suite("Foreground Recovery")
 struct ForegroundRecoveryTests {
+    private func makeSession(id: String = "s1", workspaceId: String? = "w1") -> Session {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return Session(
+            id: id,
+            userId: "u1",
+            workspaceId: workspaceId,
+            workspaceName: nil,
+            name: "Session",
+            status: .ready,
+            createdAt: now,
+            lastActivity: now,
+            model: nil,
+            runtime: nil,
+            messageCount: 0,
+            tokens: TokenUsage(input: 0, output: 0),
+            cost: 0,
+            contextTokens: nil,
+            contextWindow: nil,
+            lastMessage: nil,
+            thinkingLevel: nil
+        )
+    }
+
+    private func makeWorkspace(id: String = "w1") -> Workspace {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        return Workspace(
+            id: id,
+            userId: "u1",
+            name: "Workspace",
+            description: nil,
+            icon: nil,
+            runtime: "container",
+            skills: [],
+            policyPreset: "container",
+            systemPrompt: nil,
+            hostMount: nil,
+            memoryEnabled: nil,
+            memoryNamespace: nil,
+            extensionMode: nil,
+            extensions: nil,
+            defaultModel: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
 
     @MainActor
     @Test func reconnectIfNeededWithoutApiClientIsNoOp() async {
@@ -1063,6 +1257,147 @@ struct ForegroundRecoveryTests {
         // (API calls fail to unreachable host, but no crash)
         await conn.reconnectIfNeeded()
         #expect(!conn.foregroundRecoveryInFlight)
+    }
+
+    @MainActor
+    @Test func reconnectSkipsFullListRefreshWhenRecentSyncIsFresh() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.markSyncSucceeded(at: now)
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+
+        await conn.reconnectIfNeeded()
+
+        // If full refresh ran, unreachable host would mark these as failed.
+        #expect(conn.sessionStore.lastSyncFailed == false)
+        #expect(conn.workspaceStore.lastSyncFailed == false)
+        #expect(!conn.foregroundRecoveryInFlight)
+    }
+
+    @MainActor
+    @Test func reconnectPerformsFullListRefreshWhenCachedDataIsStale() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let stale = Date().addingTimeInterval(-600)
+        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.markSyncSucceeded(at: stale)
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: stale)
+
+        await conn.reconnectIfNeeded()
+
+        #expect(conn.sessionStore.lastSyncFailed == true)
+        #expect(conn.workspaceStore.lastSyncFailed == true)
+        #expect(!conn.foregroundRecoveryInFlight)
+    }
+
+    @MainActor
+    @Test func refreshSessionListSkipsNetworkWhenFreshAndNotForced() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.markSyncSucceeded(at: now)
+
+        await conn.refreshSessionList(force: false)
+
+        #expect(conn.sessionStore.lastSyncFailed == false)
+    }
+
+    @MainActor
+    @Test func refreshSessionListSkipEmitsStructuredBreadcrumb() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.markSyncSucceeded(at: now)
+
+        var skipMetadata: [String: String] = [:]
+        conn._onRefreshBreadcrumbForTesting = { message, metadata, _ in
+            if message == "session_list.skip" {
+                skipMetadata = metadata
+            }
+        }
+
+        await conn.refreshSessionList(force: false)
+
+        #expect(skipMetadata["force"] == "0")
+        #expect(skipMetadata["cachedSessionCount"] == "1")
+        #expect(skipMetadata["durationMs"] != nil)
+    }
+
+    @MainActor
+    @Test func refreshSessionListForceRefreshesEvenWhenFresh() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let now = Date()
+        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.markSyncSucceeded(at: now)
+
+        await conn.refreshSessionList(force: true)
+
+        #expect(conn.sessionStore.lastSyncFailed == true)
+    }
+
+    @MainActor
+    @Test func refreshWorkspaceCatalogSkipsNetworkWhenFreshAndNotForced() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        let now = Date()
+        conn.workspaceStore.workspaces = [makeWorkspace()]
+        conn.workspaceStore.isLoaded = true
+        conn.workspaceStore.markSyncSucceeded(at: now)
+
+        await conn.refreshWorkspaceCatalog(force: false)
+
+        #expect(conn.workspaceStore.lastSyncFailed == false)
+    }
+
+    @MainActor
+    @Test func refreshWorkspaceCatalogForceEmitsEndBreadcrumbWithCounts() async {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "192.0.2.1", port: 7749, token: "sk_test", name: "Test"
+        ))
+
+        var endMetadata: [String: String] = [:]
+        var endLevel: ClientLogLevel?
+        conn._onRefreshBreadcrumbForTesting = { message, metadata, level in
+            if message == "workspace_catalog.end" {
+                endMetadata = metadata
+                endLevel = level
+            }
+        }
+
+        await conn.refreshWorkspaceCatalog(force: true)
+
+        #expect(endMetadata["force"] == "1")
+        #expect(endMetadata["durationMs"] != nil)
+        #expect(endMetadata["workspaceCount"] != nil)
+        #expect(endMetadata["sessionCount"] != nil)
+        #expect(endMetadata["skillCount"] != nil)
+        #expect(endLevel != nil)
     }
 
     @MainActor

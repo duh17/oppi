@@ -57,6 +57,9 @@ final class ServerConnection {
     /// Test seam: shorten ack timeout in integration-style tests.
     var _sendAckTimeoutForTesting: Duration?
 
+    /// Test seam: observe refresh breadcrumbs emitted by list refresh paths.
+    var _onRefreshBreadcrumbForTesting: ((_ message: String, _ metadata: [String: String], _ level: ClientLogLevel) -> Void)?
+
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest?
     var extensionToast: String?
@@ -259,6 +262,7 @@ final class ServerConnection {
             reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
         }
         PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        syncLiveActivityPermissions()
     }
 
     /// Respond to an extension UI dialog.
@@ -455,15 +459,23 @@ final class ServerConnection {
         }
 
         return values.compactMap { value in
-            guard let object = value.objectValue,
-                  let entryId = object["entryId"]?.stringValue,
+            guard let object = value.objectValue else {
+                return nil
+            }
+
+            let entryId =
+                object["entryId"]?.stringValue
+                ?? object["id"]?.stringValue
+                ?? object["messageId"]?.stringValue
+
+            guard let entryId,
                   !entryId.isEmpty else {
                 return nil
             }
 
             return ForkMessage(
                 entryId: entryId,
-                text: object["text"]?.stringValue ?? ""
+                text: object["text"]?.stringValue ?? object["content"]?.stringValue ?? ""
             )
         }
     }
@@ -676,13 +688,98 @@ final class ServerConnection {
             throw ForkRequestError.noForkableMessages
         }
 
-        guard forkMessages.contains(where: { $0.entryId == entryId }) else {
+        guard let resolvedEntryId = Self.resolveForkEntryId(entryId, from: forkMessages) else {
             throw ForkRequestError.entryNotForkable
         }
 
         _ = try await sendRPCCommandAwaitingResult(command: "fork") { requestId in
-            .fork(entryId: entryId, requestId: requestId)
+            .fork(entryId: resolvedEntryId, requestId: requestId)
         }
+    }
+
+    /// Create a new forked app session from a timeline entry.
+    ///
+    /// Unlike raw pi `fork`, this keeps the current app session untouched and
+    /// materializes the branch as a new session row in the workspace.
+    func forkIntoNewSessionFromTimelineEntry(
+        _ entryId: String,
+        sourceSessionId: String,
+        workspaceId: String
+    ) async throws -> Session {
+        guard let apiClient else {
+            throw RPCRequestError.rejected(command: "fork", reason: "API client unavailable")
+        }
+
+        guard UUID(uuidString: entryId) == nil else {
+            throw ForkRequestError.turnInProgress
+        }
+
+        let forkMessages = try await getForkMessages()
+        guard !forkMessages.isEmpty else {
+            throw ForkRequestError.noForkableMessages
+        }
+
+        guard let resolvedEntryId = Self.resolveForkEntryId(entryId, from: forkMessages) else {
+            throw ForkRequestError.entryNotForkable
+        }
+
+        let sourceName = sessionStore.sessions
+            .first(where: { $0.id == sourceSessionId })?
+            .name?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = "Session \(sourceSessionId.prefix(8))"
+        let baseName = (sourceName?.isEmpty == false ? sourceName! : fallbackName)
+        let forkName = "Fork: \(baseName)"
+
+        let forkedSession = try await apiClient.forkWorkspaceSession(
+            workspaceId: workspaceId,
+            sessionId: sourceSessionId,
+            entryId: resolvedEntryId,
+            name: forkName
+        )
+
+        sessionStore.upsert(forkedSession)
+
+        if let refreshed = try? await apiClient.listWorkspaceSessions(workspaceId: workspaceId) {
+            for session in refreshed {
+                sessionStore.upsert(session)
+            }
+        }
+
+        return forkedSession
+    }
+
+    private static func resolveForkEntryId(_ requestedEntryId: String, from messages: [ForkMessage]) -> String? {
+        if messages.contains(where: { $0.entryId == requestedEntryId }) {
+            return requestedEntryId
+        }
+
+        let normalized = normalizeTraceDerivedEntryId(requestedEntryId)
+        guard normalized != requestedEntryId else {
+            return nil
+        }
+
+        if messages.contains(where: { $0.entryId == normalized }) {
+            return normalized
+        }
+
+        return nil
+    }
+
+    /// Trace assistant rows may use synthetic IDs (`<entry>-text-0`,
+    /// `<entry>-think-0`, `<entry>-tool-0`). Normalize those back to the
+    /// canonical session entry ID before validating against `get_fork_messages`.
+    private static func normalizeTraceDerivedEntryId(_ id: String) -> String {
+        for marker in ["-text-", "-think-", "-tool-"] {
+            if let range = id.range(of: marker, options: .backwards) {
+                let prefix = id[..<range.lowerBound]
+                if !prefix.isEmpty {
+                    return String(prefix)
+                }
+            }
+        }
+
+        return id
     }
 
     // ── Bash ──
@@ -697,6 +794,256 @@ final class ServerConnection {
     /// from rapid background→foreground cycling.
     private(set) var foregroundRecoveryInFlight = false
 
+    /// Skip expensive list refreshes when data was synced very recently.
+    /// This reduces foreground watchdog risk on short app switches.
+    private static let listRefreshMinimumInterval: TimeInterval = 120
+
+    /// Shared in-flight tasks to coalesce overlapping refresh requests from
+    /// launch/foreground/view refresh paths.
+    private var sessionListRefreshTask: Task<Void, Never>?
+    private var workspaceCatalogRefreshTask: Task<Void, Never>?
+
+    private static func elapsedMs(since startedAt: Date) -> Int {
+        max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
+    }
+
+    private static func compactError(_ error: any Error, maxLength: Int = 200) -> String {
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return "unknown" }
+        if message.count <= maxLength {
+            return message
+        }
+        return String(message.prefix(maxLength)) + "…"
+    }
+
+    private static func workspaceCount(from sessions: [Session]) -> Int {
+        let workspaceIDs = Set(sessions.compactMap(\.workspaceId).filter { !$0.isEmpty })
+        return workspaceIDs.count
+    }
+
+    private func recordRefreshBreadcrumb(
+        _ message: String,
+        level: ClientLogLevel = .info,
+        metadata: [String: String] = [:]
+    ) {
+        _onRefreshBreadcrumbForTesting?(message, metadata, level)
+
+        Task.detached(priority: .utility) {
+#if DEBUG
+            await ClientLogBuffer.shared.record(
+                level: level,
+                category: "Refresh",
+                message: message,
+                metadata: metadata
+            )
+#endif
+            await SentryService.shared.recordBreadcrumb(
+                level: level,
+                category: "Refresh",
+                message: message,
+                metadata: metadata
+            )
+        }
+    }
+
+    private func shouldRefreshSessionList(now: Date = Date(), force: Bool) -> Bool {
+        if force {
+            return true
+        }
+
+        if sessionStore.sessions.isEmpty {
+            return true
+        }
+
+        if sessionStore.lastSyncFailed {
+            return true
+        }
+
+        guard let sessionSyncAt = sessionStore.lastSuccessfulSyncAt else {
+            return true
+        }
+
+        let age = now.timeIntervalSince(sessionSyncAt)
+        return age >= Self.listRefreshMinimumInterval
+    }
+
+    private func shouldRefreshWorkspaceCatalog(now: Date = Date(), force: Bool) -> Bool {
+        if force {
+            return true
+        }
+
+        if !workspaceStore.isLoaded {
+            return true
+        }
+
+        if workspaceStore.lastSyncFailed {
+            return true
+        }
+
+        guard let workspaceSyncAt = workspaceStore.lastSuccessfulSyncAt else {
+            return true
+        }
+
+        let age = now.timeIntervalSince(workspaceSyncAt)
+        return age >= Self.listRefreshMinimumInterval
+    }
+
+    /// Refresh global session list (`/workspaces` + workspace session fan-out).
+    /// Uses single-flight coalescing so overlapping callers share one request.
+    func refreshSessionList(force: Bool = false) async {
+        guard let apiClient else { return }
+
+        let callStartedAt = Date()
+        let callMetadata: [String: String] = [
+            "force": force ? "1" : "0",
+            "cachedSessionCount": String(sessionStore.sessions.count),
+            "cachedWorkspaceCount": String(workspaceStore.workspaces.count),
+        ]
+
+        if let inFlight = sessionListRefreshTask {
+            recordRefreshBreadcrumb(
+                "session_list.coalesced",
+                metadata: callMetadata.merging([
+                    "durationMs": String(Self.elapsedMs(since: callStartedAt)),
+                ]) { _, new in new }
+            )
+            await inFlight.value
+            return
+        }
+
+        guard shouldRefreshSessionList(force: force) else {
+            logger.debug("Skipping session list refresh (recent successful sync)")
+            recordRefreshBreadcrumb(
+                "session_list.skip",
+                metadata: callMetadata.merging([
+                    "durationMs": String(Self.elapsedMs(since: callStartedAt)),
+                ]) { _, new in new }
+            )
+            return
+        }
+
+        recordRefreshBreadcrumb("session_list.start", metadata: callMetadata)
+
+        let task = Task { @MainActor [weak self, apiClient] in
+            guard let self else { return }
+            let requestStartedAt = Date()
+            defer { self.sessionListRefreshTask = nil }
+
+            if self.sessionStore.sessions.isEmpty,
+               let cached = await TimelineCache.shared.loadSessionList() {
+                self.sessionStore.applyServerSnapshot(cached)
+            }
+
+            self.sessionStore.markSyncStarted()
+            do {
+                let sessions = try await apiClient.listSessions()
+                self.sessionStore.applyServerSnapshot(sessions)
+                self.sessionStore.markSyncSucceeded()
+                Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
+
+                self.recordRefreshBreadcrumb(
+                    "session_list.end",
+                    metadata: [
+                        "force": force ? "1" : "0",
+                        "result": "success",
+                        "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
+                        "sessionCount": String(sessions.count),
+                        "workspaceCount": String(Self.workspaceCount(from: sessions)),
+                    ]
+                )
+            } catch {
+                self.sessionStore.markSyncFailed()
+                logger.error("Failed to refresh sessions: \(error)")
+
+                self.recordRefreshBreadcrumb(
+                    "session_list.end",
+                    level: .warning,
+                    metadata: [
+                        "force": force ? "1" : "0",
+                        "result": "failure",
+                        "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
+                        "sessionCount": String(self.sessionStore.sessions.count),
+                        "workspaceCount": String(self.workspaceStore.workspaces.count),
+                        "error": Self.compactError(error),
+                    ]
+                )
+            }
+        }
+
+        sessionListRefreshTask = task
+        await task.value
+    }
+
+    /// Refresh workspaces + skills catalog with single-flight coalescing.
+    func refreshWorkspaceCatalog(force: Bool = false) async {
+        guard let apiClient else { return }
+
+        let callStartedAt = Date()
+        let callMetadata: [String: String] = [
+            "force": force ? "1" : "0",
+            "cachedWorkspaceCount": String(workspaceStore.workspaces.count),
+            "cachedSessionCount": String(sessionStore.sessions.count),
+            "isLoaded": workspaceStore.isLoaded ? "1" : "0",
+        ]
+
+        if let inFlight = workspaceCatalogRefreshTask {
+            recordRefreshBreadcrumb(
+                "workspace_catalog.coalesced",
+                metadata: callMetadata.merging([
+                    "durationMs": String(Self.elapsedMs(since: callStartedAt)),
+                ]) { _, new in new }
+            )
+            await inFlight.value
+            return
+        }
+
+        guard shouldRefreshWorkspaceCatalog(force: force) else {
+            logger.debug("Skipping workspace catalog refresh (recent successful sync)")
+            recordRefreshBreadcrumb(
+                "workspace_catalog.skip",
+                metadata: callMetadata.merging([
+                    "durationMs": String(Self.elapsedMs(since: callStartedAt)),
+                ]) { _, new in new }
+            )
+            return
+        }
+
+        recordRefreshBreadcrumb("workspace_catalog.start", metadata: callMetadata)
+
+        let task = Task { @MainActor [weak self, apiClient] in
+            guard let self else { return }
+            let requestStartedAt = Date()
+            defer { self.workspaceCatalogRefreshTask = nil }
+
+            await self.workspaceStore.load(api: apiClient)
+
+            let level: ClientLogLevel = self.workspaceStore.lastSyncFailed ? .warning : .info
+            let result = self.workspaceStore.lastSyncFailed ? "failure" : "success"
+            self.recordRefreshBreadcrumb(
+                "workspace_catalog.end",
+                level: level,
+                metadata: [
+                    "force": force ? "1" : "0",
+                    "result": result,
+                    "durationMs": String(Self.elapsedMs(since: requestStartedAt)),
+                    "workspaceCount": String(self.workspaceStore.workspaces.count),
+                    "sessionCount": String(self.sessionStore.sessions.count),
+                    "skillCount": String(self.workspaceStore.skills.count),
+                ]
+            )
+        }
+
+        workspaceCatalogRefreshTask = task
+        await task.value
+    }
+
+    /// Refresh both global lists. Each branch has its own single-flight task,
+    /// so overlapping callers don't trigger duplicate network fan-out.
+    func refreshWorkspaceAndSessionLists(force: Bool = false) async {
+        await refreshSessionList(force: force)
+        await refreshWorkspaceCatalog(force: force)
+    }
+
     /// Called when app returns to foreground.
     ///
     /// Refreshes session list, workspaces, and session metadata.
@@ -709,27 +1056,10 @@ final class ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
-        // 1. Refresh session list (always, even without active session)
-        if sessionStore.sessions.isEmpty,
-           let cached = await TimelineCache.shared.loadSessionList() {
-            sessionStore.applyServerSnapshot(cached)
-        }
+        // 1. Refresh global lists as needed (single-flight + freshness-gated).
+        await refreshWorkspaceAndSessionLists(force: false)
 
-        sessionStore.markSyncStarted()
-        do {
-            let sessions = try await apiClient.listSessions()
-            sessionStore.applyServerSnapshot(sessions)
-            sessionStore.markSyncSucceeded()
-            Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
-        } catch {
-            sessionStore.markSyncFailed()
-            logger.error("Failed to refresh sessions: \(error)")
-        }
-
-        // 2. Refresh workspaces + skills (cache-backed)
-        await workspaceStore.load(api: apiClient)
-
-        // 3. Sweep expired permissions (safety net for missed WS messages)
+        // 2. Sweep expired permissions (safety net for missed WS messages)
         let expiredRequests = permissionStore.sweepExpired()
         for request in expiredRequests {
             reducer.resolvePermission(
@@ -738,8 +1068,11 @@ final class ServerConnection {
             )
             PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
         }
+        if !expiredRequests.isEmpty {
+            syncLiveActivityPermissions()
+        }
 
-        // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
+        // 3. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = activeSessionId else { return }
         guard let workspaceId = sessionStore.sessions.first(where: { $0.id == sessionId })?.workspaceId,
               !workspaceId.isEmpty else {
@@ -783,7 +1116,7 @@ final class ServerConnection {
             }
         }
 
-        // 5. Ask server for freshest state once the active stream is connected.
+        // 4. Ask server for freshest state once the active stream is connected.
         if streamAttached, wsClient?.status == .connected {
             try? await requestState()
         }
@@ -829,7 +1162,11 @@ final class ServerConnection {
             permissionStore.add(perm)
             // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
             coalescer.receive(.permissionRequest(perm))
-            PermissionNotificationService.shared.notifyIfBackgrounded(perm)
+            PermissionNotificationService.shared.notifyIfNeeded(
+                perm,
+                activeSessionId: sessionStore.activeSessionId
+            )
+            syncLiveActivityPermissions()
 
         case .permissionExpired(let id, _):
             if let request = permissionStore.take(id: id) {
@@ -840,6 +1177,7 @@ final class ServerConnection {
             }
             coalescer.receive(.permissionExpired(id: id))
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            syncLiveActivityPermissions()
 
         case .permissionCancelled(let id):
             if let request = permissionStore.take(id: id) {
@@ -849,6 +1187,7 @@ final class ServerConnection {
                 )
             }
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            syncLiveActivityPermissions()
 
         // Agent events → pipeline
         case .agentStart:
@@ -937,7 +1276,9 @@ final class ServerConnection {
         sessionStore.upsert(session)
         syncThinkingLevel(from: session)
         scheduleSlashCommandsRefresh(for: session, force: true)
+        syncLiveActivityPermissions()
     }
+
     private func handleState(_ session: Session) {
         let previousWorkspaceId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
         sessionStore.upsert(session)
@@ -945,7 +1286,17 @@ final class ServerConnection {
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
         }
+        syncLiveActivityPermissions()
     }
+
+    private func syncLiveActivityPermissions() {
+        LiveActivityManager.shared.syncPermissions(
+            permissionStore.pending,
+            sessions: sessionStore.sessions,
+            activeSessionId: sessionStore.activeSessionId
+        )
+    }
+
     private func handleStopLifecycleMessage(_ message: ServerMessage, sessionId: String) -> Bool {
         switch message {
         case .stopRequested(_, let reason):

@@ -1,17 +1,14 @@
 import SwiftUI
 
-/// Compact interactive toolbar showing session state and controls.
+/// Quick actions dock for session controls.
 ///
-/// Sits below the navigation bar in ChatView. Interactive sections:
-/// - Model name: tap to open model picker sheet
-/// - Thinking level: tap to cycle (off -> low -> medium -> high -> off)
-/// - Context usage: informational progress bar + percentage
-/// - Overflow menu: compact, rename session
+/// Lives above the composer so model + thinking controls are thumb-reachable.
+/// This replaces the old top-of-chat control row to recover vertical space.
 struct SessionToolbar: View {
     let session: Session?
     let thinkingLevel: ThinkingLevel
     let onModelTap: () -> Void
-    let onThinkingCycle: () -> Void
+    let onThinkingSelect: (ThinkingLevel) -> Void
     let onCompact: () -> Void
     let onRename: () -> Void
     var onNewSession: (() -> Void)?
@@ -24,13 +21,19 @@ struct SessionToolbar: View {
     private var contextDisplay: String? {
         guard let window = resolvedContextWindow, window > 0 else { return nil }
         let used = effectiveContextTokens
-        let percent = Double(used) / Double(window) * 100
+        let percent = (Double(used) / Double(window)) * 100
         return String(format: "%.0f%%/%@", percent, formatTokenCount(window))
     }
 
     private var contextPercent: Double {
         guard let window = resolvedContextWindow, window > 0 else { return 0 }
-        return Double(effectiveContextTokens) / Double(window)
+        return min(max(Double(effectiveContextTokens) / Double(window), 0), 1)
+    }
+
+    private var contextTint: Color {
+        if contextPercent > 0.9 { return .tokyoRed }
+        if contextPercent > 0.7 { return .tokyoOrange }
+        return .tokyoGreen
     }
 
     private var effectiveContextTokens: Int {
@@ -40,13 +43,23 @@ struct SessionToolbar: View {
     }
 
     private var resolvedContextWindow: Int? {
-        if let window = session?.contextWindow, window > 0 { return window }
-        guard let model = session?.model else { return nil }
+        if let window = session?.contextWindow, window > 0 {
+            return window
+        }
+        guard let model = session?.model else {
+            return nil
+        }
         return inferContextWindow(from: model)
     }
 
+    private static let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
+
     private var thinkingLabel: String {
-        switch thinkingLevel {
+        Self.thinkingLabel(for: thinkingLevel)
+    }
+
+    private static func thinkingLabel(for level: ThinkingLevel) -> String {
+        switch level {
         case .off: return "off"
         case .minimal: return "min"
         case .low: return "low"
@@ -56,60 +69,53 @@ struct SessionToolbar: View {
         }
     }
 
+    private static func thinkingMenuTitle(for level: ThinkingLevel) -> String {
+        switch level {
+        case .off: return "Off"
+        case .minimal: return "Minimal"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .xhigh: return "Max"
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            // Model picker — 44pt min touch target
+        HStack(spacing: 8) {
             Button(action: onModelTap) {
-                HStack(spacing: 4) {
-                    Image(systemName: "cpu")
-                        .font(.caption2)
-                    Text(modelDisplay)
-                        .font(.caption.monospaced().bold())
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .foregroundStyle(.tokyoCyan)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                QuickActionChipLabel(
+                    icon: "cpu",
+                    text: modelDisplay,
+                    tint: .tokyoCyan,
+                    showChevron: true,
+                    maxTextWidth: 132
+                )
             }
             .buttonStyle(.plain)
 
-            toolbarSeparator
-
-            // Thinking level cycle — 44pt min touch target
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                onThinkingCycle()
+            Menu {
+                ForEach(Self.thinkingOptions, id: \.rawValue) { level in
+                    Button {
+                        guard level != thinkingLevel else { return }
+                        onThinkingSelect(level)
+                    } label: {
+                        if level == thinkingLevel {
+                            Label(Self.thinkingMenuTitle(for: level), systemImage: "checkmark")
+                        } else {
+                            Text(Self.thinkingMenuTitle(for: level))
+                        }
+                    }
+                }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "brain")
-                        .font(.caption2)
-                    Text(thinkingLabel)
-                        .font(.caption.monospaced())
-                }
-                .foregroundStyle(.tokyoPurple)
-                .padding(.horizontal, 8)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // Context usage
-            if let display = contextDisplay {
-                ContextIndicator(display: display, percent: contextPercent)
+                QuickActionChipLabel(
+                    icon: "brain",
+                    text: thinkingLabel,
+                    tint: .tokyoPurple,
+                    showChevron: true,
+                    maxTextWidth: nil
+                )
             }
 
-            // Cost
-            if let cost = session?.cost, cost > 0 {
-                Text(String(format: "$%.3f", cost))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
-                    .padding(.leading, 8)
-            }
-
-            // Overflow menu — 44pt touch target
             Menu {
                 Button("Compact Context", systemImage: "arrow.down.doc") {
                     onCompact()
@@ -124,54 +130,77 @@ struct SessionToolbar: View {
                     }
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.caption)
+                QuickActionChipLabel(
+                    icon: "ellipsis.circle",
+                    text: "More",
+                    tint: .tokyoComment,
+                    showChevron: false,
+                    maxTextWidth: nil
+                )
+            }
+
+            Spacer(minLength: 4)
+
+            if let contextDisplay {
+                Text(contextDisplay)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(contextTint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.tokyoBgHighlight.opacity(0.65), in: Capsule())
+            }
+
+            if let cost = session?.cost, cost > 0 {
+                Text(String(format: "$%.3f", cost))
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tokyoComment)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
             }
         }
-        .padding(.horizontal, 4)
-        .background(Color.tokyoBgHighlight)
-    }
-
-    private var toolbarSeparator: some View {
-        Rectangle()
-            .fill(Color.tokyoComment.opacity(0.3))
-            .frame(width: 1, height: 14)
-            .padding(.horizontal, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(Color.tokyoComment.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
     }
 }
 
-// MARK: - Context Indicator
-
-private struct ContextIndicator: View {
-    let display: String
-    let percent: Double
-
-    private var barColor: Color {
-        if percent > 0.9 { return .tokyoRed }
-        if percent > 0.7 { return .tokyoOrange }
-        return .tokyoGreen
-    }
+private struct QuickActionChipLabel: View {
+    let icon: String
+    let text: String
+    let tint: Color
+    let showChevron: Bool
+    let maxTextWidth: CGFloat?
 
     var body: some View {
-        HStack(spacing: 4) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.tokyoComment.opacity(0.3))
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(barColor)
-                        .frame(width: geo.size.width * min(percent, 1.0))
-                }
-            }
-            .frame(width: 24, height: 4)
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption.weight(.semibold))
 
-            Text(display)
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.tokyoFgDim)
+            if let maxTextWidth {
+                Text(text)
+                    .font(.caption.monospaced().bold())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: maxTextWidth, alignment: .leading)
+            } else {
+                Text(text)
+                    .font(.caption.monospaced().bold())
+                    .lineLimit(1)
+            }
+
+            if showChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
         }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .frame(minHeight: 44)
+        .background(Color.tokyoBgHighlight.opacity(0.7), in: Capsule())
+        .contentShape(Capsule())
     }
 }
 

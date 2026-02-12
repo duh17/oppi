@@ -102,25 +102,6 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SessionToolbar(
-                session: session,
-                thinkingLevel: connection.thinkingLevel,
-                onModelTap: { showModelPicker = true },
-                onThinkingCycle: {
-                    actionHandler.cycleThinking(connection: connection, reducer: reducer, sessionId: sessionId)
-                },
-                onCompact: {
-                    actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-                },
-                onRename: {
-                    renameText = session?.name ?? ""
-                    showRenameAlert = true
-                },
-                onNewSession: {
-                    actionHandler.newSession(connection: connection, reducer: reducer, sessionId: sessionId)
-                }
-            )
-
             ChatTimelineView(
                 sessionId: sessionId,
                 workspaceId: session?.workspaceId,
@@ -276,6 +257,31 @@ struct ChatView: View {
                         .padding(.horizontal, 16)
                         .transition(.opacity)
                 }
+
+                SessionToolbar(
+                    session: session,
+                    thinkingLevel: connection.thinkingLevel,
+                    onModelTap: { showModelPicker = true },
+                    onThinkingSelect: { level in
+                        actionHandler.setThinking(
+                            level,
+                            connection: connection,
+                            reducer: reducer,
+                            sessionId: sessionId
+                        )
+                    },
+                    onCompact: {
+                        actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
+                    },
+                    onRename: {
+                        renameText = session?.name ?? ""
+                        showRenameAlert = true
+                    },
+                    onNewSession: {
+                        actionHandler.newSession(connection: connection, reducer: reducer, sessionId: sessionId)
+                    }
+                )
+                .padding(.horizontal, 16)
 
                 ChatInputBar(
                     text: $inputText,
@@ -647,18 +653,10 @@ struct ChatView: View {
 
 private struct ChatEmptyState: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Text("π")
-                .font(.system(size: 48, design: .monospaced).weight(.bold))
-                .foregroundStyle(.tokyoPurple.opacity(0.5))
-            Text("Send a message to start")
-                .font(.subheadline)
-                .foregroundStyle(.tokyoComment)
-            Text("Tip: prefix with $ for shell commands")
-                .font(.caption)
-                .foregroundStyle(.tokyoComment.opacity(0.6))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Text("π")
+            .font(.system(size: 48, design: .monospaced).weight(.bold))
+            .foregroundStyle(.tokyoPurple.opacity(0.5))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

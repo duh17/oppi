@@ -24,9 +24,18 @@ final class LiveActivityManager {
         status: "ready",
         activeTool: nil,
         pendingPermissions: 0,
+        pendingPermissionSession: nil,
+        pendingPermissionTool: nil,
+        pendingPermissionSummary: nil,
+        pendingPermissionReason: nil,
+        pendingPermissionRisk: nil,
         lastEvent: nil,
         elapsedSeconds: 0
     )
+
+    /// Last pushed pending-permission count, used to trigger Dynamic Island alerts
+    /// only when new approvals arrive.
+    private var lastPushedPermissionCount = 0
 
     /// Throttle: true when a push is pending, coalesces rapid updates.
     private var hasPendingPush = false
@@ -62,9 +71,15 @@ final class LiveActivityManager {
             status: "ready",
             activeTool: nil,
             pendingPermissions: 0,
+            pendingPermissionSession: nil,
+            pendingPermissionTool: nil,
+            pendingPermissionSummary: nil,
+            pendingPermissionReason: nil,
+            pendingPermissionRisk: nil,
             lastEvent: "Connected",
             elapsedSeconds: 0
         )
+        lastPushedPermissionCount = 0
 
         do {
             let content = ActivityContent(state: currentState, staleDate: nil)
@@ -99,12 +114,18 @@ final class LiveActivityManager {
         pushThrottleTask?.cancel()
         pushThrottleTask = nil
         hasPendingPush = false
+        lastPushedPermissionCount = 0
         startTime = nil
 
         let finalState = PiSessionAttributes.ContentState(
             status: "stopped",
             activeTool: nil,
             pendingPermissions: 0,
+            pendingPermissionSession: nil,
+            pendingPermissionTool: nil,
+            pendingPermissionSummary: nil,
+            pendingPermissionReason: nil,
+            pendingPermissionRisk: nil,
             lastEvent: "Session ended",
             elapsedSeconds: currentState.elapsedSeconds
         )
@@ -145,9 +166,17 @@ final class LiveActivityManager {
 
         case .permissionRequest:
             currentState.pendingPermissions += 1
+            currentState.lastEvent = "Permission required"
 
         case .permissionExpired:
             currentState.pendingPermissions = max(0, currentState.pendingPermissions - 1)
+            if currentState.pendingPermissions == 0 {
+                currentState.pendingPermissionSession = nil
+                currentState.pendingPermissionTool = nil
+                currentState.pendingPermissionSummary = nil
+                currentState.pendingPermissionReason = nil
+                currentState.pendingPermissionRisk = nil
+            }
 
         case .sessionEnded:
             endIfNeeded()
@@ -166,14 +195,64 @@ final class LiveActivityManager {
         pushUpdate()
     }
 
-    /// Sync pending permission count from the store.
-    func syncPermissionCount(_ count: Int) {
+    /// Sync pending permissions from the canonical store.
+    ///
+    /// Keeps Live Activity permission state accurate across all resolution paths
+    /// (allow/deny/expiry/cancel), including cross-session requests.
+    func syncPermissions(
+        _ pending: [PermissionRequest],
+        sessions: [Session],
+        activeSessionId: String?
+    ) {
         guard activeActivity != nil else { return }
-        currentState.pendingPermissions = count
+
+        currentState.pendingPermissions = pending.count
+
+        if let top = pending.sorted(by: shouldPrioritizePermission).first {
+            currentState.pendingPermissionSession = sessionLabel(for: top.sessionId, sessions: sessions)
+            currentState.pendingPermissionTool = top.tool
+            currentState.pendingPermissionSummary = top.displaySummary
+            currentState.pendingPermissionReason = top.reason
+            currentState.pendingPermissionRisk = top.risk.rawValue
+
+            if top.sessionId == activeSessionId {
+                currentState.lastEvent = "Permission required"
+            } else if let session = currentState.pendingPermissionSession {
+                currentState.lastEvent = "Permission required in \(session)"
+            } else {
+                currentState.lastEvent = "Permission required"
+            }
+        } else {
+            currentState.pendingPermissionSession = nil
+            currentState.pendingPermissionTool = nil
+            currentState.pendingPermissionSummary = nil
+            currentState.pendingPermissionReason = nil
+            currentState.pendingPermissionRisk = nil
+        }
+
         pushUpdate()
     }
 
     // MARK: - Private
+
+    private func shouldPrioritizePermission(_ lhs: PermissionRequest, _ rhs: PermissionRequest) -> Bool {
+        if lhs.risk.severity != rhs.risk.severity {
+            return lhs.risk.severity > rhs.risk.severity
+        }
+        if lhs.timeoutAt != rhs.timeoutAt {
+            return lhs.timeoutAt < rhs.timeoutAt
+        }
+        return lhs.id < rhs.id
+    }
+
+    private func sessionLabel(for sessionId: String, sessions: [Session]) -> String {
+        if let session = sessions.first(where: { $0.id == sessionId }),
+           let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
+        return "Session \(String(sessionId.prefix(8)))"
+    }
 
     /// Throttled push: coalesces rapid state changes into at most one
     /// ActivityKit update per `pushThrottleInterval`.  Eliminates the
@@ -208,8 +287,25 @@ final class LiveActivityManager {
         hasPendingPush = false
 
         let state = currentState
+        let shouldAlertForPermission = state.pendingPermissions > lastPushedPermissionCount
+        lastPushedPermissionCount = state.pendingPermissions
+
+        let alertConfiguration: AlertConfiguration?
+        if shouldAlertForPermission {
+            alertConfiguration = AlertConfiguration(
+                title: "Approval required",
+                body: "Open Oppi to review command and risk",
+                sound: .default
+            )
+        } else {
+            alertConfiguration = nil
+        }
+
         Task {
-            await activity.update(.init(state: state, staleDate: nil))
+            await activity.update(
+                .init(state: state, staleDate: nil),
+                alertConfiguration: alertConfiguration
+            )
         }
     }
 

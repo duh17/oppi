@@ -2,10 +2,13 @@ import Foundation
 import UserNotifications
 import UIKit
 
-/// Manages local push notifications for permission requests.
+/// Manages local notifications for permission requests.
 ///
-/// Tier 1: When the app is backgrounded, fire a local notification
-/// with Allow/Deny actions. The user can respond from the lock screen.
+/// Fires alerts when:
+/// - App is backgrounded/inactive (lock screen/banner)
+/// - App is foregrounded but the request is for a different session
+///
+/// This keeps permission prompts visible during multi-session supervision.
 @MainActor
 final class PermissionNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = PermissionNotificationService()
@@ -21,6 +24,11 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
     /// Called when the user taps the notification body (not an action button).
     /// Navigate to the session containing this permission.
     var onNavigateToPermission: ((String, String) -> Void)?  // (permissionId, sessionId)
+
+    // Test seams
+    var _applicationStateForTesting: UIApplication.State?
+    var _onNotifyDecisionForTesting: ((PermissionRequest, String?, Bool) -> Void)?
+    var _skipSchedulingForTesting = false
 
     override private init() {
         super.init()
@@ -77,13 +85,24 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
     // MARK: - Fire Notification
 
     /// Schedule a local notification for a permission request.
-    /// Only fires when app is not in the foreground.
     ///
-    /// High/critical risk permissions use a biometric-gated category
-    /// (deny-only from lock screen). The user must open the app to
-    /// approve, which triggers Face ID.
-    func notifyIfBackgrounded(_ request: PermissionRequest) {
-        guard UIApplication.shared.applicationState != .active else { return }
+    /// Fires when:
+    /// - App is backgrounded/inactive (always)
+    /// - App is active, but permission is for a non-active session
+    ///
+    /// This prevents missed approvals when multiple sessions run in parallel.
+    func notifyIfNeeded(_ request: PermissionRequest, activeSessionId: String?) {
+        let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
+        let isAppActive = appState == .active
+        let shouldNotify = Self.shouldNotify(
+            isAppActive: isAppActive,
+            requestSessionId: request.sessionId,
+            activeSessionId: activeSessionId
+        )
+        _onNotifyDecisionForTesting?(request, activeSessionId, shouldNotify)
+        guard shouldNotify else {
+            return
+        }
 
         let needsBiometric = BiometricService.shared.requiresBiometric(for: request.risk)
 
@@ -110,9 +129,24 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             trigger: trigger
         )
 
+        guard !_skipSchedulingForTesting else {
+            return
+        }
+
         Task {
             try? await UNUserNotificationCenter.current().add(req)
         }
+    }
+
+    nonisolated static func shouldNotify(
+        isAppActive: Bool,
+        requestSessionId: String,
+        activeSessionId: String?
+    ) -> Bool {
+        guard isAppActive else {
+            return true
+        }
+        return requestSessionId != activeSessionId
     }
 
     /// Cancel notification when permission is resolved before user sees it.

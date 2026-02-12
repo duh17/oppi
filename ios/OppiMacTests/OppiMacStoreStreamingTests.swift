@@ -157,7 +157,7 @@ private final class MockStreamingClient: OppiMacStreamingClient {
 
     func send(_ message: ClientMessage) async throws {
         switch message {
-        case .permissionResponse(let id, let action, _):
+        case .permissionResponse(let id, let action, _, _, _):
             permissionResponses.append(.init(id: id, action: action))
         case .prompt(let message, _, _, _, _):
             prompts.append(message)

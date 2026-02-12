@@ -89,8 +89,7 @@ struct WorkspacePickerView: View {
     }
 
     private func loadWorkspaces() async {
-        guard let api = connection.apiClient else { return }
-        await connection.workspaceStore.load(api: api)
+        await connection.refreshWorkspaceCatalog(force: false)
     }
 
     private func createSession(workspace: Workspace) async {

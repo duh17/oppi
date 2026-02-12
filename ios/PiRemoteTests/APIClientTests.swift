@@ -284,6 +284,39 @@ struct APIClientTests {
         #expect(session.workspaceId == "w1")
     }
 
+    @Test func forkWorkspaceSession() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/fork")
+
+            let body = self.requestBodyData(request)
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                #expect(json["entryId"] as? String == "entry-123")
+                #expect(json["name"] as? String == "Fork: feature branch")
+            } else {
+                Issue.record("Expected JSON body")
+            }
+
+            return self.mockResponse(json: """
+            {"session":{"id":"forked-1","userId":"u1","workspaceId":"w1","name":"Fork: feature branch","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+            """)
+        }
+
+        let session = try await client.forkWorkspaceSession(
+            workspaceId: "w1",
+            sessionId: "s1",
+            entryId: "entry-123",
+            name: "Fork: feature branch"
+        )
+
+        #expect(session.id == "forked-1")
+        #expect(session.workspaceId == "w1")
+        #expect(session.name == "Fork: feature branch")
+    }
+
     @Test func getSessionWithTrace() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -581,6 +614,97 @@ struct APIClientTests {
         }
 
         try await client.deleteWorkspace(id: "w1")
+    }
+
+    @Test func getWorkspaceGraphBuildsQueryAndDecodesGraphs() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/graph")
+
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let queryItems = components?.queryItems ?? []
+            #expect(queryItems.contains(where: { $0.name == "sessionId" && $0.value == "s1" }))
+            #expect(queryItems.contains(where: { $0.name == "include" && $0.value == "entry" }))
+            #expect(queryItems.contains(where: { $0.name == "entrySessionId" && $0.value == "pi-child" }))
+            #expect(queryItems.contains(where: { $0.name == "includePaths" && $0.value == "true" }))
+
+            return self.mockResponse(json: """
+            {
+              "workspaceId": "w1",
+              "generatedAt": 1700000000000,
+              "current": {
+                "sessionId": "s1",
+                "nodeId": "pi-child"
+              },
+              "sessionGraph": {
+                "nodes": [
+                  {
+                    "id": "pi-root",
+                    "createdAt": 1700000000000,
+                    "workspaceId": "w1",
+                    "attachedSessionIds": ["s0"],
+                    "activeSessionIds": []
+                  },
+                  {
+                    "id": "pi-child",
+                    "createdAt": 1700000100000,
+                    "workspaceId": "w1",
+                    "parentId": "pi-root",
+                    "attachedSessionIds": ["s1"],
+                    "activeSessionIds": ["s1"],
+                    "sessionFile": "/tmp/child.jsonl",
+                    "parentSessionFile": "/tmp/root.jsonl"
+                  }
+                ],
+                "edges": [
+                  {"from": "pi-root", "to": "pi-child", "type": "fork"}
+                ],
+                "roots": ["pi-root"]
+              },
+              "entryGraph": {
+                "piSessionId": "pi-child",
+                "nodes": [
+                  {"id": "m1", "type": "model_change", "timestamp": 1700000100000},
+                  {"id": "u1", "type": "message", "parentId": "m1", "timestamp": 1700000100500, "role": "user", "preview": "Try branch B"}
+                ],
+                "edges": [
+                  {"from": "m1", "to": "u1", "type": "parent"}
+                ],
+                "rootEntryId": "m1",
+                "leafEntryId": "u1"
+              }
+            }
+            """)
+        }
+
+        let graph = try await client.getWorkspaceGraph(
+            workspaceId: "w1",
+            sessionId: "s1",
+            includeEntryGraph: true,
+            entrySessionId: "pi-child",
+            includePaths: true
+        )
+
+        #expect(graph.workspaceId == "w1")
+        #expect(graph.current?.sessionId == "s1")
+        #expect(graph.current?.nodeId == "pi-child")
+        #expect(graph.sessionGraph.nodes.count == 2)
+        #expect(graph.sessionGraph.edges.first?.type == .fork)
+        #expect(graph.sessionGraph.roots == ["pi-root"])
+
+        let child = graph.sessionGraph.nodes.first(where: { $0.id == "pi-child" })
+        #expect(child?.parentId == "pi-root")
+        #expect(child?.activeSessionIds == ["s1"])
+        #expect(child?.sessionFile == "/tmp/child.jsonl")
+
+        #expect(graph.entryGraph?.piSessionId == "pi-child")
+        #expect(graph.entryGraph?.nodes.count == 2)
+        #expect(graph.entryGraph?.nodes.last?.role == "user")
+        #expect(graph.entryGraph?.nodes.last?.preview == "Try branch B")
+        #expect(graph.entryGraph?.edges.first?.type == .parent)
+        #expect(graph.entryGraph?.leafEntryId == "u1")
     }
 
     // MARK: - Skills

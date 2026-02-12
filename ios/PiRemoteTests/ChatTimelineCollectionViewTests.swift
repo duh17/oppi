@@ -1238,6 +1238,31 @@ struct ChatTimelineCollectionViewCoordinatorTests {
     }
 
     @MainActor
+    @Test func expandedReadImageToolConfigurationUsesMediaRenderer() throws {
+        let harness = makeHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("read-image-1")
+        harness.toolArgsStore.set(["path": .string("screens/harness-initial.png")], for: "read-image-1")
+        harness.toolOutputStore.append(
+            "Read image file [image/png]\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+            to: "read-image-1"
+        )
+
+        let item = ChatItem.toolCall(
+            id: "read-image-1",
+            tool: "read",
+            argsSummary: "path: screens/harness-initial.png",
+            outputPreview: "",
+            outputByteCount: 128,
+            isError: false,
+            isDone: true
+        )
+
+        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "read-image-1", item: item))
+        #expect(config.expandedUsesReadMediaRenderer)
+        #expect(config.expandedCodeStartLine == nil)
+    }
+
+    @MainActor
     @Test func collapsedToolRowsHideByteCountTrailingByDefault() throws {
         let harness = makeHarness(sessionId: "session-a")
         harness.toolArgsStore.set(["path": .string("src/main.swift")], for: "read-1")

@@ -11,6 +11,13 @@ protocol OppiMacAPIClient: Sendable {
     func getSkillDetail(name: String) async throws -> SkillDetail
     func getSkillFile(name: String, path: String) async throws -> String
     func listWorkspaceSessions(workspaceId: String) async throws -> [Session]
+    func getWorkspaceGraph(
+        workspaceId: String,
+        sessionId: String?,
+        includeEntryGraph: Bool,
+        entrySessionId: String?,
+        includePaths: Bool
+    ) async throws -> WorkspaceGraphResponse
     func createWorkspaceSession(workspaceId: String, name: String?, model: String?) async throws -> Session
     func resumeWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session
     func getWorkspaceSession(
@@ -56,6 +63,9 @@ final class OppiMacStore {
     private static let connectionDraftDefaultsKey = "dev.chenda.OppiMac.connectionDraft"
     private static let displayPreferencesDefaultsKey = "dev.chenda.OppiMac.displayPreferences"
 
+    private static let timelineInitialRenderWindow = 240
+    private static let timelineRenderWindowStep = 200
+
     var draft: ConnectionDraft
     var timelineTextScale: Double = DisplayPreferences().timelineTextScale
 
@@ -87,11 +97,16 @@ final class OppiMacStore {
     var sessions: [Session] = []
     var selectedSessionID: String?
 
+    var selectedWorkspaceSessionGraph: WorkspaceGraphResponse.SessionGraph?
+    var selectedWorkspaceGraphGeneratedAt: Date?
+    var isLoadingWorkspaceGraph = false
+
     var timelineItems: [ReviewTimelineItem] = []
     var selectedTimelineItemID: String?
 
     var timelineSearchQuery: String = ""
     var selectedKinds: Set<ReviewTimelineKind> = Set(ReviewTimelineKind.allCases)
+    var timelineRenderWindow: Int = 240
 
     var pendingPermissions: [PermissionRequest] = []
 
@@ -163,6 +178,13 @@ final class OppiMacStore {
         return sessions.first { $0.id == selectedSessionID }
     }
 
+    var selectedWorkspaceSessionTree: [OppiMacSessionTreeNode] {
+        OppiMacSessionTreeBuilder.build(
+            sessions: sessions,
+            graph: selectedWorkspaceSessionGraph
+        )
+    }
+
     var selectedTimelineItem: ReviewTimelineItem? {
         guard let selectedTimelineItemID else { return nil }
         return timelineItems.first { $0.id == selectedTimelineItemID }
@@ -178,6 +200,38 @@ final class OppiMacStore {
             guard selectedKinds.contains(item.kind) else { return false }
             return ReviewTimelineBuilder.matches(item, query: timelineSearchQuery)
         }
+    }
+
+    var renderedTimelineItems: [ReviewTimelineItem] {
+        let filtered = filteredTimelineItems
+
+        guard shouldApplyTimelineWindow else {
+            return filtered
+        }
+
+        guard filtered.count > timelineRenderWindow else {
+            return filtered
+        }
+
+        if let selectedTimelineItemID,
+           let selectedIndex = filtered.firstIndex(where: { $0.id == selectedTimelineItemID }) {
+            let defaultWindowStart = filtered.count - timelineRenderWindow
+            if selectedIndex < defaultWindowStart {
+                let windowEnd = selectedIndex
+                let windowStart = max(0, windowEnd - timelineRenderWindow + 1)
+                return Array(filtered[windowStart...windowEnd])
+            }
+        }
+
+        return Array(filtered.suffix(timelineRenderWindow))
+    }
+
+    var hiddenTimelineItemCount: Int {
+        max(0, filteredTimelineItems.count - renderedTimelineItems.count)
+    }
+
+    private var shouldApplyTimelineWindow: Bool {
+        timelineSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func requestFocus(_ column: FocusColumn) {
@@ -216,6 +270,23 @@ final class OppiMacStore {
         } else {
             selectedKinds.insert(kind)
         }
+    }
+
+    func showEarlierTimelineItems() {
+        let total = filteredTimelineItems.count
+        guard shouldApplyTimelineWindow else {
+            return
+        }
+
+        guard total > timelineRenderWindow else {
+            return
+        }
+
+        timelineRenderWindow = min(total, timelineRenderWindow + Self.timelineRenderWindowStep)
+    }
+
+    func resetTimelineRenderWindow() {
+        timelineRenderWindow = Self.timelineInitialRenderWindow
     }
 
     func connect() async {
@@ -310,6 +381,9 @@ final class OppiMacStore {
 
         sessions = []
         selectedSessionID = nil
+        selectedWorkspaceSessionGraph = nil
+        selectedWorkspaceGraphGeneratedAt = nil
+        isLoadingWorkspaceGraph = false
 
         clearTimelineSelection()
         composerText = ""
@@ -341,6 +415,9 @@ final class OppiMacStore {
         } catch {
             sessions = []
             selectedSessionID = nil
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
             clearTimelineSelection()
             pendingPermissions = []
             lastErrorMessage = error.localizedDescription
@@ -379,6 +456,9 @@ final class OppiMacStore {
 
             selectedWorkspaceID = created.id
             selectedSessionID = nil
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
 
             disconnectStream(clearPermissions: true)
             clearTimelineSelection()
@@ -436,6 +516,9 @@ final class OppiMacStore {
 
             sessions = []
             selectedSessionID = nil
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
 
             disconnectStream(clearPermissions: true)
             clearTimelineSelection()
@@ -529,6 +612,9 @@ final class OppiMacStore {
 
         selectedWorkspaceID = workspaceID
         selectedSessionID = nil
+        selectedWorkspaceSessionGraph = nil
+        selectedWorkspaceGraphGeneratedAt = nil
+        isLoadingWorkspaceGraph = false
 
         disconnectStream(clearPermissions: true)
         clearTimelineSelection()
@@ -541,6 +627,9 @@ final class OppiMacStore {
               let selectedSessionID else {
             disconnectStream(clearPermissions: true)
             clearTimelineSelection()
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
             return
         }
 
@@ -563,6 +652,7 @@ final class OppiMacStore {
             upsertSession(created)
             selectedSessionID = created.id
             await loadTimeline(workspaceID: workspaceID, sessionID: created.id)
+            await refreshWorkspaceSessionGraph(workspaceID: workspaceID, anchorSessionID: created.id)
         } catch {
             lastErrorMessage = error.localizedDescription
         }
@@ -604,6 +694,7 @@ final class OppiMacStore {
             upsertSession(updated)
             selectedSessionID = updated.id
             await loadTimeline(workspaceID: workspaceID, sessionID: updated.id)
+            await refreshWorkspaceSessionGraph(workspaceID: workspaceID, anchorSessionID: updated.id)
         } catch {
             lastErrorMessage = error.localizedDescription
         }
@@ -629,9 +720,13 @@ final class OppiMacStore {
 
             if let selectedSessionID {
                 await loadTimeline(workspaceID: workspaceID, sessionID: selectedSessionID)
+                await refreshWorkspaceSessionGraph(workspaceID: workspaceID, anchorSessionID: selectedSessionID)
             } else {
                 disconnectStream(clearPermissions: true)
                 clearTimelineSelection()
+                selectedWorkspaceSessionGraph = nil
+                selectedWorkspaceGraphGeneratedAt = nil
+                isLoadingWorkspaceGraph = false
             }
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -750,6 +845,9 @@ final class OppiMacStore {
         guard let workspaceID = selectedWorkspaceID else {
             sessions = []
             selectedSessionID = nil
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
             disconnectStream(clearPermissions: true)
             clearTimelineSelection()
             return
@@ -776,16 +874,68 @@ final class OppiMacStore {
 
             if let selectedSessionID {
                 await loadTimeline(workspaceID: workspaceID, sessionID: selectedSessionID)
+                await refreshWorkspaceSessionGraph(
+                    workspaceID: workspaceID,
+                    anchorSessionID: selectedSessionID
+                )
             } else {
                 disconnectStream(clearPermissions: true)
                 clearTimelineSelection()
+                selectedWorkspaceSessionGraph = nil
+                selectedWorkspaceGraphGeneratedAt = nil
+                isLoadingWorkspaceGraph = false
             }
         } catch {
             sessions = []
             selectedSessionID = nil
+            selectedWorkspaceSessionGraph = nil
+            selectedWorkspaceGraphGeneratedAt = nil
+            isLoadingWorkspaceGraph = false
             disconnectStream(clearPermissions: true)
             clearTimelineSelection()
             lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshWorkspaceSessionGraph(
+        workspaceID: String,
+        anchorSessionID: String?
+    ) async {
+        guard let apiClient else {
+            return
+        }
+
+        guard selectedWorkspaceID == workspaceID else {
+            return
+        }
+
+        isLoadingWorkspaceGraph = true
+        defer { isLoadingWorkspaceGraph = false }
+
+        do {
+            let response = try await apiClient.getWorkspaceGraph(
+                workspaceId: workspaceID,
+                sessionId: anchorSessionID,
+                includeEntryGraph: false,
+                entrySessionId: nil,
+                includePaths: false
+            )
+
+            guard selectedWorkspaceID == workspaceID else {
+                return
+            }
+
+            selectedWorkspaceSessionGraph = response.sessionGraph
+            selectedWorkspaceGraphGeneratedAt = response.generatedAt
+        } catch {
+            guard selectedWorkspaceID == workspaceID else {
+                return
+            }
+
+            // Keep existing graph on transient failure.
+            if selectedWorkspaceSessionGraph == nil {
+                selectedWorkspaceGraphGeneratedAt = nil
+            }
         }
     }
 
@@ -810,6 +960,7 @@ final class OppiMacStore {
 
             upsertSession(session)
 
+            resetTimelineRenderWindow()
             timelineItems = ReviewTimelineBuilder.build(from: trace)
             selectedTimelineItemID = timelineItems.last?.id
 
@@ -1252,6 +1403,7 @@ final class OppiMacStore {
     private func clearTimelineSelection() {
         timelineItems = []
         selectedTimelineItemID = nil
+        resetTimelineRenderWindow()
     }
 
     private func clearLiveBuffers() {
