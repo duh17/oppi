@@ -949,6 +949,24 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Run a raw pi RPC command against an active session and await response.
+   * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
+   */
+  async runRpcCommand(
+    userId: string,
+    sessionId: string,
+    command: Record<string, unknown>,
+    timeoutMs = 30_000,
+  ): Promise<unknown> {
+    const key = this.sessionKey(userId, sessionId);
+    if (!this.active.has(key)) {
+      throw new Error(`Session not active: ${sessionId}`);
+    }
+
+    return this.sendRpcCommandAsync(key, { ...command }, timeoutMs);
+  }
+
+  /**
    * Apply fields we care about from pi `get_state` response payload.
    * Returns true if the session object changed.
    */
@@ -1129,6 +1147,21 @@ export class SessionManager extends EventEmitter {
         if (nextName.length > 0 && active.session.name !== nextName) {
           active.session.name = nextName;
           this.persistSessionNow(key, active.session);
+        }
+      }
+
+      // Session-branching commands mutate pi session identity/file in-place.
+      // Refresh state immediately so reconnect/resume uses the new branch.
+      if (cmdType === "fork" || cmdType === "new_session" || cmdType === "switch_session") {
+        try {
+          const refreshed = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+          if (this.applyPiStateSnapshot(active.session, refreshed)) {
+            this.persistSessionNow(key, active.session);
+            this.broadcast(key, { type: "state", session: active.session });
+          }
+        } catch (stateErr) {
+          const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
+          console.warn(`[rpc] ${cmdType} state refresh failed for ${active.session.id}: ${message}`);
         }
       }
 

@@ -40,6 +40,7 @@ import {
   computeDiffLines,
   computeLineDiffStatsFromLines,
 } from "./overall-diff.js";
+import { buildWorkspaceGraph } from "./graph.js";
 import { ensureIdentityMaterial } from "./security.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
@@ -172,6 +173,11 @@ export class RouteHandler {
       if (method === "DELETE") return this.handleDeleteWorkspace(user, wsMatch[1], res);
     }
 
+    const wsGraphMatch = path.match(/^\/workspaces\/([^/]+)\/graph$/);
+    if (wsGraphMatch && method === "GET") {
+      return this.handleGetWorkspaceGraph(user, wsGraphMatch[1], url, res);
+    }
+
     // Device tokens
     if (path === "/me/device-token" && method === "POST")
       return this.handleRegisterDeviceToken(user, req, res);
@@ -219,6 +225,17 @@ export class RouteHandler {
         user,
         wsSessionResumeMatch[1],
         wsSessionResumeMatch[2],
+        res,
+      );
+    }
+
+    const wsSessionForkMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/);
+    if (wsSessionForkMatch && method === "POST") {
+      return this.handleForkWorkspaceSession(
+        user,
+        wsSessionForkMatch[1],
+        wsSessionForkMatch[2],
+        req,
         res,
       );
     }
@@ -718,6 +735,58 @@ export class RouteHandler {
     this.json(res, { ok: true });
   }
 
+  private handleGetWorkspaceGraph(
+    user: User,
+    workspaceId: string,
+    url: URL,
+    res: ServerResponse,
+  ): void {
+    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const sessions = this.ctx.storage
+      .listUserSessions(user.id)
+      .filter((session) => session.workspaceId === workspaceId);
+
+    const currentSessionId = url.searchParams.get("sessionId") || undefined;
+    if (currentSessionId && !sessions.some((session) => session.id === currentSessionId)) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    const includeParam = url.searchParams.get("include") || "session";
+    const includeParts = includeParam
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+    const includeEntryGraph = includeParts.includes("entry");
+
+    const entrySessionId = url.searchParams.get("entrySessionId") || undefined;
+    const includePaths = url.searchParams.get("includePaths") === "true";
+
+    const activeSessionIds = new Set<string>();
+    for (const session of sessions) {
+      if (this.ctx.sessions.isActive(user.id, session.id)) {
+        activeSessionIds.add(session.id);
+      }
+    }
+
+    const graph = buildWorkspaceGraph({
+      workspaceId,
+      sessions,
+      activeSessionIds,
+      currentSessionId,
+      includeEntryGraph,
+      entrySessionId,
+      includePaths,
+    });
+
+    this.json(res, { ...graph });
+  }
+
   private async handleRegisterDeviceToken(
     user: User,
     req: IncomingMessage,
@@ -940,6 +1009,97 @@ export class RouteHandler {
       const message = err instanceof Error ? err.message : "Resume failed";
       this.error(res, 500, message);
     }
+  }
+
+  private async handleForkWorkspaceSession(
+    user: User,
+    workspaceId: string,
+    sourceSessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const sourceSession = this.ctx.storage.getSession(user.id, sourceSessionId);
+    if (!sourceSession) {
+      this.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (sourceSession.workspaceId !== workspaceId) {
+      this.error(res, 400, "Session does not belong to this workspace");
+      return;
+    }
+
+    const body = await this.parseBody<{ entryId?: string; name?: string }>(req);
+    const entryId = body.entryId?.trim() || "";
+    if (!entryId) {
+      this.error(res, 400, "entryId required");
+      return;
+    }
+
+    await this.ctx.sessions.refreshSessionState(user.id, sourceSessionId);
+
+    const latestSource = this.ctx.storage.getSession(user.id, sourceSessionId) || sourceSession;
+    const sourceSessionFile = latestSource.piSessionFile
+      || latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
+
+    if (!sourceSessionFile) {
+      this.error(res, 409, "Source session has no trace file to fork from");
+      return;
+    }
+
+    const sourceName = latestSource.name?.trim() || `Session ${latestSource.id.slice(0, 8)}`;
+    const requestedName = body.name?.trim();
+    const forkName = (requestedName && requestedName.length > 0
+      ? requestedName
+      : `Fork: ${sourceName}`).slice(0, 160);
+
+    const forkSession = this.ctx.storage.createSession(
+      user.id,
+      forkName,
+      latestSource.model || workspace.defaultModel,
+    );
+
+    forkSession.workspaceId = workspace.id;
+    forkSession.workspaceName = workspace.name;
+    forkSession.runtime = workspace.runtime;
+    forkSession.piSessionFile = sourceSessionFile;
+    forkSession.piSessionFiles = Array.from(
+      new Set([
+        ...(latestSource.piSessionFiles || []),
+        sourceSessionFile,
+      ]),
+    );
+
+    if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
+    if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
+
+    this.ctx.storage.saveSession(forkSession);
+
+    try {
+      await this.ctx.sessions.startSession(user.id, forkSession.id, user.name, workspace);
+      await this.ctx.sessions.runRpcCommand(
+        user.id,
+        forkSession.id,
+        { type: "fork", entryId },
+        30_000,
+      );
+      await this.ctx.sessions.refreshSessionState(user.id, forkSession.id);
+    } catch (err: unknown) {
+      await this.ctx.sessions.stopSession(user.id, forkSession.id).catch(() => {});
+      this.ctx.storage.deleteSession(user.id, forkSession.id);
+      const message = err instanceof Error ? err.message : "Fork failed";
+      this.error(res, 500, message);
+      return;
+    }
+
+    const created = this.ctx.storage.getSession(user.id, forkSession.id) || forkSession;
+    this.json(res, { session: this.ctx.ensureSessionContextWindow(created) }, 201);
   }
 
   private async handleStopSession(

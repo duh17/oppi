@@ -146,10 +146,12 @@ Header reparse only when file `(mtime,size)` changed.
 
 Primary endpoint:
 
-`GET /workspaces/:wid/fork-graph`
+`GET /workspaces/:wid/graph`
 
 Optional query:
-- `sessionId=<sid>` → populate `current` anchor
+- `sessionId=<sid>` → populate `current` anchor (pi-remote session id)
+- `include=entry` → include `entryGraph` for one branch
+- `entrySessionId=<piSessionId>` → branch to project into `entryGraph`
 - `includePaths=true|false` (default false for privacy; true for debug clients)
 
 Response:
@@ -190,7 +192,7 @@ On successful `fork` RPC passthrough:
 1. call `get_state` immediately
 2. persist new `piSessionFile`, `piSessionId`, `piSessionFiles`
 3. emit/broadcast updated `state`
-4. notify fork-graph cache invalidator for workspace
+4. notify graph cache invalidator for workspace
 
 This keeps graph and active session state coherent.
 
@@ -235,7 +237,7 @@ This keeps graph and active session state coherent.
 ### Phase 1 (minimal, high value)
 
 - Add graph builder from known session metadata + header recursion
-- Add `GET /workspaces/:wid/fork-graph`
+- Add `GET /workspaces/:wid/graph`
 - Add immediate post-fork `get_state` sync + cache invalidation
 
 ### Phase 2 (robustness)

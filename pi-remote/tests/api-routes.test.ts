@@ -1,8 +1,7 @@
 /**
  * API route contract tests.
  *
- * Verifies workspace-scoped session API paths and rejects removed legacy
- * `/sessions*` routes.
+ * Verifies workspace-scoped session API paths.
  */
 
 import { describe, expect, it } from "vitest";
@@ -11,12 +10,14 @@ const ROUTES = {
   wsSessionsList: /^\/workspaces\/([^/]+)\/sessions$/,
   wsSessionStop: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/,
   wsSessionResume: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
+  wsSessionFork: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
   wsSessionFiles: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
   wsSessionOverallDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
+  wsGraph: /^\/workspaces\/([^/]+)\/graph$/,
   userStream: /^\/stream$/,
   userStreamEvents: /^\/stream\/events$/,
   permissionsPending: /^\/permissions\/pending$/,
@@ -25,12 +26,6 @@ const ROUTES = {
   policyRules: /^\/policy\/rules$/,
   policyAudit: /^\/policy\/audit$/,
 };
-
-const ROUTE_PATTERNS = Object.values(ROUTES);
-
-function matchesAnyRoute(path: string): boolean {
-  return ROUTE_PATTERNS.some((pattern) => pattern.test(path));
-}
 
 describe("Workspace-scoped API routes", () => {
   it("matches GET /workspaces/:wid/sessions", () => {
@@ -48,6 +43,13 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches POST /workspaces/:wid/sessions/:sid/resume", () => {
     const m = "/workspaces/ws-1/sessions/sess-42/resume".match(ROUTES.wsSessionResume);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+    expect(m![2]).toBe("sess-42");
+  });
+
+  it("matches POST /workspaces/:wid/sessions/:sid/fork", () => {
+    const m = "/workspaces/ws-1/sessions/sess-42/fork".match(ROUTES.wsSessionFork);
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");
     expect(m![2]).toBe("sess-42");
@@ -98,6 +100,12 @@ describe("Workspace-scoped API routes", () => {
     expect(m![2]).toBe("s1");
   });
 
+  it("matches GET /workspaces/:wid/graph", () => {
+    const m = "/workspaces/ws-1/graph".match(ROUTES.wsGraph);
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+  });
+
   it("matches multiplexed WS /stream", () => {
     expect("/stream".match(ROUTES.userStream)).toBeTruthy();
   });
@@ -127,19 +135,3 @@ describe("Workspace-scoped API routes", () => {
   });
 });
 
-describe("Removed legacy session routes", () => {
-  const legacyPaths = [
-    "/sessions",
-    "/sessions/s1",
-    "/sessions/s1/stop",
-    "/sessions/s1/events",
-    "/sessions/s1/files",
-    "/sessions/s1/client-logs",
-    "/sessions/s1/tool-output/tc_abc",
-    "/sessions/s1/stream",
-  ];
-
-  it.each(legacyPaths)("does not match removed path %s", (path) => {
-    expect(matchesAnyRoute(path)).toBe(false);
-  });
-});

@@ -123,6 +123,18 @@ function asTurnAcks(events: ServerMessage[]): Array<Extract<ServerMessage, { typ
   );
 }
 
+function asRpcResults(events: ServerMessage[]): Array<Extract<ServerMessage, { type: "rpc_result" }>> {
+  return events.filter(
+    (event): event is Extract<ServerMessage, { type: "rpc_result" }> => event.type === "rpc_result",
+  );
+}
+
+function asStateEvents(events: ServerMessage[]): Array<Extract<ServerMessage, { type: "state" }>> {
+  return events.filter(
+    (event): event is Extract<ServerMessage, { type: "state" }> => event.type === "state",
+  );
+}
+
 describe("turn delivery idempotency", () => {
   it("dedupes duplicate prompt retries by clientTurnId", async () => {
     const { manager, events, stdinWrite, addSessionMessage, session } = makeManagerHarness("ready");
@@ -260,5 +272,63 @@ describe("turn delivery idempotency", () => {
     const duplicateAck = turnAcks.find((ack) => ack.requestId === "req-2");
     expect(duplicateAck?.stage).toBe("started");
     expect(duplicateAck?.duplicate).toBe(true);
+  });
+
+  it("refreshes and persists pi state after fork rpc succeeds", async () => {
+    const { manager, events, session } = makeManagerHarness("ready");
+
+    const saveSession = vi.spyOn(manager as unknown as { persistSessionNow: (key: string, session: Session) => void }, "persistSessionNow");
+
+    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+      if (command.type === "fork") {
+        return { text: "forked", cancelled: false };
+      }
+
+      if (command.type === "get_state") {
+        return {
+          sessionFile: "/tmp/child.jsonl",
+          sessionId: "pi-child-uuid",
+        };
+      }
+
+      throw new Error(`unexpected command: ${String(command.type)}`);
+    });
+
+    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+
+    await manager.forwardRpcCommand(
+      "u1",
+      "s1",
+      { type: "fork", entryId: "msg-123" },
+      "req-fork-1",
+    );
+
+    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+      1,
+      "s1",
+      expect.objectContaining({ type: "fork", entryId: "msg-123" }),
+      30_000,
+    );
+
+    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+      2,
+      "s1",
+      expect.objectContaining({ type: "get_state" }),
+      8_000,
+    );
+
+    expect(session.piSessionFile).toBe("/tmp/child.jsonl");
+    expect(session.piSessionId).toBe("pi-child-uuid");
+    expect(session.piSessionFiles).toEqual(["/tmp/child.jsonl"]);
+
+    expect(saveSession).toHaveBeenCalled();
+
+    const rpcResult = asRpcResults(events).find((event) => event.command === "fork");
+    expect(rpcResult?.success).toBe(true);
+    expect(rpcResult?.requestId).toBe("req-fork-1");
+
+    const stateEvent = asStateEvents(events).at(-1);
+    expect(stateEvent?.session.piSessionFile).toBe("/tmp/child.jsonl");
+    expect(stateEvent?.session.piSessionId).toBe("pi-child-uuid");
   });
 });
