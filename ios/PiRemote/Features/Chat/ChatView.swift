@@ -923,12 +923,18 @@ private struct ChatTimelineView: View {
         .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
         .onChange(of: reducer.renderVersion) { _, _ in
             scrollController.itemCount = visibleItems.count
+            let hasNewItems = scrollController.consumeHasNewItems()
             scrollController.handleContentChange(
                 isBusy: isBusy,
                 streamingAssistantID: reducer.streamingAssistantID,
                 bottomItemID: bottomItemID
-            ) { targetID in
-                issueScrollCommand(id: targetID, anchor: .bottom, animated: false)
+            ) { _ in
+                // Always target the actual bottom of the timeline.
+                // During streaming, bottomItemID == streaming assistant (correct).
+                // During tool calls, bottomItemID == latest tool or working indicator.
+                guard let bottom = bottomItemID else { return }
+                let animate = hasNewItems
+                issueScrollCommand(id: bottom, anchor: .bottom, animated: animate)
             }
         }
         .onChange(of: sessionManager.needsInitialScroll) { _, needs in

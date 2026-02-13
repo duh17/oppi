@@ -72,7 +72,24 @@ final class ChatScrollController {
     }
 
     /// Item count for heavy-timeline gating. Set before each scroll decision.
-    var itemCount: Int = 0
+    var itemCount: Int = 0 {
+        didSet {
+            if itemCount > oldValue, oldValue > 0 {
+                hasNewItems = true
+            }
+        }
+    }
+
+    /// Set to `true` when new items are appended. Consumed by the scroll
+    /// callback to decide whether `scrollToItem` should animate.
+    /// Reset after each scroll command.
+    private(set) var hasNewItems = false
+
+    /// Consume the `hasNewItems` flag, returning its value and resetting it.
+    func consumeHasNewItems() -> Bool {
+        defer { hasNewItems = false }
+        return hasNewItems
+    }
 
     init() {
         startKeyboardObservers()

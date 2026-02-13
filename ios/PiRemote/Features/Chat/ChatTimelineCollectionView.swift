@@ -101,6 +101,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         collectionView.backgroundColor = UIColor(Color.tokyoBg)
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
+        collectionView.contentInset.bottom = 12
         collectionView.delegate = context.coordinator
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTimelineTap(_:)))
@@ -1231,7 +1232,27 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             }
 
             ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated)
-            collectionView.scrollToItem(at: indexPath, at: position, animated: command.animated)
+
+            if command.animated {
+                // Use a spring animation for a more obvious push-up feel
+                // when new items appear. scrollToItem's default animation is
+                // too fast/subtle to notice.
+                collectionView.scrollToItem(at: indexPath, at: position, animated: false)
+                let targetOffset = collectionView.contentOffset
+                // Rewind to pre-scroll position and animate to target
+                collectionView.contentOffset.y = max(0, targetOffset.y - 60)
+                UIView.animate(
+                    withDuration: 0.4,
+                    delay: 0,
+                    usingSpringWithDamping: 0.85,
+                    initialSpringVelocity: 0.5,
+                    options: [.allowUserInteraction, .curveEaseOut]
+                ) {
+                    collectionView.contentOffset = targetOffset
+                }
+            } else {
+                collectionView.scrollToItem(at: indexPath, at: position, animated: false)
+            }
 
             // `scrollToItem(animated: false)` can update contentOffset on the next
             // runloop tick without always triggering immediate delegate callbacks.
