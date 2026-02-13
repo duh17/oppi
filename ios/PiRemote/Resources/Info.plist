@@ -39,6 +39,8 @@
 	<string>Pi Remote uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pi Remote needs local network access to connect to your Mac server.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Pi Remote uses the microphone for voice dictation in the chat composer.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Pi Remote accesses your photo library to attach images to agent conversations.</string>
 	<key>NSSupportsLiveActivities</key>

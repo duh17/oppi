@@ -204,6 +204,13 @@ final class ChatSessionManager {
 
         if let cached, !cached.events.isEmpty {
             reducer.loadSession(cached.events)
+            let footprint = SentryService.currentFootprintMB()
+            ClientLog.info("Memory", "Session loaded (cache)", metadata: [
+                "footprintMB": footprint.map(String.init) ?? "n/a",
+                "traceEvents": String(cached.events.count),
+                "timelineItems": String(reducer.items.count),
+                "sessionId": sessionId,
+            ])
 
             // Check for scroll position restoration (one-shot from RestorationState).
             // If the user was scrolled up when the app backgrounded, attempt to restore
@@ -587,7 +594,14 @@ final class ChatSessionManager {
                 } else {
                     reducer.loadSession(trace)
                     needsInitialScroll = true
-                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId)")
+                    let footprint = SentryService.currentFootprintMB()
+                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count)]")
+                    ClientLog.info("Memory", "Session loaded", metadata: [
+                        "footprintMB": footprint.map(String.init) ?? "n/a",
+                        "traceEvents": String(trace.count),
+                        "timelineItems": String(reducer.items.count),
+                        "sessionId": self.sessionId,
+                    ])
                 }
             }
 

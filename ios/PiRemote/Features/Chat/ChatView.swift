@@ -14,6 +14,7 @@ struct ChatView: View {
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
     @State private var actionHandler = ChatActionHandler()
+    @State private var dictationService = DictationService()
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
@@ -281,6 +282,7 @@ struct ChatView: View {
                     isSending: actionHandler.isSending,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
+                    dictationService: dictationService,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     slashCommands: connection.slashCommands,
@@ -920,9 +922,10 @@ private struct ChatTimelineView: View {
         }
         .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
         .onChange(of: reducer.renderVersion) { _, _ in
-            scrollController._diagnosticItemCount = visibleItems.count
-            scrollController.handleRenderVersionChange(
-                streamingID: reducer.streamingAssistantID,
+            scrollController.itemCount = visibleItems.count
+            scrollController.handleContentChange(
+                isBusy: isBusy,
+                streamingAssistantID: reducer.streamingAssistantID,
                 bottomItemID: bottomItemID
             ) { targetID in
                 issueScrollCommand(id: targetID, anchor: .bottom, animated: false)

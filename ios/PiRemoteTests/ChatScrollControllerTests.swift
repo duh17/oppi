@@ -11,15 +11,7 @@ struct ChatScrollControllerTests {
         let controller = ChatScrollController()
         #expect(controller.scrollTargetID == nil)
         #expect(!controller.needsInitialScroll)
-    }
-
-    @MainActor
-    @Test func sentinelCallbacksUpdateAnchor() {
-        // Sentinel callbacks are fire-and-forget — just verify no crash
-        let controller = ChatScrollController()
-        controller.onSentinelAppear()
-        controller.onSentinelDisappear()
-        controller.onSentinelAppear()
+        #expect(controller.isCurrentlyNearBottom)
     }
 
     @MainActor
@@ -34,8 +26,6 @@ struct ChatScrollControllerTests {
         let controller = ChatScrollController()
         controller.scrollTargetID = "item-42"
         #expect(controller.scrollTargetID == "item-42")
-
-        // In real use, handleScrollTarget resets it — test the property directly
         controller.scrollTargetID = nil
         #expect(controller.scrollTargetID == nil)
     }
@@ -44,69 +34,40 @@ struct ChatScrollControllerTests {
     @Test func needsInitialScrollToggle() {
         let controller = ChatScrollController()
         #expect(!controller.needsInitialScroll)
-
         controller.needsInitialScroll = true
         #expect(controller.needsInitialScroll)
     }
 
-    // MARK: - Scroll Position Tracking
+    // MARK: - Near-Bottom State
 
     @MainActor
-    @Test func scrollPositionBindingTracksTopVisibleItem() {
+    @Test func updateNearBottomTracksState() {
         let controller = ChatScrollController()
-        #expect(controller.currentTopVisibleItemId == nil)
-
-        // Simulate scrollPosition(id:) setter firing as user scrolls
-        controller.scrollPositionBinding.wrappedValue = "item-42"
-        #expect(controller.currentTopVisibleItemId == "item-42")
-
-        controller.scrollPositionBinding.wrappedValue = "item-99"
-        #expect(controller.currentTopVisibleItemId == "item-99")
-
-        // nil when scrolled past all identified items
-        controller.scrollPositionBinding.wrappedValue = nil
-        #expect(controller.currentTopVisibleItemId == nil)
-    }
-
-    @MainActor
-    @Test func isCurrentlyNearBottomReflectsSentinel() {
-        let controller = ChatScrollController()
-
-        // Default: near bottom (sentinel visible by default assumption)
         #expect(controller.isCurrentlyNearBottom)
-
-        controller.onSentinelDisappear()
-        #expect(!controller.isCurrentlyNearBottom)
-
-        controller.onSentinelAppear()
-        #expect(controller.isCurrentlyNearBottom)
-    }
-
-    @MainActor
-    @Test func scrollPositionBindingGetReturnsCurrentValue() {
-        let controller = ChatScrollController()
-
-        // Write through set, read through get — verify round-trip
-        controller.scrollPositionBinding.wrappedValue = "msg-123"
-        let readBack = controller.scrollPositionBinding.wrappedValue
-        #expect(readBack == "msg-123")
-    }
-
-    // MARK: - Collection-backed callbacks
-
-    @MainActor
-    @Test func collectionBackendUpdatesAnchorState() {
-        let controller = ChatScrollController()
 
         controller.updateNearBottom(false)
         #expect(!controller.isCurrentlyNearBottom)
 
-        controller.updateTopVisibleItemId("item-7")
-        #expect(controller.currentTopVisibleItemId == "item-7")
+        controller.updateNearBottom(true)
+        #expect(controller.isCurrentlyNearBottom)
     }
 
     @MainActor
-    @Test func detachedStreamingHintVisibilityIsMutable() {
+    @Test func topVisibleItemIdTracksState() {
+        let controller = ChatScrollController()
+        #expect(controller.currentTopVisibleItemId == nil)
+
+        controller.updateTopVisibleItemId("item-7")
+        #expect(controller.currentTopVisibleItemId == "item-7")
+
+        controller.updateTopVisibleItemId(nil)
+        #expect(controller.currentTopVisibleItemId == nil)
+    }
+
+    // MARK: - Hint Visibility
+
+    @MainActor
+    @Test func detachedStreamingHintVisibility() {
         let controller = ChatScrollController()
         #expect(!controller.isDetachedStreamingHintVisible)
 
@@ -118,7 +79,7 @@ struct ChatScrollControllerTests {
     }
 
     @MainActor
-    @Test func jumpToBottomHintVisibilityIsMutable() {
+    @Test func jumpToBottomHintVisibility() {
         let controller = ChatScrollController()
         #expect(!controller.isJumpToBottomHintVisible)
 
@@ -129,95 +90,92 @@ struct ChatScrollControllerTests {
         #expect(!controller.isJumpToBottomHintVisible)
     }
 
+    // MARK: - handleContentChange
+
     @MainActor
-    @Test func handleRenderVersionChangeUsesStreamingTarget() async {
+    @Test func handleContentChangeScrollsToStreamingTarget() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
 
         var targets: [String] = []
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { targetID in
-            targets.append(targetID)
-        }
+        ) { targets.append($0) }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(targets == ["stream-1"])
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeUsesBottomTarget() async {
+    @Test func handleContentChangeScrollsToBottomWhenNoStreaming() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
 
         var targets: [String] = []
-        controller.handleRenderVersionChange(
-            streamingID: nil,
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
-        ) { targetID in
-            targets.append(targetID)
-        }
+        ) { targets.append($0) }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(targets == ["bottom-1"])
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeSkipsWhenNotNearBottom() async {
+    @Test func handleContentChangeSkipsWhenNotNearBottom() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(false)
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 0)
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeHeavyTimelineKeepsStreamingFollow() async {
+    @Test func handleContentChangeHeavyTimelineFollowsWhenBusy() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
-        controller._diagnosticItemCount = 240
+        controller.itemCount = 240
 
         var targets: [String] = []
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { targetID in
-            targets.append(targetID)
-        }
+        ) { targets.append($0) }
 
         try? await Task.sleep(for: .milliseconds(200))
         #expect(targets == ["stream-1"])
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeHeavyTimelineSkipsNonStreamingScroll() async {
+    @Test func handleContentChangeHeavyTimelineSkipsWhenIdle() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
-        controller._diagnosticItemCount = 240
+        controller.itemCount = 240
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: nil,
+        controller.handleContentChange(
+            isBusy: false,
+            streamingAssistantID: nil,
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(200))
         #expect(callCount == 0)
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeSkipsDuringKeyboardTransition() async {
+    @Test func handleContentChangeSkipsDuringKeyboardTransition() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
 
@@ -225,41 +183,40 @@ struct ChatScrollControllerTests {
         await Task.yield()
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(140))
         #expect(callCount == 0)
 
+        // After keyboard settles
         try? await Task.sleep(for: .milliseconds(520))
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(140))
         #expect(callCount == 1)
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeRechecksKeyboardBeforeDelayedScroll() async {
+    @Test func handleContentChangeRechecksKeyboardBeforeDelayedScroll() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
+        // Fire keyboard mid-delay
         try? await Task.sleep(for: .milliseconds(10))
         NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
         await Task.yield()
@@ -269,35 +226,33 @@ struct ChatScrollControllerTests {
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeSkipsDuringUserInteraction() async {
+    @Test func handleContentChangeSkipsDuringUserInteraction() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
         controller.setUserInteracting(true)
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 0)
     }
 
     @MainActor
-    @Test func handleRenderVersionChangeCancelsPendingScrollWhenUserStartsInteracting() async {
+    @Test func handleContentChangeCancelsPendingScrollWhenUserStartsInteracting() async {
         let controller = ChatScrollController()
         controller.updateNearBottom(true)
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(10))
         controller.setUserInteracting(true)
@@ -306,12 +261,11 @@ struct ChatScrollControllerTests {
         #expect(callCount == 0)
 
         controller.setUserInteracting(false)
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 1)
@@ -324,27 +278,27 @@ struct ChatScrollControllerTests {
         controller.detachFromBottomForUserScroll()
 
         var callCount = 0
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 0)
 
         controller.updateNearBottom(true)
-        controller.handleRenderVersionChange(
-            streamingID: "stream-1",
+        controller.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
             bottomItemID: "bottom-1"
-        ) { _ in
-            callCount += 1
-        }
+        ) { _ in callCount += 1 }
 
         try? await Task.sleep(for: .milliseconds(120))
         #expect(callCount == 1)
     }
+
+    // MARK: - Initial Scroll & Scroll Target
 
     @MainActor
     @Test func handleInitialScrollInvokesCallback() async {
@@ -352,9 +306,7 @@ struct ChatScrollControllerTests {
         controller.needsInitialScroll = true
 
         var targets: [String] = []
-        controller.handleInitialScroll(bottomItemID: "bottom-1") { targetID in
-            targets.append(targetID)
-        }
+        controller.handleInitialScroll(bottomItemID: "bottom-1") { targets.append($0) }
 
         try? await Task.sleep(for: .milliseconds(180))
         #expect(targets == ["bottom-1"])
@@ -367,12 +319,28 @@ struct ChatScrollControllerTests {
         controller.scrollTargetID = "target-1"
 
         var targets: [String] = []
-        controller.handleScrollTarget { targetID in
-            targets.append(targetID)
-        }
+        controller.handleScrollTarget { targets.append($0) }
 
         try? await Task.sleep(for: .milliseconds(220))
         #expect(targets == ["target-1"])
         #expect(controller.scrollTargetID == nil)
+    }
+
+    // MARK: - requestScrollToBottom
+
+    @MainActor
+    @Test func requestScrollToBottomReattachesAndClearsHints() {
+        let controller = ChatScrollController()
+        controller.updateNearBottom(false)
+        controller.setDetachedStreamingHintVisible(true)
+        controller.setJumpToBottomHintVisible(true)
+
+        let nonceBefore = controller.scrollToBottomNonce
+        controller.requestScrollToBottom()
+
+        #expect(controller.isCurrentlyNearBottom)
+        #expect(!controller.isDetachedStreamingHintVisible)
+        #expect(!controller.isJumpToBottomHintVisible)
+        #expect(controller.scrollToBottomNonce == nonceBefore &+ 1)
     }
 }

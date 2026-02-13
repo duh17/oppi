@@ -61,6 +61,7 @@ targets:
         NSCameraUsageDescription: "Pi Remote uses the camera to take photos for agent conversations."
         NSPhotoLibraryUsageDescription: "Pi Remote accesses your photo library to attach images to agent conversations."
         NSLocalNetworkUsageDescription: "Pi Remote needs local network access to connect to your Mac server."
+        NSMicrophoneUsageDescription: "Pi Remote uses the microphone for voice dictation in the chat composer."
         NSFaceIDUsageDescription: "Pi Remote uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         SentryDSN: "$(SENTRY_DSN)"

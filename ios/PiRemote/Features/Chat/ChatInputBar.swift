@@ -28,6 +28,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let isSending: Bool
     let sendProgressText: String?
     let isStopping: Bool
+    var dictationService: DictationService?
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     let slashCommands: [SlashCommand]
@@ -166,6 +167,9 @@ struct ChatInputBar<ActionRow: View>: View {
             // Action row: attach (fixed) + pills/controls (trailing)
             HStack(spacing: 6) {
                 attachButton
+                if let dictationService, isDictationEnabled {
+                    dictationButton(service: dictationService)
+                }
                 actionRow()
             }
         }
@@ -294,6 +298,53 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
         }
         .disabled(isBashMode)
+    }
+
+    private var isDictationEnabled: Bool {
+        DictationConfig.load().enabled
+    }
+
+    private func dictationButton(service: DictationService) -> some View {
+        let isRecording = service.state == .recording
+        let isProcessing = service.state == .processing
+
+        return Button {
+            if isRecording {
+                service.stop()
+            } else if service.state == .idle || service.isErrorState {
+                let config = DictationConfig.load()
+                service.onTranscription = { fullText in
+                    text = fullText
+                }
+                service.start(config: config)
+            }
+        } label: {
+            Group {
+                if isProcessing {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: isRecording ? "mic.fill" : "mic")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isRecording ? .tokyoRed : .tokyoFg)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background {
+                Capsule()
+                    .fill(isRecording ? Color.tokyoRed.opacity(0.18) : Color.tokyoComment.opacity(0.18))
+                    .overlay(
+                        Capsule().stroke(
+                            isRecording ? Color.tokyoRed.opacity(0.4) : Color.tokyoComment.opacity(0.25),
+                            lineWidth: 0.5
+                        )
+                    )
+            }
+        }
+        .disabled(isProcessing || isBusy)
+        .accessibilityIdentifier("chat.dictation")
+        .accessibilityLabel(isRecording ? "Stop dictation" : "Start dictation")
     }
 
     private var imageStrip: some View {

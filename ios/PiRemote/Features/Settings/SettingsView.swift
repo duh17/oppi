@@ -100,6 +100,18 @@ struct SettingsView: View {
 
             biometricSection
 
+            Section {
+                NavigationLink {
+                    DictationSettingsView()
+                } label: {
+                    Label("Dictation", systemImage: "mic")
+                }
+            } header: {
+                Text("Voice Input")
+            } footer: {
+                Text("Configure speech-to-text for voice dictation in the composer.")
+            }
+
             Section("Cache") {
                 Button("Clear Local Cache") {
                     Task.detached { await TimelineCache.shared.clear() }

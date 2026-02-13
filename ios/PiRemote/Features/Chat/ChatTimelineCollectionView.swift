@@ -74,7 +74,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: itemSize, subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
-        section.interGroupSpacing = 12
+        section.interGroupSpacing = 8
         section.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
         return UICollectionViewCompositionalLayout(section: section)
     }
@@ -780,7 +780,16 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                performScroll(scrollCommand, in: collectionView) {
                 lastHandledScrollCommandNonce = scrollCommand.nonce
             }
-            updateScrollState(collectionView)
+
+            // When the session is busy (streaming or running tools), new items
+            // grow contentSize faster than auto-scroll can keep up. Suppress
+            // updateScrollState here to avoid flipping isNearBottom=false before
+            // the throttled auto-scroll fires. User-initiated scroll changes
+            // are still detected via scrollViewDidScroll delegate callbacks.
+            let isBusy = configuration.isBusy
+            if !isBusy {
+                updateScrollState(collectionView)
+            }
             updateDetachedStreamingHintVisibility()
         }
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {

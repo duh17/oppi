@@ -1617,6 +1617,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
     @MainActor
     @Test func nearBottomHysteresisKeepsFollowStableForSmallTailGrowth() {
+        // Thresholds: enter=120, exit=200.
+        // When already near-bottom, distances ≤ 200 keep follow stable.
         let harness = makeHarness(sessionId: "session-a")
         let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
@@ -1624,11 +1626,13 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
         harness.scrollController.updateNearBottom(true)
 
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 60, in: metricsView))
+        // Distance 150 — within exit threshold (200), stays near-bottom.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 150, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(harness.scrollController.isCurrentlyNearBottom)
 
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 100, in: metricsView))
+        // Distance 250 — exceeds exit threshold (200), detaches.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 250, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(!harness.scrollController.isCurrentlyNearBottom)
     }
@@ -1646,9 +1650,9 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         metricsView.testIsTracking = true
         harness.coordinator.scrollViewWillBeginDragging(metricsView)
 
-        // Move up only 40pt from bottom. Hysteresis alone (72pt exit threshold)
-        // would normally keep follow=true; user-scroll intent should detach.
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 40, in: metricsView))
+        // Move up 150pt from bottom — past the enter threshold (120pt) so
+        // the detach sticks even after updateScrollState re-evaluates.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 150, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
 
         #expect(!harness.scrollController.isCurrentlyNearBottom)
@@ -1656,6 +1660,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
     @MainActor
     @Test func nearBottomHysteresisRequiresCloserReentryAfterDetach() {
+        // Thresholds: enter=120, exit=200.
+        // When detached, must get within enter threshold (120) to re-attach.
         let harness = makeHarness(sessionId: "session-a")
         let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
@@ -1663,11 +1669,13 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
         harness.scrollController.updateNearBottom(false)
 
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 60, in: metricsView))
+        // Distance 150 — beyond enter threshold (120), stays detached.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 150, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(!harness.scrollController.isCurrentlyNearBottom)
 
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 24, in: metricsView))
+        // Distance 80 — within enter threshold (120), re-attaches.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 80, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(harness.scrollController.isCurrentlyNearBottom)
     }
@@ -1694,7 +1702,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
         metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
 
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 120, in: metricsView))
+        // Distance 250 — beyond enter threshold (120), detached from bottom.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 250, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(harness.scrollController.isDetachedStreamingHintVisible)
 
