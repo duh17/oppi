@@ -805,62 +805,35 @@ private struct StreamingCodeBlockView: View {
 
 // MARK: - Table Block View
 
-/// Compact, horizontally-scrollable markdown table.
+/// SwiftUI wrapper around `NativeTableBlockView` (UIKit).
 ///
-/// Uses SwiftUI `Grid` so columns align across header and data rows.
-struct TableBlockView: View {
+/// Single table implementation used everywhere — streaming, finalized, and
+/// assistant markdown content. Horizontal scroll + monospaced column alignment
+/// with proper emoji/CJK width handling.
+struct TableBlockView: UIViewRepresentable {
     let headers: [String]
     let rows: [[String]]
 
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                // Header row
-                GridRow {
-                    ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
-                        Text(header)
-                            .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoCyan)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .gridColumnAlignment(.leading)
-                    }
-                }
-                .background(Color.tokyoBgHighlight)
+    func makeUIView(context: Context) -> NativeTableBlockView {
+        let view = NativeTableBlockView()
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
 
-                // Separator
-                Rectangle()
-                    .fill(Color.tokyoComment.opacity(0.35))
-                    .frame(height: 1)
-                    .gridCellUnsizedAxes(.horizontal)
+    func updateUIView(_ uiView: NativeTableBlockView, context: Context) {
+        let palette = ThemeRuntimeState.currentThemeID().palette
+        uiView.apply(headers: headers, rows: rows, palette: palette)
+    }
 
-                // Data rows
-                ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
-                    GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            Text(cell)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.tokyoFg)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                        }
-                    }
-
-                    if rowIdx < rows.count - 1 {
-                        Rectangle()
-                            .fill(Color.tokyoComment.opacity(0.15))
-                            .frame(height: 1)
-                            .gridCellUnsizedAxes(.horizontal)
-                    }
-                }
-            }
-        }
-        .background(Color.tokyoBgDark)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: NativeTableBlockView, context: Context) -> CGSize? {
+        let width = proposal.width ?? UIScreen.main.bounds.width
+        let fitting = uiView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
         )
+        return CGSize(width: width, height: fitting.height)
     }
 }
 

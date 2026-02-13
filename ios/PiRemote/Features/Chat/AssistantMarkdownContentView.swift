@@ -617,8 +617,15 @@ final class NativeTableBlockView: UIView {
         let l = UILabel()
         l.numberOfLines = 0
         l.translatesAutoresizingMaskIntoConstraints = false
+        // Prevent Auto Layout from compressing the label to the scroll frame width.
+        l.setContentCompressionResistancePriority(.required, for: .horizontal)
         return l
     }()
+
+    /// Explicit width constraint for the label, updated in `apply()` to the
+    /// measured content width so UIScrollView knows the content is wider than
+    /// the frame and enables horizontal scrolling.
+    private var tableLabelWidthConstraint: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -636,6 +643,9 @@ final class NativeTableBlockView: UIView {
         addSubview(scrollView)
         scrollView.addSubview(tableLabel)
 
+        let widthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
+        tableLabelWidthConstraint = widthConstraint
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -644,19 +654,80 @@ final class NativeTableBlockView: UIView {
 
             tableLabel.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             tableLabel.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            tableLabel.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             tableLabel.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
 
             // Height: lock content to frame (horizontal-only scroll).
             tableLabel.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+
+            // Width: set explicitly from measured content so scroll view
+            // knows content extends beyond its frame.
+            widthConstraint,
         ])
     }
 
     func apply(headers: [String], rows: [[String]], palette: ThemePalette) {
         backgroundColor = UIColor(palette.bgDark)
         layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
-        tableLabel.attributedText = Self.makeTableAttributedText(
+        let attrText = Self.makeTableAttributedText(
             headers: headers, rows: rows, palette: palette
         )
+        tableLabel.attributedText = attrText
+
+        // Measure content width so the scroll view can scroll horizontally.
+        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
+        tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
+    }
+
+    /// Monospaced column width of a string — counts emoji/CJK as 2 columns.
+    ///
+    /// `String.count` treats 🔴 as 1, but monospaced fonts render it ~2 chars wide.
+    /// Uses the same heuristic as terminal column-width calculations (wcwidth-style).
+    private static func monoColumnWidth(_ string: String) -> Int {
+        var width = 0
+        for scalar in string.unicodeScalars {
+            let value = scalar.value
+            switch value {
+            // ASCII printable
+            case 0x20...0x7E:
+                width += 1
+            // Common fullwidth / CJK ranges
+            case 0x1100...0x115F, // Hangul Jamo
+                 0x2E80...0x303E, // CJK Radicals, Kangxi, Ideographic
+                 0x3041...0x33BF, // Hiragana, Katakana, CJK Compatibility
+                 0x3400...0x4DBF, // CJK Unified Extension A
+                 0x4E00...0x9FFF, // CJK Unified
+                 0xA000...0xA4CF, // Yi
+                 0xAC00...0xD7AF, // Hangul Syllables
+                 0xF900...0xFAFF, // CJK Compatibility Ideographs
+                 0xFE30...0xFE6F, // CJK Compatibility Forms
+                 0xFF01...0xFF60, // Fullwidth Forms
+                 0xFFE0...0xFFE6, // Fullwidth Signs
+                 0x20000...0x2FFFF, // CJK Extension B+
+                 0x30000...0x3FFFF: // CJK Extension G+
+                width += 2
+            // Emoji (Miscellaneous Symbols, Dingbats, Emoticons, Transport, Supplemental, etc.)
+            case 0x2600...0x27BF, // Misc Symbols + Dingbats
+                 0x1F300...0x1F9FF, // Emoji block
+                 0x1FA00...0x1FA6F, // Chess Symbols / Extended-A
+                 0x1FA70...0x1FAFF: // Extended-A continued
+                width += 2
+            // Variation selectors, zero-width joiners, etc. — zero width
+            case 0xFE00...0xFE0F, 0x200D, 0x20E3:
+                break
+            default:
+                width += 1
+            }
+        }
+        return width
+    }
+
+    /// Pad a string to a target monospaced column width with spaces.
+    private static func monoPad(_ string: String, toColumnWidth target: Int) -> String {
+        let currentWidth = monoColumnWidth(string)
+        let padding = max(0, target - currentWidth)
+        return string + String(repeating: " ", count: padding)
     }
 
     private static func makeTableAttributedText(
@@ -667,14 +738,14 @@ final class NativeTableBlockView: UIView {
         let colCount = max(headers.count, rows.first?.count ?? 0)
         guard colCount > 0 else { return NSAttributedString() }
 
-        // Compute column widths (max of header + all rows per column).
+        // Compute column widths using monospaced column width (emoji = 2).
         var colWidths = [Int](repeating: 0, count: colCount)
         for (i, h) in headers.enumerated() where i < colCount {
-            colWidths[i] = max(colWidths[i], h.count)
+            colWidths[i] = max(colWidths[i], monoColumnWidth(h))
         }
         for row in rows {
             for (i, cell) in row.enumerated() where i < colCount {
-                colWidths[i] = max(colWidths[i], cell.count)
+                colWidths[i] = max(colWidths[i], monoColumnWidth(cell))
             }
         }
 
@@ -694,17 +765,11 @@ final class NativeTableBlockView: UIView {
         // Header row.
         let headerStart = result.length
         for (i, header) in headers.enumerated() {
-            let padded = header.padding(toLength: colWidths[i], withPad: " ", startingAt: 0)
+            let padded = monoPad(header, toColumnWidth: colWidths[i])
             let prefix = i == 0 ? " " : " │ "
-            if i > 0 {
-                result.append(NSAttributedString(string: prefix, attributes: [
-                    .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
-                ]))
-            } else {
-                result.append(NSAttributedString(string: prefix, attributes: [
-                    .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
-                ]))
-            }
+            result.append(NSAttributedString(string: prefix, attributes: [
+                .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
+            ]))
             result.append(NSAttributedString(string: padded, attributes: [
                 .font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph,
             ]))
@@ -725,7 +790,7 @@ final class NativeTableBlockView: UIView {
 
             for i in 0..<colCount {
                 let cell = i < row.count ? row[i] : ""
-                let padded = cell.padding(toLength: colWidths[i], withPad: " ", startingAt: 0)
+                let padded = monoPad(cell, toColumnWidth: colWidths[i])
                 let prefix = i == 0 ? " " : " │ "
                 result.append(NSAttributedString(string: prefix, attributes: [
                     .font: cellFont, .foregroundColor: dimColor, .paragraphStyle: paragraph,
