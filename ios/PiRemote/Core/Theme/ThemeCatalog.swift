@@ -25,44 +25,88 @@ struct ThemePalette: Sendable {
     let yellow: Color
 }
 
-enum ThemeID: String, CaseIterable, Codable, Sendable {
-    case tokyoNight = "tokyo-night"
-    case tokyoNightDay = "tokyo-night-day"
-    case appleDark = "apple-dark"
+enum ThemeID: Hashable, Codable, Sendable {
+    case tokyoNight
+    case tokyoNightStorm
+    case tokyoNightDay
+    case appleDark
+    case custom(String)
+
+    /// All built-in themes for pickers. Custom themes added separately.
+    static let builtins: [ThemeID] = [.tokyoNight, .tokyoNightStorm, .tokyoNightDay, .appleDark]
 
     static let storageKey = "dev.chenda.PiRemote.theme.id"
 
-    static func loadPersisted() -> ThemeID {
-        guard let raw = UserDefaults.standard.string(forKey: storageKey),
-              let value = ThemeID(rawValue: raw)
-        else {
-            return .tokyoNight
+    /// Stable string ID for persistence.
+    var rawValue: String {
+        switch self {
+        case .tokyoNight: return "tokyo-night"
+        case .tokyoNightStorm: return "tokyo-night-storm"
+        case .tokyoNightDay: return "tokyo-night-day"
+        case .appleDark: return "apple-dark"
+        case .custom(let name): return "custom:\(name)"
         }
-        return value
+    }
+
+    init(rawValue: String) {
+        switch rawValue {
+        case "tokyo-night": self = .tokyoNight
+        case "tokyo-night-storm": self = .tokyoNightStorm
+        case "tokyo-night-day": self = .tokyoNightDay
+        case "apple-dark": self = .appleDark
+        default:
+            if rawValue.hasPrefix("custom:") {
+                self = .custom(String(rawValue.dropFirst("custom:".count)))
+            } else {
+                self = .tokyoNight
+            }
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self.init(rawValue: raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    static func loadPersisted() -> ThemeID {
+        guard let raw = UserDefaults.standard.string(forKey: storageKey)
+        else { return .tokyoNight }
+        return ThemeID(rawValue: raw)
     }
 
     var displayName: String {
         switch self {
         case .tokyoNight: return "Tokyo Night"
+        case .tokyoNightStorm: return "Tokyo Night Storm"
         case .tokyoNightDay: return "Tokyo Night Light"
         case .appleDark: return "Apple Dark"
+        case .custom(let name): return name
         }
     }
 
     var detail: String {
         switch self {
         case .tokyoNight:
-            return "Current terminal-matching dark palette."
+            return "Deepest dark palette, matches terminal."
+        case .tokyoNightStorm:
+            return "Slightly lighter dark with blue-tinted backgrounds."
         case .tokyoNightDay:
             return "Tokyo Night Day light palette."
         case .appleDark:
             return "Semantic iOS dark colors (system backgrounds + labels)."
+        case .custom:
+            return "Custom theme imported from server."
         }
     }
 
     var preferredColorScheme: ColorScheme {
         switch self {
-        case .tokyoNight, .appleDark:
+        case .tokyoNight, .tokyoNightStorm, .appleDark, .custom:
             return .dark
         case .tokyoNightDay:
             return .light
@@ -73,10 +117,18 @@ enum ThemeID: String, CaseIterable, Codable, Sendable {
         switch self {
         case .tokyoNight:
             return ThemePalettes.tokyoNight
+        case .tokyoNightStorm:
+            return ThemePalettes.tokyoNightStorm
         case .tokyoNightDay:
             return ThemePalettes.tokyoNightDay
         case .appleDark:
             return ThemePalettes.appleDark
+        case .custom(let name):
+            if let remote = CustomThemeStore.load(name: name),
+               let palette = remote.toPalette() {
+                return palette
+            }
+            return ThemePalettes.tokyoNight // fallback
         }
     }
 }
@@ -96,6 +148,24 @@ enum ThemePalettes {
         purple: Color(red: 187.0 / 255.0, green: 154.0 / 255.0, blue: 247.0 / 255.0),
         red: Color(red: 247.0 / 255.0, green: 118.0 / 255.0, blue: 142.0 / 255.0),
         yellow: Color(red: 224.0 / 255.0, green: 175.0 / 255.0, blue: 104.0 / 255.0)
+    )
+
+    /// Tokyo Night Storm — lighter/bluer backgrounds, same accents as Night.
+    /// Source: https://github.com/folke/tokyonight.nvim (extras/lua/tokyonight_storm.lua)
+    static let tokyoNightStorm = ThemePalette(
+        bg: Color(red: 36.0 / 255.0, green: 40.0 / 255.0, blue: 59.0 / 255.0),         // #24283b
+        bgDark: Color(red: 31.0 / 255.0, green: 35.0 / 255.0, blue: 53.0 / 255.0),      // #1f2335
+        bgHighlight: Color(red: 41.0 / 255.0, green: 46.0 / 255.0, blue: 66.0 / 255.0), // #292e42
+        fg: Color(red: 192.0 / 255.0, green: 202.0 / 255.0, blue: 245.0 / 255.0),       // #c0caf5
+        fgDim: Color(red: 169.0 / 255.0, green: 177.0 / 255.0, blue: 214.0 / 255.0),    // #a9b1d6
+        comment: Color(red: 86.0 / 255.0, green: 95.0 / 255.0, blue: 137.0 / 255.0),    // #565f89
+        blue: Color(red: 122.0 / 255.0, green: 162.0 / 255.0, blue: 247.0 / 255.0),     // #7aa2f7
+        cyan: Color(red: 125.0 / 255.0, green: 207.0 / 255.0, blue: 255.0 / 255.0),     // #7dcfff
+        green: Color(red: 158.0 / 255.0, green: 206.0 / 255.0, blue: 106.0 / 255.0),    // #9ece6a
+        orange: Color(red: 255.0 / 255.0, green: 158.0 / 255.0, blue: 100.0 / 255.0),   // #ff9e64
+        purple: Color(red: 187.0 / 255.0, green: 154.0 / 255.0, blue: 247.0 / 255.0),   // #bb9af7
+        red: Color(red: 247.0 / 255.0, green: 118.0 / 255.0, blue: 142.0 / 255.0),      // #f7768e
+        yellow: Color(red: 224.0 / 255.0, green: 175.0 / 255.0, blue: 104.0 / 255.0)    // #e0af68
     )
 
     static let tokyoNightDay = ThemePalette(

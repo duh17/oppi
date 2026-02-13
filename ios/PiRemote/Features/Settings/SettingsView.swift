@@ -10,6 +10,9 @@ struct SettingsView: View {
     @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
         forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
     ) as? Bool ?? true
+    @State private var coloredThinkingBorder = UserDefaults.standard.bool(
+        forKey: coloredThinkingBorderDefaultsKey
+    )
 
     var body: some View {
         List {
@@ -42,14 +45,32 @@ struct SettingsView: View {
                     get: { themeStore.selectedThemeID },
                     set: { themeStore.selectedThemeID = $0 }
                 )) {
-                    ForEach(ThemeID.allCases, id: \.self) { themeID in
+                    ForEach(ThemeID.builtins, id: \.self) { themeID in
                         Text(themeID.displayName).tag(themeID)
+                    }
+                    let customNames = CustomThemeStore.names()
+                    if !customNames.isEmpty {
+                        ForEach(customNames, id: \.self) { name in
+                            Text(name).tag(ThemeID.custom(name))
+                        }
                     }
                 }
 
                 Text(themeStore.selectedThemeID.detail)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+
+                NavigationLink("Import from Server") {
+                    ThemeImportView()
+                }
+
+                Toggle("Colored thinking border", isOn: $coloredThinkingBorder)
+                    .onChange(of: coloredThinkingBorder) { _, newValue in
+                        UserDefaults.standard.set(
+                            newValue,
+                            forKey: coloredThinkingBorderDefaultsKey
+                        )
+                    }
             }
 
             Section("Workspaces") {

@@ -104,8 +104,8 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
         /// streaming text grows the tail between throttled auto-scroll pulses.
-        private let nearBottomEnterThreshold: CGFloat = 24
-        private let nearBottomExitThreshold: CGFloat = 72
+        private let nearBottomEnterThreshold: CGFloat = 120
+        private let nearBottomExitThreshold: CGFloat = 200
 
         private var currentIDs: [String] = []
         private var currentItemByID: [String: ChatItem] = [:]

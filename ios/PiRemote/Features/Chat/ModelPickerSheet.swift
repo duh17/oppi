@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Model picker sheet with provider grouping and context window info.
 ///
-/// Fetches available models from the REST API. Groups by provider (Anthropic,
-/// OpenAI, Google, etc). Current model highlighted. Tap to switch.
+/// Uses `connection.cachedModels` for instant open, with background refresh.
+/// Recently-used models appear in a dedicated section at the top.
 struct ModelPickerSheet: View {
     let currentModel: String?
     let onSelect: (ModelInfo) -> Void
@@ -11,17 +11,33 @@ struct ModelPickerSheet: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(\.dismiss) private var dismiss
 
-    @State private var models: [ModelInfo] = []
-    @State private var isLoading = true
-    @State private var error: String?
     @State private var searchText = ""
+    @State private var isRefreshing = false
 
-    /// Group models by provider, sorted alphabetically.
+    private var recentIds: [String] { RecentModels.load() }
+
+    private var models: [ModelInfo] { connection.cachedModels }
+
+    /// Full provider/id key for matching.
+    private func fullId(_ model: ModelInfo) -> String {
+        "\(model.provider)/\(model.id)"
+    }
+
+    /// Models the user picked recently, ordered by recency.
+    private var recentModels: [ModelInfo] {
+        let ids = recentIds
+        let lookup = Dictionary(models.map { (fullId($0), $0) }, uniquingKeysWith: { a, _ in a })
+        return ids.compactMap { lookup[$0] }
+    }
+
+    /// All models grouped by provider, excluding any in the recent section.
     private var groupedModels: [(provider: String, models: [ModelInfo])] {
+        let recentSet = Set(recentIds)
         let filtered: [ModelInfo]
         if searchText.isEmpty {
-            filtered = models
+            filtered = models.filter { !recentSet.contains(fullId($0)) }
         } else {
+            // When searching, search everything (including recents)
             filtered = models.filter { model in
                 model.name.localizedCaseInsensitiveContains(searchText)
                     || model.id.localizedCaseInsensitiveContains(searchText)
@@ -38,15 +54,9 @@ struct ModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if isLoading {
+                if models.isEmpty && !connection.modelsCacheReady {
                     ProgressView("Loading models…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error {
-                    ContentUnavailableView(
-                        "Failed to Load Models",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(error)
-                    )
                 } else if models.isEmpty {
                     ContentUnavailableView(
                         "No Models Available",
@@ -66,27 +76,32 @@ struct ModelPickerSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .task { await loadModels() }
+            .task {
+                // Background refresh — UI already shows cached data
+                await connection.refreshModelCache()
+            }
         }
     }
 
     private var modelList: some View {
         List {
+            // Recent section (only when not searching)
+            if searchText.isEmpty, !recentModels.isEmpty {
+                Section {
+                    ForEach(recentModels) { model in
+                        modelRow(model)
+                    }
+                } header: {
+                    Text("Recent")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tokyoFgDim)
+                }
+            }
+
             ForEach(groupedModels, id: \.provider) { group in
                 Section {
                     ForEach(group.models) { model in
-                        ModelRow(model: model, isCurrent: isCurrentModel(model))
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                onSelect(model)
-                                dismiss()
-                            }
-                            .listRowBackground(
-                                isCurrentModel(model)
-                                    ? Color.tokyoBlue.opacity(0.12)
-                                    : Color.tokyoBg
-                            )
+                        modelRow(model)
                     }
                 } header: {
                     Text(providerDisplayName(group.provider))
@@ -98,10 +113,26 @@ struct ModelPickerSheet: View {
         .scrollContentBackground(.hidden)
     }
 
+    @ViewBuilder
+    private func modelRow(_ model: ModelInfo) -> some View {
+        let isCurrent = isCurrentModel(model)
+        ModelRow(model: model, isCurrent: isCurrent)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                RecentModels.record(fullId(model))
+                onSelect(model)
+                dismiss()
+            }
+            .listRowBackground(
+                isCurrent ? Color.tokyoBlue.opacity(0.12) : Color.tokyoBg
+            )
+    }
+
     private func isCurrentModel(_ model: ModelInfo) -> Bool {
         guard let current = currentModel else { return false }
-        let fullId = "\(model.provider)/\(model.id)"
-        return current == fullId || current == model.id
+        let fid = fullId(model)
+        return current == fid || current == model.id
     }
 
     private func providerDisplayName(_ provider: String) -> String {
@@ -114,22 +145,6 @@ struct ModelPickerSheet: View {
         default: return provider.capitalized
         }
     }
-
-    private func loadModels() async {
-        guard let api = connection.apiClient else {
-            error = "Not connected to server"
-            isLoading = false
-            return
-        }
-
-        do {
-            models = try await api.listModels()
-            isLoading = false
-        } catch {
-            self.error = error.localizedDescription
-            isLoading = false
-        }
-    }
 }
 
 // MARK: - Model Row
@@ -139,12 +154,14 @@ private struct ModelRow: View {
     let isCurrent: Bool
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
+            // Left: name + provider/id
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(model.name)
                         .font(.subheadline.weight(isCurrent ? .bold : .regular))
                         .foregroundStyle(isCurrent ? .tokyoBlue : .tokyoFg)
+                        .lineLimit(1)
 
                     if isCurrent {
                         Text("current")
@@ -156,26 +173,30 @@ private struct ModelRow: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    Text(model.id)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoComment)
+                Text("\(model.provider)/\(model.id)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tokyoComment)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
 
-                    if model.contextWindow > 0 {
-                        Label(formatTokenCount(model.contextWindow), systemImage: "text.rectangle")
-                            .font(.caption2)
-                            .foregroundStyle(.tokyoFgDim)
-                    }
+            Spacer(minLength: 4)
+
+            // Right: context window + checkmark, fixed trailing column
+            HStack(spacing: 8) {
+                if model.contextWindow > 0 {
+                    Text(formatTokenCount(model.contextWindow))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tokyoFgDim)
+                }
+
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.tokyoBlue)
+                        .font(.subheadline.weight(.semibold))
                 }
             }
-
-            Spacer()
-
-            if isCurrent {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(.tokyoBlue)
-                    .font(.subheadline.weight(.semibold))
-            }
+            .frame(minWidth: 50, alignment: .trailing)
         }
         .padding(.vertical, 4)
     }

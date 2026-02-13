@@ -58,6 +58,10 @@ final class ChatScrollController {
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
 
+    /// Incremented when the user sends a message and we need to scroll
+    /// to the bottom. ChatTimelineView observes this via `.onChange`.
+    var scrollToBottomNonce: UInt = 0
+
     // MARK: - Scroll Position Tracking (Non-Reactive)
 
     /// Binding for `ScrollView.scrollPosition(id:anchor:)`.
@@ -289,6 +293,17 @@ final class ChatScrollController {
                 proxy.scrollTo(target, anchor: .top)
             }
         }
+    }
+
+    // MARK: - Imperative Scroll
+
+    /// Request scroll to bottom (e.g. after sending a message).
+    /// Re-attaches to bottom so auto-follow resumes for the response.
+    func requestScrollToBottom() {
+        anchor.isNearBottom = true
+        isJumpToBottomHintVisible = false
+        isDetachedStreamingHintVisible = false
+        scrollToBottomNonce &+= 1
     }
 
     // MARK: - Cleanup

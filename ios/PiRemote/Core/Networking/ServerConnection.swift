@@ -78,6 +78,11 @@ final class ServerConnection {
 
     /// Cached slash command metadata for composer autocomplete.
     private(set) var slashCommands: [SlashCommand] = []
+
+    /// Cached model list — populated eagerly on connect, survives sheet open/close.
+    private(set) var cachedModels: [ModelInfo] = []
+    /// Whether models have been fetched at least once this connection.
+    private(set) var modelsCacheReady = false
     private var slashCommandsCacheKey: String?
     private var slashCommandsRequestId: String?
     private var slashCommandsTask: Task<Void, Never>?
@@ -1277,6 +1282,44 @@ final class ServerConnection {
         syncThinkingLevel(from: session)
         scheduleSlashCommandsRefresh(for: session, force: true)
         syncLiveActivityPermissions()
+        prefetchModelsIfNeeded()
+    }
+
+    // MARK: - Model Cache
+
+    private var modelPrefetchTask: Task<Void, Never>?
+
+    /// Eagerly fetch models on connect so the picker opens instantly.
+    private func prefetchModelsIfNeeded() {
+        guard !modelsCacheReady else { return }
+        modelPrefetchTask?.cancel()
+        modelPrefetchTask = Task { @MainActor [weak self] in
+            guard let self, let api = self.apiClient else { return }
+            do {
+                let models = try await api.listModels()
+                self.cachedModels = models
+                self.modelsCacheReady = true
+            } catch {
+                logger.warning("Model prefetch failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Force refresh the model cache (e.g. pull-to-refresh in picker).
+    func refreshModelCache() async {
+        guard let api = apiClient else { return }
+        do {
+            cachedModels = try await api.listModels()
+            modelsCacheReady = true
+        } catch {
+            logger.warning("Model cache refresh failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Invalidate the model cache so next connect re-fetches.
+    func invalidateModelCache() {
+        modelsCacheReady = false
+        cachedModels = []
     }
 
     private func handleState(_ session: Session) {

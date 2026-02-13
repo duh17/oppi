@@ -1,17 +1,42 @@
 import SwiftUI
 
-/// Quick actions dock for session controls.
+// MARK: - Thinking Level Color (matches pi TUI dark.json)
+
+/// Maps thinking level to its pi-TUI border color.
 ///
-/// Lives above the composer so model + thinking controls are thumb-reachable.
-/// This replaces the old top-of-chat control row to recover vertical space.
+/// Values sourced from `dark.json` in pi's interactive theme so the iOS
+/// app uses the same visual language as the terminal.
+func thinkingLevelColor(for level: ThinkingLevel) -> Color {
+    switch level {
+    case .off:     return Color(hex: 0x505050)  // darkGray
+    case .minimal: return Color(hex: 0x6E6E6E)
+    case .low:     return Color(hex: 0x5F87AF)
+    case .medium:  return Color(hex: 0x81A2BE)
+    case .high:    return Color(hex: 0xB294BB)
+    case .xhigh:   return Color(hex: 0xD183E8)
+    }
+}
+
+private extension Color {
+    init(hex: UInt32) {
+        self.init(
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255
+        )
+    }
+}
+
+/// Session control pills (model, thinking, context).
+///
+/// Body returns flat children (no wrapping container) so they merge
+/// into the parent's `HStack` for even distribution with the attach button.
 struct SessionToolbar: View {
     let session: Session?
     let thinkingLevel: ThinkingLevel
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
     let onCompact: () -> Void
-    let onRename: () -> Void
-    var onNewSession: (() -> Void)?
 
     private var modelDisplay: String {
         guard let model = session?.model else { return "no model" }
@@ -81,125 +106,72 @@ struct SessionToolbar: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onModelTap) {
-                QuickActionChipLabel(
-                    icon: "cpu",
-                    text: modelDisplay,
-                    tint: .tokyoCyan,
-                    showChevron: true,
-                    maxTextWidth: 132
-                )
-            }
-            .buttonStyle(.plain)
+        Spacer(minLength: 0)
 
-            Menu {
-                ForEach(Self.thinkingOptions, id: \.rawValue) { level in
-                    Button {
-                        guard level != thinkingLevel else { return }
-                        onThinkingSelect(level)
-                    } label: {
-                        if level == thinkingLevel {
-                            Label(Self.thinkingMenuTitle(for: level), systemImage: "checkmark")
-                        } else {
-                            Text(Self.thinkingMenuTitle(for: level))
-                        }
+        Button(action: onModelTap) {
+            PillLabel(icon: "cpu", text: modelDisplay, showChevron: true)
+        }
+        .buttonStyle(.plain)
+
+        Menu {
+            ForEach(Self.thinkingOptions, id: \.rawValue) { level in
+                Button {
+                    guard level != thinkingLevel else { return }
+                    onThinkingSelect(level)
+                } label: {
+                    if level == thinkingLevel {
+                        Label(Self.thinkingMenuTitle(for: level), systemImage: "checkmark")
+                    } else {
+                        Text(Self.thinkingMenuTitle(for: level))
                     }
                 }
-            } label: {
-                QuickActionChipLabel(
-                    icon: "brain",
-                    text: thinkingLabel,
-                    tint: .tokyoPurple,
-                    showChevron: true,
-                    maxTextWidth: nil
-                )
             }
+        } label: {
+            PillLabel(icon: "brain", text: thinkingLabel, showChevron: true)
+        }
 
-            Menu {
-                Button("Compact Context", systemImage: "arrow.down.doc") {
+        if let contextDisplay {
+            PillLabel(icon: nil, text: contextDisplay, tint: contextTint, showChevron: false)
+                .contentShape(Capsule())
+                .onLongPressGesture {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     onCompact()
                 }
-                Button("Rename Session", systemImage: "pencil") {
-                    onRename()
-                }
-                if let onNewSession {
-                    Divider()
-                    Button("New Session", systemImage: "plus") {
-                        onNewSession()
-                    }
-                }
-            } label: {
-                QuickActionChipLabel(
-                    icon: "ellipsis.circle",
-                    text: "More",
-                    tint: .tokyoComment,
-                    showChevron: false,
-                    maxTextWidth: nil
-                )
-            }
-
-            Spacer(minLength: 4)
-
-            if let contextDisplay {
-                Text(contextDisplay)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(contextTint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.tokyoBgHighlight.opacity(0.65), in: Capsule())
-            }
-
-            if let cost = session?.cost, cost > 0 {
-                Text(String(format: "$%.3f", cost))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
-            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(Color.tokyoComment.opacity(0.28), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
     }
 }
 
-private struct QuickActionChipLabel: View {
-    let icon: String
+private struct PillLabel: View {
+    let icon: String?
     let text: String
-    let tint: Color
+    var tint: Color = .tokyoFg
     let showChevron: Bool
-    let maxTextWidth: CGFloat?
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.caption.weight(.semibold))
-
-            if let maxTextWidth {
-                Text(text)
-                    .font(.caption.monospaced().bold())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: maxTextWidth, alignment: .leading)
-            } else {
-                Text(text)
-                    .font(.caption.monospaced().bold())
-                    .lineLimit(1)
+        HStack(spacing: 4) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.caption2.weight(.semibold))
             }
+
+            Text(text)
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
 
             if showChevron {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 7, weight: .bold))
             }
         }
         .foregroundStyle(tint)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 44)
-        .background(Color.tokyoBgHighlight.opacity(0.7), in: Capsule())
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background {
+            Capsule()
+                .fill(Color.tokyoComment.opacity(0.18))
+                .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
+        }
         .contentShape(Capsule())
     }
 }

@@ -1,5 +1,8 @@
 // swiftlint:disable file_length
 import Foundation
+import os.log
+
+private let loadSessionLog = Logger(subsystem: "dev.chenda.PiRemote", category: "LoadSession")
 
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///
@@ -7,10 +10,9 @@ import Foundation
 /// and produces the item array that drives the chat `LazyVStack`.
 @MainActor @Observable
 final class TimelineReducer { // swiftlint:disable:this type_body_length
-    /// Maximum items before trimming oldest from the front.
-    static let maxItems = 200
-    /// Target count after trimming — keeps a buffer to avoid trimming on every event.
-    static let trimTarget = 160
+    // No timeline trimming — the full session history is always preserved.
+    // The collection view uses lazy rendering so item count doesn't affect
+    // frame rate, only memory. A 1000-event session ≈ ~2MB — fine on any device.
 
     private(set) var items: [ChatItem] = []
 
@@ -181,9 +183,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
 
             loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
-            trimIfNeeded()
             bumpRenderVersion()
             timelineMatchesTrace = true
+
+            loadSessionLog.info("[loadSession] incremental: +\(events.count - appendStart) events → \(self.items.count) items")
 
             prewarmMarkdownCache(for: assistantTextsToCache)
             return
@@ -207,10 +210,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         loadedTraceEventIDs = events.map(\.id)
-        trimIfNeeded()
         rebuildIndex()
         bumpRenderVersion()
         timelineMatchesTrace = true
+
+        loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items")
 
         prewarmMarkdownCache(for: assistantTextsToCache)
     }
@@ -475,7 +479,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         flushPendingUpserts()
-        trimIfNeeded()
         if didMutate {
             bumpRenderVersion()
             timelineMatchesTrace = false
@@ -485,7 +488,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Process a single event. Bumps renderVersion once.
     func process(_ event: AgentEvent) {
         processInternal(event)
-        trimIfNeeded()
         bumpRenderVersion()
         timelineMatchesTrace = false
     }
@@ -665,7 +667,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             images: images,
             timestamp: Date()
         ))
-        trimIfNeeded()
         bumpRenderVersion()
         timelineMatchesTrace = false
         return id
@@ -686,7 +687,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Used for local-only events like force-stop confirmations.
     func appendSystemEvent(_ message: String) {
         items.append(.systemEvent(id: UUID().uuidString, message: message))
-        trimIfNeeded()
         bumpRenderVersion()
         timelineMatchesTrace = false
     }
@@ -701,7 +701,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
         items.append(item)
         indexAppend(item)
-        trimIfNeeded()
         bumpRenderVersion()
         timelineMatchesTrace = false
     }
@@ -969,68 +968,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
     }
 
-    /// Trim oldest items when count exceeds `maxItems`.
-    /// Prefer trimming non-conversation rows (tool/thinking/system/etc.) first
-    /// so long-running sessions keep user/assistant history longer.
-    private func trimIfNeeded() {
-        guard items.count > Self.maxItems else { return }
-
-        let removeCount = items.count - Self.trimTarget
-        guard removeCount > 0 else { return }
-
-        var indicesToRemove: [Int] = []
-        indicesToRemove.reserveCapacity(removeCount)
-        var marked: Set<Int> = []
-
-        func mark(_ index: Int) {
-            guard indicesToRemove.count < removeCount else { return }
-            guard !marked.contains(index) else { return }
-            marked.insert(index)
-            indicesToRemove.append(index)
-        }
-
-        // Pass 1: drop oldest non-conversation rows first.
-        for (index, item) in items.enumerated() {
-            guard indicesToRemove.count < removeCount else { break }
-            switch item {
-            case .userMessage, .assistantMessage:
-                continue
-            default:
-                mark(index)
-            }
-        }
-
-        // Pass 2: if still over cap, drop oldest remaining rows.
-        if indicesToRemove.count < removeCount {
-            for index in items.indices {
-                guard indicesToRemove.count < removeCount else { break }
-                mark(index)
-            }
-        }
-
-        let removedToolLikeIDs = indicesToRemove.reduce(into: Set<String>()) { ids, index in
-            switch items[index] {
-            case .toolCall(let id, _, _, _, _, _, _),
-                 .thinking(let id, _, _, _):
-                ids.insert(id)
-            default:
-                break
-            }
-        }
-
-        for index in indicesToRemove.sorted(by: >) {
-            items.remove(at: index)
-        }
-
-        if !removedToolLikeIDs.isEmpty {
-            toolOutputStore.clear(itemIDs: removedToolLikeIDs)
-            toolArgsStore.clear(itemIDs: removedToolLikeIDs)
-            expandedItemIDs.subtract(removedToolLikeIDs)
-        }
-
-        // Rebuild index after removals shifted positions
-        rebuildIndex()
-    }
+    // trimIfNeeded() removed — full timeline is always preserved.
 
     private func bumpRenderVersion() {
         renderVersion &+= 1

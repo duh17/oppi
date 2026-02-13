@@ -165,7 +165,7 @@ extension AppTheme {
 extension ThemeID {
     var appTheme: AppTheme {
         switch self {
-        case .tokyoNight:
+        case .tokyoNight, .tokyoNightStorm, .custom:
             return .tokyoNight
         case .tokyoNightDay:
             return .tokyoNightDay

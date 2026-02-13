@@ -3,16 +3,25 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// Chat input bar with iMessage-like layout.
+/// Chat input bar with full-width composer and action row.
 ///
-/// **Layout**: `[ + ] [ composer capsule: $, text field, expand, send-or-stop ]`
+/// **Layout**:
+/// ```
+/// ┌──────────────────────────────────────┐
+/// │ [image strip]                        │
+/// │ text input area…              [⬆/■]  │
+/// └──────────────────────────────────────┘
+/// [+]  [action row content…]
+/// ```
 ///
-/// - `+` opens attachments menu (photo library/camera)
-/// - composer stays full-width and grows with multiline input
-/// - send is the primary action when idle
-/// - during active turn: empty input shows stop; typed steering shows send
-/// - expand stays on the trailing side without taking text width
-struct ChatInputBar: View {
+/// - Composer capsule spans full width; send/stop button lives inside it.
+/// - `+` and any additional controls (model/thinking pills) sit in a
+///   dedicated action row below the capsule.
+/// - Expand stays on the trailing side without taking text width.
+/// UserDefaults key for the colored thinking-level border on the composer capsule.
+let coloredThinkingBorderDefaultsKey = "dev.chenda.PiRemote.chat.coloredThinkingBorder"
+
+struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
     let isBusy: Bool
@@ -28,6 +37,8 @@ struct ChatInputBar: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let appliesOuterPadding: Bool
+    var thinkingBorderColor: Color = .tokyoComment
+    @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showCamera = false
@@ -35,8 +46,6 @@ struct ChatInputBar: View {
 
     private let inlineMaxLines = 8
     private let expandVisibilityLineThreshold = 5
-    private let attachButtonDiameter: CGFloat = 44
-    private let primaryActionDiameter: CGFloat = 44
     private let actionVisualDiameter: CGFloat = 32
     private let expandVisualDiameter: CGFloat = 28
     private let composerHorizontalPadding: CGFloat = 12
@@ -67,8 +76,7 @@ struct ChatInputBar: View {
 
     private var borderColor: Color {
         if isBashMode { return .tokyoGreen.opacity(0.5) }
-        if isBusy { return .tokyoPurple.opacity(0.5) }
-        return .tokyoComment.opacity(0.35)
+        return thinkingBorderColor.opacity(0.5)
     }
 
     private var sendActionFillColor: Color {
@@ -108,19 +116,6 @@ struct ChatInputBar: View {
         inlineVisualLineCount >= expandVisibilityLineThreshold
     }
 
-    /// Keep expand icon centered with the primary trailing action button.
-    private var expandTrailingPadding: CGFloat {
-        composerHorizontalPadding + ((primaryActionDiameter - expandVisualDiameter) / 2)
-    }
-
-    private var supplementalLeadingPadding: CGFloat {
-        attachButtonDiameter + 8
-    }
-
-    private var supplementalTrailingPadding: CGFloat {
-        0
-    }
-
     /// Text binding for the input field.
     private var textFieldBinding: Binding<String> {
         Binding(
@@ -146,16 +141,8 @@ struct ChatInputBar: View {
                 forceStopButton
             }
 
-            if !pendingImages.isEmpty {
-                imageStrip
-                    .padding(.leading, supplementalLeadingPadding)
-                    .padding(.trailing, supplementalTrailingPadding)
-            }
-
             if !slashSuggestions.isEmpty {
                 SlashCommandSuggestionList(suggestions: slashSuggestions, onSelect: insertSlashCommand)
-                    .padding(.leading, supplementalLeadingPadding)
-                    .padding(.trailing, supplementalTrailingPadding)
             }
 
             if let sendProgressText {
@@ -172,13 +159,14 @@ struct ChatInputBar: View {
                 }
                 .foregroundStyle(.tokyoComment)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, supplementalLeadingPadding)
-                .padding(.trailing, supplementalTrailingPadding)
             }
 
-            HStack(alignment: .center, spacing: 8) {
+            composerCapsule
+
+            // Action row: attach (fixed) + pills/controls (trailing)
+            HStack(spacing: 6) {
                 attachButton
-                composerCapsule
+                actionRow()
             }
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
@@ -208,66 +196,74 @@ struct ChatInputBar: View {
     // MARK: - Subviews
 
     private var composerCapsule: some View {
-        HStack(alignment: .center, spacing: 8) {
-            if isBashMode {
-                Text("$")
-                    .font(.system(.body, design: .monospaced).bold())
-                    .foregroundStyle(.tokyoGreen)
+        VStack(alignment: .leading, spacing: 0) {
+            // Image strip inside capsule
+            if !pendingImages.isEmpty {
+                imageStrip
+                    .padding(.horizontal, composerHorizontalPadding)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
             }
 
-            ZStack(alignment: .leading) {
-                if text.isEmpty {
-                    Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.tokyoComment)
-                        .padding(.vertical, 4)
-                        .allowsHitTesting(false)
+            // Text row with send/stop button
+            HStack(alignment: .bottom, spacing: 8) {
+                if isBashMode {
+                    Text("$")
+                        .font(.system(.body, design: .monospaced).bold())
+                        .foregroundStyle(.tokyoGreen)
                 }
 
-                PastableTextView(
-                    text: textFieldBinding,
-                    placeholder: "",
-                    font: .monospacedSystemFont(ofSize: 17, weight: .regular),
-                    textColor: UIColor(Color.tokyoFg),
-                    tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
-                    maxLines: inlineMaxLines,
-                    onPasteImages: handlePastedImages,
-                    onOverflowChange: nil,
-                    onLineCountChange: handleInlineLineCountChange,
-                    onFocusChange: nil,
-                    onDictationStateChange: nil,
-                    focusRequestID: 0,
-                    blurRequestID: 0,
-                    dictationRequestID: 0,
-                    accessibilityIdentifier: "chat.input"
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+                ZStack(alignment: .leading) {
+                    if text.isEmpty {
+                        Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.tokyoComment)
+                            .padding(.vertical, 4)
+                            .allowsHitTesting(false)
+                    }
 
-            trailingActions
+                    PastableTextView(
+                        text: textFieldBinding,
+                        placeholder: "",
+                        font: .monospacedSystemFont(ofSize: 17, weight: .regular),
+                        textColor: UIColor(Color.tokyoFg),
+                        tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
+                        maxLines: inlineMaxLines,
+                        onPasteImages: handlePastedImages,
+                        onOverflowChange: nil,
+                        onLineCountChange: handleInlineLineCountChange,
+                        onFocusChange: nil,
+                        onDictationStateChange: nil,
+                        focusRequestID: 0,
+                        blurRequestID: 0,
+                        dictationRequestID: 0,
+                        accessibilityIdentifier: "chat.input"
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+
+                primaryActionButton
+                    .fixedSize()
+            }
+            .padding(.horizontal, composerHorizontalPadding)
+            .padding(.vertical, 7)
         }
-        .padding(.horizontal, composerHorizontalPadding)
-        .padding(.vertical, 10)
-        .frame(minHeight: 52)
+        .frame(minHeight: 38)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
         )
         .overlay(alignment: .topTrailing) {
             if showsExpandButton {
                 expandButton
                     .padding(.top, 4)
-                    .padding(.trailing, expandTrailingPadding)
+                    .padding(.trailing, composerHorizontalPadding)
             }
         }
-    }
-
-    private var trailingActions: some View {
-        primaryActionButton
     }
 
     private var attachButton: some View {
@@ -286,17 +282,16 @@ struct ChatInputBar: View {
                 Label("Camera", systemImage: "camera")
             }
         } label: {
-            ZStack {
-                Circle()
-                    .fill(Color.tokyoBgHighlight)
-                Circle()
-                    .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
-
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(isBashMode ? .tokyoComment : .tokyoFg)
-            }
-            .frame(width: attachButtonDiameter, height: attachButtonDiameter)
+            Image(systemName: "plus")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(isBashMode ? .tokyoComment : .tokyoFg)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background {
+                    Capsule()
+                        .fill(Color.tokyoComment.opacity(0.18))
+                        .overlay(Capsule().stroke(Color.tokyoComment.opacity(0.25), lineWidth: 0.5))
+                }
         }
         .disabled(isBashMode)
     }
@@ -332,14 +327,11 @@ struct ChatInputBar: View {
     }
 
     private var expandButton: some View {
-        Button(action: expandComposerManually) {
+        Button(action: onExpand) {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.tokyoComment)
                 .frame(width: expandVisualDiameter, height: expandVisualDiameter)
-                .background(
-                    Circle().fill(Color.tokyoBgDark.opacity(0.88))
-                )
         }
         .accessibilityIdentifier("chat.expand")
     }
@@ -376,7 +368,6 @@ struct ChatInputBar: View {
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
         .disabled(!canSend || isSending)
-        .frame(width: primaryActionDiameter, height: primaryActionDiameter)
         .accessibilityIdentifier("chat.send")
     }
 
@@ -399,7 +390,6 @@ struct ChatInputBar: View {
             .frame(width: actionVisualDiameter + 2, height: actionVisualDiameter + 2)
         }
         .disabled(isStopping)
-        .frame(width: primaryActionDiameter, height: primaryActionDiameter)
         .accessibilityIdentifier("chat.stop")
     }
 
@@ -424,10 +414,6 @@ struct ChatInputBar: View {
     }
 
     // MARK: - Actions
-
-    private func expandComposerManually() {
-        onExpand()
-    }
 
     private func handleInlineLineCountChange(_ lineCount: Int) {
         inlineVisualLineCount = max(lineCount, 1)

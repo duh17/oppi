@@ -28,10 +28,14 @@ struct ChatView: View {
     @State private var copiedSessionID = false
     @State private var forkedSessionToOpen: ForkRoute?
 #if DEBUG
-    @State private var showSessionActions = false
     @State private var uploadingClientLogs = false
     @State private var benchmarkingLocalModel = false
 #endif
+    @State private var showCompactConfirmation = false
+    @State private var isKeyboardVisible = false
+    @State private var coloredThinkingBorderEnabled = UserDefaults.standard.bool(
+        forKey: coloredThinkingBorderDefaultsKey
+    )
 
     init(sessionId: String) {
         self.sessionId = sessionId
@@ -65,6 +69,9 @@ struct ChatView: View {
     private var isStopped: Bool {
         session?.status == .stopped
     }
+
+    /// Show toolbar when composing (keyboard up) or at bottom of chat.
+    /// Hide when scrolled up to read history.
 
     private var runtimeSyncState: RuntimeStatusBadge.SyncState {
         guard let wsClient = connection.wsClient else {
@@ -122,34 +129,28 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-#if DEBUG
                 Button {
-                    showSessionActions = true
+                    renameText = session?.name ?? ""
+                    showRenameAlert = true
                 } label: {
                     sessionTitleLabel
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Session actions")
-                .confirmationDialog("Session Actions", isPresented: $showSessionActions) {
-                    Button("Copy Session ID") {
+                .accessibilityLabel("Rename session")
+#if DEBUG
+                .contextMenu {
+                    Button("Copy Session ID", systemImage: "doc.on.doc") {
                         copySessionID()
                     }
-                    Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs") {
+                    Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
                         uploadClientLogs()
                     }
                     .disabled(uploadingClientLogs)
-                    Button(benchmarkingLocalModel ? "Running Model Benchmark…" : "Benchmark On-Device Model") {
+                    Button(benchmarkingLocalModel ? "Running Model Benchmark…" : "Benchmark On-Device Model", systemImage: "gauge.with.dots.needle.67percent") {
                         benchmarkOnDeviceModel()
                     }
                     .disabled(benchmarkingLocalModel)
-                    Button("Cancel", role: .cancel) {}
                 }
-#else
-                Button(action: copySessionID) {
-                    sessionTitleLabel
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Copy session ID")
 #endif
             }
 
@@ -183,6 +184,14 @@ struct ChatView: View {
         } message: {
             Text("Keep it short (2–6 words). For task planning, start with TODO: ...")
         }
+        .alert("Compact Context", isPresented: $showCompactConfirmation) {
+            Button("Compact", role: .destructive) {
+                actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
+        }
         .task(id: sessionManager.connectionGeneration) {
             await sessionManager.connect(
                 connection: connection,
@@ -199,6 +208,12 @@ struct ChatView: View {
                 inputText = draft
                 connection.composerDraft = nil
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
         }
         .onChange(of: session?.status) { _, newStatus in
             if newStatus != .stopping {
@@ -258,31 +273,6 @@ struct ChatView: View {
                         .transition(.opacity)
                 }
 
-                SessionToolbar(
-                    session: session,
-                    thinkingLevel: connection.thinkingLevel,
-                    onModelTap: { showModelPicker = true },
-                    onThinkingSelect: { level in
-                        actionHandler.setThinking(
-                            level,
-                            connection: connection,
-                            reducer: reducer,
-                            sessionId: sessionId
-                        )
-                    },
-                    onCompact: {
-                        actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-                    },
-                    onRename: {
-                        renameText = session?.name ?? ""
-                        showRenameAlert = true
-                    },
-                    onNewSession: {
-                        actionHandler.newSession(connection: connection, reducer: reducer, sessionId: sessionId)
-                    }
-                )
-                .padding(.horizontal, 16)
-
                 ChatInputBar(
                     text: $inputText,
                     pendingImages: $pendingImages,
@@ -309,8 +299,28 @@ struct ChatView: View {
                         )
                     },
                     onExpand: presentComposer,
-                    appliesOuterPadding: true
-                )
+                    appliesOuterPadding: true,
+                    thinkingBorderColor: coloredThinkingBorderEnabled
+                        ? thinkingLevelColor(for: connection.thinkingLevel)
+                        : .tokyoComment
+                ) {
+                    SessionToolbar(
+                        session: session,
+                        thinkingLevel: connection.thinkingLevel,
+                        onModelTap: { showModelPicker = true },
+                        onThinkingSelect: { level in
+                            actionHandler.setThinking(
+                                level,
+                                connection: connection,
+                                reducer: reducer,
+                                sessionId: sessionId
+                            )
+                        },
+                        onCompact: {
+                            showCompactConfirmation = true
+                        }
+                    )
+                }
             }
             .animation(.spring(response: 0.38, dampingFraction: 0.82), value: quickReplySuggestions)
             .animation(.easeInOut(duration: 0.22), value: isLoadingQuickReplies)
@@ -324,9 +334,11 @@ struct ChatView: View {
                 .foregroundStyle(.tokyoFg)
                 .lineLimit(1)
 
-            Text(String(sessionId.prefix(6)))
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tokyoComment)
+            if let cost = session?.cost, cost > 0 {
+                Text(String(format: "$%.2f", cost))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tokyoComment)
+            }
 
             Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
@@ -447,6 +459,7 @@ struct ChatView: View {
 
         let reducerRef = reducer
         let sessionManagerRef = sessionManager
+        let scrollRef = scrollController
 
         let restored = actionHandler.sendPrompt(
             text: text,
@@ -459,6 +472,8 @@ struct ChatView: View {
             onDispatchStarted: {
                 inputText = ""
                 pendingImages = []
+                // Scroll to bottom after sending
+                scrollRef.requestScrollToBottom()
             },
             onAsyncFailure: { failedText, failedImages in
                 inputText = failedText
@@ -476,6 +491,7 @@ struct ChatView: View {
 
     private func sendBashCommand(_ command: String) {
         inputText = ""
+        scrollController.requestScrollToBottom()
         actionHandler.sendBash(
             command,
             connection: connection,
@@ -628,8 +644,20 @@ struct ChatView: View {
             pendingImages: $pendingImages,
             isBusy: isBusy,
             slashCommands: connection.slashCommands,
+            session: session,
+            thinkingLevel: connection.thinkingLevel,
             onSend: sendPrompt,
-            onBash: sendBashCommand
+            onBash: sendBashCommand,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: { level in
+                actionHandler.setThinking(
+                    level,
+                    connection: connection,
+                    reducer: reducer,
+                    sessionId: sessionId
+                )
+            },
+            onCompact: { showCompactConfirmation = true }
         )
     }
 
@@ -707,28 +735,28 @@ private struct JumpToBottomHintButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            ZStack(alignment: .topTrailing) {
-                Circle()
-                    .fill(Color.tokyoBgHighlight.opacity(0.95))
-                    .frame(width: 34, height: 34)
-                    .overlay(
-                        Circle()
-                            .stroke((isStreaming ? Color.tokyoBlue : Color.tokyoComment).opacity(0.34), lineWidth: 1)
-                    )
-
-                Image(systemName: "arrow.down")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(isStreaming ? .tokyoBlue : .tokyoFg)
-
-                if isStreaming {
+            Circle()
+                .fill(Color.tokyoBgHighlight.opacity(0.95))
+                .frame(width: 34, height: 34)
+                .overlay(
                     Circle()
-                        .fill(Color.tokyoBlue)
-                        .frame(width: 6, height: 6)
-                        .scaleEffect(pulse ? 1.0 : 0.72)
-                        .opacity(pulse ? 1.0 : 0.55)
-                        .offset(x: -2, y: 2)
+                        .stroke((isStreaming ? Color.tokyoBlue : Color.tokyoComment).opacity(0.34), lineWidth: 1)
+                )
+                .overlay {
+                    Image(systemName: "arrow.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(isStreaming ? .tokyoBlue : .tokyoFg)
                 }
-            }
+                .overlay(alignment: .topTrailing) {
+                    if isStreaming {
+                        Circle()
+                            .fill(Color.tokyoBlue)
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(pulse ? 1.0 : 0.72)
+                            .opacity(pulse ? 1.0 : 0.55)
+                            .offset(x: 1, y: -1)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
@@ -884,7 +912,7 @@ private struct ChatTimelineView: View {
                 JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
                     jumpToLatest()
                 }
-                .padding(.trailing, 14)
+                .padding(.trailing, 27)
                 .padding(.bottom, 10)
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
             }
@@ -928,6 +956,12 @@ private struct ChatTimelineView: View {
                 renderWindow = max(renderWindow, requiredWindow)
             }
             scrollController.scrollTargetID = itemId
+        }
+        .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
+            guard let bottomItemID else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
+            }
         }
         .sheet(item: $fileToOpen) { file in
             RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)

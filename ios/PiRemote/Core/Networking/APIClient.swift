@@ -207,6 +207,22 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).models
     }
 
+    // MARK: - Themes
+
+    /// List available custom themes on the server.
+    func listThemes() async throws -> [RemoteThemeSummary] {
+        let data = try await get("/themes")
+        struct Response: Decodable { let themes: [RemoteThemeSummary] }
+        return try JSONDecoder().decode(Response.self, from: data).themes
+    }
+
+    /// Fetch a full theme by name.
+    func getTheme(name: String) async throws -> RemoteTheme {
+        let data = try await get("/themes/\(name)")
+        struct Response: Decodable { let theme: RemoteTheme }
+        return try JSONDecoder().decode(Response.self, from: data).theme
+    }
+
     // MARK: - Workspaces
 
     /// List all workspaces for the authenticated user.

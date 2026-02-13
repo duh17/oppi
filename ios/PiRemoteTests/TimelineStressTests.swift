@@ -10,7 +10,7 @@ import Foundation
 /// - processBatch under rapid streaming (coalesced 33ms batches)
 /// - Session switching (reset + loadSession churn)
 /// - MarkdownSegmentCache under eviction pressure
-/// - trimIfNeeded on at-capacity timelines
+/// - Large timeline preservation (no trimming)
 /// - ToolOutputStore memory bounds
 ///
 /// Each test asserts correctness AND measures wall-clock time against a budget.
@@ -43,9 +43,7 @@ struct TimelineStressTests {
         reducer.loadSession(events)
         let elapsed = ContinuousClock.now - start
 
-        // 400 > maxItems(200), so trimming kicks in
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
-        #expect(reducer.items.count >= TimelineReducer.trimTarget)
+        #expect(reducer.items.count == 400)
         #expect(elapsed < .seconds(1),
             "loadSession(400) took \(elapsed) — budget 1s")
     }
@@ -59,7 +57,9 @@ struct TimelineStressTests {
         reducer.loadSession(events)
         let elapsed = ContinuousClock.now - start
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
+        // All items preserved (no trimming)
+        // Mixed events: user(120) + assistant(120) + toolCall(120) + toolResult(updates toolCall) + thinking(120) = ~480 items
+        #expect(reducer.items.count > 300, "Should preserve all items: got \(reducer.items.count)")
         #expect(elapsed < .seconds(1),
             "loadSession(600 mixed) took \(elapsed) — budget 1s")
 
@@ -237,36 +237,33 @@ struct TimelineStressTests {
             "Cache should not grow after reset purge")
     }
 
-    // MARK: - trimIfNeeded stress
+    // MARK: - Large timeline preservation
 
     @MainActor
-    @Test func trimWithOnlyConversationRows() {
-        // When ALL items are user/assistant messages, trim must still work
+    @Test func largeTimelinePreservesAllItems() {
         let reducer = TimelineReducer()
 
-        let start = ContinuousClock.now
         for i in 0..<400 {
             reducer.appendUserMessage("msg-\(i)")
         }
-        let elapsed = ContinuousClock.now - start
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
-        #expect(elapsed < .seconds(1),
-            "400 appends with trimming took \(elapsed) — budget 1s")
+        #expect(reducer.items.count == 400, "All 400 items preserved: got \(reducer.items.count)")
 
-        // Most recent should survive
-        guard case .userMessage(_, let text, _, _) = reducer.items.last else {
-            Issue.record("Expected last item to be userMessage")
-            return
+        guard case .userMessage(_, let first, _, _) = reducer.items.first else {
+            Issue.record("Expected first item to be userMessage"); return
         }
-        #expect(text == "msg-399")
+        #expect(first == "msg-0")
+
+        guard case .userMessage(_, let last, _, _) = reducer.items.last else {
+            Issue.record("Expected last item to be userMessage"); return
+        }
+        #expect(last == "msg-399")
     }
 
     @MainActor
-    @Test func trimPrefersDroppingToolRowsOverConversation() {
+    @Test func allToolCallsPreservedInLargeSession() {
         let reducer = TimelineReducer()
 
-        // Add 120 tool calls + user messages
         for i in 0..<120 {
             reducer.appendUserMessage("user-\(i)")
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "tool-\(i)", tool: "bash", args: [:]))
@@ -274,28 +271,21 @@ struct TimelineStressTests {
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: "tool-\(i)"))
         }
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
-
-        // Count remaining user messages vs tool calls
         let userCount = reducer.items.filter {
-            if case .userMessage = $0 { return true }
-            return false
+            if case .userMessage = $0 { return true }; return false
         }.count
         let toolCount = reducer.items.filter {
-            if case .toolCall = $0 { return true }
-            return false
+            if case .toolCall = $0 { return true }; return false
         }.count
 
-        // Trim should have preferentially dropped tool rows
-        #expect(userCount >= toolCount,
-            "User messages (\(userCount)) should outnumber tool calls (\(toolCount)) after trim")
+        #expect(userCount == 120, "All user messages preserved")
+        #expect(toolCount == 120, "All tool calls preserved")
     }
 
     @MainActor
-    @Test func trimCleanupToolOutputStore() {
+    @Test func toolOutputPreservedInLargeSession() {
         let reducer = TimelineReducer()
 
-        // Fill to capacity with tool calls
         for i in 0..<300 {
             reducer.process(.agentStart(sessionId: "s1"))
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "tool-\(i)", tool: "bash", args: [:]))
@@ -305,22 +295,17 @@ struct TimelineStressTests {
             reducer.process(.agentEnd(sessionId: "s1"))
         }
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
-
-        // Verify that trimmed tool IDs had their output cleaned up
-        let remainingToolIDs = Set(reducer.items.compactMap { item -> String? in
+        // All 300 tool calls should be preserved
+        let toolIDs = reducer.items.compactMap { item -> String? in
             guard case .toolCall(let id, _, _, _, _, _, _) = item else { return nil }
             return id
-        })
+        }
+        #expect(toolIDs.count == 300, "All 300 tool calls preserved: got \(toolIDs.count)")
 
-        // Check some early IDs that should have been trimmed
-        for i in 0..<10 {
-            let id = "tool-\(i)"
-            if !remainingToolIDs.contains(id) {
-                let output = reducer.toolOutputStore.fullOutput(for: id)
-                #expect(output.isEmpty,
-                    "Trimmed tool \(id) should have output cleaned from store")
-            }
+        // All tool outputs should be stored
+        for id in toolIDs {
+            let output = reducer.toolOutputStore.fullOutput(for: id)
+            #expect(!output.isEmpty, "Tool \(id) should have output stored")
         }
     }
 
@@ -456,12 +441,13 @@ struct TimelineStressTests {
             reducer.process(.agentEnd(sessionId: "s1"))
         }
 
-        // Add user messages that trigger trimming
+        // Add more user messages
         for i in 0..<100 {
             reducer.appendUserMessage("churn-\(i)")
         }
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
+        // All items preserved — 50 history + 30*(assistant+tool) + 100 user
+        #expect(reducer.items.count > 200, "All items should be preserved: got \(reducer.items.count)")
 
         // Verify every item's ID is unique
         let ids = reducer.items.map(\.id)

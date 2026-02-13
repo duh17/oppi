@@ -28,8 +28,13 @@ struct ExpandedComposerView: View {
     @Binding var pendingImages: [PendingImage]
     let isBusy: Bool
     let slashCommands: [SlashCommand]
+    let session: Session?
+    let thinkingLevel: ThinkingLevel
     let onSend: () -> Void
     let onBash: (String) -> Void
+    let onModelTap: () -> Void
+    let onThinkingSelect: (ThinkingLevel) -> Void
+    let onCompact: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -195,9 +200,22 @@ struct ExpandedComposerView: View {
                 imageStrip
             }
 
-            HStack {
+            HStack(spacing: 6) {
                 attachMenu
 
+                Spacer(minLength: 0)
+
+                SessionToolbar(
+                    session: session,
+                    thinkingLevel: thinkingLevel,
+                    onModelTap: onModelTap,
+                    onThinkingSelect: onThinkingSelect,
+                    onCompact: onCompact
+                )
+            }
+            .padding(.horizontal, 16)
+
+            HStack {
                 Spacer()
 
                 if charCount > 0 {

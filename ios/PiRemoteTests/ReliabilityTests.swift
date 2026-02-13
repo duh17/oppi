@@ -189,64 +189,36 @@ struct ReliabilityTests {
             "Dialog should survive background transition")
     }
 
-    // MARK: - Fix 5: Timeline Item Cap
+    // MARK: - Fix 5: Timeline preserves all items (no trimming)
 
     @MainActor
-    @Test func timelineTrimsWhenOverCap() {
-        let reducer = TimelineReducer()
-
-        for i in 0..<(TimelineReducer.maxItems + 100) {
-            reducer.appendUserMessage("msg-\(i)")
-        }
-
-        #expect(reducer.items.count <= TimelineReducer.maxItems,
-            "Items should be capped at \(TimelineReducer.maxItems), got \(reducer.items.count)")
-    }
-
-    @MainActor
-    @Test func timelineTrimPreservesRecentItems() {
+    @Test func timelinePreservesAllItems() {
         let reducer = TimelineReducer()
 
         for i in 0..<600 {
             reducer.appendUserMessage("msg-\(i)")
         }
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems)
+        #expect(reducer.items.count == 600, "All items should be preserved, got \(reducer.items.count)")
 
-        // Most recent message should still be present
-        guard case .userMessage(_, let text, _, _) = reducer.items.last else {
-            Issue.record("Expected userMessage as last item")
-            return
-        }
-        #expect(text == "msg-599", "Most recent message should be preserved")
-    }
-
-    @MainActor
-    @Test func timelineTrimRemovesOldestItems() {
-        let reducer = TimelineReducer()
-
-        for i in 0..<600 {
-            reducer.appendUserMessage("msg-\(i)")
-        }
-
-        // Oldest items should have been trimmed
         guard case .userMessage(_, let firstText, _, _) = reducer.items.first else {
             Issue.record("Expected userMessage as first item")
             return
         }
-        // After 501st item triggers trim to 400, items 0-100 are gone.
-        // Then items 101-599 accumulate. Another trim at 501 items...
-        // The first item should NOT be "msg-0"
-        #expect(firstText != "msg-0", "Oldest items should be trimmed")
+        #expect(firstText == "msg-0", "First item should be msg-0")
+
+        guard case .userMessage(_, let lastText, _, _) = reducer.items.last else {
+            Issue.record("Expected userMessage as last item")
+            return
+        }
+        #expect(lastText == "msg-599", "Last item should be msg-599")
     }
 
     @MainActor
-    @Test func timelineTrimPrefersConversationMessagesOverToolRows() {
+    @Test func timelinePreservesToolCallsWithConversation() {
         let reducer = TimelineReducer()
 
-        // Add enough items to trigger trimming: each iteration adds 3 items
-        // (user + toolStart + toolEnd). We want total > maxItems.
-        let turnCount = (TimelineReducer.maxItems / 3) + 40
+        let turnCount = 200
         for i in 0..<turnCount {
             reducer.appendUserMessage("msg-\(i)")
             let toolId = "t\(i)"
@@ -254,22 +226,19 @@ struct ReliabilityTests {
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
         }
 
-        let remainingMessages = reducer.items.compactMap { item -> String? in
-            guard case .userMessage(_, let text, _, _) = item else {
-                return nil
-            }
-            return text
+        let userMessages = reducer.items.filter {
+            if case .userMessage = $0 { return true }; return false
+        }
+        let toolItems = reducer.items.filter {
+            if case .toolCall = $0 { return true }; return false
         }
 
-        // Trim should prefer dropping tool rows over user messages.
-        // All user messages should survive since tool rows are trimmable first.
-        #expect(remainingMessages.contains("msg-0"), "Oldest user messages should be retained when tool rows are trimmable")
-        #expect(remainingMessages.contains("msg-\(turnCount - 1)"))
-        #expect(remainingMessages.count == turnCount)
+        #expect(userMessages.count == turnCount, "All user messages preserved")
+        #expect(toolItems.count == turnCount, "All tool calls preserved")
     }
 
     @MainActor
-    @Test func loadSessionRespectsCap() {
+    @Test func loadSessionPreservesAllEvents() {
         let reducer = TimelineReducer()
 
         var events: [TraceEvent] = []
@@ -279,26 +248,14 @@ struct ReliabilityTests {
 
         reducer.loadSession(events)
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems,
-            "loadSession should respect item cap, got \(reducer.items.count)")
+        #expect(reducer.items.count == 600,
+            "loadSession should preserve all items, got \(reducer.items.count)")
     }
 
     @MainActor
-    @Test func belowCapNoTrimming() {
+    @Test func processBatchPreservesAllEvents() {
         let reducer = TimelineReducer()
 
-        for i in 0..<100 {
-            reducer.appendUserMessage("msg-\(i)")
-        }
-
-        #expect(reducer.items.count == 100, "Below cap — all items preserved")
-    }
-
-    @MainActor
-    @Test func processBatchRespectsCap() {
-        let reducer = TimelineReducer()
-
-        // Build a large batch of events
         var events: [AgentEvent] = []
         for i in 0..<600 {
             events.append(.agentStart(sessionId: "s1"))
@@ -308,20 +265,8 @@ struct ReliabilityTests {
 
         reducer.processBatch(events)
 
-        #expect(reducer.items.count <= TimelineReducer.maxItems,
-            "processBatch should respect item cap, got \(reducer.items.count)")
-    }
-
-    @MainActor
-    @Test func exactlyAtCapNoTrim() {
-        let reducer = TimelineReducer()
-
-        for i in 0..<TimelineReducer.maxItems {
-            reducer.appendUserMessage("msg-\(i)")
-        }
-
-        #expect(reducer.items.count == TimelineReducer.maxItems,
-            "Exactly at cap — no trimming should occur")
+        #expect(reducer.items.count == 600,
+            "processBatch should preserve all items, got \(reducer.items.count)")
     }
 
     // MARK: - Helpers
