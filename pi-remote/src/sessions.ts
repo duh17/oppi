@@ -1353,8 +1353,11 @@ export class SessionManager extends EventEmitter {
   /** Guard check delay — extension should connect within seconds of first prompt. */
   private readonly guardCheckDelayMs = 10_000;
 
-  /** Graceful abort budget before escalation to force termination. */
+  /** Graceful abort budget before escalating to SIGINT. */
   private readonly stopAbortTimeoutMs = 8_000;
+
+  /** After SIGINT, wait this long before giving up on the abort (without killing session). */
+  private readonly stopAbortSigintTimeoutMs = 5_000;
 
   /** Grace period between abort and SIGTERM in force-stop flow. */
   private readonly stopSessionGraceMs = 1_000;
@@ -1832,14 +1835,39 @@ export class SessionManager extends EventEmitter {
         return;
       }
 
-      const timeoutReason = `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; force terminating session`;
-      this.promotePendingStop(key, current, "terminate", "timeout", timeoutReason, true);
-      this.forceTerminateSessionProcess(
-        key,
-        current,
-        "timeout",
-        `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; session terminated`,
-      );
+      // Phase 1: stdin abort didn't work — send SIGINT to interrupt running tools
+      console.log(`${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; sending SIGINT`);
+      this.broadcast(key, {
+        type: "stop_requested",
+        source: "server",
+        reason: `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; sending interrupt`,
+      });
+
+      try {
+        if (!current.process.killed) {
+          current.process.kill("SIGINT");
+        }
+      } catch {
+        // process may have already exited
+      }
+
+      // Phase 2: if SIGINT doesn't resolve the abort, give up but keep session alive
+      current.pendingStop!.timeoutHandle = setTimeout(() => {
+        const still = this.active.get(key);
+        if (!still || still.pendingStop?.mode !== "abort") {
+          return;
+        }
+
+        console.warn(
+          `${ts()} [session] Abort still pending after SIGINT + ${this.stopAbortSigintTimeoutMs}ms; giving up (session stays alive)`,
+        );
+        this.finishPendingStopWithFailure(
+          key,
+          still,
+          "server",
+          `Stop timed out — the agent may still be processing. You can send another message or stop the session.`,
+        );
+      }, this.stopAbortSigintTimeoutMs);
     }, this.stopAbortTimeoutMs);
   }
 
