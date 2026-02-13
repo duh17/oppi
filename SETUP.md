@@ -126,10 +126,23 @@ The agent needs API credentials. See step 2 above.
 
 This is expected on first use! The server defaults to asking for approval on everything. As you approve commands, you can set up auto-allow rules in the app's settings.
 
+## Runtime Modes
+
+### Container Mode (recommended)
+
+Sessions run inside Apple containers — lightweight macOS VMs with filesystem isolation. The agent can't access your host filesystem outside the workspace bind mount. Requires macOS 15+ (Sequoia).
+
+When creating a workspace in the app, choose **Container** runtime. The server will build the container image on first use (takes ~1 minute).
+
+### Host Mode
+
+Sessions run directly on your Mac. Faster startup, full access to your tools and environment, but no isolation — the agent can access anything your user can. Good for trusted projects where you want the agent to use your local toolchain.
+
+When creating a workspace, choose **Host** runtime.
+
 ## V0 Limitations
 
 - **No push notifications.** You need the app open to see permission requests. If the app is backgrounded, the agent will wait until you return.
-- **Host mode only.** Sessions run directly on your Mac (no container isolation). Be thoughtful about what you approve.
 - **Single user.** The server supports one owner.
 
 ## Advanced: Port and Host Configuration
