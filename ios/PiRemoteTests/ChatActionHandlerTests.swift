@@ -673,6 +673,78 @@ struct ChatActionHandlerTests {
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == nil)
     }
 
+    @MainActor
+    @Test func sendPromptAutoTitleSucceedsEvenWhenMessageCountGrowsFast() async {
+        // Regression: fast models (codex) fire message_end events before the
+        // on-device title LLM finishes, pushing messageCount past 1. The deferred
+        // auto-title task should still apply the name as long as the session
+        // remains untitled — it must not re-check messageCount <= 1.
+        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
+
+        // Simulate the title generator being slow (the real on-device LLM takes ~1-2s)
+        handler._generateSessionTitleForTesting = { _ in
+            // By the time this returns, messageCount will have grown
+            return "Container runtime bridge"
+        }
+
+        var setSessionNameValue: String?
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                setSessionNameValue = name
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "implement loopback bridge for container runtime",
+            images: [],
+            isBusy: false,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+
+        // Simulate fast model: messageCount jumps to 5 shortly after prompt
+        // dispatch (before the on-device title LLM finishes). This happens
+        // because pi streams message_end events that increment the count.
+        if var s = sessionStore.sessions.first(where: { $0.id == "s1" }) {
+            s.messageCount = 5
+            sessionStore.upsert(s)
+        }
+
+        await waitForCondition(timeoutMs: 800) {
+            setSessionNameValue != nil
+        }
+
+        #expect(setSessionNameValue == "Container runtime bridge")
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Container runtime bridge")
+    }
+
     // MARK: - Rename
 
     @MainActor

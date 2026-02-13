@@ -490,11 +490,18 @@ final class ChatActionHandler {
         }
     }
 
+    /// Whether a session is eligible for auto-titling.
+    ///
+    /// Only checks that no name has been set. The `autoTitleAttemptedSessionIds`
+    /// guard in the caller ensures we only attempt once per session per app run.
+    /// We intentionally do NOT gate on messageCount — fast models (codex) fire
+    /// message_end events that increment the count before the auto-title logic
+    /// even gets scheduled.
     private static func shouldAutoTitle(session: Session) -> Bool {
         if let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
             return false
         }
-        return session.messageCount <= 1
+        return true
     }
 
     private func generateSessionTitle(from firstMessage: String) async -> String? {
@@ -512,7 +519,9 @@ final class ChatActionHandler {
         let fallback = heuristicTitle(from: firstMessage)
 
         let model = SystemLanguageModel.default
-        guard case .available = model.availability else {
+        let availability = model.availability
+        guard case .available = availability else {
+            log.error("Auto title: Foundation model not available — \(String(describing: availability), privacy: .public), fallback=\(fallback ?? "nil", privacy: .public)")
             return fallback
         }
 
@@ -526,9 +535,12 @@ final class ChatActionHandler {
         do {
             let session = LanguageModelSession(instructions: autoTitleInstructions)
             let response = try await session.respond(to: prompt)
-            return normalizeAutoTitle(response.content, sourceMessage: firstMessage) ?? fallback
+            let raw = response.content
+            let normalized = normalizeAutoTitle(raw, sourceMessage: firstMessage)
+            log.error("Auto title: Foundation model produced raw=\(raw, privacy: .public) normalized=\(normalized ?? "nil", privacy: .public)")
+            return normalized ?? fallback
         } catch {
-            log.error("Auto title generation failed: \(error.localizedDescription, privacy: .public)")
+            log.error("Auto title: Foundation model error — \(error.localizedDescription, privacy: .public), fallback=\(fallback ?? "nil", privacy: .public)")
             return fallback
         }
     }
