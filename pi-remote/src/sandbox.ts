@@ -47,6 +47,7 @@ import {
   writeFetchAllowlist,
 } from "./sandbox-skills.js";
 import { generateSystemPrompt } from "./sandbox-prompt.js";
+import { LoopbackBridgeManager } from "./loopback-bridge.js";
 
 // ─── Constants ───
 
@@ -122,6 +123,7 @@ export class SandboxManager {
   readonly config: SandboxConfig;
   private skillRegistry: SkillRegistry | null = null;
   private authProxy: AuthProxy | null = null;
+  private loopbackBridges = new LoopbackBridgeManager();
   /** Running workspace containers keyed by workspaceId (single-user mode). */
   private running: Map<string, { containerId: string }> = new Map();
 
@@ -218,6 +220,65 @@ export class SandboxManager {
     } catch {
       // Already exists — expected on subsequent starts
     }
+  }
+
+  /**
+   * Start host loopback bridges for any provider baseUrls bound to localhost.
+   *
+   * Container sessions cannot reach host loopback directly. We expose ephemeral
+   * bridge ports on 0.0.0.0 and rewrite localhost provider URLs to host-gateway.
+   */
+  async prepareLoopbackBridges(): Promise<void> {
+    const modelsPath = join(homedir(), ".pi", "agent", "models.json");
+    if (!existsSync(modelsPath)) {
+      return;
+    }
+
+    let parsed: { providers?: Record<string, unknown> };
+
+    try {
+      parsed = JSON.parse(readFileSync(modelsPath, "utf-8")) as { providers?: Record<string, unknown> };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[sandbox] Failed to parse ${modelsPath}: ${message}`);
+      return;
+    }
+
+    const baseUrls: string[] = [];
+
+    if (parsed.providers && typeof parsed.providers === "object") {
+      for (const provider of Object.values(parsed.providers)) {
+        if (!provider || typeof provider !== "object") {
+          continue;
+        }
+
+        const baseUrl = (provider as Record<string, unknown>).baseUrl;
+        if (typeof baseUrl === "string" && baseUrl.length > 0) {
+          baseUrls.push(baseUrl);
+        }
+      }
+    }
+
+    if (baseUrls.length === 0) {
+      return;
+    }
+
+    await this.loopbackBridges.ensureForBaseUrls(baseUrls);
+
+    const logged = new Set<string>();
+    for (const baseUrl of baseUrls) {
+      const rewritten = this.loopbackBridges.rewriteForHostGateway(baseUrl, HOST_GATEWAY);
+      if (rewritten === baseUrl || logged.has(rewritten)) {
+        continue;
+      }
+
+      logged.add(rewritten);
+      console.log(`[sandbox] Loopback bridge enabled: ${baseUrl} -> ${rewritten}`);
+    }
+  }
+
+  async shutdownLoopbackBridges(): Promise<void> {
+    await this.loopbackBridges.shutdown();
   }
 
   // ─── Directory Layout ───
@@ -456,6 +517,7 @@ export class SandboxManager {
     }
 
     const memoryMount = this.resolveMemoryMount(userId, workspace);
+    const lmstudioBridgePort = this.loopbackBridges.bridgePortForTarget(1234) ?? 1234;
 
     const args = [
       "run",
@@ -480,7 +542,7 @@ export class SandboxManager {
       "-e",
       `SEARXNG_URL=http://${HOST_GATEWAY}:8888`,
       "-e",
-      `LMSTUDIO_URL=http://${HOST_GATEWAY}:1234`,
+      `LMSTUDIO_URL=http://${HOST_GATEWAY}:${lmstudioBridgePort}`,
       "-e",
       `UV_CACHE_DIR=${CONTAINER_UV_CACHE}`,
       "-e",
@@ -705,36 +767,65 @@ export class SandboxManager {
 
   /**
    * Sync models.json from host with transforms:
-   * 1. localhost → host-gateway (for local providers like LM Studio)
+   * 1. Rewrite localhost providers to host-gateway (optionally via bridge)
    * 2. Inject proxy baseUrl for remote providers
    */
   private syncModels(src: string, dest: string): void {
     if (!existsSync(src)) return;
     const content = readFileSync(src, "utf-8");
 
-    // Rewrite localhost → host-gateway
-    let transformed = content.replace(/http:\/\/localhost:/g, `http://${HOST_GATEWAY}:`);
+    let parsed: { providers?: Record<string, unknown> };
+
+    try {
+      parsed = JSON.parse(content) as { providers?: Record<string, unknown> };
+    } catch {
+      // Preserve backward-compatible behavior even if models.json is malformed.
+      const fallback = content.replace(
+        /http:\/\/(localhost|127\.0\.0\.1):/g,
+        `http://${HOST_GATEWAY}:`,
+      );
+      writeFileSync(dest, fallback);
+      return;
+    }
+
+    parsed.providers ??= {};
+
+    // Rewrite loopback provider URLs to host-gateway. When a loopback bridge
+    // exists for the target port, use that bridge port; otherwise keep original
+    // port and rely on direct host-gateway access.
+    for (const [providerKey, providerValue] of Object.entries(parsed.providers)) {
+      if (!providerValue || typeof providerValue !== "object") {
+        continue;
+      }
+
+      const provider = providerValue as Record<string, unknown>;
+      const baseUrl = provider.baseUrl;
+      if (typeof baseUrl !== "string" || baseUrl.length === 0) {
+        continue;
+      }
+
+      provider.baseUrl = this.loopbackBridges.rewriteForHostGateway(baseUrl, HOST_GATEWAY);
+      parsed.providers[providerKey] = provider;
+    }
 
     // Inject proxy baseUrl overrides
     if (this.authProxy) {
       const proxiedProviders = this.authProxy.getProxiedProviders();
       if (proxiedProviders.length > 0) {
-        const parsed = JSON.parse(transformed);
-        parsed.providers ??= {};
         for (const authKey of proxiedProviders) {
           const proxyUrl = this.authProxy.getProviderProxyUrl(authKey, HOST_GATEWAY);
           if (proxyUrl) {
+            const existing = parsed.providers[authKey];
             parsed.providers[authKey] = {
-              ...parsed.providers[authKey],
+              ...(existing && typeof existing === "object" ? (existing as Record<string, unknown>) : {}),
               baseUrl: proxyUrl,
             };
           }
         }
-        transformed = JSON.stringify(parsed, null, 2);
       }
     }
 
-    writeFileSync(dest, transformed);
+    writeFileSync(dest, JSON.stringify(parsed, null, 2));
   }
 }
 

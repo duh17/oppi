@@ -257,6 +257,12 @@ export async function spawnPiContainer(
   deps.gate.setSessionPolicy(session.id, containerPolicy);
   console.log(`${ts()} [session:${session.id}] policy: preset=${presetName} (container mode)`);
 
+  // Pass through API keys for OpenRouter and other providers
+  const extraEnv: Record<string, string> = {};
+  if (process.env.OPENROUTER_API_KEY) {
+    extraEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  }
+
   // Spawn pi in container
   const proc = deps.sandbox.spawnPi({
     sessionId: session.id,
@@ -266,6 +272,7 @@ export async function spawnPiContainer(
     model: session.model,
     workspace,
     gatePort,
+    env: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
   });
 
   return setupProcHandlers(key, session, proc, deps);
