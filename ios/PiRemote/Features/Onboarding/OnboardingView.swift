@@ -23,7 +23,7 @@ struct OnboardingView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.tint)
 
-                Text("Pi Remote")
+                Text("Oppi")
                     .font(.largeTitle.bold())
 
                 Text("Control your pi agents\nfrom your phone.")
