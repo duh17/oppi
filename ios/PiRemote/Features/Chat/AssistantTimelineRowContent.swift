@@ -23,6 +23,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
 final class AssistantTimelineRowContentView: UIView, UIContentView {
     private static let maxValidHeight: CGFloat = 10_000
 
+    private let bubbleContainer = UIView()
     private let iconLabel = UILabel()
     private let markdownView = AssistantMarkdownContentView()
 
@@ -75,6 +76,11 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
     private func setupViews() {
         backgroundColor = .clear
 
+        // Same bubble shape as user messages — just different tint color.
+        bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
+        bubbleContainer.layer.cornerRadius = 10
+        bubbleContainer.clipsToBounds = true
+
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
         iconLabel.textColor = UIColor(ThemeID.tokyoNight.palette.purple)
@@ -85,19 +91,26 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         markdownView.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(iconLabel)
-        addSubview(markdownView)
+        addSubview(bubbleContainer)
+        bubbleContainer.addSubview(iconLabel)
+        bubbleContainer.addSubview(markdownView)
         iconLabel.addInteraction(UIContextMenuInteraction(delegate: self))
 
         NSLayoutConstraint.activate([
-            iconLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iconLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            iconLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            bubbleContainer.topAnchor.constraint(equalTo: topAnchor),
+            bubbleContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bubbleContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bubbleContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // Match user bubble insets: 10pt horizontal, 8pt vertical.
+            iconLabel.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
+            iconLabel.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 9),
+            iconLabel.bottomAnchor.constraint(lessThanOrEqualTo: bubbleContainer.bottomAnchor, constant: -8),
 
             markdownView.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 6),
-            markdownView.topAnchor.constraint(equalTo: topAnchor),
-            markdownView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            markdownView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            markdownView.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
+            markdownView.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
+            markdownView.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
         ])
     }
 
@@ -106,9 +119,15 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         iconLabel.textColor = UIColor(palette.purple)
+        // Purple tint — same pattern as user's blue tint (0.08 alpha).
+        bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(0.08)
+
+        // Trim leading/trailing whitespace so model output starting with \n
+        // doesn't create visual gaps above the π icon.
+        let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         markdownView.apply(configuration: .init(
-            content: configuration.text,
+            content: trimmedText,
             isStreaming: configuration.isStreaming,
             themeID: configuration.themeID
         ))

@@ -39,16 +39,13 @@ final class AssistantMarkdownContentView: UIView {
         return sv
     }()
 
-    private let cursorView: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.layer.cornerRadius = 1
-        v.isHidden = true
-        return v
-    }()
+    // Cursor removed — streaming text growth is sufficient visual feedback,
+    // and the working indicator at the timeline bottom handles busy state.
 
     /// Very large responses fall back to plain text to avoid expensive layout.
     private static let plainTextFallbackThreshold = 20_000
+
+
 
     // MARK: - State
 
@@ -76,18 +73,12 @@ final class AssistantMarkdownContentView: UIView {
 
     private func setupViews() {
         addSubview(stackView)
-        addSubview(cursorView)
 
         NSLayoutConstraint.activate([
             stackView.topAnchor.constraint(equalTo: topAnchor),
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-            cursorView.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
-            cursorView.topAnchor.constraint(equalTo: stackView.bottomAnchor, constant: 4),
-            cursorView.widthAnchor.constraint(equalToConstant: 8),
-            cursorView.heightAnchor.constraint(equalToConstant: 14),
-            cursorView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -105,8 +96,6 @@ final class AssistantMarkdownContentView: UIView {
         } else {
             rebuild(segments: segments, signatures: signatures, config: config)
         }
-
-        updateCursor(isStreaming: config.isStreaming, themeID: config.themeID)
     }
 
     // MARK: - Segment building
@@ -342,37 +331,7 @@ final class AssistantMarkdownContentView: UIView {
         }
     }
 
-    // MARK: - Cursor
 
-    private func updateCursor(isStreaming: Bool, themeID: ThemeID) {
-        cursorView.backgroundColor = UIColor(themeID.palette.purple)
-
-        if isStreaming {
-            cursorView.isHidden = false
-            startCursorPulse()
-        } else {
-            cursorView.isHidden = true
-            cursorView.layer.removeAnimation(forKey: "opacityPulse")
-        }
-    }
-
-    private func startCursorPulse() {
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            cursorView.layer.removeAnimation(forKey: "opacityPulse")
-            cursorView.layer.opacity = 0.56
-            return
-        }
-        guard cursorView.layer.animation(forKey: "opacityPulse") == nil else { return }
-
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 0.58
-        pulse.toValue = 0.46
-        pulse.duration = 2.2
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        cursorView.layer.add(pulse, forKey: "opacityPulse")
-    }
 }
 
 // MARK: - UITextViewDelegate (deep link routing)

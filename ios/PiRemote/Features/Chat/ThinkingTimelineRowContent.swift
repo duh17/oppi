@@ -48,6 +48,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private let spacerView = UIView()
     private let chevronImageView = UIImageView()
 
+    /// Brain icon inside the expanded container (top-left, visible when done).
+    private let brainIcon = UIImageView()
+
     private let expandedContainerView = UIView()
     private let expandedScrollView = UIScrollView()
     private let expandedTextView = UITextView()
@@ -136,8 +139,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         chevronImageView.contentMode = .scaleAspectFit
 
         expandedContainerView.translatesAutoresizingMaskIntoConstraints = false
-        expandedContainerView.layer.cornerRadius = 8
-        expandedContainerView.layer.borderWidth = 1
+        expandedContainerView.layer.cornerRadius = 10
+        expandedContainerView.layer.borderWidth = 0
         expandedContainerView.clipsToBounds = true
 
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -154,6 +157,12 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         expandedTextView.font = .preferredFont(forTextStyle: .callout)
         expandedTextView.adjustsFontForContentSizeCategory = true
 
+        // Brain icon inside the bubble — small, top-left.
+        brainIcon.translatesAutoresizingMaskIntoConstraints = false
+        brainIcon.image = UIImage(systemName: "brain")
+        brainIcon.contentMode = .scaleAspectFit
+        brainIcon.isHidden = true
+
         addSubview(containerStack)
 
         containerStack.addArrangedSubview(headerStack)
@@ -167,6 +176,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         statusHostView.addSubview(statusImageView)
         statusHostView.addSubview(statusSpinner)
 
+        // Brain icon sits inside the expanded container, above the scroll view.
+        expandedContainerView.addSubview(brainIcon)
         expandedContainerView.addSubview(expandedScrollView)
         expandedScrollView.addSubview(expandedTextView)
 
@@ -196,9 +207,16 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             chevronImageView.widthAnchor.constraint(equalToConstant: 10),
             chevronImageView.heightAnchor.constraint(equalToConstant: 10),
 
+            // Brain icon — top-left inside the bubble.
+            brainIcon.leadingAnchor.constraint(equalTo: expandedContainerView.leadingAnchor, constant: 10),
+            brainIcon.topAnchor.constraint(equalTo: expandedContainerView.topAnchor, constant: 10),
+            brainIcon.widthAnchor.constraint(equalToConstant: 14),
+            brainIcon.heightAnchor.constraint(equalToConstant: 14),
+
+            // Scroll view indented to the right of brain icon.
             expandedScrollView.leadingAnchor.constraint(
-                equalTo: expandedContainerView.leadingAnchor,
-                constant: Self.expandedContainerHorizontalPadding
+                equalTo: brainIcon.trailingAnchor,
+                constant: 6
             ),
             expandedScrollView.trailingAnchor.constraint(
                 equalTo: expandedContainerView.trailingAnchor,
@@ -227,6 +245,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let palette = configuration.themeID.palette
         statusImageView.tintColor = UIColor(palette.purple)
         statusSpinner.color = UIColor(palette.purple)
+        brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
         titleLabel.textColor = UIColor(palette.comment)
         chevronImageView.tintColor = UIColor(palette.comment)
         expandedTextView.tintColor = UIColor(palette.blue)
@@ -236,8 +255,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         ]
 
         if configuration.isDone {
-            // Completed thoughts should read like content, not a collapsible section.
             headerStack.isHidden = true
+            brainIcon.isHidden = false
             statusSpinner.stopAnimating()
             statusSpinner.isHidden = true
             chevronImageView.isHidden = true
@@ -245,14 +264,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
             let previewOnly = configuration.isPreviewOnly
             expandedContainerView.isHidden = !shouldShowThoughtContent
-            expandedContainerView.backgroundColor = UIColor(
-                (previewOnly ? palette.bgDark : palette.bgHighlight)
-                    .opacity(previewOnly ? 0.70 : 0.90)
-            )
-            expandedContainerView.layer.borderColor = UIColor(
-                (previewOnly ? palette.comment : palette.purple)
-                    .opacity(previewOnly ? 0.18 : 0.24)
-            ).cgColor
+            // Same bubble style as assistant/user — subtle tinted fill, no border.
+            expandedContainerView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.08)
+            expandedContainerView.layer.borderColor = UIColor.clear.cgColor
 
             if shouldShowThoughtContent {
                 applyExpandedTextStyle(
@@ -270,6 +284,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             }
             return
         }
+
+        // In-progress state.
+        brainIcon.isHidden = true
 
         headerStack.isHidden = false
         titleLabel.text = "Thinking…"
@@ -328,9 +345,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         }
 
         let resolvedWidth = max(0, preferredWidth ?? bounds.width)
+        // Account for brain icon width (14) + spacing (6) + leading (10) + trailing padding.
+        let brainIndent: CGFloat = 30
         let availableWidth = max(
             1,
-            resolvedWidth - (Self.expandedContainerHorizontalPadding * 2)
+            resolvedWidth - brainIndent - Self.expandedContainerHorizontalPadding
         )
 
         guard availableWidth > 1 else { return }

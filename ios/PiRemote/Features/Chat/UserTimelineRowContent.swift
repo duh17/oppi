@@ -58,7 +58,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         outerStack.translatesAutoresizingMaskIntoConstraints = false
         outerStack.axis = .vertical
-        outerStack.alignment = .leading
+        outerStack.alignment = .fill
         outerStack.spacing = 6
 
         // Image strip (horizontal scroll of thumbnails).
