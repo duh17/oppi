@@ -2,10 +2,6 @@
 import SwiftUI
 import UIKit
 
-extension Notification.Name {
-    static let inviteDeepLinkTapped = Notification.Name("dev.chenda.PiRemote.inviteDeepLinkTapped")
-}
-
 // MARK: - Global Segment Cache
 
 /// Process-wide cache for parsed markdown segments.

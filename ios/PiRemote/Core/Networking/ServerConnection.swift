@@ -80,9 +80,9 @@ final class ServerConnection {
     private(set) var slashCommands: [SlashCommand] = []
 
     /// Cached model list — populated eagerly on connect, survives sheet open/close.
-    private(set) var cachedModels: [ModelInfo] = []
+    var cachedModels: [ModelInfo] = []
     /// Whether models have been fetched at least once this connection.
-    private(set) var modelsCacheReady = false
+    var modelsCacheReady = false
     var slashCommandsCacheKey: String?
     var slashCommandsRequestId: String?
     var slashCommandsTask: Task<Void, Never>?
@@ -90,13 +90,21 @@ final class ServerConnection {
     /// Timer that auto-dismisses extension dialogs after their timeout expires.
     var extensionTimeoutTask: Task<Void, Never>?
 
+    /// Model prefetch task — eagerly loaded on connect.
+    var modelPrefetchTask: Task<Void, Never>?
+
     /// Watchdog: if the session reports busy but no stream events arrive for
     /// this duration, trigger a state reconciliation.
     static let silenceTimeout: Duration = .seconds(15)
+    static let silenceReconnectTimeout: Duration = .seconds(45)
     /// Tracks the last time a meaningful stream event was routed.
     var lastEventTime: ContinuousClock.Instant?
     /// Watchdog task — monitors for silence during busy sessions.
     var silenceWatchdog: Task<Void, Never>?
+
+    /// Callback for the silence watchdog to trigger a full reconnection.
+    /// Set by `ChatSessionManager` when connecting.
+    var onSilenceReconnect: (() -> Void)?
 
     /// Set when server sends a fatal error (e.g. session limit).
     /// ChatSessionManager checks this to suppress auto-reconnect.
@@ -485,7 +493,7 @@ final class ServerConnection {
         }
     }
 
-    private func resolvePendingRPCResult(
+    func resolvePendingRPCResult(
         command: String,
         requestId: String,
         success: Bool,
@@ -505,7 +513,7 @@ final class ServerConnection {
         return true
     }
 
-    private func resolveTurnAck(
+    func resolveTurnAck(
         command: String,
         clientTurnId: String,
         stage: TurnAckStage,
@@ -529,7 +537,7 @@ final class ServerConnection {
         return true
     }
 
-    private func resolveTurnRpcResult(
+    func resolveTurnRpcResult(
         command: String,
         requestId: String,
         success: Bool,
@@ -574,7 +582,7 @@ final class ServerConnection {
     }
 
     /// Sync thinking level from a session state update (connected/state messages).
-    private func syncThinkingLevel(from session: Session) {
+    func syncThinkingLevel(from session: Session) {
         guard let levelStr = session.thinkingLevel,
               let level = ThinkingLevel(rawValue: levelStr),
               thinkingLevel != level else { return }
@@ -585,7 +593,7 @@ final class ServerConnection {
         "\(session.id)|\(session.workspaceId ?? "")"
     }
 
-    private func scheduleSlashCommandsRefresh(for session: Session, force: Bool) {
+    func scheduleSlashCommandsRefresh(for session: Session, force: Bool) {
         slashCommandsTask?.cancel()
         slashCommandsTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -611,7 +619,7 @@ final class ServerConnection {
         }
     }
 
-    private func handleSlashCommandsResult(
+    func handleSlashCommandsResult(
         requestId: String?,
         success: Bool,
         data: JSONValue?,

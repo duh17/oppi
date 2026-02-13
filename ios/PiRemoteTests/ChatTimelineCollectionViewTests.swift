@@ -77,42 +77,42 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         let sample = "let sample = \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==\""
 
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "read",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "functions.read",
                 outputPreview: "",
                 fullOutput: sample
             )
         )
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "write",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "tools/write",
                 outputPreview: "",
                 fullOutput: sample
             )
         )
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "edit",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "todo",
                 outputPreview: sample,
                 fullOutput: ""
@@ -123,7 +123,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
     @MainActor
     @Test func inlineMediaWarningHeuristicKeepsBashPlainText() {
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "bash",
                 outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
@@ -131,7 +131,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "functions.bash",
                 outputPreview: "",
                 fullOutput: "before data:audio/wav;base64,UklGRg== after"
@@ -139,7 +139,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         #expect(
-            !ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "bash\n",
                 outputPreview: "plain output",
                 fullOutput: ""
@@ -150,7 +150,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
     @MainActor
     @Test func inlineMediaWarningHeuristicDetectsDataURIsForNonBashTools() {
         #expect(
-            ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "grep",
                 outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
                 fullOutput: ""
@@ -158,7 +158,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionView.Coordinator.shouldWarnInlineMediaForToolOutput(
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
                 normalizedTool: "find",
                 outputPreview: "",
                 fullOutput: "before data:audio/wav;base64,UklGRg== after"
@@ -1331,7 +1331,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
     @MainActor
     @Test func readOutputFileTypeDetectsFromRawSummaryWithLineRange() {
-        let fileType = ChatTimelineCollectionView.Coordinator.readOutputFileType(
+        let fileType = ToolPresentationBuilder.readOutputFileType(
             args: nil,
             argsSummary: "Chat/ChatTimelineCollectionView.swift:440-499"
         )

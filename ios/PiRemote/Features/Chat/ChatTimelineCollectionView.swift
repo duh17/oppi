@@ -1,6 +1,60 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Safe-sizing cell
+
+/// UICollectionViewCell subclass that bypasses UIKit's content-view size
+/// assertion entirely.
+///
+/// **The problem:** `UICollectionViewCell.systemLayoutSizeFitting` internally
+/// calls `systemLayoutSizeFitting` on the *UIContentView*, checks the result,
+/// and throws `NSInternalInconsistencyException` if it's non-finite (DBL_MAX).
+/// This happens when a content view's constraints are momentarily ambiguous
+/// (e.g. during initial cell configuration). Overriding `systemLayoutSizeFitting`
+/// on the cell doesn't help because the assertion fires inside UIKit's private
+/// code path *before* calling the cell's method.
+///
+/// **The fix:** Override `preferredLayoutAttributesFittingAttributes:` — the
+/// method that UIKit calls to get self-sizing dimensions. This is the CALLER
+/// of `systemLayoutSizeFitting`. By overriding it, we compute the size
+/// ourselves (via `contentView.systemLayoutSizeFitting`) and clamp the result,
+/// completely bypassing the assertion path in `UICollectionViewCell`.
+private final class SafeSizingCell: UICollectionViewCell {
+    private static let maxValidHeight: CGFloat = 10_000
+    private static let fallbackHeight: CGFloat = 44
+
+    override func preferredLayoutAttributesFitting(
+        _ layoutAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes {
+        let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+
+        let targetSize = CGSize(
+            width: attributes.size.width,
+            height: UIView.layoutFittingCompressedSize.height
+        )
+
+        // Size the cell's contentView directly. This triggers auto layout on
+        // all subviews (including the UIContentView) without going through
+        // UICollectionViewCell's assertion-guarded systemLayoutSizeFitting.
+        let fitted = contentView.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .defaultLow
+        )
+
+        let width = attributes.size.width
+        let height: CGFloat
+        if fitted.height.isFinite && fitted.height > 0 {
+            height = min(fitted.height, Self.maxValidHeight)
+        } else {
+            height = Self.fallbackHeight
+        }
+
+        attributes.size = CGSize(width: width, height: height)
+        return attributes
+    }
+}
+
 // swiftlint:disable type_body_length
 struct ChatTimelineScrollCommand: Equatable {
     enum Anchor: Equatable {
@@ -167,7 +221,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         func configureDataSource(collectionView: UICollectionView) {
             self.collectionView = collectionView
 
-            let chatRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, itemID in
+            let chatRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
                 let configureStartNs = ChatTimelinePerf.timestampNs()
                 guard let self,
                       let item = self.currentItemByID[itemID],
@@ -262,7 +316,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
-            let loadMoreRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, _ in
+            let loadMoreRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
                 let configureStartNs = ChatTimelinePerf.timestampNs()
                 guard let self else {
                     ChatTimelinePerf.recordCellConfigure(
@@ -285,7 +339,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 )
             }
 
-            let workingRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> { [weak self] cell, _, _ in
+            let workingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
                 let configureStartNs = ChatTimelinePerf.timestampNs()
                 guard let self else {
                     ChatTimelinePerf.recordCellConfigure(
@@ -506,96 +560,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return Int(String(digits))
         }
 
-        static func shouldWarnInlineMediaForToolOutput(
-            normalizedTool: String,
-            outputPreview: String,
-            fullOutput: String
-        ) -> Bool {
-            let tool = ToolCallFormatting.normalized(normalizedTool)
-
-            // Diagnostic heuristic only.
-            // Tool rows always render natively; this controls warning affordances.
-            // Skip parity tools where textual content may legitimately include
-            // `data:image/...` literals (e.g. source files read via `read`).
-            switch tool {
-            case "bash", "read", "write", "edit", "todo":
-                return false
-            default:
-                break
-            }
-
-            let outputSample = fullOutput.isEmpty ? outputPreview : fullOutput
-            guard !outputSample.isEmpty else {
-                return false
-            }
-
-            return containsInlineMediaDataURI(outputSample)
-        }
-
-        private static func containsInlineMediaDataURI(_ text: String) -> Bool {
-            text.range(of: "data:image/", options: .caseInsensitive) != nil
-                || text.range(of: "data:audio/", options: .caseInsensitive) != nil
-        }
-
-        static func readOutputFileType(
-            args: [String: JSONValue]?,
-            argsSummary: String
-        ) -> FileType? {
-            let filePath = ToolCallFormatting.filePath(from: args)
-                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-                ?? inferredPathFromSummary(argsSummary)
-            guard let filePath, !filePath.isEmpty else {
-                return nil
-            }
-            return FileType.detect(from: filePath)
-        }
-
-        private static func inferredPathFromSummary(_ argsSummary: String) -> String? {
-            let trimmed = argsSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-
-            // Some streamed tool summaries arrive as raw path strings
-            // (e.g. `Chat/File.swift:440-499`) without `path:` keys.
-            let withoutToolPrefix: String
-            if trimmed.hasPrefix("read ") {
-                withoutToolPrefix = String(trimmed.dropFirst(5))
-            } else if trimmed.hasPrefix("write ") {
-                withoutToolPrefix = String(trimmed.dropFirst(6))
-            } else if trimmed.hasPrefix("edit ") {
-                withoutToolPrefix = String(trimmed.dropFirst(5))
-            } else {
-                withoutToolPrefix = trimmed
-            }
-
-            let candidate = withoutToolPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !candidate.isEmpty else { return nil }
-
-            // Strip read-style line range suffix so extension detection works:
-            // `file.swift:120-180` -> `file.swift`
-            if let range = candidate.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) {
-                return String(candidate[..<range.lowerBound])
-            }
-
-            return candidate
-        }
-
-        static func readOutputLanguage(
-            args: [String: JSONValue]?,
-            argsSummary: String
-        ) -> SyntaxLanguage? {
-            guard let fileType = readOutputFileType(args: args, argsSummary: argsSummary) else {
-                return nil
-            }
-
-            switch fileType {
-            case .code(let language):
-                return language
-            case .json:
-                return .json
-            case .markdown, .image, .audio, .plain:
-                return nil
-            }
-        }
 
         private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
             if let currentAudioPlayer = self.audioPlayer,
@@ -1026,272 +990,21 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 return nil
             }
 
-            let args = toolArgsStore?.args(for: itemID)
-            let normalizedTool = ToolCallFormatting.normalized(tool)
-            let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-            let fullOutput = toolOutputStore?.fullOutput(for: itemID) ?? ""
-            let hasInlineMediaDataURI = Self.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: normalizedTool,
-                outputPreview: outputPreview,
-                fullOutput: fullOutput
+            let context = ToolPresentationBuilder.Context(
+                args: toolArgsStore?.args(for: itemID),
+                expandedItemIDs: reducer?.expandedItemIDs ?? [],
+                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
+                isLoadingOutput: toolOutputLoadState.isLoading(itemID)
             )
-            let outputForFormatting = fullOutput.isEmpty ? outputPreview : fullOutput
-            let todoMutationDiff = normalizedTool == "todo"
-                ? ToolCallFormatting.todoMutationDiffPresentation(
-                    args: args,
-                    argsSummary: argsSummary
-                )
-                : nil
-            let todoPresentation = normalizedTool == "todo"
-                ? ToolCallFormatting.todoOutputPresentation(
-                    args: args,
-                    argsSummary: argsSummary,
-                    output: outputForFormatting
-                )
-                : nil
 
-            var title: String
-            var preview: String?
-            var toolNamePrefix: String?
-            var toolNameColor = UIColor(Color.tokyoCyan)
-            var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
-            var languageBadge: String?
-            var editAdded: Int?
-            var editRemoved: Int?
-            var editTrailingFallback: String?
-
-            switch normalizedTool {
-            case "bash":
-                let compactCommand = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
-                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if isExpanded {
-                    title = "bash"
-                } else {
-                    title = compactCommand.isEmpty ? "bash" : compactCommand
-                    titleLineBreakMode = .byTruncatingMiddle
-                }
-                toolNamePrefix = "$"
-                toolNameColor = UIColor(Color.tokyoGreen)
-
-            case "read", "write", "edit":
-                let displayPath = ToolCallFormatting.displayFilePath(
-                    tool: normalizedTool,
-                    args: args,
-                    argsSummary: argsSummary
-                )
-                title = displayPath.isEmpty
-                    ? normalizedTool
-                    : displayPath
-                toolNamePrefix = normalizedTool
-                toolNameColor = UIColor(Color.tokyoCyan)
-                titleLineBreakMode = .byTruncatingMiddle
-
-                if normalizedTool == "read" {
-                    if let fileType = Self.readOutputFileType(args: args, argsSummary: argsSummary),
-                       fileType == .markdown {
-                        languageBadge = fileType.displayLabel
-                    } else {
-                        languageBadge = Self.readOutputLanguage(
-                            args: args,
-                            argsSummary: argsSummary
-                        )?.displayName
-                    }
-                }
-
-                if normalizedTool == "edit" {
-                    if let stats = ToolCallFormatting.editDiffStats(from: args) {
-                        editAdded = stats.added
-                        editRemoved = stats.removed
-                    } else {
-                        editTrailingFallback = "modified"
-                    }
-                }
-
-            case "todo":
-                let summary = ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
-                title = summary.isEmpty ? "todo" : "todo \(summary)"
-                toolNamePrefix = "todo"
-                toolNameColor = UIColor(Color.tokyoPurple)
-                if let todoMutationDiff {
-                    editAdded = todoMutationDiff.addedLineCount
-                    editRemoved = todoMutationDiff.removedLineCount
-                    preview = todoMutationDiff.preview
-                } else if let todoPresentation,
-                          let todoPreview = ToolCallFormatting.headLines(todoPresentation.text, count: 2),
-                          !todoPreview.isEmpty {
-                    preview = todoPreview
-                }
-
-            default:
-                title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
-                toolNamePrefix = tool
-                toolNameColor = UIColor(Color.tokyoCyan)
-                if isError, !outputPreview.isEmpty {
-                    preview = String(outputPreview.prefix(180))
-                }
-            }
-
-            // Keep collapsed tool rows single-line and visually consistent.
-            preview = nil
-
-            if title.count > 240 {
-                title = String(title.prefix(239)) + "…"
-            }
-
-            var expandedText: String?
-            var expandedTextUsesMarkdown = false
-            var expandedDiffLines: [DiffLine]?
-            var expandedDiffPath: String?
-            var expandedCommandText: String?
-            var expandedOutputText: String?
-            var expandedOutputLanguage: SyntaxLanguage?
-            var expandedCodeStartLine: Int?
-            var expandedCodeFilePath: String?
-            var expandedUsesReadMediaRenderer = false
-            var prefersUnwrappedOutput = false
-            var showSeparatedCommandAndOutput = false
-            var copyCommandText: String?
-            var copyOutputText: String?
-            if isExpanded {
-                let output = fullOutput.isEmpty ? outputPreview : fullOutput
-                let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                copyOutputText = outputTrimmed.isEmpty ? nil : outputTrimmed
-
-                switch normalizedTool {
-                case "bash":
-                    let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
-                    copyCommandText = command.isEmpty ? nil : command
-                    expandedCommandText = command.isEmpty ? nil : command
-                    expandedOutputText = outputTrimmed.isEmpty ? nil : outputTrimmed
-                    prefersUnwrappedOutput = true
-                    showSeparatedCommandAndOutput = true
-
-                case "read":
-                    if !outputTrimmed.isEmpty {
-                        expandedText = outputTrimmed
-                        let readFileType = Self.readOutputFileType(
-                            args: args,
-                            argsSummary: argsSummary
-                        )
-                        expandedOutputLanguage = Self.readOutputLanguage(
-                            args: args,
-                            argsSummary: argsSummary
-                        )
-                        if readFileType == .markdown {
-                            expandedTextUsesMarkdown = true
-                            expandedCodeStartLine = nil
-                        } else if readFileType == .image {
-                            expandedUsesReadMediaRenderer = true
-                            expandedCodeStartLine = nil
-                        } else {
-                            expandedCodeStartLine = ToolCallFormatting.readStartLine(from: args)
-                        }
-                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
-                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-                    } else if toolOutputLoadState.isLoading(itemID) {
-                        expandedText = "Loading read output…"
-                    } else if isDone {
-                        expandedText = "Waiting for output…"
-                    }
-
-                case "write":
-                    if !outputTrimmed.isEmpty {
-                        expandedText = outputTrimmed
-                        expandedOutputLanguage = Self.readOutputLanguage(
-                            args: args,
-                            argsSummary: argsSummary
-                        )
-                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
-                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-                    }
-
-                case "edit":
-                    if !isError,
-                       let editText = ToolCallFormatting.editOldAndNewText(from: args) {
-                        let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
-                        expandedDiffLines = lines
-                        expandedDiffPath = ToolCallFormatting.displayFilePath(
-                            tool: normalizedTool,
-                            args: args,
-                            argsSummary: argsSummary
-                        )
-                        copyOutputText = DiffEngine.formatUnified(lines)
-                    } else if !outputTrimmed.isEmpty {
-                        expandedText = outputTrimmed
-                        expandedOutputLanguage = Self.readOutputLanguage(
-                            args: args,
-                            argsSummary: argsSummary
-                        )
-                        expandedCodeFilePath = ToolCallFormatting.filePath(from: args)
-                            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-                    }
-
-                case "todo":
-                    if let todoMutationDiff {
-                        expandedDiffLines = todoMutationDiff.diffLines
-                        copyOutputText = todoMutationDiff.unifiedText
-                    } else if let todoPresentation {
-                        expandedText = todoPresentation.text
-                        expandedTextUsesMarkdown = todoPresentation.usesMarkdown
-                    } else if !outputTrimmed.isEmpty {
-                        expandedText = outputTrimmed
-                    }
-
-                default:
-                    if !outputTrimmed.isEmpty {
-                        expandedText = outputTrimmed
-                    }
-                }
-            }
-
-            let trailing: String?
-            if let editTrailingFallback {
-                trailing = editTrailingFallback
-            } else if normalizedTool == "todo",
-                      todoMutationDiff == nil,
-                      let todoTrailing = todoPresentation?.trailing,
-                      !todoTrailing.isEmpty {
-                trailing = todoTrailing
-            } else {
-                trailing = nil
-            }
-
-            if hasInlineMediaDataURI {
-                if let existingBadge = languageBadge, !existingBadge.isEmpty {
-                    languageBadge = "\(existingBadge) • ⚠︎media"
-                } else {
-                    languageBadge = "⚠︎media"
-                }
-            }
-
-            return ToolTimelineRowConfiguration(
-                title: title,
-                preview: preview,
-                expandedText: expandedText,
-                expandedTextUsesMarkdown: expandedTextUsesMarkdown,
-                expandedDiffLines: expandedDiffLines,
-                expandedDiffPath: expandedDiffPath,
-                expandedCommandText: expandedCommandText,
-                expandedOutputText: expandedOutputText,
-                expandedOutputLanguage: expandedOutputLanguage,
-                expandedCodeStartLine: expandedCodeStartLine,
-                expandedCodeFilePath: expandedCodeFilePath,
-                expandedUsesReadMediaRenderer: expandedUsesReadMediaRenderer,
-                prefersUnwrappedOutput: prefersUnwrappedOutput,
-                showSeparatedCommandAndOutput: showSeparatedCommandAndOutput,
-                copyCommandText: copyCommandText,
-                copyOutputText: copyOutputText,
-                languageBadge: languageBadge,
-                trailing: trailing,
-                titleLineBreakMode: titleLineBreakMode,
-                toolNamePrefix: toolNamePrefix,
-                toolNameColor: toolNameColor,
-                editAdded: editAdded,
-                editRemoved: editRemoved,
-                isExpanded: isExpanded,
+            return ToolPresentationBuilder.build(
+                itemID: itemID,
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: outputPreview,
+                isError: isError,
                 isDone: isDone,
-                isError: isError
+                context: context
             )
         }
 
