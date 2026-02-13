@@ -458,28 +458,140 @@ export function hasSecretEnvExpansionInUrl(parsed: ParsedCommand): boolean {
   return false;
 }
 
+/**
+ * Directories that always contain secret material.
+ * Matches both absolute paths (/.ssh/) and home-relative (~/.ssh/).
+ */
+const SECRET_DIRS = ["ssh", "aws", "gnupg", "docker", "kube", "azure"];
+
+/**
+ * Config subdirectories that contain secret material.
+ * Matched under ~/.config/NAME/ or PATH/.config/NAME/
+ */
+const SECRET_CONFIG_DIRS = [
+  "gh", // GitHub CLI tokens (hosts.yml)
+  "gcloud", // GCP credentials
+];
+
+/**
+ * Specific dotfiles in the home directory that contain credentials.
+ * Matched as exact filenames at the end of a path.
+ */
+const SECRET_DOTFILES = [
+  ".npmrc", // npm auth tokens
+  ".netrc", // login credentials for curl/wget/ftp
+  ".pypirc", // PyPI upload tokens
+];
+
 function isSecretPath(pathCandidate: string): boolean {
-  const normalized = pathCandidate.trim().replace(/^['"]|['"]$/g, "").toLowerCase();
+  const normalized = pathCandidate
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .toLowerCase();
 
   if (!normalized || normalized === "-" || normalized.startsWith("-")) return false;
 
-  if (
-    normalized.includes("/.ssh/") ||
-    normalized.startsWith("~/.ssh/") ||
-    normalized.includes("/.aws/") ||
-    normalized.startsWith("~/.aws/") ||
-    normalized.includes("/.gnupg/") ||
-    normalized.startsWith("~/.gnupg/")
-  ) {
-    return true;
+  // Secret directories: ~/.ssh/, ~/.aws/, ~/.docker/, etc.
+  for (const dir of SECRET_DIRS) {
+    if (
+      normalized.includes(`/.${dir}/`) ||
+      normalized.startsWith(`~/.${dir}/`) ||
+      normalized.endsWith(`/.${dir}`) ||
+      normalized === `~/.${dir}`
+    ) {
+      return true;
+    }
   }
 
+  // Secret config subdirectories: ~/.config/gh/, ~/.config/gcloud/, etc.
+  for (const dir of SECRET_CONFIG_DIRS) {
+    if (
+      normalized.includes(`/.config/${dir}/`) ||
+      normalized.startsWith(`~/.config/${dir}/`) ||
+      normalized.endsWith(`/.config/${dir}`) ||
+      normalized === `~/.config/${dir}`
+    ) {
+      return true;
+    }
+  }
+
+  // Secret dotfiles: ~/.npmrc, ~/.netrc, ~/.pypirc
+  for (const file of SECRET_DOTFILES) {
+    if (normalized.endsWith(`/${file}`) || normalized === `~/${file}` || normalized === file) {
+      return true;
+    }
+  }
+
+  // .env files (various patterns)
   return (
     normalized === ".env" ||
     normalized.startsWith(".env.") ||
     normalized.endsWith("/.env") ||
     normalized.includes("/.env.")
   );
+}
+
+/**
+ * Extract command substitution contents from a command string.
+ *
+ * Matches both $(cmd) and `cmd` forms. Not recursive — extracts
+ * the outermost substitutions only.
+ */
+export function extractCommandSubstitutions(command: string): string[] {
+  const subs: string[] = [];
+
+  // Match $(...) — handle nested parens with a simple depth counter
+  let i = 0;
+  while (i < command.length) {
+    if (command[i] === "$" && command[i + 1] === "(") {
+      let depth = 1;
+      const start = i + 2;
+      let j = start;
+      while (j < command.length && depth > 0) {
+        if (command[j] === "(") depth++;
+        else if (command[j] === ")") depth--;
+        j++;
+      }
+      if (depth === 0) {
+        subs.push(command.slice(start, j - 1));
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+
+  // Match `cmd` (backtick form)
+  const backtickRe = /`([^`]+)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = backtickRe.exec(command)) !== null) {
+    subs.push(m[1]);
+  }
+
+  return subs;
+}
+
+/**
+ * Check if a raw command string (including embedded substitutions)
+ * references secret file paths.
+ *
+ * Scans both the command arguments directly and any $() / `` contents.
+ */
+export function hasSecretFileReference(command: string): boolean {
+  // Direct check: scan for secret paths anywhere in the command text.
+  // This catches both top-level args and embedded substitutions.
+  const subs = extractCommandSubstitutions(command);
+
+  for (const sub of subs) {
+    // Parse the substitution as a command and check for secret file reads
+    const stages = splitPipelineStages(sub);
+    for (const stage of stages) {
+      const parsed = parseBashCommand(stage);
+      if (isSecretFileRead(parsed)) return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -1129,6 +1241,12 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
   { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
 
+  // Raw sockets (can exfiltrate data to arbitrary endpoints)
+  { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection", risk: "high" },
+  { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection", risk: "high" },
+  { tool: "bash", exec: "socat", action: "ask", label: "Socket relay", risk: "high" },
+  { tool: "bash", exec: "telnet", action: "ask", label: "Telnet connection", risk: "high" },
+
   // Local host-control flows (explicit approval required in host mode)
   {
     tool: "bash",
@@ -1338,12 +1456,12 @@ export class PolicyEngine {
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {
-        // Pipe to shell — curl/wget piped to sh/bash is remote code execution.
-        // Match downloader anywhere in the pipeline, not only first stage.
-        if (/(^|\|)\s*(curl|wget)\b/.test(segment) && /\|\s*(ba)?sh\b/.test(segment)) {
+        // Pipe to shell — ANY content piped to sh/bash is arbitrary code execution.
+        // This catches curl|sh, base64 -d|bash, echo|sh, cat script.sh|bash, etc.
+        if (/\|\s*(ba)?sh\b/.test(segment)) {
           return {
             action: "ask",
-            reason: "Pipe to shell (remote code execution)",
+            reason: "Pipe to shell (arbitrary code execution)",
             risk: "high",
             layer: "rule",
             ruleLabel: "Pipe to shell",
@@ -1941,14 +2059,26 @@ export class PolicyEngine {
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {
+        // Check for secret file reads in pipeline stages
         const stages = splitPipelineStages(segment);
         for (const stage of stages) {
           const parsed = parseBashCommand(stage);
-          if (!isSecretFileRead(parsed)) continue;
+          if (isSecretFileRead(parsed)) {
+            return {
+              action: "deny",
+              reason: "Blocked access to secret credential files",
+              risk: "critical",
+              layer: "hard_deny",
+              ruleLabel: "Protect secret files",
+            };
+          }
+        }
 
+        // Check for secret file references inside command substitutions
+        if (hasSecretFileReference(segment)) {
           return {
             action: "deny",
-            reason: "Blocked access to secret credential files",
+            reason: "Blocked secret file access via command substitution",
             risk: "critical",
             layer: "hard_deny",
             ruleLabel: "Protect secret files",
@@ -2031,13 +2161,7 @@ export class PolicyEngine {
     input: Record<string, unknown>,
   ): PolicyDecision | null {
     if (!this.isConstrainedHostPreset()) return null;
-    if (![
-      "read",
-      "write",
-      "edit",
-      "find",
-      "ls",
-    ].includes(tool)) {
+    if (!["read", "write", "edit", "find", "ls"].includes(tool)) {
       return null;
     }
 
