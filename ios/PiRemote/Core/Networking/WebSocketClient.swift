@@ -383,9 +383,20 @@ final class WebSocketClient {
                 try? await Task.sleep(for: self?.pingInterval ?? .seconds(30))
                 guard !Task.isCancelled else { break }
 
-                let failed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                // Guard: skip ping if the task is no longer running.
+                // This avoids sending pings into a cancelled/completed task.
+                guard ws.state == .running else { break }
+
+                // Use a one-shot wrapper around the continuation because
+                // URLSessionWebSocketTask.sendPing can invoke its completion
+                // handler more than once when the task is cancelled during an
+                // in-flight ping (race with reconnect/disconnect paths).
+                // withCheckedContinuation crashes on double-resume; the
+                // OneShotPingContinuation silently drops subsequent resumes.
+                let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
+                    let oneShot = OneShotPingContinuation(cont)
                     ws.sendPing { error in
-                        cont.resume(returning: error != nil)
+                        oneShot.resume(returning: error != nil)
                     }
                 }
 
@@ -526,6 +537,29 @@ final class WebSocketClient {
             timeoutWorkItem?.cancel()
             continuation.resume(with: result)
         }
+    }
+}
+
+// MARK: - One-Shot Ping Continuation
+
+/// Thread-safe wrapper that ensures an `UnsafeContinuation` is resumed
+/// exactly once. Subsequent calls to `resume(returning:)` are silently
+/// dropped. This prevents crashes when `URLSessionWebSocketTask.sendPing`
+/// invokes its completion handler more than once during cancellation races.
+private final class OneShotPingContinuation: @unchecked Sendable {
+    private var continuation: UnsafeContinuation<Bool, Never>?
+    private let lock = NSLock()
+
+    init(_ continuation: UnsafeContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Bool) {
+        lock.lock()
+        let cont = continuation
+        continuation = nil
+        lock.unlock()
+        cont?.resume(returning: value)
     }
 }
 
