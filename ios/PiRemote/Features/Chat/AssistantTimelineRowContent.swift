@@ -80,6 +80,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         iconLabel.textColor = UIColor(ThemeID.tokyoNight.palette.purple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconLabel.setContentHuggingPriority(.required, for: .horizontal)
         iconLabel.isUserInteractionEnabled = true
 
         markdownView.translatesAutoresizingMaskIntoConstraints = false
@@ -90,10 +91,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         NSLayoutConstraint.activate([
             iconLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iconLabel.topAnchor.constraint(equalTo: topAnchor),
+            iconLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             iconLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
 
-            markdownView.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 8),
+            markdownView.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 6),
             markdownView.topAnchor.constraint(equalTo: topAnchor),
             markdownView.trailingAnchor.constraint(equalTo: trailingAnchor),
             markdownView.bottomAnchor.constraint(equalTo: bottomAnchor),

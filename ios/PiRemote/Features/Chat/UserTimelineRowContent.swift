@@ -19,6 +19,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
 
 final class UserTimelineRowContentView: UIView, UIContentView {
     private let outerStack = UIStackView()
+    private let bubbleContainer = UIView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
     private let messageLabel = UILabel()
@@ -79,26 +80,40 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             imageStrip.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
         ])
 
+        // Bubble container — subtle accent-tinted background.
+        bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
+        bubbleContainer.layer.cornerRadius = 10
+        bubbleContainer.clipsToBounds = true
+
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
         textRow.axis = .horizontal
         textRow.alignment = .top
-        textRow.spacing = 8
+        textRow.spacing = 6
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.text = "❯"
-        iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
+        iconLabel.font = .monospacedSystemFont(ofSize: 15, weight: .semibold)
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.numberOfLines = 0
-        messageLabel.font = .monospacedSystemFont(ofSize: 17, weight: .regular)
+        messageLabel.font = .preferredFont(forTextStyle: .body)
 
         textRow.addArrangedSubview(iconLabel)
         textRow.addArrangedSubview(messageLabel)
 
+        bubbleContainer.addSubview(textRow)
+        NSLayoutConstraint.activate([
+            textRow.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
+            textRow.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
+            textRow.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
+            textRow.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
+        ])
+
         outerStack.addArrangedSubview(imageStrip)
-        outerStack.addArrangedSubview(textRow)
+        outerStack.addArrangedSubview(bubbleContainer)
 
         addSubview(outerStack)
         addInteraction(UIContextMenuInteraction(delegate: self))
@@ -120,10 +135,14 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         iconLabel.textColor = UIColor(palette.blue)
         messageLabel.textColor = UIColor(palette.fg)
 
+        // Subtle blue-tinted background — distinct from bgDark/bgHighlight
+        // used by thinking traces and tool rows.
+        bubbleContainer.backgroundColor = UIColor(palette.blue).withAlphaComponent(0.08)
+
         let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
         messageLabel.text = trimmedText
         messageLabel.isHidden = trimmedText.isEmpty
-        textRow.isHidden = trimmedText.isEmpty && configuration.images.isEmpty
+        bubbleContainer.isHidden = trimmedText.isEmpty && configuration.images.isEmpty
         iconLabel.isHidden = trimmedText.isEmpty && configuration.images.isEmpty
 
         // If text is empty but images exist, show just the ❯ prompt.
