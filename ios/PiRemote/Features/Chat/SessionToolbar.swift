@@ -1,32 +1,5 @@
 import SwiftUI
 
-// MARK: - Thinking Level Color (matches pi TUI dark.json)
-
-/// Maps thinking level to its pi-TUI border color.
-///
-/// Values sourced from `dark.json` in pi's interactive theme so the iOS
-/// app uses the same visual language as the terminal.
-func thinkingLevelColor(for level: ThinkingLevel) -> Color {
-    switch level {
-    case .off:     return Color(hex: 0x505050)  // darkGray
-    case .minimal: return Color(hex: 0x6E6E6E)
-    case .low:     return Color(hex: 0x5F87AF)
-    case .medium:  return Color(hex: 0x81A2BE)
-    case .high:    return Color(hex: 0xB294BB)
-    case .xhigh:   return Color(hex: 0xD183E8)
-    }
-}
-
-private extension Color {
-    init(hex: UInt32) {
-        self.init(
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255
-        )
-    }
-}
-
 /// Session control pills (model, thinking, context).
 ///
 /// Body returns flat children (no wrapping container) so they merge

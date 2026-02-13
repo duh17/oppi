@@ -8,6 +8,7 @@ struct ChatView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(\.theme) private var theme
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var sessionManager: ChatSessionManager
@@ -301,7 +302,7 @@ struct ChatView: View {
                     onExpand: presentComposer,
                     appliesOuterPadding: true,
                     thinkingBorderColor: coloredThinkingBorderEnabled
-                        ? thinkingLevelColor(for: connection.thinkingLevel)
+                        ? theme.thinking.color(for: connection.thinkingLevel)
                         : .tokyoComment
                 ) {
                     SessionToolbar(

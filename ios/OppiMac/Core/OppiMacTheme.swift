@@ -61,19 +61,20 @@ enum OppiMacTheme {
             )
 
         case .appleDark:
+            // Liquid Glass — muted, frosted accents (matches iOS palette).
             return Palette(
                 background: .windowBackgroundColor,
                 backgroundSecondary: .controlBackgroundColor,
                 foreground: .labelColor,
                 foregroundDim: .secondaryLabelColor,
                 comment: .tertiaryLabelColor,
-                blue: .systemBlue,
-                cyan: .systemTeal,
-                green: .systemGreen,
-                orange: .systemOrange,
-                purple: .systemPurple,
-                red: .systemRed,
-                selection: NSColor.systemBlue.withAlphaComponent(0.18)
+                blue:   .srgb(100, 155, 230),          // #649BE6 — soft blue
+                cyan:   .srgb(120, 185, 178),           // #78B9B2 — muted teal
+                green:  .srgb(115, 185, 135),            // #73B987 — sage
+                orange: .srgb(205, 160, 110),            // #CDA06E — warm amber
+                purple: .srgb(160, 145, 200),            // #A091C8 — dusty lavender
+                red:    .srgb(220, 110, 115),            // #DC6E73 — rosewood
+                selection: NSColor.srgb(100, 155, 230, alpha: 0.18)
             )
         }
     }

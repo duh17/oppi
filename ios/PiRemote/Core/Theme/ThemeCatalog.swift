@@ -98,7 +98,7 @@ enum ThemeID: Hashable, Codable, Sendable {
         case .tokyoNightDay:
             return "Tokyo Night Day light palette."
         case .appleDark:
-            return "Semantic iOS dark colors (system backgrounds + labels)."
+            return "Native dark with muted, frosted accents. Less color, more glass."
         case .custom:
             return "Custom theme imported from server."
         }
@@ -184,6 +184,12 @@ enum ThemePalettes {
         yellow: Color(red: 140.0 / 255.0, green: 108.0 / 255.0, blue: 62.0 / 255.0)
     )
 
+    /// Apple Liquid Glass — native dark with desaturated, frosted accents.
+    ///
+    /// Backgrounds and text use system semantic colors for full adaptivity.
+    /// Accent colors are intentionally muted to feel like system colors viewed
+    /// through frosted glass — less vibrant, more cohesive, closer to how
+    /// Apple's own apps use color sparingly in dark mode.
     static let appleDark = ThemePalette(
         bg: Color(uiColor: .systemBackground),
         bgDark: Color(uiColor: .secondarySystemBackground),
@@ -191,13 +197,13 @@ enum ThemePalettes {
         fg: Color(uiColor: .label),
         fgDim: Color(uiColor: .secondaryLabel),
         comment: Color(uiColor: .tertiaryLabel),
-        blue: Color(uiColor: .systemBlue),
-        cyan: Color(uiColor: .systemTeal),
-        green: Color(uiColor: .systemGreen),
-        orange: Color(uiColor: .systemOrange),
-        purple: Color(uiColor: .systemPurple),
-        red: Color(uiColor: .systemRed),
-        yellow: Color(uiColor: .systemYellow)
+        blue:   Color(red: 100.0 / 255, green: 155.0 / 255, blue: 230.0 / 255), // #649BE6 — soft blue
+        cyan:   Color(red: 120.0 / 255, green: 185.0 / 255, blue: 178.0 / 255), // #78B9B2 — muted teal
+        green:  Color(red: 115.0 / 255, green: 185.0 / 255, blue: 135.0 / 255), // #73B987 — sage
+        orange: Color(red: 205.0 / 255, green: 160.0 / 255, blue: 110.0 / 255), // #CDA06E — warm amber
+        purple: Color(red: 160.0 / 255, green: 145.0 / 255, blue: 200.0 / 255), // #A091C8 — dusty lavender
+        red:    Color(red: 220.0 / 255, green: 110.0 / 255, blue: 115.0 / 255), // #DC6E73 — rosewood
+        yellow: Color(red: 200.0 / 255, green: 182.0 / 255, blue: 120.0 / 255)  // #C8B678 — warm khaki
     )
 }
 
