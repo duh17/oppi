@@ -977,6 +977,22 @@ export class SessionManager extends EventEmitter {
     storageWithPrefs.setModelThinkingLevelPreference?.(session.userId, modelId, level);
   }
 
+  /**
+   * Persist the last-used model on the workspace so new sessions
+   * default to it (sticky model per workspace).
+   */
+  private persistWorkspaceLastUsedModel(session: Session): void {
+    const model = session.model?.trim();
+    if (!model || !session.workspaceId) return;
+
+    const workspace = this.storage.getWorkspace(session.userId, session.workspaceId);
+    if (!workspace || workspace.lastUsedModel === model) return;
+
+    workspace.lastUsedModel = model;
+    workspace.updatedAt = Date.now();
+    this.storage.saveWorkspace(workspace);
+  }
+
   private async applyRememberedThinkingLevel(key: string, active: ActiveSession): Promise<boolean> {
     const preferred = this.getRememberedThinkingLevel(active.session.userId, active.session.model);
     if (!preferred) {
@@ -1086,6 +1102,7 @@ export class SessionManager extends EventEmitter {
       if (this.contextWindowResolver) {
         session.contextWindow = this.contextWindowResolver(fullModelId);
       }
+      this.persistWorkspaceLastUsedModel(session);
       changed = true;
     }
 
@@ -1215,6 +1232,7 @@ export class SessionManager extends EventEmitter {
             if (this.contextWindowResolver) {
               active.session.contextWindow = this.contextWindowResolver(fullId);
             }
+            this.persistWorkspaceLastUsedModel(active.session);
             this.persistSessionNow(key, active.session);
           }
         }

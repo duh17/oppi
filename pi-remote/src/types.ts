@@ -56,6 +56,7 @@ export interface Workspace {
 
   // Defaults
   defaultModel?: string; // Override server default for this workspace
+  lastUsedModel?: string; // Sticky: last model used in any session (auto-updated)
 
   // Metadata
   createdAt: number;

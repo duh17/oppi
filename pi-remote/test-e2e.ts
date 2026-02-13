@@ -286,6 +286,27 @@ function wsSessionPath(workspace: string, session: string): string {
   return `/workspaces/${workspace}/sessions/${session}`;
 }
 
+async function waitForSessionReady(workspaceId: string, sessionId: string): Promise<void> {
+  const deadline = Date.now() + CONTAINER_TIMEOUT;
+
+  while (Date.now() < deadline) {
+    const detail = await api("GET", wsSessionPath(workspaceId, sessionId));
+    const status = detail.data?.session?.status;
+
+    if (status === "ready") {
+      return;
+    }
+
+    if (status === "error") {
+      throw new Error("Session entered error state while waiting for ready");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  throw new Error("Timed out waiting for session to become ready");
+}
+
 // ─── WebSocket Helpers ───
 
 /** Connect WS and wait for the "connected" message (container boot happens here). */
@@ -803,7 +824,14 @@ async function testAgentSession(): Promise<string> {
     CONTAINER_TIMEOUT,
     "container boot",
   );
-  check("Container booted, session ready", session.status === "ready");
+  check("Connected to session stream", typeof session?.id === "string" && session.id === sessionId);
+
+  await withTimeout(
+    waitForSessionReady(workspaceId, sessionId),
+    CONTAINER_TIMEOUT,
+    "session ready",
+  );
+  check("Container booted, session ready", true);
 
   // ── Run 1: Simple tool use (auto-allowed by policy) ──
   log("\n── Run 1: Tool use (ls — auto-allowed) ──\n");

@@ -79,6 +79,8 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     addSessionMessage,
     getModelThinkingLevelPreference,
     setModelThinkingLevelPreference,
+    getWorkspace: vi.fn(() => undefined),
+    saveWorkspace: vi.fn(),
   } as unknown as Storage;
 
   const gate = {

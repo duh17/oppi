@@ -970,7 +970,7 @@ export class RouteHandler {
     }
 
     const body = await this.parseBody<{ name?: string; model?: string }>(req);
-    const model = body.model || workspace.defaultModel;
+    const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
     const session = this.ctx.storage.createSession(user.id, body.name, model);
 
     session.workspaceId = workspace.id;
