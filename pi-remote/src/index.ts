@@ -6,6 +6,7 @@
  *   serve           Start the server
  *   pair [name]     Pair iOS client with server owner token
  *   status          Show server status
+ *   token           Rotate owner bearer token
  *   config          Show/validate server config
  */
 
@@ -235,6 +236,7 @@ async function cmdPair(
   requestedName: string | undefined,
   saveFile?: string,
   hostOverride?: string,
+  showToken = false,
 ): Promise<void> {
   printHeader();
 
@@ -352,9 +354,16 @@ async function cmdPair(
     console.log("");
   }
 
-  console.log(chalk.dim("  Owner token (manual setup fallback):"));
-  console.log(`  ${chalk.dim(user.token)}`);
-  console.log("");
+  if (showToken) {
+    console.log(chalk.yellow("  ⚠️  Manual token display enabled (--show-token)"));
+    console.log(chalk.dim("  Owner token:"));
+    console.log(`  ${chalk.dim(user.token)}`);
+    console.log("");
+  } else {
+    console.log(chalk.dim("  Manual token output hidden by default."));
+    console.log(chalk.dim("  Use --show-token only for emergency/manual setup."));
+    console.log("");
+  }
 }
 
 function cmdStatus(storage: Storage): void {
@@ -408,6 +417,44 @@ function cmdStatus(storage: Storage): void {
     console.log(`  Sessions: ${sessions.length}`);
   }
   console.log("");
+}
+
+function cmdToken(storage: Storage, action: string | undefined): void {
+  printHeader();
+
+  if (storage.hasInvalidOwnerData()) {
+    console.log(chalk.red("  Error: users.json has invalid owner data."));
+    console.log(chalk.dim("  Keep exactly one owner object in users.json."));
+    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
+    console.log("");
+    process.exit(1);
+  }
+
+  const mode = action || "help";
+
+  if (mode === "rotate") {
+    const owner = storage.getOwnerUser();
+    if (!owner) {
+      console.log(chalk.red("  Error: server is not paired yet."));
+      console.log(chalk.dim("  Run 'pi-remote pair [name]' first."));
+      console.log("");
+      process.exit(1);
+    }
+
+    storage.rotateOwnerToken();
+
+    console.log(chalk.green("  ✓ Owner bearer token rotated."));
+    console.log("");
+    console.log(chalk.yellow("  Existing clients will be unauthorized until re-paired."));
+    console.log(chalk.dim("  Next step: run 'pi-remote pair \"Chen\"' to issue a fresh invite."));
+    console.log("");
+    return;
+  }
+
+  console.log(chalk.red(`  Unknown token action: ${mode}`));
+  console.log(chalk.dim("  Usage: pi-remote token rotate"));
+  console.log("");
+  process.exit(1);
 }
 
 function cmdConfig(storage: Storage, action: string | undefined, flags: Record<string, string>): void {
@@ -471,6 +518,7 @@ function cmdHelp(): void {
   console.log(`    ${chalk.cyan("serve")}              Start the server`);
   console.log(`    ${chalk.cyan("pair")} [name]        Generate pairing QR for server owner`);
   console.log(`    ${chalk.cyan("status")}             Show server status`);
+  console.log(`    ${chalk.cyan("token rotate")}       Rotate owner bearer token`);
   console.log(`    ${chalk.cyan("config show")}        Show current server config`);
   console.log(`    ${chalk.cyan("config validate")}    Validate server config`);
   console.log(`    ${chalk.cyan("help")}               Show this help`);
@@ -479,6 +527,7 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${chalk.dim("--save <file>")}      Save pairing QR as PNG`);
   console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
+  console.log(`    ${chalk.dim("--show-token")}       Print owner token in pair output (unsafe)`);
   console.log(`    ${chalk.dim("--port <n>")}         Override port (default: 7749)`);
   console.log(`    ${chalk.dim("--config-file <p>")}  Config path for 'config validate'`);
   console.log("");
@@ -487,6 +536,7 @@ function cmdHelp(): void {
   console.log(`    ${chalk.dim("pi-remote serve")}`);
   console.log(`    ${chalk.dim('pi-remote pair "Chen" --save owner-pair.png')}`);
   console.log(`    ${chalk.dim('pi-remote pair "Chen" --host mac-studio.local')}`);
+  console.log(`    ${chalk.dim("pi-remote token rotate")}`);
   console.log(`    ${chalk.dim("pi-remote config show")}`);
   console.log(`    ${chalk.dim("pi-remote config validate")}`);
   console.log("");
@@ -526,11 +576,15 @@ async function main(): Promise<void> {
       break;
 
     case "pair":
-      await cmdPair(storage, positional[0], flags.save, flags.host);
+      await cmdPair(storage, positional[0], flags.save, flags.host, flags["show-token"] === "true");
       break;
 
     case "status":
       cmdStatus(storage);
+      break;
+
+    case "token":
+      cmdToken(storage, positional[0]);
       break;
 
     case "config":

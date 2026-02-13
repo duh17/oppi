@@ -689,6 +689,10 @@ export class Storage {
     writeFileSync(this.usersPath, JSON.stringify(this.owner, null, 2), { mode: 0o600 });
   }
 
+  private generateOwnerToken(): string {
+    return `sk_${nanoid(24)}`;
+  }
+
   createUser(name: string): User {
     const existingOwner = this.getOwnerUser();
     if (existingOwner) {
@@ -698,7 +702,7 @@ export class Storage {
     }
 
     const id = nanoid(8);
-    const token = `sk_${nanoid(24)}`;
+    const token = this.generateOwnerToken();
 
     const user: User = {
       id,
@@ -712,6 +716,22 @@ export class Storage {
     this.saveUsers();
 
     return user;
+  }
+
+  rotateOwnerToken(): User {
+    const owner = this.getOwnerUser();
+    if (!owner) {
+      throw new Error("Owner not paired");
+    }
+
+    const updated: User = {
+      ...owner,
+      token: this.generateOwnerToken(),
+    };
+
+    this.owner = updated;
+    this.saveUsers();
+    return updated;
   }
 
   getOwnerUser(): User | undefined {

@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { execFileSync, execSync } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
@@ -60,6 +61,15 @@ function hasAuthHeader(header: string | string[] | undefined): boolean {
     return header.some((value) => value.trim().length > 0);
   }
   return false;
+}
+
+function secureTokenEquals(expected: string, actual: string): boolean {
+  const expectedBytes = Buffer.from(expected, "utf-8");
+  const actualBytes = Buffer.from(actual, "utf-8");
+  if (expectedBytes.length !== actualBytes.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBytes, actualBytes);
 }
 
 export function formatUnauthorizedAuthLog(opts: {
@@ -466,6 +476,9 @@ export class Server {
     await this.sandbox.ensureImage();
     this.sandbox.ensureNetwork();
 
+    // Bridge host loopback-only model endpoints for container runtime.
+    await this.sandbox.prepareLoopbackBridges();
+
     // Start auth proxy (credential-injecting reverse proxy for containers)
     await this.authProxy.start();
 
@@ -489,6 +502,7 @@ export class Server {
   async stop(): Promise<void> {
     await this.sessions.stopAll();
     await this.sandbox.cleanupOrphanedContainers();
+    await this.sandbox.shutdownLoopbackBridges();
     await this.gate.shutdown();
     await this.authProxy.stop();
     for (const timer of this.liveActivityTimers.values()) {
@@ -1029,7 +1043,7 @@ export class Server {
     const token = auth.slice(7);
     const owner = this.storage.getOwnerUser();
     if (!owner) return null;
-    if (owner.token !== token) return null;
+    if (!secureTokenEquals(owner.token, token)) return null;
 
     this.storage.updateUserLastSeen(owner.id);
     return owner;

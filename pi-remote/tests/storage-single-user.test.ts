@@ -33,6 +33,24 @@ describe("Storage single-user mode", () => {
     expect(storage.getOwnerUser()?.id).toBe(owner.id);
   });
 
+  it("rotates owner token and persists it", () => {
+    const storage = new Storage(dir);
+    const owner = storage.createUser("Chen");
+
+    const rotated = storage.rotateOwnerToken();
+
+    expect(rotated.id).toBe(owner.id);
+    expect(rotated.token).not.toBe(owner.token);
+
+    const reloaded = new Storage(dir).getOwnerUser();
+    expect(reloaded?.token).toBe(rotated.token);
+  });
+
+  it("rejects token rotation when owner is not paired", () => {
+    const storage = new Storage(dir);
+    expect(() => storage.rotateOwnerToken()).toThrowError(/Owner not paired/);
+  });
+
   it("marks legacy users-array data as invalid", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
