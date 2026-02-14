@@ -362,6 +362,7 @@ export class Server {
     this.userSkillStore = new UserSkillStore();
     this.userSkillStore.init();
     this.skillRegistry.scan();
+    this.skillRegistry.watch(); // Live-reload: watch skill dirs for changes
     this.sandbox.setSkillRegistry(this.skillRegistry);
     this.sandbox.setAuthProxy(this.authProxy);
 
@@ -512,6 +513,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
     await this.sandbox.cleanupOrphanedContainers();
     await this.sandbox.shutdownLoopbackBridges();
