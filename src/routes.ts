@@ -141,6 +141,8 @@ export class RouteHandler {
       return this.handleGetPolicyProfile(user, url, res);
     if (path === "/policy/rules" && method === "GET")
       return this.handleGetPolicyRules(user, url, res);
+    if (path.startsWith("/policy/rules/") && method === "DELETE")
+      return this.handleDeletePolicyRule(user, path, res);
     if (path === "/policy/audit" && method === "GET")
       return this.handleGetPolicyAudit(user, url, res);
     if (path === "/me" && method === "GET") return this.handleGetMe(user, res);
@@ -1685,6 +1687,38 @@ export class RouteHandler {
     rules.sort((a, b) => b.createdAt - a.createdAt);
 
     this.json(res, { rules });
+  }
+
+  private handleDeletePolicyRule(user: User, path: string, res: ServerResponse): void {
+    const ruleId = path.split("/").pop();
+    if (!ruleId) {
+      this.error(res, 400, "Missing rule ID");
+      return;
+    }
+
+    // Verify rule exists and belongs to this user
+    const allRules = this.ctx.gate.ruleStore.getAll();
+    const rule = allRules.find((r) => r.id === ruleId);
+    if (!rule) {
+      this.error(res, 404, "Rule not found");
+      return;
+    }
+
+    if (!this.isRuleVisibleToUser(user.id, rule)) {
+      this.error(res, 404, "Rule not found");
+      return;
+    }
+
+    const removed = this.ctx.gate.ruleStore.remove(ruleId);
+    if (!removed) {
+      this.error(res, 500, "Failed to remove rule");
+      return;
+    }
+
+    console.log(
+      `[policy] Rule ${ruleId} deleted by user ${user.id}: ${rule.description}`,
+    );
+    this.json(res, { ok: true, deleted: ruleId });
   }
 
   private handleGetPolicyAudit(user: User, url: URL, res: ServerResponse): void {
