@@ -27,7 +27,7 @@ The server starts on `http://0.0.0.0:7779` by default. A QR code appears in the 
 ### Pair a Device
 
 ```bash
-npx oppi-server pair "Sam"    # generates a pairing QR code
+npx oppi-server pair           # generates a pairing QR code
 ```
 
 Open the Oppi app → Settings → Add Server → scan the QR.
@@ -44,11 +44,11 @@ Open the Oppi app → Settings → Add Server → scan the QR.
 - **Permission gate**: Pi extension that intercepts tool calls and routes approval requests to connected mobile clients.
 - **Policy engine**: Rule-based auto-allow/deny. Reduces notification noise for safe operations (reads, linting, tests).
 - **Sessions**: Each conversation is a pi session. Multiple sessions can run concurrently.
-- **Storage**: Sessions, workspaces, and config live in `~/.pi-remote/`.
+- **Storage**: Sessions, workspaces, and config live in `~/.config/oppi/`.
 
 ## Configuration
 
-Config file at `~/.pi-remote/config.json`:
+Config file at `~/.config/oppi/config.json`:
 
 ```json
 {

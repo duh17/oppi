@@ -446,7 +446,7 @@ function cmdToken(storage: Storage, action: string | undefined): void {
     console.log(chalk.green("  ✓ Owner bearer token rotated."));
     console.log("");
     console.log(chalk.yellow("  Existing clients will be unauthorized until re-paired."));
-    console.log(chalk.dim("  Next step: run 'oppi-server pair \"Chen\"' to issue a fresh invite."));
+    console.log(chalk.dim("  Next step: run 'oppi-server pair' to issue a fresh invite."));
     console.log("");
     return;
   }
