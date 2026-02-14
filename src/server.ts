@@ -364,6 +364,18 @@ export class Server {
     this.skillRegistry.scan();
     this.sandbox.setSkillRegistry(this.skillRegistry);
     this.sandbox.setAuthProxy(this.authProxy);
+
+    // Wire FSWatcher → container re-sync: when skill files change on disk,
+    // re-sync affected container workspaces automatically.
+    this.skillRegistry.on("skills:changed", (event) => {
+      const changedNames = [...event.added, ...event.modified];
+      if (changedNames.length === 0) return;
+
+      this.sandbox.handleSkillsChanged(
+        changedNames,
+        () => this.storage.listAllWorkspaces().filter((ws) => ws.runtime === "container"),
+      );
+    });
     this.push = createPushClient(apnsConfig);
     this.sessions = new SessionManager(storage, this.gate, this.sandbox, this.authProxy);
     this.sessions.contextWindowResolver = (modelId: string) => this.getContextWindow(modelId);

@@ -397,6 +397,70 @@ export class SandboxManager {
     return { piDir, workDir };
   }
 
+  // ─── Live Skill Re-sync ───
+
+  /**
+   * Re-sync skills for a specific workspace. Called when:
+   * - Workspace skills list is changed (PUT /workspaces/:id)
+   * - A skill's files change on disk (FSWatcher event)
+   *
+   * Updates the workspace-level skills/ directory and rebuilds shims for
+   * any existing sessions. Active sessions won't be disrupted (pi already
+   * loaded the skill into context), but the updated files will be available
+   * on the next `read` of SKILL.md or on the next session.
+   *
+   * Only applies to container-mode workspaces (host mode reads from host
+   * filesystem directly).
+   *
+   * Returns the list of skills that were installed.
+   */
+  resyncWorkspaceSkills(
+    userId: string,
+    workspaceId: string,
+    requestedSkills: string[],
+  ): string[] {
+    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
+    const workspaceSkillsDir = join(workspaceRoot, "skills");
+
+    // Only sync if workspace dir exists (was ever initialized)
+    if (!existsSync(workspaceRoot)) return [];
+
+    const installedSkills = syncSkills(workspaceSkillsDir, requestedSkills, this.skillRegistry, {
+      force: true,
+    });
+    console.log(
+      `[sandbox] Re-synced skills for workspace ${workspaceId}: ${installedSkills.join(", ")}`,
+    );
+    return installedSkills;
+  }
+
+  /**
+   * Handle skill registry changes — re-sync affected workspaces.
+   *
+   * Called when the FSWatcher detects skill files changed on disk.
+   * For each container workspace that uses any of the changed skills,
+   * re-sync those skills into the workspace sandbox.
+   */
+  handleSkillsChanged(
+    changedSkillNames: string[],
+    getContainerWorkspaces: () => Workspace[],
+  ): void {
+    if (changedSkillNames.length === 0) return;
+
+    const changedSet = new Set(changedSkillNames);
+
+    for (const workspace of getContainerWorkspaces()) {
+      if (workspace.runtime !== "container") continue;
+      const overlap = workspace.skills.filter((s) => changedSet.has(s));
+      if (overlap.length === 0) continue;
+
+      console.log(
+        `[sandbox] Skills changed: ${overlap.join(", ")} → re-syncing workspace ${workspace.id}`,
+      );
+      this.resyncWorkspaceSkills(workspace.userId, workspace.id, workspace.skills);
+    }
+  }
+
   // ─── Container Lifecycle ───
 
   /**

@@ -1087,6 +1087,12 @@ export class Storage {
     }
   }
 
+  /** List all workspaces (single-owner shortcut — no userId needed). */
+  listAllWorkspaces(): Workspace[] {
+    const owner = this.getOwnerUser();
+    return owner ? this.listWorkspaces(owner.id) : [];
+  }
+
   listWorkspaces(userId: string): Workspace[] {
     const normalizedUserId = this.normalizeUserId(userId);
     const dir = this.workspacesDir;

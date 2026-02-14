@@ -833,6 +833,16 @@ export class RouteHandler {
     }
 
     const updated = this.ctx.storage.updateWorkspace(user.id, wsId, body);
+    if (!updated) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    // If skills changed on a container workspace, re-sync the sandbox
+    if (body.skills && updated.runtime === "container") {
+      this.ctx.sandbox.resyncWorkspaceSkills(user.id, wsId, updated.skills);
+    }
+
     this.json(res, { workspace: updated });
   }
 

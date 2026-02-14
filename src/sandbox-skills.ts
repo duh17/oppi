@@ -82,6 +82,7 @@ export function syncSkills(
   skillsDir: string,
   requestedSkills: string[],
   skillRegistry: SkillRegistry | null,
+  opts?: { force?: boolean },
 ): string[] {
   if (!existsSync(skillsDir)) {
     mkdirSync(skillsDir, { recursive: true });
@@ -112,8 +113,8 @@ export function syncSkills(
       continue;
     }
 
-    // Re-copy if source is newer or dest doesn't exist
-    if (!existsSync(dest) || isNewer(src, dest)) {
+    // Re-copy if forced, source is newer, or dest doesn't exist
+    if (!existsSync(dest) || opts?.force || isNewer(src, dest)) {
       if (existsSync(dest)) rmSync(dest, { recursive: true });
       cpSync(src, dest, { recursive: true, dereference: true });
     }
