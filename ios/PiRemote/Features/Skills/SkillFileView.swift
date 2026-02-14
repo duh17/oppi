@@ -10,6 +10,7 @@ private let logger = Logger(subsystem: "dev.chenda.PiRemote", category: "SkillFi
 struct SkillFileView: View {
     let skillName: String
     let filePath: String
+    var isEditable: Bool = false
 
     @Environment(ServerConnection.self) private var connection
     @State private var content: String?
@@ -57,13 +58,15 @@ struct SkillFileView: View {
                         Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.string = content
                         }
-                        NavigationLink(value: SkillEditorDestination(
-                            skillName: skillName,
-                            filePath: filePath,
-                            content: content,
-                            isNew: false
-                        )) {
-                            Label("Edit", systemImage: "pencil")
+                        if isEditable {
+                            NavigationLink(value: SkillEditorDestination(
+                                skillName: skillName,
+                                filePath: filePath,
+                                content: content,
+                                isNew: false
+                            )) {
+                                Label("Edit", systemImage: "pencil")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")

@@ -629,7 +629,8 @@ final class OppiMacStoreWorkspaceAPITests: XCTestCase {
             description: description,
             containerSafe: true,
             hasScripts: false,
-            path: "~/.pi/agent/skills/\(name)"
+            path: "~/.pi/agent/skills/\(name)",
+            builtIn: true
         )
     }
 

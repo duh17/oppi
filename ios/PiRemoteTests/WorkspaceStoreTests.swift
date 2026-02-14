@@ -97,7 +97,8 @@ struct WorkspaceStoreOfflineTests {
             description: "desc",
             containerSafe: true,
             hasScripts: false,
-            path: "/tmp/\(name)"
+            path: "/tmp/\(name)",
+            builtIn: true
         )
     }
 }

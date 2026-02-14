@@ -42,7 +42,7 @@ struct SkillDetailView: View {
         .navigationTitle(skillName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let detail, !detail.skill.path.contains("/.pi/") {
+            if let detail, detail.skill.isEditable {
                 // User skill — allow editing
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink(value: SkillEditorDestination(

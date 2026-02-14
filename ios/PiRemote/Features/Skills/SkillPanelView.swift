@@ -68,7 +68,11 @@ struct SkillPanelView: View {
             SkillDetailView(skillName: dest.skillName)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
-            SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
+            SkillFileView(
+                skillName: dest.skillName,
+                filePath: dest.filePath,
+                isEditable: allSkills.first { $0.name == dest.skillName }?.isEditable ?? false
+            )
         }
         .navigationDestination(for: SkillEditorDestination.self) { dest in
             SkillEditorView(
