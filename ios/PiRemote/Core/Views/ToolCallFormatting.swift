@@ -32,6 +32,11 @@ enum ToolCallFormatting {
         args?["offset"]?.numberValue.map { Int($0) } ?? 1
     }
 
+    /// Extract file content from write tool args.
+    static func writeContent(from args: [String: JSONValue]?) -> String? {
+        args?["content"]?.stringValue
+    }
+
     // MARK: - Display Formatting
 
     /// Format bash command for header display (truncated to 200 chars).

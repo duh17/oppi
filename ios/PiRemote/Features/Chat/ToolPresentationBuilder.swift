@@ -181,7 +181,7 @@ enum ToolPresentationBuilder {
             result.toolNameColor = UIColor(Color.tokyoCyan)
             result.titleLineBreakMode = .byTruncatingMiddle
 
-            if normalizedTool == "read" {
+            if normalizedTool == "read" || normalizedTool == "write" {
                 if let fileType = readOutputFileType(args: args, argsSummary: argsSummary),
                    fileType == .markdown {
                     result.languageBadge = fileType.displayLabel
@@ -284,7 +284,23 @@ enum ToolPresentationBuilder {
             }
 
         case "write":
-            if !outputTrimmed.isEmpty {
+            let writeContent = ToolCallFormatting.writeContent(from: args)
+            if let writeContent, !writeContent.isEmpty {
+                result.text = writeContent
+                result.copyOutputText = writeContent
+                let fileType = readOutputFileType(args: args, argsSummary: argsSummary)
+                result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
+                result.codeFilePath = ToolCallFormatting.filePath(from: args)
+                    ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                if fileType == .markdown {
+                    result.textUsesMarkdown = true
+                } else if fileType == .image {
+                    result.usesReadMediaRenderer = true
+                } else {
+                    result.codeStartLine = 1
+                }
+            } else if !outputTrimmed.isEmpty {
+                // Fallback: show tool output when content not available
                 result.text = outputTrimmed
                 result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
                 result.codeFilePath = ToolCallFormatting.filePath(from: args)

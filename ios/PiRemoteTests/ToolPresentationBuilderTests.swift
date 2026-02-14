@@ -174,6 +174,88 @@ struct ToolPresentationBuilderTests {
         #expect(config.toolNamePrefix == "write")
     }
 
+    @Test("write collapsed shows language badge")
+    func writeCollapsedLanguageBadge() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: app.swift",
+            outputPreview: "wrote 100 bytes",
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "path": .string("src/app.swift"),
+                "content": .string("import Foundation"),
+            ])
+        )
+
+        #expect(config.languageBadge == "Swift")
+    }
+
+    @Test("write expanded shows file content with syntax highlighting")
+    func writeExpandedCode() {
+        let content = "const x = 42;\nconsole.log(x);"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: index.ts",
+            outputPreview: "wrote 30 bytes",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("src/index.ts"),
+                    "content": .string(content),
+                ],
+                expanded: ["t1"],
+                fullOutput: "Successfully wrote 30 bytes to src/index.ts"
+            )
+        )
+
+        #expect(config.expandedText == content)
+        #expect(config.expandedOutputLanguage == .typescript)
+        #expect(config.expandedCodeStartLine == 1)
+        #expect(config.expandedCodeFilePath == "src/index.ts")
+        #expect(config.copyOutputText == content)
+    }
+
+    @Test("write expanded renders markdown files")
+    func writeExpandedMarkdown() {
+        let content = "# Hello\n\nSome **bold** text."
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: README.md",
+            outputPreview: "wrote 28 bytes",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("README.md"),
+                    "content": .string(content),
+                ],
+                expanded: ["t1"],
+                fullOutput: "Successfully wrote 28 bytes to README.md"
+            )
+        )
+
+        #expect(config.expandedText == content)
+        #expect(config.expandedTextUsesMarkdown == true)
+        #expect(config.expandedOutputLanguage == nil)
+    }
+
+    @Test("write expanded falls back to output when content missing")
+    func writeExpandedFallback() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "write",
+            argsSummary: "path: file.txt",
+            outputPreview: "wrote 10 bytes",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("file.txt")],
+                expanded: ["t1"],
+                fullOutput: "Successfully wrote 10 bytes to file.txt"
+            )
+        )
+
+        #expect(config.expandedText == "Successfully wrote 10 bytes to file.txt")
+        #expect(config.expandedTextUsesMarkdown == false)
+    }
+
     // MARK: - Todo
 
     @Test("todo collapsed shows summary")
