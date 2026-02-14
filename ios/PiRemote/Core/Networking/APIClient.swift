@@ -48,6 +48,12 @@ actor APIClient {
         return try JSONDecoder().decode(User.self, from: data)
     }
 
+    /// Fetch server metadata (version, uptime, stats) for the server detail view.
+    func serverInfo() async throws -> ServerInfo {
+        let data = try await get("/server/info")
+        return try JSONDecoder().decode(ServerInfo.self, from: data)
+    }
+
     /// Fetch server-authored security posture for trust + transport checks.
     func securityProfile() async throws -> ServerSecurityProfile {
         let data = try await get("/security/profile")
