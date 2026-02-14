@@ -1197,6 +1197,27 @@ const HOST_HARD_DENY: PolicyRule[] = [
 ];
 
 const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
+  // ── Destructive local operations → ask ──
+  // Irreversible actions that can damage local data.
+
+  // rm with force/recursive flags
+  {
+    tool: "bash",
+    exec: "rm",
+    pattern: "rm *-*r*",
+    action: "ask",
+    label: "Recursive delete",
+    risk: "high",
+  },
+  {
+    tool: "bash",
+    exec: "rm",
+    pattern: "rm *-*f*",
+    action: "ask",
+    label: "Force delete",
+    risk: "high",
+  },
+
   // ── External actions → ask ──
   // Only gate things that act on the user's behalf on external systems.
 

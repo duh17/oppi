@@ -24,7 +24,10 @@ const baseConfig = {
 describe("host profile split", () => {
   it("host (dev mode) stays low-friction", () => {
     const policy = new PolicyEngine("host", baseConfig);
-    expect(policy.evaluate(bash("rm -f /tmp/test.txt")).action).toBe("allow");
+    // rm -f is destructive — should ask even in dev mode
+    expect(policy.evaluate(bash("rm -f /tmp/test.txt")).action).toBe("ask");
+    // Normal commands still flow freely
+    expect(policy.evaluate(bash("ls -la")).action).toBe("allow");
   });
 
   describe("host_standard", () => {
