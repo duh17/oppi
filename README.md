@@ -19,7 +19,7 @@ All code stays on your Mac. The agent can't run commands without your approval. 
 - **macOS 15+** (Sequoia)
 - **Node.js 22+** — `brew install node`
 - **pi CLI** — `npm install -g @mariozechner/pi-coding-agent`
-- **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
+- **LLM provider account** — Anthropic or OpenAI (via `pi login`)
 - **iPhone** with the **Oppi** app installed via TestFlight invite
 
 ### 1. Clone and install
@@ -33,16 +33,7 @@ npm install
 ### 2. Set up pi credentials
 
 ```bash
-mkdir -p ~/.pi/agent
-cat > ~/.pi/agent/auth.json << 'EOF'
-{
-  "anthropic": {
-    "type": "api_key",
-    "key": "sk-ant-api03-YOUR-KEY-HERE"
-  }
-}
-EOF
-chmod 600 ~/.pi/agent/auth.json
+pi login          # follow prompts to authenticate with Anthropic or Codex
 ```
 
 ### 3. Start the server
@@ -108,7 +99,7 @@ pi-remote config validate              Validate config schema
 
 **"pi not found"** — Install globally: `npm install -g @mariozechner/pi-coding-agent`. Or set `PI_REMOTE_PI_BIN=/path/to/pi`.
 
-**"auth.json not found"** — Create `~/.pi/agent/auth.json` per step 2 above.
+**"auth.json not found"** — Run `pi login` to set up credentials.
 
 **Can't connect from phone** — Verify both devices are on the same network. Check `curl http://localhost:7749/health`. Check firewall allows port 7749.
 
@@ -118,7 +109,7 @@ pi-remote config validate              Validate config schema
 
 - Communication travels over your local network or VPN — use an encrypted overlay (Tailscale, WireGuard, etc.) for remote access
 - Server identity key stored in `~/.pi-remote/identity/` with restrictive permissions
-- API credentials stored in `~/.pi/agent/auth.json` (mode 600)
+- API credentials managed by `pi login` with restrictive file permissions
 - Pairing uses signed, time-limited, single-use envelopes (Ed25519)
 - Container mode provides filesystem isolation via Apple's containerization
 - Permission gate enforces per-tool-call approval with a layered policy engine
