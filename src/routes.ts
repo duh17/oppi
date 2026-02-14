@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve, extname, dirname } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir, homedir, hostname } from "node:os";
 import type { Storage } from "./storage.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer } from "./gate.js";
@@ -89,6 +89,9 @@ export interface RouteContext {
   isValidMemoryNamespace: (ns: string) => boolean;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
+  serverStartedAt: number;
+  serverVersion: string;
+  piVersion: string;
 }
 
 type PolicyPresetName = keyof typeof PRESETS;
@@ -148,6 +151,7 @@ export class RouteHandler {
     if (path === "/policy/audit" && method === "GET")
       return this.handleGetPolicyAudit(user, url, res);
     if (path === "/me" && method === "GET") return this.handleGetMe(user, res);
+    if (path === "/server/info" && method === "GET") return this.handleGetServerInfo(user, res);
     if (path === "/models" && method === "GET") return this.handleListModels(res);
     if (path === "/skills" && method === "GET") return this.handleListSkills(res);
     if (path === "/skills/rescan" && method === "POST") return this.handleRescanSkills(res);
@@ -433,6 +437,44 @@ export class RouteHandler {
 
   private handleGetMe(user: User, res: ServerResponse): void {
     this.json(res, { user: user.id, name: user.name });
+  }
+
+  private handleGetServerInfo(user: User, res: ServerResponse): void {
+    const config = this.ctx.storage.getConfig();
+    const identity = config.identity;
+    const workspaces = this.ctx.storage.listWorkspaces(user.id);
+    const sessions = this.ctx.storage.listUserSessions(user.id);
+    const activeSessions = sessions.filter(
+      (s) => s.status !== "stopped" && s.status !== "error",
+    );
+
+    const uptimeSeconds = Math.floor((Date.now() - this.ctx.serverStartedAt) / 1000);
+
+    this.json(res, {
+      name: hostname(),
+      version: this.ctx.serverVersion,
+      uptime: uptimeSeconds,
+      os: process.platform,
+      arch: process.arch,
+      hostname: hostname(),
+      nodeVersion: process.version,
+      piVersion: this.ctx.piVersion,
+      configVersion: config.configVersion ?? 1,
+      identity: identity
+        ? {
+            fingerprint: identity.fingerprint,
+            keyId: identity.keyId,
+            algorithm: identity.algorithm,
+          }
+        : null,
+      stats: {
+        workspaceCount: workspaces.length,
+        activeSessionCount: activeSessions.length,
+        totalSessionCount: sessions.length,
+        skillCount: this.ctx.skillRegistry.list().length,
+        modelCount: this.ctx.getModelCatalog().length,
+      },
+    });
   }
 
   private async handleListModels(res: ServerResponse): Promise<void> {

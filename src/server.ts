@@ -308,6 +308,23 @@ function resolvePiExecutable(): string {
 }
 
 export class Server {
+  static readonly VERSION = "0.2.0";
+
+  static detectPiVersion(piExecutable: string): string {
+    try {
+      const output = execFileSync(piExecutable, ["--version"], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      // Output may be "pi 0.8.0" or just "0.8.0"
+      const match = output.match(/(\d+\.\d+\.\d+)/);
+      return match ? match[1] : output || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
   private storage: Storage;
   private sessions: SessionManager;
   private policy: PolicyEngine;
@@ -427,6 +444,9 @@ export class Server {
       isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
       refreshModelCatalog: () => this.refreshModelCatalog(),
       getModelCatalog: () => this.modelCatalog,
+      serverStartedAt: Date.now(),
+      serverVersion: Server.VERSION,
+      piVersion: Server.detectPiVersion(this.piExecutable),
     });
 
     this.httpServer = createServer((req, res) => this.handleHttp(req, res));
