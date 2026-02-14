@@ -169,7 +169,7 @@ private struct ManualEntryView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    TextField("Host (e.g. mac-studio.local)", text: $host)
+                    TextField("Host (e.g. my-mac.local)", text: $host)
                         .textContentType(.URL)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
