@@ -3,7 +3,7 @@
 # Full-capability image: coding tools + web research + content extraction.
 # Supports: search, fetch, web-browser skills out of the box.
 #
-# Build: container build -t pi-remote:local -f Containerfile .
+# Build: container build -t oppi-server:local -f Containerfile .
 
 FROM node:22-alpine
 

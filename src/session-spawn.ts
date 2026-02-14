@@ -58,6 +58,58 @@ export interface SpawnDeps {
   onSessionEnd: (key: string, reason: string) => void;
 }
 
+// ─── User Shell PATH ───
+
+/**
+ * Resolve the user's interactive shell PATH.
+ *
+ * LaunchAgents and non-interactive contexts inherit a minimal PATH that misses
+ * tools installed via homebrew, cargo, uv, etc.  We run the user's login shell
+ * once at startup to capture the full PATH and merge it with process.env.PATH
+ * for host-mode spawns.
+ */
+export function resolveUserShellPath(): string {
+  const shell = process.env.SHELL || "/bin/zsh";
+  try {
+    // -i (interactive) ensures .zshrc/.bashrc are sourced (where most PATH
+    // additions live, e.g. uv's ~/.local/bin/env, cargo, etc.)
+    // -l (login) ensures .zprofile/.bash_profile are sourced too.
+    const raw = execSync(`${shell} -lic 'echo "___PATH___:$PATH"'`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    // Extract the PATH marker — shell startup may print other noise before it.
+    const match = raw.match(/___PATH___:(.+)/);
+    if (match) {
+      return match[1].trim();
+    }
+  } catch {
+    // Fall through — use process.env.PATH as-is
+  }
+  return process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
+}
+
+/**
+ * Merge user shell PATH with process.env.PATH, deduplicating entries.
+ * User shell entries come first (higher priority).
+ */
+export function mergedHostPath(userShellPath: string): string {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const p of `${userShellPath}:${process.env.PATH || ""}`.split(":")) {
+    if (p && !seen.has(p)) {
+      seen.add(p);
+      entries.push(p);
+    }
+  }
+  return entries.join(":");
+}
+
+/** Cached user shell PATH — resolved once at module load. */
+export const USER_SHELL_PATH = resolveUserShellPath();
+export const HOST_PATH = mergedHostPath(USER_SHELL_PATH);
+
 // ─── Pi Executable Resolution ───
 
 /**
@@ -76,6 +128,7 @@ export function resolvePiExecutable(): string {
     const discovered = execSync("which pi", {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, PATH: HOST_PATH },
     }).trim();
     if (discovered.length > 0) {
       return discovered;
@@ -221,6 +274,7 @@ export async function spawnPiHost(
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
+      PATH: HOST_PATH,
       OPPI_SESSION: session.id,
       OPPI_USER: session.userId,
       OPPI_GATE_HOST: "127.0.0.1",

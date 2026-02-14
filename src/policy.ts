@@ -2222,26 +2222,32 @@ export class PolicyEngine {
     if (segments.length === 0) return false;
 
     for (const segment of segments) {
-      const parsed = parseBashCommand(segment);
-      const exec = this.normalizeExecutable(parsed.executable);
-      if (!exec) return false;
+      // Split pipelines so `grep ... | head -10` is evaluated per-stage
+      // instead of bailing on the pipe character.
+      const stages = splitPipelineStages(segment);
 
-      // Helpers are always safe for chaining.
-      if (CHAIN_HELPER_EXECUTABLES.has(exec)) continue;
+      for (const stage of stages) {
+        const parsed = parseBashCommand(stage);
+        const exec = this.normalizeExecutable(parsed.executable);
+        if (!exec) return false;
 
-      // Complex shell features are not considered read-only-safe.
-      if (parsed.hasPipe || parsed.hasRedirect || parsed.hasSubshell) {
+        // Helpers are always safe for chaining.
+        if (CHAIN_HELPER_EXECUTABLES.has(exec)) continue;
+
+        // Redirects and subshells are not considered read-only-safe.
+        if (parsed.hasRedirect || parsed.hasSubshell) {
+          return false;
+        }
+
+        if (HOST_SAFE_READ_ONLY_EXECUTABLES.has(exec)) continue;
+
+        if (exec === "git") {
+          const subcommand = parsed.args[0] || "";
+          if (HOST_SAFE_GIT_SUBCOMMANDS.has(subcommand)) continue;
+        }
+
         return false;
       }
-
-      if (HOST_SAFE_READ_ONLY_EXECUTABLES.has(exec)) continue;
-
-      if (exec === "git") {
-        const subcommand = parsed.args[0] || "";
-        if (HOST_SAFE_GIT_SUBCOMMANDS.has(subcommand)) continue;
-      }
-
-      return false;
     }
 
     return true;
