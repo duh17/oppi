@@ -9,7 +9,7 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Session, Workspace } from "./types.js";
@@ -58,57 +58,106 @@ export interface SpawnDeps {
   onSessionEnd: (key: string, reason: string) => void;
 }
 
-// ─── User Shell PATH ───
+// ─── Host Environment ───
 
 /**
- * Resolve the user's interactive shell PATH.
+ * Load host-mode environment overrides from ~/.config/oppi/env.
  *
- * LaunchAgents and non-interactive contexts inherit a minimal PATH that misses
- * tools installed via homebrew, cargo, uv, etc.  We run the user's login shell
- * once at startup to capture the full PATH and merge it with process.env.PATH
- * for host-mode spawns.
+ * LaunchAgents inherit a minimal environment that misses tools installed via
+ * homebrew, cargo, uv, etc.  Rather than sniffing the user's shell (fragile,
+ * shell-specific), we read an explicit env file with KEY=VALUE lines.
+ *
+ * Format (one per line, # comments, blank lines ignored):
+ *   PATH=/opt/homebrew/bin:~/.local/bin:~/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ *   EDITOR=nvim
+ *
+ * Generate from your current shell:
+ *   oppi-server env init          # writes ~/.config/oppi/env from current $PATH
+ *   oppi-server env show          # prints resolved host PATH
+ *
+ * Tilde (~) in values is expanded to $HOME.
  */
-export function resolveUserShellPath(): string {
-  const shell = process.env.SHELL || "/bin/zsh";
+export function loadHostEnv(): Record<string, string> {
+  const envPath =
+    process.env.OPPI_ENV_FILE || join(homedir(), ".config", "oppi", "env");
+  const overrides: Record<string, string> = {};
+
+  if (!existsSync(envPath)) {
+    return overrides;
+  }
+
   try {
-    // -i (interactive) ensures .zshrc/.bashrc are sourced (where most PATH
-    // additions live, e.g. uv's ~/.local/bin/env, cargo, etc.)
-    // -l (login) ensures .zprofile/.bash_profile are sourced too.
-    const raw = execSync(`${shell} -lic 'echo "___PATH___:$PATH"'`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000,
-    });
-    // Extract the PATH marker — shell startup may print other noise before it.
-    const match = raw.match(/___PATH___:(.+)/);
-    if (match) {
-      return match[1].trim();
+    const content = readFileSync(envPath, "utf-8");
+    for (const rawLine of content.split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eqIdx = line.indexOf("=");
+      if (eqIdx <= 0) continue;
+      const key = line.slice(0, eqIdx).trim();
+      let value = line.slice(eqIdx + 1).trim();
+      // Strip optional quotes
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      // Expand ~ to $HOME
+      value = value.replaceAll("~", homedir());
+      overrides[key] = value;
     }
   } catch {
-    // Fall through — use process.env.PATH as-is
+    // Unreadable env file — continue with process.env only
   }
-  return process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
+
+  return overrides;
 }
 
 /**
- * Merge user shell PATH with process.env.PATH, deduplicating entries.
- * User shell entries come first (higher priority).
+ * Build the merged host-mode environment.
+ *
+ * Priority (highest first):
+ *   1. Explicit OPPI_* env vars from process.env
+ *   2. ~/.config/oppi/env overrides
+ *   3. process.env baseline
+ *
+ * For PATH specifically, env file PATH entries are prepended to process.env.PATH
+ * with deduplication.
  */
-export function mergedHostPath(userShellPath: string): string {
-  const seen = new Set<string>();
-  const entries: string[] = [];
-  for (const p of `${userShellPath}:${process.env.PATH || ""}`.split(":")) {
-    if (p && !seen.has(p)) {
-      seen.add(p);
-      entries.push(p);
+export function buildHostEnv(overrides: Record<string, string>): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+
+  // Merge PATH with dedup (env file entries first)
+  if (overrides.PATH) {
+    const seen = new Set<string>();
+    const entries: string[] = [];
+    for (const p of `${overrides.PATH}:${env.PATH || ""}`.split(":")) {
+      if (p && !seen.has(p)) {
+        seen.add(p);
+        entries.push(p);
+      }
+    }
+    env.PATH = entries.join(":");
+  }
+
+  // Apply non-PATH overrides
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key !== "PATH") {
+      env[key] = value;
     }
   }
-  return entries.join(":");
+
+  return env;
 }
 
-/** Cached user shell PATH — resolved once at module load. */
-export const USER_SHELL_PATH = resolveUserShellPath();
-export const HOST_PATH = mergedHostPath(USER_SHELL_PATH);
+/** Loaded once at module init. */
+const HOST_ENV_OVERRIDES = loadHostEnv();
+
+/** Full merged environment for host-mode spawns. */
+export const HOST_ENV = buildHostEnv(HOST_ENV_OVERRIDES);
+
+/** Just the PATH component for quick access. */
+export const HOST_PATH = HOST_ENV.PATH || process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
 
 // ─── Pi Executable Resolution ───
 
@@ -273,8 +322,7 @@ export async function spawnPiHost(
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
-      ...process.env,
-      PATH: HOST_PATH,
+      ...HOST_ENV,
       OPPI_SESSION: session.id,
       OPPI_USER: session.userId,
       OPPI_GATE_HOST: "127.0.0.1",
