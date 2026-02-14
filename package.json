@@ -1,0 +1,49 @@
+{
+  "name": "oppi-server",
+  "version": "0.1.0",
+  "description": "Self-hosted server for the Oppi mobile coding agent",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "oppi-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "dead-code": "knip",
+    "check": "tsc --noEmit && eslint src/ && prettier --check src/"
+  },
+  "dependencies": {
+    "@types/diff-match-patch": "^1.0.36",
+    "chalk": "^5.3.0",
+    "diff-match-patch": "^1.0.5",
+    "minimatch": "^10.1.2",
+    "nanoid": "^5.0.7",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.5.12",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "knip": "^5.83.1",
+    "prettier": "^3.8.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
+  }
+}
