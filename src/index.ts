@@ -560,30 +560,44 @@ async function cmdEnv(action: string | undefined): Promise<void> {
     }
 
     case "show": {
-      if (!existsSync(envPath)) {
-        console.log(chalk.yellow(`  ⚠ No env file at ${envPath}`));
-        console.log(chalk.dim("    Run 'oppi-server env init' from your shell to create one."));
-        return;
-      }
-
       // Show what the server would resolve
       const spawnMod = await import("./session-spawn.js");
       const overrides = spawnMod.loadHostEnv();
       const merged = spawnMod.buildHostEnv(overrides);
+      const hasEnvFile = existsSync(envPath);
 
-      console.log(chalk.bold("  Host env file:") + " " + envPath);
+      console.log(
+        chalk.bold("  Env file:") +
+          " " +
+          (hasEnvFile ? envPath : chalk.dim("none (using well-known dirs only)")),
+      );
       console.log("");
 
-      if (overrides.PATH) {
-        console.log(chalk.bold("  PATH entries:"));
-        for (const p of merged.PATH!.split(":")) {
-          const fromEnvFile = overrides.PATH.includes(p);
-          const marker = fromEnvFile ? chalk.green("●") : chalk.dim("○");
-          console.log(`    ${marker} ${p}`);
+      console.log(chalk.bold("  PATH entries:"));
+      const envFilePaths = new Set(
+        (overrides.PATH || "").split(":").filter(Boolean),
+      );
+
+      for (const p of (merged.PATH || "").split(":")) {
+        let marker: string;
+        if (envFilePaths.has(p)) {
+          marker = chalk.green("●"); // from env file
+        } else if (
+          p.includes(".local/bin") || p.includes(".cargo/bin") ||
+          p.includes(".bun/") || p.includes("homebrew")
+        ) {
+          marker = chalk.blue("◆"); // well-known bootstrap
+        } else {
+          marker = chalk.dim("○"); // inherited from process.env
         }
-        console.log("");
-        console.log(chalk.dim(`    ${chalk.green("●")} from env file  ${chalk.dim("○")} inherited`));
+        console.log(`    ${marker} ${p}`);
       }
+      console.log("");
+      console.log(
+        chalk.dim(
+          `    ${chalk.green("●")} env file  ${chalk.blue("◆")} well-known  ${chalk.dim("○")} inherited`,
+        ),
+      );
 
       // Show non-PATH overrides
       const nonPath = Object.entries(overrides).filter(([k]) => k !== "PATH");

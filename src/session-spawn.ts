@@ -61,14 +61,47 @@ export interface SpawnDeps {
 // ─── Host Environment ───
 
 /**
+ * Well-known tool directories that should be on PATH for host-mode sessions.
+ *
+ * LaunchAgents / systemd services inherit a minimal PATH. Rather than sniffing
+ * the user's shell (fragile, shell-specific — especially fish), we:
+ *
+ *   1. Bootstrap PATH with well-known directories (checked for existence)
+ *   2. Layer on explicit overrides from ~/.config/oppi/env
+ *
+ * This covers ~90% of cases with zero config. The env file handles the rest.
+ */
+function wellKnownPathDirs(): string[] {
+  const home = homedir();
+  const candidates = [
+    // Package managers & language toolchains
+    join(home, ".local", "bin"),               // uv, pipx
+    join(home, ".cargo", "bin"),               // rust / cargo
+    join(home, ".bun", "bin"),                 // bun
+    join(home, ".yarn", "bin"),                // yarn
+    join(home, ".deno", "bin"),                // deno
+    join(home, "go", "bin"),                   // go
+    join(home, ".go", "bin"),                  // go (alt)
+    // mise / asdf shims
+    join(process.env.MISE_DATA_DIR || join(home, ".local", "share", "mise"), "shims"),
+    // Homebrew (macOS)
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    // System
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  return candidates.filter((d) => existsSync(d));
+}
+
+/**
  * Load host-mode environment overrides from ~/.config/oppi/env.
  *
- * LaunchAgents inherit a minimal environment that misses tools installed via
- * homebrew, cargo, uv, etc.  Rather than sniffing the user's shell (fragile,
- * shell-specific), we read an explicit env file with KEY=VALUE lines.
- *
  * Format (one per line, # comments, blank lines ignored):
- *   PATH=/opt/homebrew/bin:~/.local/bin:~/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ *   PATH=/opt/homebrew/bin:~/.local/bin:~/.cargo/bin
  *   EDITOR=nvim
  *
  * Generate from your current shell:
@@ -113,32 +146,41 @@ export function loadHostEnv(): Record<string, string> {
   return overrides;
 }
 
-/**
- * Build the merged host-mode environment.
- *
- * Priority (highest first):
- *   1. Explicit OPPI_* env vars from process.env
- *   2. ~/.config/oppi/env overrides
- *   3. process.env baseline
- *
- * For PATH specifically, env file PATH entries are prepended to process.env.PATH
- * with deduplication.
- */
-export function buildHostEnv(overrides: Record<string, string>): Record<string, string> {
-  const env = { ...process.env } as Record<string, string>;
-
-  // Merge PATH with dedup (env file entries first)
-  if (overrides.PATH) {
-    const seen = new Set<string>();
-    const entries: string[] = [];
-    for (const p of `${overrides.PATH}:${env.PATH || ""}`.split(":")) {
+/** Deduplicated PATH merge. Earlier entries take priority. */
+function mergePath(...sources: string[]): string {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const source of sources) {
+    for (const p of source.split(":")) {
       if (p && !seen.has(p)) {
         seen.add(p);
         entries.push(p);
       }
     }
-    env.PATH = entries.join(":");
   }
+  return entries.join(":");
+}
+
+/**
+ * Build the merged host-mode environment.
+ *
+ * PATH resolution order (highest priority first):
+ *   1. ~/.config/oppi/env PATH entries
+ *   2. Well-known tool directories (homebrew, uv, cargo, etc.)
+ *   3. process.env.PATH (LaunchAgent baseline)
+ *
+ * Non-PATH overrides from the env file are applied directly.
+ */
+export function buildHostEnv(overrides: Record<string, string>): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+
+  // Build PATH: env file > well-known dirs > process.env.PATH
+  const wellKnown = wellKnownPathDirs().join(":");
+  env.PATH = mergePath(
+    overrides.PATH || "",
+    wellKnown,
+    process.env.PATH || "",
+  );
 
   // Apply non-PATH overrides
   for (const [key, value] of Object.entries(overrides)) {
