@@ -15,11 +15,13 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
-import { join, resolve, extname } from "node:path";
-import { homedir } from "node:os";
+import { join, resolve, extname, dirname } from "node:path";
+import { tmpdir, homedir } from "node:os";
 import type { Storage } from "./storage.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer } from "./gate.js";
@@ -197,6 +199,8 @@ export class RouteHandler {
     const userSkillMatch = path.match(/^\/me\/skills\/([^/]+)$/);
     if (userSkillMatch) {
       if (method === "GET") return this.handleGetUserSkill(user, userSkillMatch[1], res);
+      if (method === "PUT")
+        return this.handlePutUserSkill(user, userSkillMatch[1], req, res);
       if (method === "DELETE") return this.handleDeleteUserSkill(user, userSkillMatch[1], res);
     }
 
@@ -441,8 +445,8 @@ export class RouteHandler {
   }
 
   private handleRescanSkills(res: ServerResponse): void {
-    this.ctx.skillRegistry.scan();
-    this.json(res, { skills: this.ctx.skillRegistry.list() });
+    const event = this.ctx.skillRegistry.scan();
+    this.json(res, { skills: this.ctx.skillRegistry.list(), changed: event });
   }
 
   private handleListExtensions(res: ServerResponse): void {
@@ -476,11 +480,26 @@ export class RouteHandler {
   // ─── User Skills CRUD ───
 
   private handleListUserSkills(user: User, res: ServerResponse): void {
+    // Build enabledIn map: skill name → workspace IDs
+    const workspaces = this.ctx.storage.listWorkspaces(user.id);
+    const enabledIn = new Map<string, string[]>();
+    for (const ws of workspaces) {
+      for (const skill of ws.skills) {
+        const list = enabledIn.get(skill) || [];
+        list.push(ws.id);
+        enabledIn.set(skill, list);
+      }
+    }
+
     const builtIn = this.ctx.skillRegistry.list().map((s) => ({
       ...s,
       builtIn: true as const,
+      enabledIn: enabledIn.get(s.name) || [],
     }));
-    const userSkills = this.ctx.userSkillStore.listSkills(user.id);
+    const userSkills = this.ctx.userSkillStore.listSkills(user.id).map((s) => ({
+      ...s,
+      enabledIn: enabledIn.get(s.name) || [],
+    }));
     this.json(res, { skills: [...builtIn, ...userSkills] });
   }
 
@@ -552,6 +571,8 @@ export class RouteHandler {
 
     try {
       const skill = this.ctx.userSkillStore.saveSkill(user.id, body.name, resolvedSource);
+      // scan() first (re-reads disk), then register user skill on top
+      this.ctx.skillRegistry.scan();
       this.ctx.skillRegistry.registerUserSkills([skill]);
       this.json(res, { skill }, 201);
     } catch (err) {
@@ -560,6 +581,72 @@ export class RouteHandler {
         return;
       }
       throw err;
+    }
+  }
+
+  /**
+   * PUT /me/skills/:name — create or update a user skill with inline content.
+   *
+   * Body: { content: string, files?: Record<string, string> }
+   *   content: SKILL.md content (required)
+   *   files: optional extra files as { "scripts/run.sh": "#!/bin/bash\n..." }
+   */
+  private async handlePutUserSkill(
+    user: User,
+    name: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    // Can't overwrite built-in skills
+    const builtIn = this.ctx.skillRegistry.get(name);
+    if (builtIn && !this.ctx.userSkillStore.getSkill(user.id, name)) {
+      this.error(res, 403, "Cannot overwrite built-in skill — use a different name");
+      return;
+    }
+
+    const body = await this.parseBody<{
+      content: string;
+      files?: Record<string, string>;
+    }>(req);
+
+    if (!body.content) {
+      this.error(res, 400, "content (SKILL.md) required");
+      return;
+    }
+
+    // Write to a temp dir, then use saveSkill for validation
+    const tmpDir = join(tmpdir(), `oppi-skill-${name}-${Date.now()}`);
+    try {
+      mkdirSync(tmpDir, { recursive: true });
+      writeFileSync(join(tmpDir, "SKILL.md"), body.content);
+
+      // Write extra files
+      if (body.files) {
+        for (const [relPath, fileContent] of Object.entries(body.files)) {
+          // Safety: reject path traversal
+          if (relPath.includes("..") || relPath.startsWith("/")) {
+            this.error(res, 400, `Invalid file path: ${relPath}`);
+            return;
+          }
+          const dir = dirname(join(tmpDir, relPath));
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(join(tmpDir, relPath), fileContent);
+        }
+      }
+
+      const skill = this.ctx.userSkillStore.saveSkill(user.id, name, tmpDir);
+      // scan() first (re-reads disk), then register user skill on top
+      this.ctx.skillRegistry.scan();
+      this.ctx.skillRegistry.registerUserSkills([skill]);
+      this.json(res, { skill });
+    } catch (err) {
+      if (err instanceof SkillValidationError) {
+        this.error(res, 400, err.message);
+        return;
+      }
+      throw err;
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   }
 
@@ -577,6 +664,7 @@ export class RouteHandler {
     }
 
     this.ctx.userSkillStore.deleteSkill(user.id, name);
+    this.ctx.skillRegistry.scan(); // refresh catalog
     res.writeHead(204).end();
   }
 
