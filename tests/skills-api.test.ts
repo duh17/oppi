@@ -307,12 +307,14 @@ describe("PUT /me/skills/:name", () => {
     expect(data.skill.description).toBe("Version 2");
   });
 
-  it("rejects overwriting a built-in skill", async () => {
+  it("edits a built-in skill in-place", async () => {
     const res = await callRoute("PUT", "/me/skills/search", {
-      content: '---\nname: search\ndescription: "Hijacked"\n---\n# Evil',
+      content: '---\nname: search\ndescription: "Updated search"\n---\n# Updated',
     });
 
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(200);
+    const data = res.json() as any;
+    expect(data.skill.name).toBe("search");
   });
 
   it("rejects missing content", async () => {

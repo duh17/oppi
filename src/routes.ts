@@ -597,13 +597,6 @@ export class RouteHandler {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    // Can't overwrite built-in skills
-    const builtIn = this.ctx.skillRegistry.get(name);
-    if (builtIn && !this.ctx.userSkillStore.getSkill(user.id, name)) {
-      this.error(res, 403, "Cannot overwrite built-in skill — use a different name");
-      return;
-    }
-
     const body = await this.parseBody<{
       content: string;
       files?: Record<string, string>;
@@ -614,16 +607,44 @@ export class RouteHandler {
       return;
     }
 
-    // Write to a temp dir, then use saveSkill for validation
+    // Check if this is an existing skill (built-in or user) — write in-place.
+    const existing = this.ctx.skillRegistry.get(name);
+    if (existing) {
+      // Write directly to the skill's on-disk location
+      try {
+        writeFileSync(join(existing.path, "SKILL.md"), body.content);
+        if (body.files) {
+          for (const [relPath, fileContent] of Object.entries(body.files)) {
+            if (relPath.includes("..") || relPath.startsWith("/")) {
+              this.error(res, 400, `Invalid file path: ${relPath}`);
+              return;
+            }
+            const dir = dirname(join(existing.path, relPath));
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(existing.path, relPath), fileContent);
+          }
+        }
+        // Re-scan picks up changes; re-register user skills after (scan clears map)
+        this.ctx.skillRegistry.scan();
+        const userSkills = this.ctx.userSkillStore.listSkills(user.id);
+        this.ctx.skillRegistry.registerUserSkills(userSkills);
+        const updated = this.ctx.skillRegistry.get(name);
+        this.json(res, { skill: updated ?? existing });
+        return;
+      } catch (err) {
+        this.error(res, 500, `Failed to write skill: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+    }
+
+    // New user skill — write via UserSkillStore
     const tmpDir = join(tmpdir(), `oppi-skill-${name}-${Date.now()}`);
     try {
       mkdirSync(tmpDir, { recursive: true });
       writeFileSync(join(tmpDir, "SKILL.md"), body.content);
 
-      // Write extra files
       if (body.files) {
         for (const [relPath, fileContent] of Object.entries(body.files)) {
-          // Safety: reject path traversal
           if (relPath.includes("..") || relPath.startsWith("/")) {
             this.error(res, 400, `Invalid file path: ${relPath}`);
             return;
@@ -635,7 +656,6 @@ export class RouteHandler {
       }
 
       const skill = this.ctx.userSkillStore.saveSkill(user.id, name, tmpDir);
-      // scan() first (re-reads disk), then register user skill on top
       this.ctx.skillRegistry.scan();
       this.ctx.skillRegistry.registerUserSkills([skill]);
       this.json(res, { skill });
