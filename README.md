@@ -32,13 +32,7 @@ npm install
 
 ### 2. Set up pi credentials
 
-Set your LLM provider API key as an environment variable:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # or OPENAI_API_KEY, GEMINI_API_KEY, etc.
-```
-
-See `pi -h` for all supported providers and environment variables.
+Run `pi`, then type `/login` to authenticate with Anthropic, OpenAI, or another provider. Alternatively, set an API key via environment variable (see `pi -h`).
 
 ### 3. Start the server
 
@@ -103,7 +97,7 @@ pi-remote config validate              Validate config schema
 
 **"pi not found"** — Install globally: `npm install -g @mariozechner/pi-coding-agent`. Or set `PI_REMOTE_PI_BIN=/path/to/pi`.
 
-**"auth.json not found"** — Set your API key: `export ANTHROPIC_API_KEY="sk-ant-..."` (or another provider). See `pi -h`.
+**"auth.json not found"** — Run `pi` then `/login`, or set an API key env var (see `pi -h`).
 
 **Can't connect from phone** — Verify both devices are on the same network. Check `curl http://localhost:7749/health`. Check firewall allows port 7749.
 
