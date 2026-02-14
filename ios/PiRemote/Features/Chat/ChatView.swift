@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var benchmarkingLocalModel = false
 #endif
     @State private var showCompactConfirmation = false
+    @State private var showSkillPanel = false
     @State private var isKeyboardVisible = false
     @State private var coloredThinkingBorderEnabled = UserDefaults.standard.bool(
         forKey: coloredThinkingBorderDefaultsKey
@@ -164,11 +165,13 @@ struct ChatView: View {
                                 .font(.subheadline)
                         }
                     }
-                    RuntimeStatusBadge(
-                        runtime: session?.runtime,
-                        statusColor: session?.status.color ?? .tokyoComment,
-                        syncState: runtimeSyncState
-                    )
+                    Button { showSkillPanel = true } label: {
+                        RuntimeStatusBadge(
+                            runtime: session?.runtime,
+                            statusColor: session?.status.color ?? .tokyoComment,
+                            syncState: runtimeSyncState
+                        )
+                    }
                 }
             }
         }
@@ -177,6 +180,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showModelPicker) {
             modelPickerSheet
+        }
+        .sheet(isPresented: $showSkillPanel) {
+            skillPanelSheet
         }
         .fullScreenCover(isPresented: $showComposer) {
             composerSheet
@@ -626,6 +632,25 @@ struct ChatView: View {
                 reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
             }
         }
+    }
+
+    private var currentWorkspaceSkillNames: [String] {
+        guard let wsId = session?.workspaceId else { return [] }
+        return connection.workspaceStore.workspaces.first { $0.id == wsId }?.skills ?? []
+    }
+
+    private var skillPanelSheet: some View {
+        NavigationStack {
+            SkillPanelView(workspaceSkillNames: currentWorkspaceSkillNames)
+                .navigationTitle("Skills")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showSkillPanel = false }
+                    }
+                }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var modelPickerSheet: some View {
