@@ -147,6 +147,18 @@ actor TimelineCache {
         save(workspaces, to: "workspaces.json")
     }
 
+    /// Load workspaces for a specific server (multi-server).
+    func loadWorkspaces(serverId: String) -> [Workspace]? {
+        ensureServerDir(serverId)
+        return load([Workspace].self, from: serverPath(serverId, "workspaces.json"))
+    }
+
+    /// Save workspaces for a specific server (multi-server).
+    func saveWorkspaces(_ workspaces: [Workspace], serverId: String) {
+        ensureServerDir(serverId)
+        save(workspaces, to: serverPath(serverId, "workspaces.json"))
+    }
+
     // MARK: - Skills
 
     func loadSkills() -> [SkillInfo]? {
@@ -155,6 +167,18 @@ actor TimelineCache {
 
     func saveSkills(_ skills: [SkillInfo]) {
         save(skills, to: "skills.json")
+    }
+
+    /// Load skills for a specific server (multi-server).
+    func loadSkills(serverId: String) -> [SkillInfo]? {
+        ensureServerDir(serverId)
+        return load([SkillInfo].self, from: serverPath(serverId, "skills.json"))
+    }
+
+    /// Save skills for a specific server (multi-server).
+    func saveSkills(_ skills: [SkillInfo], serverId: String) {
+        ensureServerDir(serverId)
+        save(skills, to: serverPath(serverId, "skills.json"))
     }
 
     // MARK: - Skill Detail
@@ -235,6 +259,17 @@ actor TimelineCache {
 
     private func traceURL(_ sessionId: String) -> URL {
         tracesDir.appending(path: "\(sessionId).json")
+    }
+
+    /// Path for a server-namespaced file: `servers/<id>/<filename>`.
+    private func serverPath(_ serverId: String, _ filename: String) -> String {
+        "servers/\(serverId)/\(filename)"
+    }
+
+    /// Ensure the server subdirectory exists.
+    private func ensureServerDir(_ serverId: String) {
+        let dir = root.appending(path: "servers/\(serverId)", directoryHint: .isDirectory)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
     private func load<T: Decodable>(_ type: T.Type, from filename: String) -> T? {
