@@ -42,8 +42,7 @@ struct SkillDetailView: View {
         .navigationTitle(skillName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let detail, detail.skill.isEditable {
-                // User skill — allow editing
+            if let detail {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink(value: SkillEditorDestination(
                         skillName: skillName,
