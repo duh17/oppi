@@ -9,10 +9,11 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Session, Workspace } from "./types.js";
+import { HOST_ENV, HOST_PATH } from "./host-env.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
 import type { AuthProxy } from "./auth-proxy.js";
@@ -57,149 +58,6 @@ export interface SpawnDeps {
   /** Callback when pi process exits or errors. */
   onSessionEnd: (key: string, reason: string) => void;
 }
-
-// ─── Host Environment ───
-
-/**
- * Well-known tool directories that should be on PATH for host-mode sessions.
- *
- * LaunchAgents / systemd services inherit a minimal PATH. Rather than sniffing
- * the user's shell (fragile, shell-specific — especially fish), we:
- *
- *   1. Bootstrap PATH with well-known directories (checked for existence)
- *   2. Layer on explicit overrides from ~/.config/oppi/env
- *
- * This covers ~90% of cases with zero config. The env file handles the rest.
- */
-function wellKnownPathDirs(): string[] {
-  const home = homedir();
-  const candidates = [
-    // Package managers & language toolchains
-    join(home, ".local", "bin"),               // uv, pipx
-    join(home, ".cargo", "bin"),               // rust / cargo
-    join(home, ".bun", "bin"),                 // bun
-    join(home, ".yarn", "bin"),                // yarn
-    join(home, ".deno", "bin"),                // deno
-    join(home, "go", "bin"),                   // go
-    join(home, ".go", "bin"),                  // go (alt)
-    // mise / asdf shims
-    join(process.env.MISE_DATA_DIR || join(home, ".local", "share", "mise"), "shims"),
-    // Homebrew (macOS)
-    "/opt/homebrew/bin",
-    "/opt/homebrew/sbin",
-    // System
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-  ];
-  return candidates.filter((d) => existsSync(d));
-}
-
-/**
- * Load host-mode environment overrides from ~/.config/oppi/env.
- *
- * Format (one per line, # comments, blank lines ignored):
- *   PATH=/opt/homebrew/bin:~/.local/bin:~/.cargo/bin
- *   EDITOR=nvim
- *
- * Generate from your current shell:
- *   oppi-server env init          # writes ~/.config/oppi/env from current $PATH
- *   oppi-server env show          # prints resolved host PATH
- *
- * Tilde (~) in values is expanded to $HOME.
- */
-export function loadHostEnv(): Record<string, string> {
-  const envPath =
-    process.env.OPPI_ENV_FILE || join(homedir(), ".config", "oppi", "env");
-  const overrides: Record<string, string> = {};
-
-  if (!existsSync(envPath)) {
-    return overrides;
-  }
-
-  try {
-    const content = readFileSync(envPath, "utf-8");
-    for (const rawLine of content.split("\n")) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-      const eqIdx = line.indexOf("=");
-      if (eqIdx <= 0) continue;
-      const key = line.slice(0, eqIdx).trim();
-      let value = line.slice(eqIdx + 1).trim();
-      // Strip optional quotes
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      // Expand ~ to $HOME
-      value = value.replaceAll("~", homedir());
-      overrides[key] = value;
-    }
-  } catch {
-    // Unreadable env file — continue with process.env only
-  }
-
-  return overrides;
-}
-
-/** Deduplicated PATH merge. Earlier entries take priority. */
-function mergePath(...sources: string[]): string {
-  const seen = new Set<string>();
-  const entries: string[] = [];
-  for (const source of sources) {
-    for (const p of source.split(":")) {
-      if (p && !seen.has(p)) {
-        seen.add(p);
-        entries.push(p);
-      }
-    }
-  }
-  return entries.join(":");
-}
-
-/**
- * Build the merged host-mode environment.
- *
- * PATH resolution order (highest priority first):
- *   1. ~/.config/oppi/env PATH entries
- *   2. Well-known tool directories (homebrew, uv, cargo, etc.)
- *   3. process.env.PATH (LaunchAgent baseline)
- *
- * Non-PATH overrides from the env file are applied directly.
- */
-export function buildHostEnv(overrides: Record<string, string>): Record<string, string> {
-  const env = { ...process.env } as Record<string, string>;
-
-  // Build PATH: env file > well-known dirs > process.env.PATH
-  const wellKnown = wellKnownPathDirs().join(":");
-  env.PATH = mergePath(
-    overrides.PATH || "",
-    wellKnown,
-    process.env.PATH || "",
-  );
-
-  // Apply non-PATH overrides
-  for (const [key, value] of Object.entries(overrides)) {
-    if (key !== "PATH") {
-      env[key] = value;
-    }
-  }
-
-  return env;
-}
-
-/** Loaded once at module init. */
-const HOST_ENV_OVERRIDES = loadHostEnv();
-
-/** Full merged environment for host-mode spawns. */
-export const HOST_ENV = buildHostEnv(HOST_ENV_OVERRIDES);
-
-/** Just the PATH component for quick access. */
-export const HOST_PATH = HOST_ENV.PATH || process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
 
 // ─── Pi Executable Resolution ───
 
