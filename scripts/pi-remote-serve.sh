@@ -21,5 +21,5 @@ load_secret() {
 load_secret OPENROUTER_API_KEY
 
 # Start pi-remote server
-cd /Users/chenda/workspace/pios/pi-remote
+cd /path/to/pios/pi-remote
 exec npx tsx src/index.ts serve "$@"

@@ -10,7 +10,7 @@
 A command like:
 
 ```bash
-cd /Users/chenda/workspace/pios && git push
+cd /Users/dev/workspace/myproject && git push
 ```
 
 executes without a permission request, even though `git push` is configured as `ask`.
@@ -30,7 +30,7 @@ Policy falls through to default `allow` for chained commands where the first seg
 ### Runtime repro (reported)
 
 1. Start a host-mode session.
-2. Send: `cd /Users/chenda/workspace/pios && git push`
+2. Send: `cd /Users/dev/workspace/myproject && git push`
 3. Observe: no `permission_request`; push runs directly.
 
 ### Unit-level repro
@@ -43,7 +43,7 @@ host.evaluate({ tool: "bash", input: { command: "git push" }, toolCallId: "1" })
 
 host.evaluate({
   tool: "bash",
-  input: { command: "cd /Users/chenda/workspace/pios && git push" },
+  input: { command: "cd /Users/dev/workspace/myproject && git push" },
   toolCallId: "2",
 }).action
 // => "allow"

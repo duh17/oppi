@@ -3,7 +3,7 @@
 Control a sandboxed [pi](https://github.com/badlogic/pi-mono) coding agent from your iPhone. Your Mac runs the server, your phone supervises.
 
 ```
-iPhone (Oppi)  ←— Tailscale / LAN —→  Your Mac (pi-remote)
+iPhone (Oppi)  ←— Local network / VPN —→  Your Mac (pi-remote)
                                             ↕
                                        pi (coding agent)
                                             ↕
@@ -20,7 +20,7 @@ All code stays on your Mac. The agent can't run commands without your approval. 
 - **Node.js 22+** — `brew install node`
 - **pi CLI** — `npm install -g @mariozechner/pi-coding-agent`
 - **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
-- **Oppi app** — installed via TestFlight invite
+- **iPhone** with the **Oppi** app installed via TestFlight invite
 
 ### 1. Clone and install
 
@@ -79,9 +79,11 @@ Scan the QR code in the Oppi app. Done.
 
 ## Networking
 
-**Same WiFi (LAN):** Works automatically. The pairing QR uses your Mac's local IP.
+Your phone and Mac just need to reach each other over the network.
 
-**Tailscale (recommended for remote):** Install [Tailscale](https://tailscale.com) on both devices and sign in. The QR will use your Tailscale hostname. Encrypted, works from anywhere.
+**Same WiFi (simplest):** Works automatically. The pairing QR uses your Mac's local IP or `.local` hostname.
+
+**VPN / overlay network:** If you want remote access, use any VPN or overlay network (Tailscale, WireGuard, ZeroTier, etc.) that puts both devices on the same network. The server auto-detects Tailscale hostnames if available.
 
 ```bash
 # Force a specific hostname in the QR
@@ -108,13 +110,13 @@ pi-remote config validate              Validate config schema
 
 **"auth.json not found"** — Create `~/.pi/agent/auth.json` per step 2 above.
 
-**Can't connect from phone** — Verify both devices are on the same network (or Tailscale). Check `curl http://localhost:7749/health`. Check firewall allows port 7749.
+**Can't connect from phone** — Verify both devices are on the same network. Check `curl http://localhost:7749/health`. Check firewall allows port 7749.
 
 **Everything needs approval** — Expected! The server defaults to asking. As you approve commands, you can set up auto-allow rules in the app's policy settings.
 
 ## Security
 
-- All communication is encrypted (Tailscale) or local network only
+- Communication travels over your local network or VPN — use an encrypted overlay (Tailscale, WireGuard, etc.) for remote access
 - Server identity key stored in `~/.pi-remote/identity/` with restrictive permissions
 - API credentials stored in `~/.pi/agent/auth.json` (mode 600)
 - Pairing uses signed, time-limited, single-use envelopes (Ed25519)

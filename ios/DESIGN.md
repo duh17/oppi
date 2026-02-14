@@ -630,7 +630,7 @@ permission count, countdown). This keeps battery/network cost predictable.
 QR code contains JSON:
 ```json
 {
-  "host": "mac-studio.tail12345.ts.net",
+  "host": "myhost.tail12345.ts.net",
   "port": 7749,
   "token": "nr_abc123...",
   "name": "Chen"
@@ -1530,7 +1530,7 @@ session name for context.
 │                             │
 │  SERVER                     │
 │  ┌──────────────────────┐   │
-│  │ Host  mac-studio...  │   │
+│  │ Host  myhost...  │   │
 │  │ Port  7749           │   │
 │  │ Status  🟢 Connected │   │
 │  │ Latency  12ms        │   │

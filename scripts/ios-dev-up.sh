@@ -10,7 +10,7 @@ RESTART_SERVER=1
 NO_LAUNCH=0
 DEBUG=0
 FORWARD_ARGS=()
-LAUNCHD_LABEL="com.chenda.pi-remote"
+LAUNCHD_LABEL="com.oppi.pi-remote"
 LOG_PATH="$HOME/.local/var/log/pi-remote.log"
 
 usage() {

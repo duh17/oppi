@@ -21,7 +21,7 @@ struct ConnectionSecurityPolicyTests {
 
     @Test func allowsTailnetHostWhenPolicyPermitsInsecureTailnet() {
         let violation = ConnectionSecurityPolicy.evaluate(
-            host: "my-server.tail00000.ts.net",
+            host: "myhost.tail12345.ts.net",
             profile: profile(requireTlsOutsideTailnet: true, allowInsecureHttpInTailnet: true)
         )
 
@@ -30,11 +30,11 @@ struct ConnectionSecurityPolicyTests {
 
     @Test func blocksTailnetHostWhenPolicyDisallowsInsecureTailnet() {
         let violation = ConnectionSecurityPolicy.evaluate(
-            host: "my-server.tail00000.ts.net",
+            host: "myhost.tail12345.ts.net",
             profile: profile(requireTlsOutsideTailnet: true, allowInsecureHttpInTailnet: false)
         )
 
-        #expect(violation == .insecureTailnetTransportBlocked(host: "my-server.tail00000.ts.net"))
+        #expect(violation == .insecureTailnetTransportBlocked(host: "myhost.tail12345.ts.net"))
     }
 
     @Test func blocksPublicHostWhenTlsRequiredOutsideTailnet() {

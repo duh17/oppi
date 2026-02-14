@@ -38,9 +38,9 @@ what your agent can do. The permission gate keeps it safe while it learns.
 │  └──────────────────────┬─────────────────────────────────────┘ │
 └─────────────────────────┼───────────────────────────────────────┘
                           │ WebSocket + REST
-                          │ (Tailscale encrypted)
+                          │ (encrypted)
 ┌─────────────────────────┼───────────────────────────────────────┐
-│  mac-studio             │                                        │
+│  your-mac             │                                        │
 │                         ▼                                        │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │  pi-remote server                                           │ │
@@ -69,7 +69,7 @@ what your agent can do. The permission gate keeps it safe while it learns.
 │            ▼                         ▼                           │
 │  ┌─────────────────┐      ┌─────────────────┐                   │
 │  │  Pi Instance     │      │  Pi Instance     │                   │
-│  │  (user: chen)    │      │  (user: wife)    │                   │
+│  │  (user: alice)    │      │  (user: bob)    │                   │
 │  │                  │      │                  │                   │
 │  │  permission-gate │      │  permission-gate │                   │
 │  │  extension       │      │  extension       │                   │
@@ -222,7 +222,7 @@ interface UserPolicy {
 
 interface WorkspacePolicy {
   name: string;                        // "my-project"
-  hostPath: string;                    // "/Users/chenda/workspace/pios"
+  hostPath: string;                    // "/Users/dev/workspace/myproject"
   sandboxPath: string;                 // "/workspace/pios"
   access: "read-write" | "read-only";
 }
@@ -398,7 +398,7 @@ When a user approves with "Always Allow", the phone presents scope options:
 Learned rules are stored in a separate tier and can never override `hardDeny`:
 
 ```yaml
-# In chen.yaml, auto-maintained section
+# In alice.yaml, auto-maintained section
 learnedRules:
   - tool: bash
     exec: npm
@@ -463,7 +463,7 @@ gate token can still be layered as defense-in-depth.
 {"type":"gate_result","action":"allow"}
 
 ← Server responds (after phone approval):
-{"type":"gate_result","action":"allow","approvedBy":"user_chen","scope":"session"}
+{"type":"gate_result","action":"allow","approvedBy":"user_alice","scope":"session"}
 
 ← Server responds (denied):
 {"type":"gate_result","action":"deny","reason":"Blocked by policy: no sudo"}

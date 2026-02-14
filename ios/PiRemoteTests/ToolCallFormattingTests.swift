@@ -304,7 +304,7 @@ struct ToolCallFormattingTests {
     // MARK: - Display File Path
 
     @Test func displayFilePathShowsTailComponents() {
-        let args: [String: JSONValue] = ["path": .string("/Users/chenda/workspace/project/src/main.swift")]
+        let args: [String: JSONValue] = ["path": .string("/Users/dev/workspace/project/src/main.swift")]
         let result = ToolCallFormatting.displayFilePath(tool: "Read", args: args, argsSummary: "")
         #expect(result == "src/main.swift")
     }
@@ -331,7 +331,7 @@ struct ToolCallFormattingTests {
 
     @Test func displayFilePathShowsTailAndLineRangeForAbsolutePath() {
         let args: [String: JSONValue] = [
-            "path": .string("/Users/chenda/workspace/pios/ios/PiRemote/Features/Chat/ToolTimelineRowContent.swift"),
+            "path": .string("/Users/dev/workspace/myproject/ios/PiRemote/Features/Chat/ToolTimelineRowContent.swift"),
             "offset": .number(1),
             "limit": .number(120),
         ]

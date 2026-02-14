@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-SSH_HOST="mac-studio"
-REMOTE_REPO="/Users/chenda/workspace/pios"
+SSH_HOST="your-mac"
+REMOTE_REPO="/path/to/pios"
 LOCAL_LOG_DIR=""
 WATCH=0
 WATCH_INTERVAL=2
@@ -26,8 +26,8 @@ Usage:
   scripts/ios-deploy-ssh.sh [options] [-- <build-install args>]
 
 Options:
-      --host <ssh-host>           SSH host (default: mac-studio)
-      --repo <path>               Remote repo path (default: /Users/chenda/workspace/pios)
+      --host <ssh-host>           SSH host (default: your-mac)
+      --repo <path>               Remote repo path (default: /path/to/pios)
       --local-log-dir <path>      Save local SSH output logs to directory
       --watch                     Watch iOS source files and auto-redeploy on change
       --watch-interval <seconds>  Poll interval for watch mode (default: 2)
@@ -38,7 +38,7 @@ Options:
 Any additional args are forwarded to ios/scripts/build-install.sh on the remote host.
 
 Examples:
-  scripts/ios-deploy-ssh.sh --host mac-studio -- --device DEVICE_UDID --launch
+  scripts/ios-deploy-ssh.sh --host your-mac -- --device DEVICE_UDID --launch
   scripts/ios-deploy-ssh.sh --local-log-dir ~/Library/Logs/PiRemote -- --logs-dir ~/Library/Logs/PiRemote --launch
   scripts/ios-deploy-ssh.sh --watch -- --skip-generate --launch
 EOF
