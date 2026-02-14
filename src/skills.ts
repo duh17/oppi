@@ -20,9 +20,12 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  watch,
+  type FSWatcher,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { EventEmitter } from "node:events";
 
 // ─── Types ───
 
@@ -89,25 +92,50 @@ const HOST_ONLY_SKILLS = new Set([
 
 // ─── Skill Registry ───
 
-export class SkillRegistry {
+/** Emitted when the skill catalog changes after a re-scan. */
+export interface SkillsChangedEvent {
+  added: string[];
+  removed: string[];
+  modified: string[];
+}
+
+export class SkillRegistry extends EventEmitter {
   private skills: Map<string, SkillInfo> = new Map();
   private scanDirs: string[];
+  private watchers: FSWatcher[] = [];
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceMs: number;
 
-  constructor(extraDirs?: string[]) {
+  constructor(extraDirs?: string[], opts?: { debounceMs?: number }) {
+    super();
     this.scanDirs = [join(homedir(), ".pi", "agent", "skills"), ...(extraDirs || [])];
+    this.debounceMs = opts?.debounceMs ?? 500;
   }
 
   /**
    * Scan host skill directories and build the registry.
-   * Call on startup and when skills may have changed.
+   * Idempotent — safe to call anytime. Emits "skills:changed" if the
+   * catalog changed since the last scan.
    */
-  scan(): void {
+  scan(): SkillsChangedEvent {
+    const prevNames = new Set(this.skills.keys());
+    const prevDescriptions = new Map(
+      Array.from(this.skills.entries()).map(([k, v]) => [k, v.description]),
+    );
+
     this.skills.clear();
 
     for (const dir of this.scanDirs) {
       if (!existsSync(dir)) continue;
 
-      for (const entry of readdirSync(dir)) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
         const skillDir = join(dir, entry);
         try {
           if (!statSync(skillDir).isDirectory()) continue;
@@ -129,9 +157,75 @@ export class SkillRegistry {
       }
     }
 
-    console.log(
-      `[skills] Discovered ${this.skills.size} skill(s): ${Array.from(this.skills.keys()).join(", ")}`,
-    );
+    // Compute diff
+    const currentNames = new Set(this.skills.keys());
+    const added = [...currentNames].filter((n) => !prevNames.has(n));
+    const removed = [...prevNames].filter((n) => !currentNames.has(n));
+    const modified = [...currentNames].filter((n) => {
+      if (!prevNames.has(n)) return false; // new, not modified
+      return prevDescriptions.get(n) !== this.skills.get(n)?.description;
+    });
+
+    const event: SkillsChangedEvent = { added, removed, modified };
+
+    if (added.length || removed.length || modified.length) {
+      console.log(
+        `[skills] Catalog changed: +${added.length} -${removed.length} ~${modified.length} ` +
+          `(${this.skills.size} total)`,
+      );
+      this.emit("skills:changed", event);
+    }
+
+    return event;
+  }
+
+  /**
+   * Start watching skill directories for changes.
+   * Debounces rapid changes and re-scans automatically.
+   */
+  watch(): void {
+    this.stopWatching();
+
+    for (const dir of this.scanDirs) {
+      if (!existsSync(dir)) continue;
+
+      try {
+        const watcher = watch(dir, { recursive: true }, () => {
+          this.debouncedRescan();
+        });
+        this.watchers.push(watcher);
+      } catch (err) {
+        console.warn(`[skills] Could not watch ${dir}: ${err}`);
+      }
+    }
+
+    if (this.watchers.length > 0) {
+      console.log(`[skills] Watching ${this.watchers.length} director${this.watchers.length === 1 ? "y" : "ies"} for changes`);
+    }
+  }
+
+  /** Stop all file watchers. */
+  stopWatching(): void {
+    for (const w of this.watchers) {
+      try {
+        w.close();
+      } catch { /* ignore */ }
+    }
+    this.watchers = [];
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+  }
+
+  private debouncedRescan(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      this.scan();
+    }, this.debounceMs);
   }
 
   /** Get all available skills. */
@@ -259,11 +353,16 @@ export class SkillRegistry {
   }
 
   private isContainerSafe(name: string, content: string): boolean {
-    // Explicit overrides first
+    // 1. Explicit frontmatter: `container: true/false`
+    const containerFlag = extractFrontmatterField(content, "container");
+    if (containerFlag === "true") return true;
+    if (containerFlag === "false") return false;
+
+    // 2. Hardcoded overrides (legacy, will migrate to frontmatter)
     if (HOST_ONLY_SKILLS.has(name)) return false;
     if (CONTAINER_SAFE_OVERRIDES.has(name)) return true;
 
-    // Heuristic: check for host-only markers in content
+    // 3. Heuristic: check for host-only markers in content
     for (const marker of HOST_ONLY_MARKERS) {
       if (content.includes(marker)) return false;
     }
@@ -559,6 +658,15 @@ function extractDescription(content: string): string {
   const descMatch = frontmatter.match(/^description:\s*"?([^"\n]+)"?\s*$/m);
   if (!descMatch) return "";
   return descMatch[1].trim();
+}
+
+/** Extract an arbitrary field from SKILL.md YAML frontmatter. */
+export function extractFrontmatterField(content: string, field: string): string | undefined {
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!fmMatch) return undefined;
+  const re = new RegExp(`^${field}:\\s*"?([^"\\n]+)"?\\s*$`, "m");
+  const match = fmMatch[1].match(re);
+  return match ? match[1].trim() : undefined;
 }
 
 /** Recursively list files, skipping junk directories and binary extensions. */

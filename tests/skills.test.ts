@@ -1,8 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { UserSkillStore, SkillValidationError } from "../src/skills.js";
+import {
+  UserSkillStore,
+  SkillValidationError,
+  SkillRegistry,
+  extractFrontmatterField,
+  type SkillsChangedEvent,
+} from "../src/skills.js";
 
 // ─── Helpers ───
 
@@ -281,5 +287,335 @@ describe("UserSkillStore", () => {
     it("returns null for missing skill", () => {
       expect(store.getPath("u1", "missing")).toBeNull();
     });
+  });
+});
+
+// ─── SkillRegistry Tests ───
+
+const SKILL_A = `---
+name: skill-a
+description: "First test skill"
+---
+# Skill A
+`;
+
+const SKILL_B = `---
+name: skill-b
+description: "Second test skill"
+container: true
+---
+# Skill B
+`;
+
+const SKILL_HOST_ONLY = `---
+name: host-only
+description: "Host-only skill"
+container: false
+---
+# Host Only
+Uses MLX and tmux send-keys.
+`;
+
+const SKILL_NO_CONTAINER_FIELD = `---
+name: heuristic-test
+description: "Has homebrew marker"
+---
+# Heuristic
+Install via homebrew.
+`;
+
+describe("SkillRegistry", () => {
+  let scanDir: string;
+  let registry: SkillRegistry;
+
+  beforeEach(() => {
+    scanDir = mkdtempSync(join(tmpdir(), "pi-skill-registry-"));
+    registry = new SkillRegistry([], { debounceMs: 50 });
+    // Replace default scan dirs with our temp dir
+    (registry as any).scanDirs = [scanDir];
+  });
+
+  afterEach(() => {
+    registry.stopWatching();
+    rmSync(scanDir, { recursive: true, force: true });
+  });
+
+  describe("scan", () => {
+    it("discovers skills from directories with SKILL.md", () => {
+      makeSkillDir(scanDir, "skill-a", SKILL_A);
+      makeSkillDir(scanDir, "skill-b", SKILL_B);
+
+      const event = registry.scan();
+      expect(registry.list()).toHaveLength(2);
+      expect(registry.get("skill-a")?.description).toBe("First test skill");
+      expect(registry.get("skill-b")?.description).toBe("Second test skill");
+      expect(event.added).toContain("skill-a");
+      expect(event.added).toContain("skill-b");
+      expect(event.removed).toEqual([]);
+    });
+
+    it("skips directories without SKILL.md", () => {
+      mkdirSync(join(scanDir, "no-skill"), { recursive: true });
+      writeFileSync(join(scanDir, "no-skill", "README.md"), "not a skill");
+
+      registry.scan();
+      expect(registry.list()).toHaveLength(0);
+    });
+
+    it("skips SKILL.md without description", () => {
+      makeSkillDir(scanDir, "bad-skill", NO_DESC_SKILL_MD);
+      registry.scan();
+      expect(registry.list()).toHaveLength(0);
+    });
+
+    it("emits skills:changed on catalog change", () => {
+      const events: SkillsChangedEvent[] = [];
+      registry.on("skills:changed", (e) => events.push(e));
+
+      makeSkillDir(scanDir, "skill-a", SKILL_A);
+      registry.scan();
+
+      expect(events).toHaveLength(1);
+      expect(events[0].added).toEqual(["skill-a"]);
+    });
+
+    it("does not emit when nothing changed", () => {
+      makeSkillDir(scanDir, "skill-a", SKILL_A);
+      registry.scan(); // first scan
+
+      const events: SkillsChangedEvent[] = [];
+      registry.on("skills:changed", (e) => events.push(e));
+      registry.scan(); // second scan — same data
+
+      expect(events).toHaveLength(0);
+    });
+
+    it("detects removed skills", () => {
+      makeSkillDir(scanDir, "skill-a", SKILL_A);
+      registry.scan();
+
+      rmSync(join(scanDir, "skill-a"), { recursive: true });
+      const event = registry.scan();
+
+      expect(event.removed).toEqual(["skill-a"]);
+      expect(registry.list()).toHaveLength(0);
+    });
+
+    it("detects modified skills (description change)", () => {
+      makeSkillDir(scanDir, "skill-a", SKILL_A);
+      registry.scan();
+
+      // Change description
+      const updated = SKILL_A.replace("First test skill", "Updated skill");
+      writeFileSync(join(scanDir, "skill-a", "SKILL.md"), updated);
+      const event = registry.scan();
+
+      expect(event.modified).toEqual(["skill-a"]);
+      expect(registry.get("skill-a")?.description).toBe("Updated skill");
+    });
+
+    it("first dir wins on name collision", () => {
+      const dir2 = mkdtempSync(join(tmpdir(), "pi-skill-registry2-"));
+      (registry as any).scanDirs = [scanDir, dir2];
+
+      makeSkillDir(scanDir, "shared", SKILL_A);
+      makeSkillDir(dir2, "shared", SKILL_B);
+      registry.scan();
+
+      // scanDir is first, so its version wins
+      expect(registry.get("shared")?.description).toBe("First test skill");
+
+      rmSync(dir2, { recursive: true, force: true });
+    });
+  });
+
+  describe("container compatibility", () => {
+    it("respects container: true in frontmatter", () => {
+      makeSkillDir(scanDir, "skill-b", SKILL_B);
+      registry.scan();
+      expect(registry.get("skill-b")?.containerSafe).toBe(true);
+    });
+
+    it("respects container: false in frontmatter", () => {
+      makeSkillDir(scanDir, "host-only", SKILL_HOST_ONLY);
+      registry.scan();
+      expect(registry.get("host-only")?.containerSafe).toBe(false);
+    });
+
+    it("falls back to heuristic when no frontmatter field", () => {
+      makeSkillDir(scanDir, "heuristic-test", SKILL_NO_CONTAINER_FIELD);
+      registry.scan();
+      // "homebrew" is a host-only marker
+      expect(registry.get("heuristic-test")?.containerSafe).toBe(false);
+    });
+
+    it("defaults to container-safe when no markers", () => {
+      makeSkillDir(scanDir, "clean", SKILL_A);
+      registry.scan();
+      expect(registry.get("clean")?.containerSafe).toBe(true);
+    });
+  });
+
+  describe("hasScripts", () => {
+    it("detects skills with scripts directory", () => {
+      const dir = makeSkillDir(scanDir, "with-scripts", SKILL_A);
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      writeFileSync(join(dir, "scripts", "run.sh"), "#!/bin/bash");
+      registry.scan();
+      expect(registry.get("with-scripts")?.hasScripts).toBe(true);
+    });
+
+    it("false when no scripts directory", () => {
+      makeSkillDir(scanDir, "no-scripts", SKILL_A);
+      registry.scan();
+      expect(registry.get("no-scripts")?.hasScripts).toBe(false);
+    });
+  });
+
+  describe("getDetail", () => {
+    it("returns SKILL.md content and file list", () => {
+      const dir = makeSkillDir(scanDir, "detailed", SKILL_A);
+      writeFileSync(join(dir, "helper.py"), "print('hi')");
+      registry.scan();
+
+      const detail = registry.getDetail("detailed");
+      expect(detail).toBeDefined();
+      expect(detail!.content).toContain("First test skill");
+      expect(detail!.files).toContain("SKILL.md");
+      expect(detail!.files).toContain("helper.py");
+    });
+
+    it("returns undefined for missing skill", () => {
+      registry.scan();
+      expect(registry.getDetail("nope")).toBeUndefined();
+    });
+  });
+
+  describe("getFileContent", () => {
+    it("reads a file from a skill", () => {
+      const dir = makeSkillDir(scanDir, "readable", SKILL_A);
+      writeFileSync(join(dir, "data.txt"), "hello");
+      registry.scan();
+
+      expect(registry.getFileContent("readable", "data.txt")).toBe("hello");
+    });
+
+    it("blocks path traversal", () => {
+      makeSkillDir(scanDir, "trapped", SKILL_A);
+      registry.scan();
+      expect(registry.getFileContent("trapped", "../../etc/passwd")).toBeUndefined();
+    });
+  });
+
+  describe("watch", () => {
+    it("re-scans when a new skill is added", async () => {
+      registry.scan();
+      registry.watch();
+
+      const changed = new Promise<SkillsChangedEvent>((resolve) => {
+        registry.once("skills:changed", resolve);
+      });
+
+      // Create a new skill while watching
+      makeSkillDir(scanDir, "new-skill", SKILL_A);
+
+      const event = await changed;
+      expect(event.added).toContain("new-skill");
+      expect(registry.get("new-skill")).toBeDefined();
+    });
+
+    it("re-scans when a skill is removed", async () => {
+      makeSkillDir(scanDir, "doomed", SKILL_A);
+      registry.scan();
+      registry.watch();
+
+      const changed = new Promise<SkillsChangedEvent>((resolve) => {
+        registry.once("skills:changed", resolve);
+      });
+
+      rmSync(join(scanDir, "doomed"), { recursive: true });
+
+      const event = await changed;
+      expect(event.removed).toContain("doomed");
+    });
+
+    it("re-scans when SKILL.md is modified", async () => {
+      makeSkillDir(scanDir, "evolving", SKILL_A);
+      registry.scan();
+      registry.watch();
+
+      const changed = new Promise<SkillsChangedEvent>((resolve) => {
+        registry.once("skills:changed", resolve);
+      });
+
+      const updated = SKILL_A.replace("First test skill", "Changed description");
+      writeFileSync(join(scanDir, "evolving", "SKILL.md"), updated);
+
+      const event = await changed;
+      expect(event.modified).toContain("evolving");
+      expect(registry.get("evolving")?.description).toBe("Changed description");
+    });
+
+    it("stopWatching prevents further re-scans", async () => {
+      registry.scan();
+      registry.watch();
+      registry.stopWatching();
+
+      const events: SkillsChangedEvent[] = [];
+      registry.on("skills:changed", (e) => events.push(e));
+
+      makeSkillDir(scanDir, "ignored", SKILL_A);
+      await new Promise((r) => setTimeout(r, 200));
+
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  describe("registerUserSkills", () => {
+    it("adds user skills to the registry", () => {
+      const userDir = mkdtempSync(join(tmpdir(), "pi-user-skill-"));
+      makeSkillDir(userDir, "custom", SKILL_A);
+
+      registry.scan();
+      registry.registerUserSkills([
+        {
+          name: "custom",
+          description: "Custom skill",
+          userId: "u1",
+          builtIn: false,
+          createdAt: Date.now(),
+          sizeBytes: 100,
+          path: join(userDir, "custom"),
+        },
+      ]);
+
+      expect(registry.get("custom")).toBeDefined();
+      expect(registry.get("custom")?.description).toBe("First test skill"); // re-parsed from SKILL.md
+
+      rmSync(userDir, { recursive: true, force: true });
+    });
+  });
+});
+
+// ─── Frontmatter Extraction ───
+
+describe("extractFrontmatterField", () => {
+  it("extracts a simple field", () => {
+    const content = `---\nname: test\ncontainer: true\n---\n# Hello`;
+    expect(extractFrontmatterField(content, "container")).toBe("true");
+  });
+
+  it("extracts quoted field", () => {
+    const content = `---\ndescription: "hello world"\n---\n# Hello`;
+    expect(extractFrontmatterField(content, "description")).toBe("hello world");
+  });
+
+  it("returns undefined when field missing", () => {
+    const content = `---\nname: test\n---\n# Hello`;
+    expect(extractFrontmatterField(content, "container")).toBeUndefined();
+  });
+
+  it("returns undefined when no frontmatter", () => {
+    expect(extractFrontmatterField("# No frontmatter", "name")).toBeUndefined();
   });
 });
