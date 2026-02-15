@@ -82,7 +82,7 @@ describe("Storage.createWorkspace", () => {
         icon: "terminal",
         runtime: "host",
         systemPrompt: "Be helpful",
-        hostMount: "~/workspace/pios",
+        hostMount: "~/workspace/oppi",
         memoryEnabled: true,
         memoryNamespace: "coding",
         extensionMode: "explicit",
@@ -95,7 +95,7 @@ describe("Storage.createWorkspace", () => {
     expect(ws.icon).toBe("terminal");
     expect(ws.runtime).toBe("host");
     expect(ws.systemPrompt).toBe("Be helpful");
-    expect(ws.hostMount).toBe("~/workspace/pios");
+    expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.memoryEnabled).toBe(true);
     expect(ws.memoryNamespace).toBe("coding");
     expect(ws.extensionMode).toBe("explicit");

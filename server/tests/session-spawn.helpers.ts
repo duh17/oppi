@@ -29,7 +29,7 @@ export function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
     runtime: "host",
     skills: [],
     policyPreset: "host",
-    hostMount: "~/workspace/pios",
+    hostMount: "~/workspace/oppi",
     createdAt: now,
     updatedAt: now,
     ...overrides,

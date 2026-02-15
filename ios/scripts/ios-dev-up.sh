@@ -10,13 +10,13 @@ RESTART_SERVER=1
 NO_LAUNCH=0
 DEBUG=0
 FORWARD_ARGS=()
-LAUNCHD_LABEL="com.oppi.pi-remote"
-LOG_PATH="$HOME/.local/var/log/pi-remote.log"
+LAUNCHD_LABEL="com.oppi.oppi-server"
+LOG_PATH="$HOME/.local/var/log/oppi-server.log"
 
 usage() {
   cat <<'EOF'
 Repeatable local iOS dev flow:
-1) Ensure pi-remote server is running (launchd)
+1) Ensure oppi-server server is running (launchd)
 2) Build + install Oppi to iPhone
 
 Usage:
@@ -68,7 +68,7 @@ restart_launchd_server() {
       launchctl load "$plist"
     else
       echo "error: launchd plist not found at $plist" >&2
-      echo "  Run: ~/.config/dotfiles/scripts/pi-remote.sh" >&2
+      echo "  Run: ~/.config/dotfiles/scripts/oppi-server.sh" >&2
       exit 1
     fi
   fi

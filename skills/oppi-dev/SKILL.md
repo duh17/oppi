@@ -191,17 +191,17 @@ Harness flags:
 
 ```bash
 # Setup/reload plist
-~/.config/dotfiles/scripts/pi-remote.sh
+~/.config/dotfiles/scripts/oppi-server.sh
 
 # Restart (KeepAlive auto-restarts after stop)
-launchctl stop com.chenda.pi-remote
+launchctl stop com.chenda.oppi-server
 
 # Status
-launchctl list | grep pi-remote
+launchctl list | grep oppi-server
 curl -s http://localhost:7749/health
 
 # Logs
-tail -f ~/.local/var/log/pi-remote.log
+tail -f ~/.local/var/log/oppi-server.log
 ```
 
 ### Manual server start (fallback, no launchd)

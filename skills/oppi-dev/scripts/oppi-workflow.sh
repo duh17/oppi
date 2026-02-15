@@ -7,7 +7,7 @@ PIOS_ROOT="${PIOS_ROOT:-$HOME/workspace/oppi}"
 
 usage() {
   cat <<'EOF'
-Compose Oppi iOS + pi-remote debug workflows with one command hub.
+Compose Oppi iOS + oppi-server debug workflows with one command hub.
 
 Usage:
   oppi-workflow.sh <command> [args...]

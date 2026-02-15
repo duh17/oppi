@@ -1,5 +1,5 @@
 #!/bin/bash
-# Load API keys from macOS Keychain and start pi-remote server
+# Load API keys from macOS Keychain and start oppi-server server
 #
 # Keys must be stored in Keychain:
 #   security add-generic-password -a "$USER" -s "OPENROUTER_API_KEY" -w "value" -U
@@ -20,6 +20,6 @@ load_secret() {
 
 load_secret OPENROUTER_API_KEY
 
-# Start pi-remote server
-cd /path/to/pios/pi-remote
+# Start oppi-server server
+cd /path/to/pios/oppi-server
 exec npx tsx src/index.ts serve "$@"

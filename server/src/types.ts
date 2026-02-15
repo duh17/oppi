@@ -44,7 +44,7 @@ export interface Workspace {
 
   // Context
   systemPrompt?: string; // Additional instructions appended to base prompt
-  hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/pios")
+  hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
 
   // Memory
   memoryEnabled?: boolean; // Enable remember/recall memory extension

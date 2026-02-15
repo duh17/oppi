@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$HOME/workspace/oppi"
 
-STATE_DIR="$HOME/.config/pi-remote/live-debug"
+STATE_DIR="$HOME/.config/oppi-server/live-debug"
 PID_FILE="$STATE_DIR/idevicesyslog.pid"
 SESSION_FILE="$STATE_DIR/session.json"
 
@@ -25,7 +25,7 @@ LOG_DIR="$HOME/Library/Logs/Oppi/device"
 DEVICE_LOG="$LOG_DIR/live.log"
 
 SERVER_URL="${PI_REMOTE_URL:-http://localhost:7749}"
-USERS_FILE="$HOME/.config/pi-remote/users.json"
+USERS_FILE="$HOME/.config/oppi-server/users.json"
 
 # Colors
 RED='\033[0;31m'
@@ -60,7 +60,7 @@ auth() { curl -sf -H "Authorization: Bearer $(get_token)" "$@"; }
 
 find_server_pane() {
   for win in $(tmux list-windows -t main -F '#{window_name}' 2>/dev/null || true); do
-    if [[ "$win" == *"pi-remote"* || "$win" == *"server"* ]]; then
+    if [[ "$win" == *"oppi-server"* || "$win" == *"server"* ]]; then
       echo "main:$win"
       return
     fi

@@ -116,7 +116,7 @@ enum ToolCallFormatting {
     /// Keep only the path tail for compact row headers.
     ///
     /// Examples:
-    /// - `/Users/chenda/workspace/pios/ios/Oppi/Features/Chat/File.swift`
+    /// - `/Users/chenda/workspace/oppi/ios/Oppi/Features/Chat/File.swift`
     ///   -> `Chat/File.swift`
     /// - `src/server.ts` -> `src/server.ts`
     /// - `README.md` -> `README.md`

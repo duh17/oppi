@@ -67,7 +67,7 @@ describe("session-spawn spawnPiHost", () => {
       piExecutable: "/opt/homebrew/bin/pi",
     });
 
-    const expectedCwd = join(homedir(), "workspace", "pios");
+    const expectedCwd = join(homedir(), "workspace", "oppi");
     const existing = new Set<string>([
       expectedCwd,
       OPPI_GATE_EXTENSION,
@@ -144,7 +144,7 @@ describe("session-spawn spawnPiHost", () => {
       piExecutable: "/opt/homebrew/bin/pi",
     });
 
-    const expectedCwd = join(homedir(), "workspace", "pios");
+    const expectedCwd = join(homedir(), "workspace", "oppi");
     const existing = new Set<string>([
       expectedCwd,
       OPPI_GATE_EXTENSION,
@@ -178,7 +178,7 @@ describe("session-spawn spawnPiHost", () => {
       legacyExtensionsEnabled: false,
     });
 
-    const expectedCwd = join(homedir(), "workspace", "pios");
+    const expectedCwd = join(homedir(), "workspace", "oppi");
     const existing = new Set<string>([
       expectedCwd,
       OPPI_GATE_EXTENSION,
@@ -215,7 +215,7 @@ describe("session-spawn spawnPiHost", () => {
       piExecutable: "pi",
     });
 
-    const expectedCwd = join(homedir(), "workspace", "pios");
+    const expectedCwd = join(homedir(), "workspace", "oppi");
     const promptDir = join(homedir(), ".config", "oppi", "prompts");
     const promptPath = join(promptDir, "s1.md");
 

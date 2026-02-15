@@ -1,4 +1,4 @@
-# Pi Remote iOS — Claude Code Instructions
+# Oppi iOS — Claude Code Instructions
 
 This file provides guidance to Claude Code when working with the iOS app in this directory.
 
@@ -11,11 +11,11 @@ This file provides guidance to Claude Code when working with the iOS app in this
 xcodegen generate
 
 # Build for simulator
-xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+xcodebuild -project Oppi.xcodeproj -scheme Oppi \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build
 
 # Build for device (requires signing)
-xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+xcodebuild -project Oppi.xcodeproj -scheme Oppi \
   -destination 'generic/platform=iOS' build
 ```
 
@@ -23,11 +23,11 @@ xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
 
 ```bash
 # Run all tests
-xcodebuild -project PiRemote.xcodeproj -scheme PiRemote \
+xcodebuild -project Oppi.xcodeproj -scheme Oppi \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test
 ```
 
-Test files in `PiRemoteTests/`:
+Test files in `OppiTests/`:
 - `ServerMessageTests.swift` — wire format decoding (manual `Decodable`)
 - `ClientMessageTests.swift` — client message encoding
 - `JSONValueTests.swift` — recursive JSON type
@@ -36,7 +36,7 @@ Test files in `PiRemoteTests/`:
 
 ### Setup
 
-The Xcode project file (`PiRemote.xcodeproj/`) is gitignored. Always regenerate from `project.yml` via XcodeGen before building.
+The Xcode project file (`Oppi.xcodeproj/`) is gitignored. Always regenerate from `project.yml` via XcodeGen before building.
 
 ```bash
 brew install xcodegen  # if not installed
@@ -75,9 +75,9 @@ The server (`../pi-remote/`) handles pi process management, policy evaluation, a
 ### App Structure
 
 ```
-PiRemote/
+Oppi/
 ├── App/                    # App entry, navigation, delegates
-│   ├── PiRemoteApp.swift   # @main, scene setup, scenePhase
+│   ├── OppiApp.swift   # @main, scene setup, scenePhase
 │   ├── AppNavigation.swift  # Tab-based navigation state
 │   ├── AppDelegate.swift    # Push notification registration
 │   └── ContentView.swift    # Root view with tab bar
@@ -150,12 +150,12 @@ PiRemote/
 ├── Resources/
 │   ├── Assets.xcassets
 │   ├── Info.plist
-│   └── PiRemote.entitlements
+│   └── Oppi.entitlements
 │
-PiRemoteActivityExtension/        # Live Activity widget extension
+OppiActivityExtension/        # Live Activity widget extension
 Shared/                            # Shared between app and extension
 │   └── PiSessionAttributes.swift  # ActivityKit attributes
-PiRemoteTests/                     # Unit tests
+OppiTests/                     # Unit tests
 ```
 
 ### Key Architectural Patterns
@@ -202,7 +202,7 @@ Timestamps come from the server as Unix milliseconds. Convert to `Date` via `Dat
 
 ### Live Activity / Dynamic Island
 
-`PiRemoteActivityExtension` uses `Shared/PiSessionAttributes.swift` for the ActivityKit `ActivityAttributes` definition. The main app updates Live Activities via `LiveActivityManager`.
+`OppiActivityExtension` uses `Shared/PiSessionAttributes.swift` for the ActivityKit `ActivityAttributes` definition. The main app updates Live Activities via `LiveActivityManager`.
 
 ## Code Formatting
 
@@ -237,4 +237,4 @@ Never use Liquid Glass for scrollable content (chat bubbles, list rows, feed ent
 - Image upload (when enabled) must use workspace-scoped REST routes (`POST /workspaces/:workspaceId/sessions/:id/attachments`), not base64 over WebSocket.
 - On background → foreground, the app calls `GET /workspaces/:workspaceId/sessions/:id` to rebuild chat state. The server does not replay missed streaming events.
 - Just because unit tests pass doesn't mean a given bug is fixed. It may not have a test. It may require manual testing on device.
-- The Xcode project file is generated — never edit `PiRemote.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.
+- The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.

@@ -14,12 +14,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_URL="${PI_REMOTE_URL:-http://localhost:7749}"
-USERS_FILE="$HOME/.config/pi-remote/users.json"
-SESSIONS_DIR="$HOME/.config/pi-remote/sessions"
+USERS_FILE="$HOME/.config/oppi-server/users.json"
+SESSIONS_DIR="$HOME/.config/oppi-server/sessions"
 
 usage() {
   cat <<'EOF'
-Quick diagnostic for a pi-remote session.
+Quick diagnostic for a oppi-server session.
 
 Usage:
   debug-session.sh <session-id>
@@ -107,7 +107,7 @@ PYEOF
     fi
   else
     err "Server not reachable at $SERVER_URL"
-    python3 "$HOME/.claude/skills/pi-remote-session/scripts/session-lookup.py" list --limit 5
+    python3 "$HOME/.claude/skills/oppi-server-session/scripts/session-lookup.py" list --limit 5
     echo ""
     read -rp "Session ID: " SESSION_ID
     [[ -z "$SESSION_ID" ]] && exit 0
@@ -292,7 +292,7 @@ heading "Server log (recent)"
 
 SERVER_PANE=""
 for win in $(tmux list-windows -t main -F '#{window_name}' 2>/dev/null || true); do
-  if [[ "$win" == *"pi-remote"* || "$win" == *"server"* ]]; then
+  if [[ "$win" == *"oppi-server"* || "$win" == *"server"* ]]; then
     SERVER_PANE="main:$win"
     break
   fi
@@ -308,7 +308,7 @@ if [[ -n "$SERVER_PANE" ]]; then
     dim "  (no log lines for $SESSION_ID in tmux)"
   fi
 else
-  dim "  (no pi-remote tmux window found)"
+  dim "  (no oppi-server tmux window found)"
 fi
 
 echo ""

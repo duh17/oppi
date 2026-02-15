@@ -2,7 +2,7 @@
 
 ## Session Metadata JSON
 
-Stored at `~/.config/pi-remote/sessions/<userId>/<sessionId>.json`.
+Stored at `~/.config/oppi-server/sessions/<userId>/<sessionId>.json`.
 
 ```typescript
 {
@@ -50,7 +50,7 @@ Each line in the JSONL file is a trace event. Types:
 | Runtime | Path |
 |---------|------|
 | Host | `~/.pi/agent/sessions/--Users-chenda--/<timestamp>_<uuid>.jsonl` |
-| Container | `~/.pi-remote/sandboxes/<userId>/<sessionId>/agent/sessions/<workspace>/<timestamp>_<uuid>.jsonl` |
+| Container | `~/.oppi-server/sandboxes/<userId>/<sessionId>/agent/sessions/<workspace>/<timestamp>_<uuid>.jsonl` |
 
 ## REST API Endpoints
 
@@ -63,4 +63,4 @@ Server runs at `localhost:7749`. All endpoints require `Authorization: Bearer <t
 | `GET /sessions/:id` | `{ session, messages }` |
 | `GET /sessions/:id/trace` | `{ session, trace: TraceEvent[] }` |
 
-User tokens stored in `~/.config/pi-remote/users.json`.
+User tokens stored in `~/.config/oppi-server/users.json`.

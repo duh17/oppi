@@ -223,7 +223,7 @@ interface UserPolicy {
 interface WorkspacePolicy {
   name: string;                        // "my-project"
   hostPath: string;                    // "/Users/dev/workspace/myproject"
-  sandboxPath: string;                 // "/workspace/pios"
+  sandboxPath: string;                 // "/workspace/oppi"
   access: "read-write" | "read-only";
 }
 
@@ -238,7 +238,7 @@ interface PolicyRule {
   pattern?: string;
 
   // Path confinement (resolved via realpath before matching)
-  pathWithin?: string;     // "/workspace/pios" — must be inside this dir
+  pathWithin?: string;     // "/workspace/oppi" — must be inside this dir
 
   action: "allow" | "ask" | "deny";
   label?: string;
@@ -286,7 +286,7 @@ Rules match against parsed fields:
 # Match rm, but only within workspace
 - tool: bash
   exec: rm
-  pathWithin: /workspace/pios
+  pathWithin: /workspace/oppi
   action: ask
 
 # Block anything with pipes or subshells (structural hazard)
@@ -405,7 +405,7 @@ learnedRules:
     pattern: "npm test*"
     action: allow
     scope: workspace
-    pathWithin: /workspace/pios
+    pathWithin: /workspace/oppi
     label: "Approved npm test (2026-02-06)"
     learnedAt: "2026-02-06T13:30:00Z"
     learnedFrom: "tc_abc123"
@@ -535,7 +535,7 @@ New message types for permission flow:
 Agents can emit rapid-fire tool calls. Prevent phone UI overload:
 
 1. **Coalescing**: Group similar requests. "Agent wants to read 12 files in
-   `/workspace/pios/src/` — approve all?"
+   `/workspace/oppi/src/` — approve all?"
 2. **Batch templates**: "Allow next N calls matching this pattern"
 3. **Per-session queue limit**: Max 10 pending approvals. Beyond that, new
    requests get queued server-side, oldest-first.

@@ -14,8 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_URL="${PI_REMOTE_URL:-http://localhost:7749}"
-USERS_FILE="$HOME/.config/pi-remote/users.json"
-SESSIONS_DIR="$HOME/.config/pi-remote/sessions"
+USERS_FILE="$HOME/.config/oppi-server/users.json"
+SESSIONS_DIR="$HOME/.config/oppi-server/sessions"
 
 # Colors
 RED='\033[0;31m'
@@ -333,7 +333,7 @@ heading "Server log (recent)"
 
 SERVER_PANE=""
 for win in $(tmux list-windows -t main -F '#{window_name}' 2>/dev/null || true); do
-  if [[ "$win" == *"pi-remote"* || "$win" == *"server"* ]]; then
+  if [[ "$win" == *"oppi-server"* || "$win" == *"server"* ]]; then
     SERVER_PANE="main:$win"
     break
   fi
@@ -349,7 +349,7 @@ if [[ -n "$SERVER_PANE" ]]; then
     dim "  (no log lines for $SESSION_ID in tmux)"
   fi
 else
-  dim "  (no pi-remote tmux window found)"
+  dim "  (no oppi-server tmux window found)"
 fi
 
 echo ""
