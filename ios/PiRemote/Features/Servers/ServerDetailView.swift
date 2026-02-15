@@ -35,56 +35,26 @@ struct ServerDetailView: View {
 
             if let info {
                 Section("Server") {
-                    LabeledContent("Host", value: server.host)
-                    LabeledContent("Port", value: String(server.port))
+                    LabeledContent("Host", value: "\(server.host):\(server.port)")
                     LabeledContent("Uptime", value: info.uptimeLabel)
                     LabeledContent("Platform", value: info.platformLabel)
-                    LabeledContent("Pi Version", value: info.piVersion)
-                    LabeledContent("Server Version", value: info.version)
-                    LabeledContent("Node", value: info.nodeVersion)
                 }
 
                 Section("Stats") {
                     LabeledContent("Workspaces", value: String(info.stats.workspaceCount))
                     LabeledContent("Active Sessions", value: String(info.stats.activeSessionCount))
-                    LabeledContent("Total Sessions", value: String(info.stats.totalSessionCount))
                     LabeledContent("Skills", value: String(info.stats.skillCount))
-                    LabeledContent("Models", value: String(info.stats.modelCount))
                 }
 
-                if let identity = info.identity {
+                if let profile = server.securityProfile {
                     Section("Security") {
-                        if let profile = server.securityProfile {
-                            LabeledContent("Profile", value: profile)
-                        }
-                        LabeledContent("Algorithm", value: identity.algorithm)
-                        LabeledContent("Key ID", value: identity.keyId)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Fingerprint")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            HStack {
-                                Text(identity.fingerprint)
-                                    .font(.caption.monospaced())
-                                    .textSelection(.enabled)
-                                Spacer()
-                                Button {
-                                    UIPasteboard.general.string = identity.fingerprint
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.caption)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
+                        LabeledContent("Profile", value: profile)
                     }
                 }
             }
 
             Section("Connection") {
                 LabeledContent("Paired", value: server.addedAt.formatted(date: .abbreviated, time: .shortened))
-                LabeledContent("Server ID", value: String(server.id.prefix(24)) + "…")
-                    .font(.caption.monospaced())
             }
         }
         .navigationTitle(server.name)
