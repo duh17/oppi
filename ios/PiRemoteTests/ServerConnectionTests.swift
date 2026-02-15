@@ -1070,6 +1070,66 @@ struct ServerConnectionTests {
         let conn = ServerConnection()
         #expect(!conn.isConnected)
     }
+
+    // MARK: - switchServer
+
+    @MainActor
+    @Test func switchServerConfiguresNewServer() {
+        let conn = ServerConnection()
+        let creds = ServerCredentials(
+            host: "studio.ts.net", port: 7749, token: "sk_studio",
+            name: "studio", serverFingerprint: "sha256:studio-fp"
+        )
+        let server = PairedServer(from: creds)!
+
+        let result = conn.switchServer(to: server)
+        #expect(result == true)
+        #expect(conn.currentServerId == "sha256:studio-fp")
+        #expect(conn.apiClient != nil)
+    }
+
+    @MainActor
+    @Test func switchServerSkipsIfAlreadyTargeting() {
+        let conn = ServerConnection()
+        let creds = ServerCredentials(
+            host: "studio.ts.net", port: 7749, token: "sk_a",
+            name: "studio", serverFingerprint: "sha256:same-fp"
+        )
+        let server = PairedServer(from: creds)!
+
+        let _ = conn.switchServer(to: server)
+        // Switch to the same server again — should return true immediately
+        let result = conn.switchServer(to: server)
+        #expect(result == true)
+        #expect(conn.currentServerId == "sha256:same-fp")
+    }
+
+    @MainActor
+    @Test func switchServerChangesTarget() {
+        let conn = ServerConnection()
+        let creds1 = ServerCredentials(
+            host: "studio.ts.net", port: 7749, token: "sk_a",
+            name: "studio", serverFingerprint: "sha256:fp-a"
+        )
+        let creds2 = ServerCredentials(
+            host: "mini.ts.net", port: 7749, token: "sk_b",
+            name: "mini", serverFingerprint: "sha256:fp-b"
+        )
+        let server1 = PairedServer(from: creds1)!
+        let server2 = PairedServer(from: creds2)!
+
+        let _ = conn.switchServer(to: server1)
+        #expect(conn.currentServerId == "sha256:fp-a")
+
+        let _ = conn.switchServer(to: server2)
+        #expect(conn.currentServerId == "sha256:fp-b")
+    }
+
+    @MainActor
+    @Test func currentServerIdNilByDefault() {
+        let conn = ServerConnection()
+        #expect(conn.currentServerId == nil)
+    }
 }
 
 private enum AckCommand: CaseIterable {
