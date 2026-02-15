@@ -437,6 +437,8 @@ struct PiRemoteApp: App {
             let upgraded = creds.applyingSecurityProfile(profile)
             if upgraded != creds {
                 try? KeychainService.saveCredentials(upgraded)
+                // Keep ServerStore in sync with security profile upgrades
+                serverStore.addOrUpdate(from: upgraded)
                 creds = upgraded
                 guard connection.configure(credentials: upgraded) else {
                     launchOutcome = "blocked_transport_policy"
