@@ -480,7 +480,8 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   console.log(chalk.bold("  First-time setup"));
   console.log("");
 
-  const dataDir = flags["data-dir"] || join(require("node:os").homedir(), ".config", "oppi");
+  const { homedir } = await import("node:os");
+  const dataDir = flags["data-dir"] || join(homedir(), ".config", "oppi");
   const alreadyExists = existsSync(join(dataDir, "config.json"));
   const nonInteractive = flags.yes === "true" || flags.y === "true" || !process.stdin.isTTY;
 
