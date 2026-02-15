@@ -1,7 +1,11 @@
 import SwiftUI
 
-/// Create a new workspace.
+/// Create a new workspace on a specific server.
 struct WorkspaceCreateView: View {
+    /// The server to create the workspace on. Required for multi-server.
+    let server: PairedServer
+
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
     @Environment(\.dismiss) private var dismiss
 
@@ -14,8 +18,9 @@ struct WorkspaceCreateView: View {
     @State private var isCreating = false
     @State private var error: String?
 
+    /// Skills from the target server.
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skills
+        connection.workspaceStore.skillsByServer[server.id] ?? connection.workspaceStore.skills
     }
 
     var body: some View {
@@ -109,7 +114,7 @@ struct WorkspaceCreateView: View {
                     }
                 }
             }
-            .navigationTitle("New Workspace")
+            .navigationTitle("New Workspace on \(server.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -160,14 +165,26 @@ struct WorkspaceCreateView: View {
     }
 
     private func loadSkills() async {
-        guard let api = connection.apiClient else { return }
-        if connection.workspaceStore.skills.isEmpty {
-            await connection.workspaceStore.load(api: api)
+        // Load skills from target server if not cached
+        if (connection.workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
+            guard let api = coordinator.apiClient(for: server.id) else { return }
+            do {
+                let skills = try await api.listSkills()
+                connection.workspaceStore.skillsByServer[server.id] = skills
+            } catch {
+                // Fall back to flat skills list
+            }
         }
     }
 
     private func create() async {
-        guard let api = connection.apiClient else { return }
+        // Ensure we're talking to the right server
+        coordinator.switchToServer(server)
+
+        guard let api = coordinator.apiClient(for: server.id) ?? connection.apiClient else {
+            error = "Cannot connect to \(server.name)"
+            return
+        }
         isCreating = true
         error = nil
 
@@ -182,6 +199,8 @@ struct WorkspaceCreateView: View {
 
         do {
             let workspace = try await api.createWorkspace(request)
+            connection.workspaceStore.upsert(workspace, serverId: server.id)
+            // Also update flat list for backward compat
             connection.workspaceStore.upsert(workspace)
             dismiss()
         } catch {

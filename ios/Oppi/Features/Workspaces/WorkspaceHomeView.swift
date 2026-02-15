@@ -18,7 +18,7 @@ struct WorkspaceHomeView: View {
     @Environment(PermissionStore.self) private var permissionStore
     @Environment(ServerStore.self) private var serverStore
 
-    @State private var showNewWorkspace = false
+    @State private var createOnServer: PairedServer?
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -41,17 +41,8 @@ struct WorkspaceHomeView: View {
         .navigationDestination(for: PairedServer.self) { server in
             ServerDetailView(server: server)
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showNewWorkspace = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-        }
-        .sheet(isPresented: $showNewWorkspace) {
-            WorkspaceCreateView()
+        .sheet(item: $createOnServer) { server in
+            WorkspaceCreateView(server: server)
         }
         .refreshable {
             await refresh(force: true)
@@ -106,14 +97,27 @@ struct WorkspaceHomeView: View {
                 }
             }
         } header: {
-            NavigationLink(value: server) {
-                ServerSectionHeader(
-                    server: server,
-                    freshnessState: freshness,
-                    freshnessLabel: freshnessLabel
-                )
+            HStack(spacing: 0) {
+                NavigationLink(value: server) {
+                    ServerSectionHeader(
+                        server: server,
+                        freshnessState: freshness,
+                        freshnessLabel: freshnessLabel
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    createOnServer = server
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 8)
+                }
+                .buttonStyle(.plain)
+                .disabled(isUnreachable)
             }
-            .buttonStyle(.plain)
         }
     }
 
