@@ -816,9 +816,13 @@ async function main(): Promise<void> {
     }
   }
 
-  // `init` runs before Storage to avoid creating default config prematurely
+  // These commands run before Storage to avoid creating default config prematurely
   if (command === "init") {
     await cmdInit(flags);
+    return;
+  }
+  if (command === "help" || command === "--help" || command === "-h") {
+    cmdHelp();
     return;
   }
 
@@ -848,12 +852,6 @@ async function main(): Promise<void> {
 
     case "env":
       cmdEnv(positional[0]);
-      break;
-
-    case "help":
-    case "--help":
-    case "-h":
-      cmdHelp();
       break;
 
     default:
