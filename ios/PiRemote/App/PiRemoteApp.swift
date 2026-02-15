@@ -111,6 +111,8 @@ struct PiRemoteApp: App {
             connection.permissionStore.pending.removeAll()
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
+            // Add to ServerStore (handles fingerprint dedup)
+            serverStore.addOrUpdate(from: bootstrap.effectiveCredentials)
             try KeychainService.saveCredentials(bootstrap.effectiveCredentials)
             guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")

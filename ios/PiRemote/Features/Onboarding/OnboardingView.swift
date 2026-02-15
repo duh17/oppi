@@ -1,9 +1,21 @@
 import SwiftUI
 import VisionKit
 
+/// Mode for the onboarding flow.
+enum OnboardingMode {
+    /// First-time setup or re-launch with no servers.
+    case initial
+    /// Adding an additional server from Settings.
+    case addServer
+}
+
 struct OnboardingView: View {
+    var mode: OnboardingMode = .initial
+
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
+    @Environment(ServerStore.self) private var serverStore
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showScanner = false
     @State private var showManualEntry = false
@@ -87,10 +99,17 @@ struct OnboardingView: View {
                 }
             }
 
-            if connection.credentials != nil {
+            if mode == .initial, connection.credentials != nil {
                 Button("Back to current server") {
                     connectionTest = .idle
                     navigation.showOnboarding = false
+                }
+                .font(.footnote)
+            }
+
+            if mode == .addServer {
+                Button("Cancel") {
+                    dismiss()
                 }
                 .font(.footnote)
             }
@@ -123,9 +142,15 @@ struct OnboardingView: View {
                 await BiometricService.shared.authenticate(reason: reason)
             }
 
-            // Save credentials and transition
-            try KeychainService.saveCredentials(bootstrap.effectiveCredentials)
-            guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
+            let effectiveCreds = bootstrap.effectiveCredentials
+
+            // Add to ServerStore (handles fingerprint dedup via addOrUpdate)
+            serverStore.addOrUpdate(from: effectiveCreds)
+
+            // Also save to legacy Keychain for backward compat
+            try KeychainService.saveCredentials(effectiveCreds)
+
+            guard connection.configure(credentials: effectiveCreds) else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }
@@ -139,7 +164,13 @@ struct OnboardingView: View {
 
             // Short delay then transition
             try? await Task.sleep(for: .milliseconds(600))
-            navigation.showOnboarding = false
+
+            switch mode {
+            case .initial:
+                navigation.showOnboarding = false
+            case .addServer:
+                dismiss()
+            }
         } catch {
             connection.sessionStore.markSyncFailed()
             connectionTest = .failed(error.localizedDescription)

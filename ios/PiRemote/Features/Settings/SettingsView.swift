@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
+    @Environment(ServerStore.self) private var serverStore
     @Environment(ThemeStore.self) private var themeStore
 
     @State private var biometricEnabled = BiometricService.shared.isEnabled
@@ -13,18 +14,63 @@ struct SettingsView: View {
     @State private var coloredThinkingBorder = UserDefaults.standard.bool(
         forKey: coloredThinkingBorderDefaultsKey
     )
+    @State private var showAddServer = false
+    @State private var renameServerId: String?
+    @State private var renameServerText = ""
+    @State private var showRemoveConfirmation: PairedServer?
 
     var body: some View {
         List {
-            Section("Server") {
-                if let creds = connection.credentials {
-                    LabeledContent("Host", value: creds.host)
-                    LabeledContent("Port", value: String(creds.port))
-                } else {
-                    Text("Not connected")
-                        .foregroundStyle(.secondary)
+            Section("Servers") {
+                ForEach(serverStore.servers) { server in
+                    NavigationLink(value: server) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "server.rack")
+                                .font(.caption)
+                                .foregroundStyle(server.id == connection.currentServerId ? .green : .secondary)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(server.name)
+                                    .font(.subheadline.weight(.medium))
+                                Text("\(server.host):\(server.port)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            if server.id == connection.currentServerId {
+                                Text("Active")
+                                    .font(.caption2)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            renameServerId = server.id
+                            renameServerText = server.name
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            showRemoveConfirmation = server
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                        .disabled(serverStore.servers.count <= 1)
+                    }
                 }
 
+                Button {
+                    showAddServer = true
+                } label: {
+                    Label("Add Server", systemImage: "plus")
+                }
+            }
+
+            Section("Connection") {
                 HStack {
                     Circle()
                         .fill(connection.isConnected ? .green : .red)
@@ -118,28 +164,50 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                Button("Re-pair via Invite Link") {
-                    startRePairing()
-                }
-            } header: {
-                Text("Pairing")
-            } footer: {
-                Text("Opens onboarding without clearing local cache, sessions, or workspaces.")
-            }
-
-            Section("Account") {
-                Button("Disconnect & Sign Out", role: .destructive) {
-                    signOut()
-                }
-            }
-
             Section("About") {
                 LabeledContent("Version", value: "1.0.0")
                 LabeledContent("Build", value: "Phase 1")
             }
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: PairedServer.self) { server in
+            ServerDetailView(server: server)
+        }
+        .sheet(isPresented: $showAddServer) {
+            OnboardingView(mode: .addServer)
+        }
+        .alert("Rename Server", isPresented: Binding(
+            get: { renameServerId != nil },
+            set: { if !$0 { renameServerId = nil } }
+        )) {
+            TextField("Server name", text: $renameServerText)
+            Button("Save") {
+                if let id = renameServerId {
+                    serverStore.rename(id: id, to: renameServerText)
+                }
+                renameServerId = nil
+            }
+            Button("Cancel", role: .cancel) {
+                renameServerId = nil
+            }
+        }
+        .confirmationDialog(
+            "Remove \(showRemoveConfirmation?.name ?? "server")?",
+            isPresented: Binding(
+                get: { showRemoveConfirmation != nil },
+                set: { if !$0 { showRemoveConfirmation = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let server = showRemoveConfirmation {
+                    removeServer(server)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove the server from your paired servers. You can re-pair later.")
+        }
     }
 
     // MARK: - Biometric Section
@@ -189,15 +257,20 @@ struct SettingsView: View {
         }
     }
 
-    private func startRePairing() {
-        navigation.showOnboarding = true
-    }
+    private func removeServer(_ server: PairedServer) {
+        // If removing the active server, disconnect first
+        if server.id == connection.currentServerId {
+            connection.disconnectSession()
+        }
 
-    private func signOut() {
-        connection.disconnectSession()
-        KeychainService.deleteCredentials()
-        Task.detached { await TimelineCache.shared.clear() }
-        navigation.showOnboarding = true
+        serverStore.remove(id: server.id)
+        connection.workspaceStore.removeServer(server.id)
+
+        // If no servers left, go to onboarding
+        if serverStore.servers.isEmpty {
+            KeychainService.deleteCredentials()
+            navigation.showOnboarding = true
+        }
     }
 }
 
