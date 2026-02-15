@@ -1,0 +1,237 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Background gradient: deep indigo to dark teal with more depth -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#1c1245"/>
+      <stop offset="35%" stop-color="#1a1650"/>
+      <stop offset="70%" stop-color="#142040"/>
+      <stop offset="100%" stop-color="#0a1e35"/>
+    </linearGradient>
+
+    <!-- Warm accent glow (top right) -->
+    <radialGradient id="warmGlow" cx="0.75" cy="0.2" r="0.5">
+      <stop offset="0%" stop-color="#5040a0" stop-opacity="0.3"/>
+      <stop offset="60%" stop-color="#3020668" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#1a1245" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Central backlight behind pi -->
+    <radialGradient id="backglow" cx="0.5" cy="0.5" r="0.35">
+      <stop offset="0%" stop-color="#7B68EE" stop-opacity="0.35"/>
+      <stop offset="40%" stop-color="#5B4FCF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#1a1040" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Glass fill: translucent white-to-lavender -->
+    <linearGradient id="glassFill" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.88"/>
+      <stop offset="25%" stop-color="#e8e4ff" stop-opacity="0.72"/>
+      <stop offset="55%" stop-color="#c8bfee" stop-opacity="0.55"/>
+      <stop offset="80%" stop-color="#9a90cc" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#7068aa" stop-opacity="0.35"/>
+    </linearGradient>
+
+    <!-- Glass fill for legs (slightly more transparent) -->
+    <linearGradient id="glassLeg" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#e0dcff" stop-opacity="0.7"/>
+      <stop offset="40%" stop-color="#b8b0dd" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#8078bb" stop-opacity="0.35"/>
+    </linearGradient>
+
+    <!-- Top edge bright highlight -->
+    <linearGradient id="topEdge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="20%" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="80%" stop-color="#ffffff" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Caustic arc -->
+    <linearGradient id="caustic1" x1="0" y1="0" x2="1" y2="0.3">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="25%" stop-color="#d0e0ff" stop-opacity="0.12"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="75%" stop-color="#e0d8ff" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Bottom warm caustic -->
+    <linearGradient id="caustic2" x1="0.1" y1="0.9" x2="0.9" y2="0.4">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="35%" stop-color="#ffc8e0" stop-opacity="0.06"/>
+      <stop offset="55%" stop-color="#ffe0c8" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Drop shadow -->
+    <filter id="piShadow" x="-15%" y="-10%" width="130%" height="130%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="22"/>
+      <feOffset dx="0" dy="16"/>
+      <feFlood flood-color="#08082a" flood-opacity="0.55"/>
+      <feComposite in2="offsetBlur" operator="in" result="shadow"/>
+      <feComposite in="SourceGraphic" in2="shadow" operator="over"/>
+    </filter>
+
+    <!-- Soft outer glow on pi -->
+    <filter id="outerGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feFlood flood-color="#a090ff" flood-opacity="0.2"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Background blur -->
+    <filter id="bgBlur">
+      <feGaussianBlur stdDeviation="50"/>
+    </filter>
+
+    <filter id="bgBlurSmall">
+      <feGaussianBlur stdDeviation="25"/>
+    </filter>
+
+    <!-- Icon clip -->
+    <clipPath id="iconClip">
+      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#iconClip)">
+
+    <!-- Background base -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Warm accent zone -->
+    <rect width="1024" height="1024" fill="url(#warmGlow)"/>
+
+    <!-- Backlight glow -->
+    <ellipse cx="512" cy="500" rx="350" ry="320" fill="url(#backglow)" filter="url(#bgBlur)"/>
+
+    <!-- Subtle secondary glow (cool blue, bottom-left) -->
+    <ellipse cx="350" cy="680" rx="200" ry="200" fill="#4060ff" opacity="0.04" filter="url(#bgBlur)"/>
+
+    <!-- Subtle tertiary glow (warm, top-right) -->
+    <ellipse cx="700" cy="280" rx="180" ry="160" fill="#8060ff" opacity="0.06" filter="url(#bgBlur)"/>
+
+    <!-- === PI SYMBOL === -->
+    <!-- 
+      Proper π shape:
+      - Horizontal bar extends past both legs, but more on left
+      - Left leg: slightly curved inward at bottom (like a serif/foot)
+      - Right leg: straighter, slight taper
+      - Bar has rounded ends
+      - Overall wider and more recognizably π
+    -->
+    <g filter="url(#piShadow)">
+      <g filter="url(#outerGlow)">
+
+        <!-- Horizontal bar — extends generously, especially to the left -->
+        <path d="
+          M 210 295
+          C 210 270, 230 265, 255 265
+          L 750 265
+          C 775 265, 790 275, 790 295
+          L 790 330
+          C 790 352, 775 358, 750 358
+          L 255 358
+          C 230 358, 210 350, 210 330
+          Z
+        " fill="url(#glassFill)"/>
+
+        <!-- Top bright edge on bar -->
+        <path d="
+          M 225 290
+          C 225 272, 240 267, 260 267
+          L 745 267
+          C 770 267, 782 274, 782 288
+          L 782 280
+          C 782 268, 770 265, 745 265
+          L 260 265
+          C 240 265, 225 270, 225 282
+          Z
+        " fill="url(#topEdge)" opacity="0.7"/>
+
+        <!-- Hair line at very top -->
+        <path d="
+          M 260 266 L 745 266
+        " stroke="white" stroke-opacity="0.55" stroke-width="1.2" stroke-linecap="round"/>
+
+        <!-- Left leg — slight inward curve, ends with a leftward foot -->
+        <path d="
+          M 325 358
+          L 395 358
+          C 400 358, 402 362, 401 368
+          L 365 680
+          C 358 720, 340 748, 310 758
+          C 295 764, 270 762, 255 755
+          C 242 748, 240 738, 248 728
+          C 255 718, 275 722, 290 730
+          C 298 735, 305 730, 310 710
+          L 332 378
+          C 334 365, 330 358, 325 358
+          Z
+        " fill="url(#glassLeg)"/>
+
+        <!-- Left leg inner highlight -->
+        <path d="
+          M 358 370 
+          C 350 500, 335 620, 310 710
+        " stroke="white" stroke-opacity="0.12" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+        <!-- Right leg — straighter, subtle taper -->
+        <path d="
+          M 580 358
+          L 650 358
+          C 656 358, 658 362, 657 370
+          L 630 710
+          C 628 730, 622 748, 610 756
+          C 605 760, 598 758, 595 750
+          C 592 742, 595 732, 602 728
+          C 607 724, 612 726, 615 732
+          C 617 738, 612 730, 614 710
+          L 587 378
+          C 586 365, 582 358, 580 358
+          Z
+        " fill="url(#glassLeg)"/>
+
+        <!-- Right leg inner highlight -->
+        <path d="
+          M 618 370 
+          L 607 710
+        " stroke="white" stroke-opacity="0.1" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+
+      </g>
+    </g>
+
+    <!-- === LIQUID GLASS CAUSTICS === -->
+
+    <!-- Large sweeping caustic arc — top -->
+    <ellipse cx="512" cy="160" rx="420" ry="200" 
+             fill="none" stroke="url(#caustic1)" stroke-width="70" opacity="0.5"/>
+
+    <!-- Smaller warm caustic — bottom right -->
+    <ellipse cx="620" cy="820" rx="280" ry="100"
+             fill="none" stroke="url(#caustic2)" stroke-width="50" opacity="0.6"/>
+
+    <!-- Diagonal light streak (very subtle) -->
+    <line x1="150" y1="900" x2="900" y2="100" 
+          stroke="white" stroke-opacity="0.02" stroke-width="120" stroke-linecap="round"/>
+
+    <!-- Specular highlights (tiny glass-edge catches) -->
+    <circle cx="350" cy="295" r="3.5" fill="white" opacity="0.5"/>
+    <circle cx="640" cy="288" r="2.5" fill="white" opacity="0.35"/>
+    <circle cx="265" cy="305" r="2" fill="white" opacity="0.3"/>
+    <circle cx="760" cy="298" r="2.5" fill="white" opacity="0.25"/>
+
+    <!-- Vignette -->
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.71">
+      <stop offset="55%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.35"/>
+    </radialGradient>
+    <rect width="1024" height="1024" fill="url(#vignette)"/>
+
+  </g>
+</svg>

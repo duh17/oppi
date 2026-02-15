@@ -5,8 +5,6 @@ server/dist/
 # iOS
 ios/build/
 ios/*.xcodeproj/
-ios/PiRemote.xcodeproj/
-ios/Oppi.xcodeproj/
 
 # General
 *.tsbuildinfo
