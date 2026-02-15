@@ -197,7 +197,21 @@ export class SandboxManager {
     });
   }
 
+  /** Check whether the `container` CLI is available on this machine. */
+  containerRuntimeAvailable(): boolean {
+    try {
+      execSync("which container", { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async ensureImage(): Promise<void> {
+    if (!this.containerRuntimeAvailable()) {
+      console.log("[sandbox] Container runtime not available — host-only mode");
+      return;
+    }
     if (!this.imageExists()) {
       await this.buildImage();
     }
@@ -209,6 +223,7 @@ export class SandboxManager {
    * Idempotent — safe to call on every server start.
    */
   ensureNetwork(): void {
+    if (!this.containerRuntimeAvailable()) return;
     try {
       execSync(
         `container network create --subnet ${CONTAINER_NETWORK_SUBNET} ${CONTAINER_NETWORK_NAME}`,
@@ -229,6 +244,7 @@ export class SandboxManager {
    * bridge ports on 0.0.0.0 and rewrite localhost provider URLs to host-gateway.
    */
   async prepareLoopbackBridges(): Promise<void> {
+    if (!this.containerRuntimeAvailable()) return;
     const modelsPath = join(homedir(), ".pi", "agent", "models.json");
     if (!existsSync(modelsPath)) {
       return;
@@ -660,6 +676,7 @@ export class SandboxManager {
   }
 
   async cleanupOrphanedContainers(): Promise<void> {
+    if (!this.containerRuntimeAvailable()) return;
     const tracked = new Set(Array.from(this.running.values()).map((entry) => entry.containerId));
     const candidates = this.listRunningManagedContainerIds();
     const orphaned = candidates.filter((containerId) => !tracked.has(containerId));
