@@ -122,7 +122,22 @@ final class ServerConnection {
         }
     }
 
+    /// Fingerprint of the currently connected server (set after configure).
+    private(set) var currentServerId: String?
+
     // MARK: - Setup
+
+    /// Reconfigure to target a different server.
+    ///
+    /// Tears down any active session stream and WebSocket, then configures
+    /// the new server's credentials. Returns `false` on policy/URL failure.
+    @discardableResult
+    func switchServer(to server: PairedServer) -> Bool {
+        guard server.id != currentServerId else { return true } // Already targeting this server
+        disconnectSession()
+        reducer.reset()
+        return configure(credentials: server.credentials)
+    }
 
     /// Configure the connection with validated credentials.
     /// Returns `false` if the credentials contain a malformed host.
@@ -138,6 +153,7 @@ final class ServerConnection {
             return false
         }
         self.credentials = credentials
+        self.currentServerId = credentials.normalizedServerFingerprint
         self.apiClient = APIClient(baseURL: baseURL, token: credentials.token)
         self.wsClient = WebSocketClient(credentials: credentials)
         return true

@@ -34,6 +34,7 @@ struct PiRemoteApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var connection = ServerConnection()
     @State private var navigation = AppNavigation()
+    @State private var serverStore = ServerStore()
     @State private var themeStore = ThemeStore()
 #if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
@@ -58,6 +59,7 @@ struct PiRemoteApp: App {
                     .environment(connection.reducer.toolArgsStore)
                     .environment(connection.audioPlayer)
                     .environment(navigation)
+                    .environment(serverStore)
                     .environment(themeStore)
                     .environment(\.theme, themeStore.appTheme)
                     .preferredColorScheme(themeStore.preferredColorScheme)
@@ -384,6 +386,10 @@ struct PiRemoteApp: App {
             return
         }
 
+        // Never show onboarding when we have valid credentials.
+        // Even if security profile check fails (server offline), show cached workspace.
+        navigation.showOnboarding = false
+
         // Enforce trust + transport contract as early as possible.
         do {
             let profile = try await api.securityProfile()
@@ -391,7 +397,7 @@ struct PiRemoteApp: App {
             if let violation = ConnectionSecurityPolicy.evaluate(host: creds.host, profile: profile) {
                 launchOutcome = "blocked_transport_policy"
                 appLog.error("SECURITY transport policy blocked host=\(creds.host, privacy: .public): \(violation.localizedDescription, privacy: .public)")
-                navigation.showOnboarding = true
+                connection.extensionToast = "Server blocked: \(violation.localizedDescription)"
                 return
             }
 
@@ -404,14 +410,14 @@ struct PiRemoteApp: App {
                     appLog.error(
                         "SECURITY pinned identity mismatch host=\(creds.host, privacy: .public) stored=\(storedFingerprint, privacy: .public) server=\(serverFingerprint, privacy: .public)"
                     )
-                    navigation.showOnboarding = true
+                    connection.extensionToast = "Server identity changed. Re-pair from Settings."
                     return
                 }
 
                 if serverFingerprint == nil {
                     launchOutcome = "missing_server_fingerprint"
                     appLog.error("SECURITY pinned identity required but server fingerprint missing")
-                    navigation.showOnboarding = true
+                    connection.extensionToast = "Server identity missing. Re-pair from Settings."
                     return
                 }
             }
@@ -422,18 +428,15 @@ struct PiRemoteApp: App {
                 creds = upgraded
                 guard connection.configure(credentials: upgraded) else {
                     launchOutcome = "blocked_transport_policy"
-                    navigation.showOnboarding = true
+                    connection.extensionToast = "Server transport policy changed. Re-pair from Settings."
                     return
                 }
             }
         } catch {
             launchOutcome = "missing_security_profile"
             appLog.error("SECURITY profile check failed on launch: \(error.localizedDescription, privacy: .public)")
-            navigation.showOnboarding = true
-            return
+            // Server unreachable — continue with cached data, don't kick to onboarding.
         }
-
-        navigation.showOnboarding = false
 
         // 2. Restore UI state (tab, active session, draft, scroll position)
         if let restored = RestorationState.load() {
@@ -466,7 +469,21 @@ struct PiRemoteApp: App {
             Task.detached { await TimelineCache.shared.evictStaleTraces(keepIds: activeIds) }
 
             // 6. Load workspaces + skills (cache-backed internally)
-            await connection.workspaceStore.load(api: api)
+            if serverStore.servers.count > 1 {
+                await connection.workspaceStore.loadAll(servers: serverStore.servers)
+            } else {
+                await connection.workspaceStore.load(api: api)
+                // Populate per-server data for grouped UI
+                if let serverId = connection.currentServerId {
+                    connection.workspaceStore.workspacesByServer[serverId] = connection.workspaceStore.workspaces
+                    connection.workspaceStore.skillsByServer[serverId] = connection.workspaceStore.skills
+                    if !connection.workspaceStore.serverOrder.contains(serverId) {
+                        connection.workspaceStore.serverOrder = [serverId]
+                    }
+                    connection.workspaceStore.serverFreshness[serverId] = ServerSyncState()
+                    connection.workspaceStore.serverFreshness[serverId]?.markSyncSucceeded()
+                }
+            }
 
             // 7. Register for push notifications (after successful server connection)
             await PushRegistration.shared.requestAndRegister()
