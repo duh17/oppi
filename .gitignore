@@ -1,5 +1,13 @@
-node_modules/
-dist/
-docs/
+# Server
+server/node_modules/
+server/dist/
+
+# iOS
+ios/build/
+ios/*.xcodeproj/
+ios/PiRemote.xcodeproj/
+ios/Oppi.xcodeproj/
+
+# General
 *.tsbuildinfo
 .DS_Store
