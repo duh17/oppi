@@ -251,7 +251,7 @@ async function cmdPair(
     process.exit(1);
   }
 
-  const ownerName = requestedName?.trim() || "Owner";
+  const ownerName = requestedName?.trim() || osHostname().split(".")[0] || "Owner";
   const config = storage.getConfig();
   const inviteHost = resolveInviteHost(hostOverride);
 
@@ -758,7 +758,7 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${chalk.cyan("init")}                       Interactive first-time setup`);
   console.log(`    ${chalk.cyan("serve")}                      Start the server`);
-  console.log(`    ${chalk.cyan("pair")} [name]                Generate pairing QR for server owner`);
+  console.log(`    ${chalk.cyan("pair")}                       Generate pairing QR for server owner`);
   console.log("");
 
   console.log("  " + chalk.bold("Server:"));
@@ -789,7 +789,7 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${chalk.dim("oppi init")}`);
   console.log(`    ${chalk.dim("oppi serve")}`);
-  console.log(`    ${chalk.dim('oppi pair "Sam" --save owner-pair.png')}`);
+  console.log(`    ${chalk.dim("oppi pair --save owner-pair.png")}`);
   console.log(`    ${chalk.dim('oppi config set defaultModel "anthropic/claude-opus-4-6"')}`);
   console.log(`    ${chalk.dim("oppi config set port 8080")}`);
   console.log(`    ${chalk.dim("oppi env init   # run from fish/zsh/bash")}`);
