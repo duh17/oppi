@@ -125,6 +125,10 @@ struct PiRemoteApp: App {
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
             await PushRegistration.shared.requestAndRegister()
+            // Register push with all servers (new server included)
+            if serverStore.servers.count > 1 {
+                await PushRegistration.shared.registerWithAllServers(serverStore.servers)
+            }
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
         } catch {
             connection.sessionStore.markSyncFailed()
@@ -487,8 +491,11 @@ struct PiRemoteApp: App {
                 }
             }
 
-            // 7. Register for push notifications (after successful server connection)
+            // 7. Register for push notifications with all paired servers
             await PushRegistration.shared.requestAndRegister()
+            if serverStore.servers.count > 1 {
+                await PushRegistration.shared.registerWithAllServers(serverStore.servers)
+            }
         } catch {
             connection.sessionStore.markSyncFailed()
             launchOutcome = "offline_cache_only"

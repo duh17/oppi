@@ -93,6 +93,35 @@ final class PushRegistration {
         }
     }
 
+    /// Register the device token with ALL paired servers (multi-server support).
+    ///
+    /// Each server gets a separate registration call. Failures are per-server
+    /// and don't block others.
+    func registerWithAllServers(_ servers: [PairedServer]) async {
+        guard let token = deviceToken else {
+            logger.info("No device token yet — skipping multi-server registration")
+            return
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for server in servers {
+                guard let baseURL = server.baseURL else { continue }
+                let serverToken = server.token
+                let serverId = server.id
+
+                group.addTask {
+                    let api = APIClient(baseURL: baseURL, token: serverToken)
+                    do {
+                        try await api.registerDeviceToken(token, tokenType: "apns")
+                        logger.info("Push token registered with server \(serverId.prefix(16), privacy: .public)")
+                    } catch {
+                        logger.error("Push token registration failed for server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+        }
+    }
+
     /// Re-send the cached device token (e.g., after reconnect).
     func resendTokenIfNeeded() async {
         guard let token = deviceToken else { return }
