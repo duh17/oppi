@@ -526,7 +526,7 @@ export class Server {
 
     return new Promise((resolve) => {
       this.httpServer.listen(config.port, config.host, () => {
-        console.log(`🚀 oppi-server listening on ${config.host}:${config.port}`);
+        console.log(`🚀 oppi listening on ${config.host}:${config.port}`);
         resolve();
       });
     });

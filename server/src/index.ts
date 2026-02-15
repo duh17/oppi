@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * oppi-server CLI
+ * oppi CLI
  *
  * Commands:
+ *   init            Interactive first-time setup
  *   serve           Start the server
  *   pair [name]     Pair iOS client with server owner token
  *   status          Show server status
  *   token           Rotate owner bearer token
- *   config          Show/validate server config
+ *   config          Show/get/set/validate server config
  */
 
 import chalk from "chalk";
@@ -15,6 +16,7 @@ import qrcode from "qrcode-terminal";
 import QRCode from "qrcode";
 import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
@@ -56,7 +58,7 @@ function printHeader(): void {
   console.log(chalk.bold.magenta("  ╭─────────────────────────────────────╮"));
   console.log(
     chalk.bold.magenta("  │") +
-      chalk.bold("          π  oppi-server               ") +
+      chalk.bold("              π  oppi                   ") +
       chalk.bold.magenta("│"),
   );
   console.log(chalk.bold.magenta("  ╰─────────────────────────────────────╯"));
@@ -221,7 +223,7 @@ async function cmdServe(storage: Storage): Promise<void> {
   const owner = storage.getOwnerUser();
   if (!owner) {
     console.log(chalk.yellow("  Server not paired yet."));
-    console.log(chalk.dim("  Run 'oppi-server pair [name]' to generate pairing QR."));
+    console.log(chalk.dim("  Run 'oppi pair [name]' to generate pairing QR."));
   } else {
     console.log(`  Owner: ${owner.name}`);
   }
@@ -294,7 +296,7 @@ async function cmdPair(
   const identityConfig = config.identity;
   if (!identityConfig) {
     console.log(chalk.red("  Error: config.identity is missing; cannot issue pairing QR."));
-    console.log(chalk.dim("  Run 'oppi-server config validate' to repair config."));
+    console.log(chalk.dim("  Run 'oppi config validate' to repair config."));
     console.log("");
     process.exit(1);
   }
@@ -411,7 +413,7 @@ function cmdStatus(storage: Storage): void {
     console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
   } else if (!owner) {
     console.log(chalk.dim("  Not paired"));
-    console.log(chalk.dim("  Run 'oppi-server pair [name]'"));
+    console.log(chalk.dim("  Run 'oppi pair [name]'"));
   } else {
     const sessions = storage.listUserSessions(owner.id);
     console.log(`  Owner:    ${chalk.cyan(owner.name)}`);
@@ -437,7 +439,7 @@ function cmdToken(storage: Storage, action: string | undefined): void {
     const owner = storage.getOwnerUser();
     if (!owner) {
       console.log(chalk.red("  Error: server is not paired yet."));
-      console.log(chalk.dim("  Run 'oppi-server pair [name]' first."));
+      console.log(chalk.dim("  Run 'oppi pair [name]' first."));
       console.log("");
       process.exit(1);
     }
@@ -447,21 +449,195 @@ function cmdToken(storage: Storage, action: string | undefined): void {
     console.log(chalk.green("  ✓ Owner bearer token rotated."));
     console.log("");
     console.log(chalk.yellow("  Existing clients will be unauthorized until re-paired."));
-    console.log(chalk.dim("  Next step: run 'oppi-server pair' to issue a fresh invite."));
+    console.log(chalk.dim("  Next step: run 'oppi pair' to issue a fresh invite."));
     console.log("");
     return;
   }
 
   console.log(chalk.red(`  Unknown token action: ${mode}`));
-  console.log(chalk.dim("  Usage: oppi-server token rotate"));
+  console.log(chalk.dim("  Usage: oppi token rotate"));
   console.log("");
   process.exit(1);
 }
 
-function cmdConfig(storage: Storage, action: string | undefined, flags: Record<string, string>): void {
-  printHeader();
+// ─── Prompt Helper ───
 
+function prompt(question: string, defaultValue?: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const suffix = defaultValue ? chalk.dim(` [${defaultValue}]`) : "";
+  return new Promise((resolve) => {
+    rl.question(`  ${question}${suffix}: `, (answer) => {
+      rl.close();
+      resolve(answer.trim() || defaultValue || "");
+    });
+  });
+}
+
+// ─── Init Command ───
+
+async function cmdInit(flags: Record<string, string>): Promise<void> {
+  printHeader();
+  console.log(chalk.bold("  First-time setup"));
+  console.log("");
+
+  const dataDir = flags["data-dir"] || join(require("node:os").homedir(), ".config", "oppi");
+  const alreadyExists = existsSync(join(dataDir, "config.json"));
+  const nonInteractive = flags.yes === "true" || flags.y === "true" || !process.stdin.isTTY;
+
+  if (alreadyExists && flags.force !== "true") {
+    console.log(chalk.yellow(`  Config already exists at ${dataDir}/config.json`));
+    console.log(chalk.dim("  Use --force to re-initialize (keeps existing data)."));
+    console.log("");
+    if (nonInteractive) {
+      process.exit(1);
+    }
+    const answer = await prompt("Continue anyway? (y/N)", "n");
+    if (answer.toLowerCase() !== "y") {
+      console.log("");
+      return;
+    }
+    console.log("");
+  }
+
+  let port: number;
+  let defaultModel: string;
+  let maxSessionsGlobal: number;
+
+  if (nonInteractive) {
+    // Non-interactive: use flags or defaults
+    port = parseInt(flags.port || "7749") || 7749;
+    defaultModel = flags.model || "anthropic/claude-sonnet-4-20250514";
+    maxSessionsGlobal = parseInt(flags["max-sessions"] || "5") || 5;
+
+    console.log(chalk.dim(`  Port:         ${port}`));
+    console.log(chalk.dim(`  Model:        ${defaultModel}`));
+    console.log(chalk.dim(`  Max sessions: ${maxSessionsGlobal}`));
+    console.log("");
+  } else {
+    // Interactive prompts
+    const portStr = await prompt("Port", "7749");
+    port = parseInt(portStr) || 7749;
+
+    console.log("");
+    console.log(chalk.dim("  Popular models:"));
+    console.log(chalk.dim("    anthropic/claude-sonnet-4-20250514"));
+    console.log(chalk.dim("    anthropic/claude-opus-4-6"));
+    console.log(chalk.dim("    anthropic/claude-haiku-3.5"));
+    console.log("");
+    defaultModel = await prompt("Default model", "anthropic/claude-sonnet-4-20250514");
+
+    const maxSessionsStr = await prompt("Max concurrent sessions", "5");
+    maxSessionsGlobal = parseInt(maxSessionsStr) || 5;
+  }
+
+  // Create storage (auto-creates dirs + default config)
+  const storage = new Storage(dataDir);
+
+  // Apply user choices
+  storage.updateConfig({
+    port,
+    defaultModel,
+    maxSessionsGlobal,
+  });
+
+  console.log("");
+  console.log(chalk.green("  ✓ Config written to ") + chalk.dim(storage.getConfigPath()));
+
+  // 4. Generate identity keys
+  const config = storage.getConfig();
+  if (config.identity) {
+    ensureIdentityMaterial(config.identity);
+    const identity = ensureIdentityMaterial(config.identity);
+    if (config.identity.fingerprint !== identity.fingerprint) {
+      storage.updateConfig({ identity: { ...config.identity, fingerprint: identity.fingerprint } });
+    }
+    console.log(chalk.green("  ✓ Identity keys generated"));
+  }
+
+  // 5. Capture env if interactive shell
+  if (process.env.PATH && process.env.PATH.includes("/homebrew/")) {
+    envInit();
+    console.log(chalk.green("  ✓ Host environment captured"));
+  } else {
+    console.log(chalk.yellow("  ⚠ Run 'oppi env init' from your interactive shell to capture PATH"));
+  }
+
+  // 6. Summary
+  console.log("");
+  console.log(chalk.bold("  Next steps:"));
+  console.log("");
+  console.log(`    ${chalk.cyan("1.")} oppi serve              ${chalk.dim("Start the server")}`);
+  console.log(`    ${chalk.cyan("2.")} oppi pair ${chalk.dim('"YourName"')}     ${chalk.dim("Generate pairing QR")}`);
+  console.log(`    ${chalk.cyan("3.")} Scan QR in Oppi app     ${chalk.dim("Connect your phone")}`);
+  console.log("");
+}
+
+// ─── Config Command ───
+
+/** Settable config keys and their types for `oppi config set`. */
+const SETTABLE_KEYS: Record<string, { type: "number" | "string" | "boolean"; desc: string }> = {
+  port:                     { type: "number",  desc: "Server port" },
+  host:                     { type: "string",  desc: "Bind address" },
+  defaultModel:             { type: "string",  desc: "Default model for new sessions" },
+  maxSessionsGlobal:        { type: "number",  desc: "Max concurrent sessions" },
+  maxSessionsPerWorkspace:  { type: "number",  desc: "Max sessions per workspace" },
+  sessionIdleTimeoutMs:     { type: "number",  desc: "Session idle timeout (ms)" },
+  workspaceIdleTimeoutMs:   { type: "number",  desc: "Workspace idle timeout (ms)" },
+  approvalTimeoutMs:        { type: "number",  desc: "Permission approval timeout (ms)" },
+  legacyExtensionsEnabled:  { type: "boolean", desc: "Auto-load memory/todos extensions" },
+};
+
+function coerceValue(raw: string, type: "number" | "string" | "boolean"): number | string | boolean {
+  switch (type) {
+    case "number": {
+      const n = Number(raw);
+      if (isNaN(n)) throw new Error(`"${raw}" is not a valid number`);
+      return n;
+    }
+    case "boolean": {
+      const lower = raw.toLowerCase();
+      if (["true", "1", "yes", "on"].includes(lower)) return true;
+      if (["false", "0", "no", "off"].includes(lower)) return false;
+      throw new Error(`"${raw}" is not a valid boolean`);
+    }
+    case "string":
+      return raw;
+  }
+}
+
+function cmdConfig(
+  storage: Storage,
+  action: string | undefined,
+  positional: string[],
+  flags: Record<string, string>,
+): void {
   const mode = action || "show";
+
+  // `get` is machine-readable — no header
+  if (mode === "get") {
+    const key = positional[0];
+    if (!key) {
+      console.log(chalk.red("  Usage: oppi config get <key>"));
+      console.log("");
+      process.exit(1);
+    }
+
+    const config = storage.getConfig() as unknown as Record<string, unknown>;
+    const value = config[key];
+    if (value === undefined) {
+      console.error(`Unknown key: ${key}`);
+      process.exit(1);
+    }
+
+    if (typeof value === "object") {
+      console.log(JSON.stringify(value, null, 2));
+    } else {
+      console.log(String(value));
+    }
+    return;
+  }
+
+  printHeader();
 
   if (mode === "show") {
     const showDefault = flags.default === "true";
@@ -505,8 +681,49 @@ function cmdConfig(storage: Storage, action: string | undefined, flags: Record<s
     return;
   }
 
+  if (mode === "set") {
+    const key = positional[0];
+    const value = positional[1];
+
+    if (!key || value === undefined) {
+      console.log(chalk.red("  Usage: oppi config set <key> <value>"));
+      console.log("");
+      console.log(chalk.bold("  Available keys:"));
+      console.log("");
+      for (const [k, meta] of Object.entries(SETTABLE_KEYS)) {
+        const current = (storage.getConfig() as unknown as Record<string, unknown>)[k];
+        console.log(`    ${chalk.cyan(k.padEnd(28))} ${chalk.dim(meta.desc)}`);
+        console.log(`    ${"".padEnd(28)} ${chalk.dim("current:")} ${current}`);
+      }
+      console.log("");
+      process.exit(1);
+    }
+
+    const meta = SETTABLE_KEYS[key];
+    if (!meta) {
+      console.log(chalk.red(`  Unknown config key: ${key}`));
+      console.log(chalk.dim(`  Available: ${Object.keys(SETTABLE_KEYS).join(", ")}`));
+      console.log("");
+      process.exit(1);
+    }
+
+    try {
+      const coerced = coerceValue(value, meta.type);
+      storage.updateConfig({ [key]: coerced } as Partial<import("./types.js").ServerConfig>);
+      console.log(chalk.green(`  ✓ ${key} = ${coerced}`));
+      console.log(chalk.dim(`    Saved to ${storage.getConfigPath()}`));
+      console.log("");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(chalk.red(`  ✗ ${message}`));
+      console.log("");
+      process.exit(1);
+    }
+    return;
+  }
+
   console.log(chalk.red(`  Unknown config action: ${mode}`));
-  console.log(chalk.dim("  Usage: oppi-server config [show|validate] [--config-file <path>]"));
+  console.log(chalk.dim("  Usage: oppi config [show|get|set|validate]"));
   console.log("");
   process.exit(1);
 }
@@ -522,7 +739,7 @@ function cmdEnv(action: string | undefined): void {
       envShow();
       break;
     default:
-      console.log(chalk.bold("  oppi-server env") + " — manage host environment for sessions");
+      console.log(chalk.bold("  oppi env") + " — manage host environment for sessions");
       console.log("");
       console.log(`    ${chalk.cyan("env init")}    Capture current $PATH into ~/.config/oppi/env`);
       console.log(`    ${chalk.cyan("env show")}    Show resolved host PATH`);
@@ -536,35 +753,45 @@ function cmdEnv(action: string | undefined): void {
 function cmdHelp(): void {
   printHeader();
 
-  console.log("  " + chalk.bold("Commands:"));
+  console.log("  " + chalk.bold("Getting Started:"));
   console.log("");
-  console.log(`    ${chalk.cyan("serve")}              Start the server`);
-  console.log(`    ${chalk.cyan("pair")} [name]        Generate pairing QR for server owner`);
-  console.log(`    ${chalk.cyan("status")}             Show server status`);
-  console.log(`    ${chalk.cyan("token rotate")}       Rotate owner bearer token`);
-  console.log(`    ${chalk.cyan("config show")}        Show current server config`);
-  console.log(`    ${chalk.cyan("config validate")}    Validate server config`);
-  console.log(`    ${chalk.cyan("env init")}           Capture shell PATH for host sessions`);
-  console.log(`    ${chalk.cyan("env show")}           Show resolved host PATH`);
-  console.log(`    ${chalk.cyan("help")}               Show this help`);
+  console.log(`    ${chalk.cyan("init")}                       Interactive first-time setup`);
+  console.log(`    ${chalk.cyan("serve")}                      Start the server`);
+  console.log(`    ${chalk.cyan("pair")} [name]                Generate pairing QR for server owner`);
   console.log("");
+
+  console.log("  " + chalk.bold("Server:"));
+  console.log("");
+  console.log(`    ${chalk.cyan("status")}                     Show server status`);
+  console.log(`    ${chalk.cyan("token rotate")}               Rotate owner bearer token`);
+  console.log(`    ${chalk.cyan("env init")}                   Capture shell PATH for host sessions`);
+  console.log(`    ${chalk.cyan("env show")}                   Show resolved host PATH`);
+  console.log("");
+
+  console.log("  " + chalk.bold("Configuration:"));
+  console.log("");
+  console.log(`    ${chalk.cyan("config show")}                Show current config`);
+  console.log(`    ${chalk.cyan("config set")} <key> <value>   Update a config value`);
+  console.log(`    ${chalk.cyan("config get")} <key>           Get a config value`);
+  console.log(`    ${chalk.cyan("config validate")}            Validate config file`);
+  console.log("");
+
   console.log("  " + chalk.bold("Options:"));
   console.log("");
   console.log(`    ${chalk.dim("--save <file>")}      Save pairing QR as PNG`);
   console.log(`    ${chalk.dim("--host <host>")}      Hostname/IP encoded in pairing QR`);
   console.log(`    ${chalk.dim("--show-token")}       Print owner token in pair output (unsafe)`);
-  console.log(`    ${chalk.dim("--port <n>")}         Override port (default: 7749)`);
   console.log(`    ${chalk.dim("--config-file <p>")}  Config path for 'config validate'`);
   console.log("");
+
   console.log("  " + chalk.bold("Examples:"));
   console.log("");
-  console.log(`    ${chalk.dim("oppi-server serve")}`);
-  console.log(`    ${chalk.dim('oppi-server pair "Sam" --save owner-pair.png')}`);
-  console.log(`    ${chalk.dim('oppi-server pair "Sam" --host my-mac.local')}`);
-  console.log(`    ${chalk.dim("oppi-server token rotate")}`);
-  console.log(`    ${chalk.dim("oppi-server config show")}`);
-  console.log(`    ${chalk.dim("oppi-server env init   # run from fish/zsh/bash")}`);
-  console.log(`    ${chalk.dim("oppi-server env show")}`);
+  console.log(`    ${chalk.dim("oppi init")}`);
+  console.log(`    ${chalk.dim("oppi serve")}`);
+  console.log(`    ${chalk.dim('oppi pair "Sam" --save owner-pair.png')}`);
+  console.log(`    ${chalk.dim('oppi config set defaultModel "anthropic/claude-opus-4-6"')}`);
+  console.log(`    ${chalk.dim("oppi config set port 8080")}`);
+  console.log(`    ${chalk.dim("oppi env init   # run from fish/zsh/bash")}`);
   console.log("");
 }
 
@@ -588,12 +815,13 @@ async function main(): Promise<void> {
     }
   }
 
-  const storage = new Storage();
-
-  // Apply port override
-  if (flags.port) {
-    storage.updateConfig({ port: parseInt(flags.port) });
+  // `init` runs before Storage to avoid creating default config prematurely
+  if (command === "init") {
+    await cmdInit(flags);
+    return;
   }
+
+  const storage = new Storage();
 
   switch (command) {
     case "serve":
@@ -614,7 +842,7 @@ async function main(): Promise<void> {
       break;
 
     case "config":
-      cmdConfig(storage, positional[0], flags);
+      cmdConfig(storage, positional[0], positional.slice(1), flags);
       break;
 
     case "env":
@@ -629,7 +857,7 @@ async function main(): Promise<void> {
 
     default:
       console.log(chalk.red(`Unknown command: ${command}`));
-      console.log(chalk.dim("Run 'oppi-server help' for usage."));
+      console.log(chalk.dim("Run 'oppi help' for usage."));
       process.exit(1);
   }
 }

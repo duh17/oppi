@@ -5,12 +5,12 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "oppi-server": "./dist/index.js"
+    "oppi": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/index.js serve",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/",
