@@ -373,12 +373,18 @@ struct PiRemoteApp: App {
             }
         }
 
-        // 1. Load credentials from Keychain
-        guard var creds = KeychainService.loadCredentials() else {
+        // 1. Load credentials — prefer multi-server store, fallback to legacy
+        let initialCreds: ServerCredentials
+        if let firstServer = serverStore.servers.first {
+            initialCreds = firstServer.credentials
+        } else if let legacy = KeychainService.loadCredentials() {
+            initialCreds = legacy
+        } else {
             launchOutcome = "no_credentials"
             navigation.showOnboarding = true
             return
         }
+        var creds = initialCreds
 
         guard connection.configure(credentials: creds) else {
             launchOutcome = "invalid_credentials"
