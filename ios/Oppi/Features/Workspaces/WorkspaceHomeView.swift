@@ -12,6 +12,7 @@ struct WorkspaceNavTarget: Hashable {
 /// with name and freshness state. Tapping a workspace connects to that server
 /// on demand and navigates to the workspace detail.
 struct WorkspaceHomeView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
@@ -34,9 +35,7 @@ struct WorkspaceHomeView: View {
         .navigationDestination(for: WorkspaceNavTarget.self) { target in
             WorkspaceDetailView(workspace: target.workspace)
                 .onAppear {
-                    if let server = serverStore.server(for: target.serverId) {
-                        connection.switchServer(to: server)
-                    }
+                    coordinator.switchToServer(target.serverId)
                 }
         }
         .navigationDestination(for: PairedServer.self) { server in
@@ -81,9 +80,10 @@ struct WorkspaceHomeView: View {
 
     @ViewBuilder
     private func serverSection(for server: PairedServer) -> some View {
-        let workspaces = sortedWorkspaces(for: server.id)
-        let freshness = connection.workspaceStore.freshnessState(forServer: server.id)
-        let freshnessLabel = connection.workspaceStore.freshnessLabel(forServer: server.id)
+        let serverId = server.id
+        let workspaces = sortedWorkspaces(for: serverId)
+        let freshness = connection.workspaceStore.freshnessState(forServer: serverId)
+        let freshnessLabel = connection.workspaceStore.freshnessLabel(forServer: serverId)
         let isUnreachable = freshness == .offline
 
         Section {
@@ -93,12 +93,12 @@ struct WorkspaceHomeView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 ForEach(workspaces) { workspace in
-                    NavigationLink(value: WorkspaceNavTarget(serverId: server.id, workspace: workspace)) {
+                    NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
                         WorkspaceHomeRow(
                             workspace: workspace,
-                            activeCount: activeCount(for: workspace.id),
-                            stoppedCount: stoppedCount(for: workspace.id),
-                            hasAttention: hasAttention(for: workspace.id),
+                            activeCount: activeCount(for: workspace.id, serverId: serverId),
+                            stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
+                            hasAttention: hasAttention(for: workspace.id, serverId: serverId),
                             isUnreachable: isUnreachable
                         )
                     }
@@ -129,58 +129,50 @@ struct WorkspaceHomeView: View {
 
     private func sortedWorkspaces(for serverId: String) -> [Workspace] {
         workspacesForServer(serverId).sorted { lhs, rhs in
-            let lhsActive = activeCount(for: lhs.id)
-            let rhsActive = activeCount(for: rhs.id)
-            let lhsAttn = hasAttention(for: lhs.id)
-            let rhsAttn = hasAttention(for: rhs.id)
+            let lhsActive = activeCount(for: lhs.id, serverId: serverId)
+            let rhsActive = activeCount(for: rhs.id, serverId: serverId)
+            let lhsAttn = hasAttention(for: lhs.id, serverId: serverId)
+            let rhsAttn = hasAttention(for: rhs.id, serverId: serverId)
 
             if lhsAttn != rhsAttn { return lhsAttn }
             if (lhsActive > 0) != (rhsActive > 0) { return lhsActive > 0 }
-            return latestActivity(for: lhs.id) > latestActivity(for: rhs.id)
+            return latestActivity(for: lhs.id, serverId: serverId) > latestActivity(for: rhs.id, serverId: serverId)
         }
     }
 
     // MARK: - Session Helpers
 
-    private func sessionsFor(_ workspaceId: String) -> [Session] {
-        sessionStore.sessions.filter { $0.workspaceId == workspaceId }
+    /// Sessions for a workspace on a specific server.
+    ///
+    /// Uses per-server session query so non-active servers show correct counts
+    /// instead of always reading from the active partition.
+    private func sessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
+        sessionStore.sessions(forServer: serverId).filter { $0.workspaceId == workspaceId }
     }
 
-    private func activeCount(for workspaceId: String) -> Int {
-        sessionsFor(workspaceId).filter { $0.status != .stopped }.count
+    private func activeCount(for workspaceId: String, serverId: String) -> Int {
+        sessionsFor(workspaceId, serverId: serverId).filter { $0.status != .stopped }.count
     }
 
-    private func stoppedCount(for workspaceId: String) -> Int {
-        sessionsFor(workspaceId).filter { $0.status == .stopped }.count
+    private func stoppedCount(for workspaceId: String, serverId: String) -> Int {
+        sessionsFor(workspaceId, serverId: serverId).filter { $0.status == .stopped }.count
     }
 
-    private func hasAttention(for workspaceId: String) -> Bool {
-        sessionsFor(workspaceId).contains { session in
-            !permissionStore.pending(for: session.id).isEmpty
+    private func hasAttention(for workspaceId: String, serverId: String) -> Bool {
+        let serverPermissions = permissionStore.pending(forServer: serverId)
+        return sessionsFor(workspaceId, serverId: serverId).contains { session in
+            serverPermissions.contains { $0.sessionId == session.id }
             || session.status == .error
         }
     }
 
-    private func latestActivity(for workspaceId: String) -> Date {
-        sessionsFor(workspaceId).map(\.lastActivity).max() ?? .distantPast
+    private func latestActivity(for workspaceId: String, serverId: String) -> Date {
+        sessionsFor(workspaceId, serverId: serverId).map(\.lastActivity).max() ?? .distantPast
     }
 
     private func refresh(force: Bool) async {
-        if serverStore.servers.count > 1 {
-            await connection.workspaceStore.loadAll(servers: serverStore.servers)
-        } else {
-            await connection.refreshWorkspaceAndSessionLists(force: force)
-            // Sync per-server data from flat lists
-            if let serverId = connection.currentServerId {
-                connection.workspaceStore.workspacesByServer[serverId] = connection.workspaceStore.workspaces
-                connection.workspaceStore.skillsByServer[serverId] = connection.workspaceStore.skills
-                if !connection.workspaceStore.serverOrder.contains(serverId) {
-                    connection.workspaceStore.serverOrder = [serverId]
-                }
-                connection.workspaceStore.serverFreshness[serverId] = ServerSyncState()
-                connection.workspaceStore.serverFreshness[serverId]?.markSyncSucceeded()
-            }
-        }
+        // Unified path: coordinator handles single- and multi-server refresh
+        await coordinator.refreshAllServers()
     }
 }
 
