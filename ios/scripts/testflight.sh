@@ -238,6 +238,19 @@ xcodebuild -exportArchive \
   "${AUTH_FLAGS[@]}" \
   2>&1 | tee "$EXPORT_LOG" | tail -5
 
+# With destination=upload, xcodebuild uploads directly during export.
+# Check if export log confirms success (no local IPA created in this mode).
+if grep -q "EXPORT SUCCEEDED" "$EXPORT_LOG"; then
+  if grep -q "Upload succeeded" "$EXPORT_LOG"; then
+    echo ""
+    echo "── Done! Version $VERSION ($BUILD_NUMBER) uploaded via cloud signing."
+    echo "   TestFlight build available in ~5-15 minutes."
+    echo "   https://appstoreconnect.apple.com/apps"
+    exit 0
+  fi
+fi
+
+# Fallback: check for local IPA (build-only or non-upload destination)
 IPA_PATH="$EXPORT_DIR/$SCHEME.ipa"
 if [[ ! -f "$IPA_PATH" ]]; then
   echo "error: Export failed. Full log: $EXPORT_LOG"
@@ -245,8 +258,6 @@ if [[ ! -f "$IPA_PATH" ]]; then
 fi
 
 echo "── IPA: $IPA_PATH ($(du -h "$IPA_PATH" | cut -f1))"
-
-# ─── Upload ──────────────────────────────────────────────────────
 
 if [[ "$BUILD_ONLY" -eq 1 ]]; then
   echo ""
