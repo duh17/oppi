@@ -316,7 +316,7 @@ async function cmdPair(
   const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
   const envelope: InviteV2Envelope = createSignedInviteV2(identity, payload, maxAgeSeconds);
   const inviteJson = JSON.stringify(envelope);
-  const inviteUrl = `pi://connect?${new URLSearchParams({
+  const inviteUrl = `oppi://connect?${new URLSearchParams({
     v: "2",
     invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
   }).toString()}`;
