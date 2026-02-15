@@ -9,7 +9,7 @@ set -euo pipefail
 # Prerequisites (one-time setup):
 #   1. Apple Developer account with team ID AZAQMY4SPZ
 #   2. App Store Connect API key (.p8 file) with "Admin" or "App Manager" role
-#   3. App created in App Store Connect with bundle ID: dev.chenda.PiRemote
+#   3. App created in App Store Connect with bundle ID: dev.chenda.Oppi
 #
 # Setup:
 #   mkdir -p ~/.appstoreconnect
@@ -27,7 +27,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-SCHEME="PiRemote"
+SCHEME="Oppi"
 TEAM_ID="AZAQMY4SPZ"
 
 BUILD_ONLY=0
@@ -37,7 +37,7 @@ BUILD_NUMBER=""
 
 usage() {
   cat <<'EOF'
-Build, archive, and upload PiRemote to TestFlight.
+Build, archive, and upload Oppi to TestFlight.
 
 Usage:
   ios/scripts/testflight.sh [options]
@@ -184,7 +184,7 @@ echo "── Archiving $SCHEME (Release)..."
 ARCHIVE_LOG="$BUILD_DIR/archive.log"
 
 xcodebuild archive \
-  -project PiRemote.xcodeproj \
+  -project Oppi.xcodeproj \
   -scheme "$SCHEME" \
   -configuration Release \
   -archivePath "$ARCHIVE_PATH" \

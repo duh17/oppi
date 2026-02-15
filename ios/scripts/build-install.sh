@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-SCHEME="PiRemote"
+SCHEME="Oppi"
 CONFIGURATION="Debug"
-BUNDLE_ID="dev.chenda.PiRemote"
+BUNDLE_ID="dev.chenda.Oppi"
 DEVICE_QUERY=""
 LAUNCH=0
 CONSOLE=0
@@ -28,7 +28,7 @@ TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 
 usage() {
   cat <<'EOF'
-Build and install PiRemote on a paired iPhone.
+Build and install Oppi on a paired iPhone.
 
 Usage:
   ios/scripts/build-install.sh [options]
@@ -54,7 +54,7 @@ Sentry DSN precedence:
 
 Examples:
   ios/scripts/build-install.sh --device DEVICE_UDID --launch
-  ios/scripts/build-install.sh --logs-dir ~/Library/Logs/PiRemote --launch
+  ios/scripts/build-install.sh --logs-dir ~/Library/Logs/Oppi --launch
   PI_KEYCHAIN_PASSWORD='***' ios/scripts/build-install.sh --unlock-keychain --launch
   SENTRY_DSN='https://...@o0.ingest.sentry.io/0' ios/scripts/build-install.sh --launch
 EOF
@@ -278,7 +278,7 @@ fi
 BUILD_SETTINGS="$(
   (
     cd "$IOS_DIR"
-    xcodebuild -project PiRemote.xcodeproj \
+    xcodebuild -project Oppi.xcodeproj \
       -scheme "$SCHEME" \
       -configuration "$CONFIGURATION" \
       -destination "id=$DEVICE_UDID" \
@@ -301,10 +301,11 @@ echo "==> Build log: $BUILD_LOG"
 if ! (
   cd "$IOS_DIR"
   run_and_tee "$BUILD_LOG" \
-    xcodebuild -project PiRemote.xcodeproj \
+    xcodebuild -project Oppi.xcodeproj \
       -scheme "$SCHEME" \
       -configuration "$CONFIGURATION" \
       -destination "id=$DEVICE_UDID" \
+      -allowProvisioningUpdates \
       "${XCODEBUILD_EXTRA_ARGS[@]}" \
       build
 ); then

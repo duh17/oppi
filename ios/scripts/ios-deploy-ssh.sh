@@ -12,15 +12,15 @@ WATCH_INTERVAL=2
 DEBUG=0
 FORWARD_ARGS=()
 WATCH_PATHS=(
-  "ios/PiRemote"
+  "ios/Oppi"
   "ios/Shared"
-  "ios/PiRemoteActivityExtension"
+  "ios/OppiActivityExtension"
   "ios/project.yml"
 )
 
 usage() {
   cat <<'EOF'
-Build + install PiRemote on a remote Mac over SSH.
+Build + install Oppi on a remote Mac over SSH.
 
 Usage:
   scripts/ios-deploy-ssh.sh [options] [-- <build-install args>]
@@ -39,7 +39,7 @@ Any additional args are forwarded to ios/scripts/build-install.sh on the remote 
 
 Examples:
   scripts/ios-deploy-ssh.sh --host your-mac -- --device DEVICE_UDID --launch
-  scripts/ios-deploy-ssh.sh --local-log-dir ~/Library/Logs/PiRemote -- --logs-dir ~/Library/Logs/PiRemote --launch
+  scripts/ios-deploy-ssh.sh --local-log-dir ~/Library/Logs/Oppi -- --logs-dir ~/Library/Logs/Oppi --launch
   scripts/ios-deploy-ssh.sh --watch -- --skip-generate --launch
 EOF
 }

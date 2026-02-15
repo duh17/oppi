@@ -1,7 +1,7 @@
 import AppKit
 
 enum OppiMacTheme {
-    private static let themeDefaultsKey = "dev.chenda.PiRemote.theme.id"
+    private static let themeDefaultsKey = "dev.chenda.Oppi.theme.id"
 
     enum ID: String {
         case tokyoNight = "tokyo-night"

@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 Repeatable local iOS dev flow:
 1) Ensure pi-remote server is running (launchd)
-2) Build + install PiRemote to iPhone
+2) Build + install Oppi to iPhone
 
 Usage:
   scripts/ios-dev-up.sh [options] [-- <build-install args>]

@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-SCHEME="${PIOS_UI_RELIABILITY_SCHEME:-PiRemoteUIReliability}"
+SCHEME="${PIOS_UI_RELIABILITY_SCHEME:-OppiUIReliability}"
 DESTINATION="${PIOS_UI_RELIABILITY_DESTINATION:-platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro}"
-ONLY_TESTING="${PIOS_UI_RELIABILITY_ONLY_TESTING:-PiRemoteUITests/UIHangHarnessUITests}"
+ONLY_TESTING="${PIOS_UI_RELIABILITY_ONLY_TESTING:-OppiUITests/UIHangHarnessUITests}"
 SKIP_GENERATE=0
 
 usage() {
@@ -19,7 +19,7 @@ Usage:
 Options:
   --skip-generate          Skip `xcodegen generate`
   --destination <value>    xcodebuild destination string (simulator only)
-  --scheme <name>          Scheme name (default: PiRemoteUIReliability)
+  --scheme <name>          Scheme name (default: OppiUIReliability)
   --only-testing <value>   xcodebuild -only-testing value
   -h, --help               Show help
 
@@ -80,7 +80,7 @@ if [[ "$SKIP_GENERATE" -eq 0 ]]; then
   xcodegen generate
 fi
 
-xcodebuild -project PiRemote.xcodeproj -scheme "$SCHEME" \
+xcodebuild -project Oppi.xcodeproj -scheme "$SCHEME" \
   -destination "$DESTINATION" \
   -only-testing:"$ONLY_TESTING" \
   test

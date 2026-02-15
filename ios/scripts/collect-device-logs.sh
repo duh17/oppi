@@ -3,16 +3,16 @@ set -euo pipefail
 
 DEVICE_QUERY=""
 LAST="15m"
-SUBSYSTEM="dev.chenda.PiRemote"
-PROCESS_NAME="PiRemote"
+SUBSYSTEM="dev.chenda.Oppi"
+PROCESS_NAME="Oppi"
 PREDICATE_OVERRIDE=""
-OUTPUT_DIR="$HOME/Library/Logs/PiRemote/device"
+OUTPUT_DIR="$HOME/Library/Logs/Oppi/device"
 INCLUDE_DEBUG=0
 USE_SUDO=1
 
 usage() {
   cat <<'EOF'
-Collect PiRemote unified logs from a physical iPhone.
+Collect Oppi unified logs from a physical iPhone.
 
 Usage:
   ios/scripts/collect-device-logs.sh [options]
@@ -20,10 +20,10 @@ Usage:
 Options:
   -d, --device <id|name|udid>  Device selector (optional; auto-detect paired booted iPhone)
       --last <duration>        Lookback window for log collect (default: 15m)
-      --subsystem <name>       Subsystem filter (default: dev.chenda.PiRemote)
-      --process <name>         Process filter (default: PiRemote)
+      --subsystem <name>       Subsystem filter (default: dev.chenda.Oppi)
+      --process <name>         Process filter (default: Oppi)
       --predicate <expr>       Full NSPredicate override (takes precedence)
-      --output-dir <path>      Output directory (default: ~/Library/Logs/PiRemote/device)
+      --output-dir <path>      Output directory (default: ~/Library/Logs/Oppi/device)
       --include-debug          Include debug-level entries in rendered text output
       --no-sudo                Do not use sudo for `log collect` (requires root)
   -h, --help                   Show help
@@ -31,7 +31,7 @@ Options:
 Examples:
   ios/scripts/collect-device-logs.sh --device DEVICE_UDID --last 30m
   ios/scripts/collect-device-logs.sh --include-debug --output-dir /tmp/piremote-device-logs
-  ios/scripts/collect-device-logs.sh --predicate 'process == "PiRemote" OR subsystem == "com.apple.runningboard"'
+  ios/scripts/collect-device-logs.sh --predicate 'process == "Oppi" OR subsystem == "com.apple.runningboard"'
 EOF
 }
 
@@ -154,7 +154,7 @@ else
   fi
 
   if [[ ${#PREDICATE_PARTS[@]} -eq 0 ]]; then
-    PREDICATE='process == "PiRemote"'
+    PREDICATE='process == "Oppi"'
   else
     PREDICATE="${PREDICATE_PARTS[0]}"
     for ((i = 1; i < ${#PREDICATE_PARTS[@]}; i++)); do
