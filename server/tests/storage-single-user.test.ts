@@ -19,7 +19,8 @@ describe("Storage pairing", () => {
     const storage = new Storage(dir);
     expect(storage.isPaired()).toBe(false);
     expect(storage.getToken()).toBeUndefined();
-    expect(storage.getOwnerUser()).toBeUndefined();
+    // getOwnerName always returns hostname, regardless of pairing state
+    expect(storage.getOwnerName()).toBeTruthy();
   });
 
   it("ensurePaired generates a token", () => {
@@ -37,10 +38,11 @@ describe("Storage pairing", () => {
     expect(token1).toBe(token2);
   });
 
-  it("rejects creating when already paired", () => {
+  it("ensurePaired is idempotent (returns same token)", () => {
     const storage = new Storage(dir);
-    storage.createUser("Bob");
-    expect(() => storage.createUser("Other")).toThrowError(/Already paired/);
+    const t1 = storage.ensurePaired();
+    const t2 = storage.ensurePaired();
+    expect(t1).toBe(t2);
   });
 
   it("rotates token and persists", () => {
@@ -90,8 +92,8 @@ describe("Storage pairing", () => {
     expect(storage.isPaired()).toBe(true);
 
     // State migrated
-    expect(storage.getDeviceTokens("owner")).toEqual(["apns-hex-1"]);
-    expect(storage.getModelThinkingLevelPreference("owner", "anthropic/claude-sonnet-4-20250514")).toBe("high");
+    expect(storage.getDeviceTokens()).toEqual(["apns-hex-1"]);
+    expect(storage.getModelThinkingLevelPreference("anthropic/claude-sonnet-4-20250514")).toBe("high");
   });
 
   it("ignores malformed users.json gracefully", () => {

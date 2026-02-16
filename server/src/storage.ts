@@ -16,7 +16,6 @@ import { dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { nanoid } from "nanoid";
 import type {
-  User,
   Session,
   SessionMessage,
   SecurityProfile,
@@ -731,31 +730,9 @@ export class Storage {
     return token;
   }
 
-  /**
-   * Legacy compatibility: construct a User object from config state.
-   * Used by routes/auth that still pass User objects internally.
-   * The id is always "owner" — callers should not depend on it.
-   */
-  getOwnerUser(): User | undefined {
-    if (!this.config.token) return undefined;
-    return {
-      id: "owner",
-      name: hostname().split(".")[0] || "owner",
-      token: this.config.token,
-      createdAt: 0,
-      deviceTokens: this.config.deviceTokens,
-      liveActivityToken: this.config.liveActivityToken,
-      thinkingLevelByModel: this.config.thinkingLevelByModel,
-    };
-  }
-
-  /** Legacy compat: createUser now just ensures pairing. */
-  createUser(_name: string): User {
-    if (this.config.token) {
-      throw new Error("Already paired");
-    }
-    this.ensurePaired();
-    return this.getOwnerUser()!;
+  /** Owner display name derived from hostname. */
+  getOwnerName(): string {
+    return hostname().split(".")[0] || "owner";
   }
 
   /** Legacy compat stub — always false now. */
@@ -763,53 +740,41 @@ export class Storage {
     return false;
   }
 
-  /** No-op — userId concept eliminated. Always resolves to owner. */
-  private normalizeUserId(_userId: string): string {
-    return "owner";
-  }
-
-  /** No-op. */
-  updateUserLastSeen(_userId: string): void {}
-
   // ─── Device Tokens ───
 
-  addDeviceToken(_userId: string, token: string): void {
+  addDeviceToken(token: string): void {
     const tokens = this.config.deviceTokens || [];
     if (!tokens.includes(token)) {
       this.updateConfig({ deviceTokens: [...tokens, token] });
     }
   }
 
-  removeDeviceToken(_userId: string, token: string): void {
+  removeDeviceToken(token: string): void {
     const tokens = this.config.deviceTokens || [];
     this.updateConfig({ deviceTokens: tokens.filter((t) => t !== token) });
   }
 
-  removeDeviceTokenGlobal(token: string): void {
-    this.removeDeviceToken("owner", token);
-  }
-
-  getDeviceTokens(_userId: string): string[] {
+  getDeviceTokens(): string[] {
     return this.config.deviceTokens || [];
   }
 
-  setLiveActivityToken(_userId: string, token: string | null): void {
+  setLiveActivityToken(token: string | null): void {
     this.updateConfig({ liveActivityToken: token || undefined });
   }
 
-  getLiveActivityToken(_userId: string): string | undefined {
+  getLiveActivityToken(): string | undefined {
     return this.config.liveActivityToken;
   }
 
   // ─── Thinking Preferences ───
 
-  getModelThinkingLevelPreference(_userId: string, modelId: string): string | undefined {
+  getModelThinkingLevelPreference(modelId: string): string | undefined {
     const normalized = modelId.trim();
     if (!normalized) return undefined;
     return this.config.thinkingLevelByModel?.[normalized];
   }
 
-  setModelThinkingLevelPreference(_userId: string, modelId: string, level: string): void {
+  setModelThinkingLevelPreference(modelId: string, level: string): void {
     const normalizedModel = modelId.trim();
     const normalizedLevel = level.trim();
     if (!normalizedModel || !normalizedLevel) return;
@@ -824,17 +789,15 @@ export class Storage {
 
   // ─── Sessions ───
 
-  private getSessionPath(_userId: string, sessionId: string): string {
+  private getSessionPath(sessionId: string): string {
     return join(this.sessionsDir, `${sessionId}.json`);
   }
 
-  createSession(userId: string, name?: string, model?: string): Session {
+  createSession(name?: string, model?: string): Session {
     const id = nanoid(8);
-    const normalizedUserId = this.normalizeUserId(userId);
 
     const session: Session = {
       id,
-      userId: normalizedUserId,
       name,
       status: "starting",
       createdAt: Date.now(),
@@ -850,10 +813,8 @@ export class Storage {
   }
 
   saveSession(session: Session): void {
-    const normalizedUserId = this.normalizeUserId(session.userId);
-    session.userId = normalizedUserId;
 
-    const path = this.getSessionPath(normalizedUserId, session.id);
+    const path = this.getSessionPath(session.id);
     const dir = dirname(path);
 
     if (!existsSync(dir)) {
@@ -875,23 +836,20 @@ export class Storage {
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
-  getSession(userId: string, sessionId: string): Session | undefined {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getSessionPath(normalizedUserId, sessionId);
+  getSession(sessionId: string): Session | undefined {
+    const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return undefined;
 
     try {
       const data = JSON.parse(readFileSync(path, "utf-8"));
       if (!data.session) return undefined;
-      data.session.userId = normalizedUserId;
       return data.session;
     } catch {
       return undefined;
     }
   }
 
-  listUserSessions(userId: string): Session[] {
-    const normalizedUserId = this.normalizeUserId(userId);
+  listSessions(): Session[] {
     const baseDir = this.sessionsDir;
     if (!existsSync(baseDir)) return [];
 
@@ -904,8 +862,6 @@ export class Storage {
         const data = JSON.parse(readFileSync(join(baseDir, file), "utf-8"));
         const session = data.session as Session | undefined;
         if (!session) continue;
-
-        session.userId = normalizedUserId;
         sessions.push(session);
       } catch (err) {
         console.error(`[storage] Corrupt session file ${join(baseDir, file)}, skipping:`, err);
@@ -916,9 +872,8 @@ export class Storage {
     return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
   }
 
-  getSessionMessages(userId: string, sessionId: string): SessionMessage[] {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getSessionPath(normalizedUserId, sessionId);
+  getSessionMessages(sessionId: string): SessionMessage[] {
+    const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return [];
 
     try {
@@ -930,12 +885,10 @@ export class Storage {
   }
 
   addSessionMessage(
-    userId: string,
     sessionId: string,
     message: Omit<SessionMessage, "id" | "sessionId">,
   ): SessionMessage {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getSessionPath(normalizedUserId, sessionId);
+    const path = this.getSessionPath(sessionId);
 
     const writeDir = dirname(path);
     if (!existsSync(writeDir)) {
@@ -961,7 +914,6 @@ export class Storage {
 
     // Update session stats
     if (data.session) {
-      data.session.userId = normalizedUserId;
       data.session.messageCount = data.messages.length;
       data.session.lastActivity = Date.now();
       data.session.lastMessage = message.content.slice(0, 100);
@@ -981,9 +933,8 @@ export class Storage {
     return fullMessage;
   }
 
-  deleteSession(userId: string, sessionId: string): boolean {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getSessionPath(normalizedUserId, sessionId);
+  deleteSession(sessionId: string): boolean {
+    const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return false;
 
     rmSync(path);
@@ -992,14 +943,13 @@ export class Storage {
 
   // ─── Workspaces ───
 
-  private getWorkspacePath(_userId: string, workspaceId: string): string {
+  private getWorkspacePath(workspaceId: string): string {
     return join(this.workspacesDir, `${workspaceId}.json`);
   }
 
-  createWorkspace(userId: string, req: CreateWorkspaceRequest): Workspace {
+  createWorkspace(req: CreateWorkspaceRequest): Workspace {
     const id = nanoid(8);
     const now = Date.now();
-    const normalizedUserId = this.normalizeUserId(userId);
 
     const policyPreset = req.policyPreset || "container";
     const runtime =
@@ -1009,7 +959,6 @@ export class Storage {
 
     const workspace: Workspace = {
       id,
-      userId: normalizedUserId,
       name: req.name,
       description: req.description,
       icon: req.icon,
@@ -1032,10 +981,8 @@ export class Storage {
   }
 
   saveWorkspace(workspace: Workspace): void {
-    const normalizedUserId = this.normalizeUserId(workspace.userId);
-    workspace.userId = normalizedUserId;
 
-    const path = this.getWorkspacePath(normalizedUserId, workspace.id);
+    const path = this.getWorkspacePath(workspace.id);
     const dir = dirname(path);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1052,14 +999,12 @@ export class Storage {
     throw new Error(`workspace ${workspace.id} missing runtime`);
   }
 
-  getWorkspace(userId: string, workspaceId: string): Workspace | undefined {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getWorkspacePath(normalizedUserId, workspaceId);
+  getWorkspace(workspaceId: string): Workspace | undefined {
+    const path = this.getWorkspacePath(workspaceId);
     if (!existsSync(path)) return undefined;
 
     try {
       const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
-      ws.userId = normalizedUserId;
       ws.runtime = this.validateWorkspaceRuntime(ws);
       ws.extensions = normalizeExtensionList(ws.extensions);
       ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
@@ -1069,14 +1014,7 @@ export class Storage {
     }
   }
 
-  /** List all workspaces (single-owner shortcut — no userId needed). */
-  listAllWorkspaces(): Workspace[] {
-    const owner = this.getOwnerUser();
-    return owner ? this.listWorkspaces(owner.id) : [];
-  }
-
-  listWorkspaces(userId: string): Workspace[] {
-    const normalizedUserId = this.normalizeUserId(userId);
+  listWorkspaces(): Workspace[] {
     const dir = this.workspacesDir;
     if (!existsSync(dir)) return [];
 
@@ -1086,7 +1024,6 @@ export class Storage {
       if (!file.endsWith(".json")) continue;
       try {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
-        ws.userId = normalizedUserId;
         ws.runtime = this.validateWorkspaceRuntime(ws);
         ws.extensions = normalizeExtensionList(ws.extensions);
         ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
@@ -1100,11 +1037,10 @@ export class Storage {
   }
 
   updateWorkspace(
-    userId: string,
     workspaceId: string,
     updates: UpdateWorkspaceRequest,
   ): Workspace | undefined {
-    const workspace = this.getWorkspace(userId, workspaceId);
+    const workspace = this.getWorkspace(workspaceId);
     if (!workspace) return undefined;
 
     if (updates.name !== undefined) workspace.name = updates.name;
@@ -1138,9 +1074,8 @@ export class Storage {
     return workspace;
   }
 
-  deleteWorkspace(userId: string, workspaceId: string): boolean {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const path = this.getWorkspacePath(normalizedUserId, workspaceId);
+  deleteWorkspace(workspaceId: string): boolean {
+    const path = this.getWorkspacePath(workspaceId);
     if (!existsSync(path)) return false;
 
     rmSync(path);
@@ -1150,11 +1085,11 @@ export class Storage {
   /**
    * Ensure a user has at least one workspace. Seeds defaults if empty.
    */
-  ensureDefaultWorkspaces(userId: string): void {
-    const existing = this.listWorkspaces(userId);
+  ensureDefaultWorkspaces(): void {
+    const existing = this.listWorkspaces();
     if (existing.length > 0) return;
 
-    this.createWorkspace(userId, {
+    this.createWorkspace({
       name: "general",
       description: "General-purpose agent with web search and browsing",
       icon: "terminal",
@@ -1164,7 +1099,7 @@ export class Storage {
       memoryNamespace: "general",
     });
 
-    this.createWorkspace(userId, {
+    this.createWorkspace({
       name: "research",
       description: "Deep research with search, web, and transcription",
       icon: "magnifyingglass",

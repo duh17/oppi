@@ -32,7 +32,6 @@ import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 import { AuthProxy } from "./auth-proxy.js";
 
 import type {
-  User,
   Session,
   Workspace,
   ClientMessage,
@@ -90,13 +89,12 @@ export function formatUnauthorizedAuthLog(opts: {
 
 export function formatPermissionRequestLog(opts: {
   requestId: string;
-  userId: string;
   sessionId: string;
   tool: string;
   risk: string;
   displaySummary: string;
 }): string {
-  return `${ts()} [gate] Permission request ${opts.requestId} → ${opts.userId} (session=${opts.sessionId}, tool=${opts.tool}, risk=${opts.risk}, summaryChars=${opts.displaySummary.length})`;
+  return `${ts()} [gate] Permission request ${opts.requestId} (session=${opts.sessionId}, tool=${opts.tool}, risk=${opts.risk}, summaryChars=${opts.displaySummary.length})`;
 }
 
 function normalizeBindHost(host: string): string {
@@ -344,11 +342,11 @@ export class Server {
   private readonly modelCatalogTtlMs = 30_000;
 
   // Track WebSocket connections per user for permission/UI forwarding
-  private userConnections: Map<string, Set<WebSocket>> = new Map();
+  private connections: Set<WebSocket> = new Set();
 
   // Live Activity push coalescing (one pending update per user, flushed with debounce).
-  private liveActivityTimers: Map<string, NodeJS.Timeout> = new Map();
-  private liveActivityPending: Map<string, PendingLiveActivityUpdate> = new Map();
+  private liveActivityTimer: NodeJS.Timeout | null = null;
+  private liveActivityPending: PendingLiveActivityUpdate | null = null;
   private readonly liveActivityDebounceMs = 750;
 
   // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
@@ -391,7 +389,7 @@ export class Server {
 
       this.sandbox.handleSkillsChanged(
         changedNames,
-        () => this.storage.listAllWorkspaces().filter((ws) => ws.runtime === "container"),
+        () => this.storage.listWorkspaces().filter((ws) => ws.runtime === "container"),
       );
     });
     this.push = createPushClient(apnsConfig);
@@ -404,12 +402,12 @@ export class Server {
       sessions: this.sessions,
       gate: this.gate,
       ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (userId, session) =>
-        this.resolveWorkspaceForSession(userId, session),
-      handleClientMessage: (user, session, msg, send) =>
-        this.handleClientMessage(user, session, msg, send),
-      trackConnection: (userId, ws) => this.trackConnection(userId, ws),
-      untrackConnection: (userId, ws) => this.untrackConnection(userId, ws),
+      resolveWorkspaceForSession: (session) =>
+        this.resolveWorkspaceForSession(session),
+      handleClientMessage: (session, msg, send) =>
+        this.handleClientMessage(session, msg, send),
+      trackConnection: (ws) => this.trackConnection(ws),
+      untrackConnection: (ws) => this.untrackConnection(ws),
     });
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
@@ -420,7 +418,6 @@ export class Server {
       }
 
       const streamSeq = this.streamMux.recordUserStreamEvent(
-        payload.userId,
         payload.sessionId,
         payload.event,
       );
@@ -439,8 +436,8 @@ export class Server {
       userSkillStore: this.userSkillStore,
       streamMux: this.streamMux,
       ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (userId, session) =>
-        this.resolveWorkspaceForSession(userId, session),
+      resolveWorkspaceForSession: (session) =>
+        this.resolveWorkspaceForSession(session),
       isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
       refreshModelCatalog: () => this.refreshModelCatalog(),
       getModelCatalog: () => this.modelCatalog,
@@ -466,13 +463,13 @@ export class Server {
       ({ requestId, sessionId }: { requestId: string; sessionId: string }) => {
         const session = this.findSessionById(sessionId);
         if (session) {
-          this.broadcastToUser(session.userId, {
+          this.broadcastToUser({
             type: "permission_expired",
             id: requestId,
             reason: "Approval timeout",
             sessionId,
           });
-          this.queueLiveActivityUpdate(session.userId, {
+          this.queueLiveActivityUpdate({
             sessionId,
             lastEvent: "Permission expired",
             priority: 5,
@@ -483,8 +480,8 @@ export class Server {
 
     this.gate.on(
       "approval_resolved",
-      ({ sessionId, userId, action }: { sessionId: string; userId: string; action: "allow" | "deny" }) => {
-        this.queueLiveActivityUpdate(userId, {
+      ({ sessionId, action }: { sessionId: string; action: "allow" | "deny" }) => {
+        this.queueLiveActivityUpdate({
           sessionId,
           lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
           priority: action === "deny" ? 10 : 5,
@@ -539,11 +536,9 @@ export class Server {
     await this.sandbox.shutdownLoopbackBridges();
     await this.gate.shutdown();
     await this.authProxy.stop();
-    for (const timer of this.liveActivityTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.liveActivityTimers.clear();
-    this.liveActivityPending.clear();
+    if (this.liveActivityTimer) clearTimeout(this.liveActivityTimer);
+    this.liveActivityTimer = null;
+    this.liveActivityPending = null;
     this.push.shutdown();
     this.wss.close();
     this.httpServer.close();
@@ -566,8 +561,8 @@ export class Server {
       resolutionOptions: pending.resolutionOptions,
     };
 
-    this.broadcastToUser(pending.userId, msg);
-    this.queueLiveActivityUpdate(pending.userId, {
+    this.broadcastToUser(msg);
+    this.queueLiveActivityUpdate({
       sessionId: pending.sessionId,
       lastEvent: "Permission required",
       priority: pending.risk === "low" ? 5 : 10,
@@ -575,7 +570,7 @@ export class Server {
     console.log(
       formatPermissionRequestLog({
         requestId: pending.id,
-        userId: pending.userId,
+        
         sessionId: pending.sessionId,
         tool: pending.tool,
         risk: pending.risk,
@@ -586,23 +581,23 @@ export class Server {
 
   // ─── User Connection Tracking ───
 
-  private broadcastToUser(userId: string, msg: ServerMessage): void {
+  private broadcastToUser(msg: ServerMessage): void {
     let outbound = msg;
     if (
       msg.sessionId &&
       this.streamMux.isNotificationLevelMessage(msg) &&
       msg.streamSeq === undefined
     ) {
-      const streamSeq = this.streamMux.recordUserStreamEvent(userId, msg.sessionId, msg);
+      const streamSeq = this.streamMux.recordUserStreamEvent(msg.sessionId, msg);
       outbound = {
         ...msg,
         streamSeq,
       };
     }
 
-    const conns = this.userConnections.get(userId);
+    const conns = this.connections;
     if (!conns || conns.size === 0) {
-      this.pushFallback(userId, outbound);
+      this.pushFallback(outbound);
       return;
     }
 
@@ -614,7 +609,7 @@ export class Server {
       }
     } else {
       // No WebSocket connected — fall back to push notification
-      this.pushFallback(userId, outbound);
+      this.pushFallback(outbound);
     }
   }
 
@@ -622,8 +617,8 @@ export class Server {
    * Send a push notification when no WebSocket client is connected.
    * Only fires for permission requests and session lifecycle events.
    */
-  private pushFallback(userId: string, msg: ServerMessage): void {
-    const tokens = this.storage.getDeviceTokens(userId);
+  private pushFallback(msg: ServerMessage): void {
+    const tokens = this.storage.getDeviceTokens();
     if (tokens.length === 0) return;
 
     if (msg.type === "permission_request") {
@@ -648,7 +643,7 @@ export class Server {
           });
       }
     } else if (msg.type === "session_ended") {
-      const session = this.findSessionByReason(userId, msg);
+      const session = this.findSessionByReason(msg);
       for (const token of tokens) {
         this.push.sendSessionEventPush(token, {
           sessionId: session?.id || "unknown",
@@ -672,11 +667,11 @@ export class Server {
   }
 
   private handleLiveActivitySessionEvent(payload: SessionBroadcastEvent): void {
-    const { event, userId, sessionId } = payload;
+    const { event, sessionId } = payload;
 
     switch (event.type) {
       case "state":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: this.mapSessionStatusToLiveActivity(event.session.status),
           lastEvent: this.sessionStatusLabel(event.session.status),
@@ -684,7 +679,7 @@ export class Server {
         });
         return;
       case "agent_start":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "busy",
           lastEvent: "Agent started",
@@ -692,7 +687,7 @@ export class Server {
         });
         return;
       case "agent_end":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "ready",
           activeTool: null,
@@ -701,7 +696,7 @@ export class Server {
         });
         return;
       case "tool_start":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "busy",
           activeTool: event.tool,
@@ -710,14 +705,14 @@ export class Server {
         });
         return;
       case "tool_end":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           activeTool: null,
           priority: 5,
         });
         return;
       case "stop_requested":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "stopping",
           lastEvent: "Stopping",
@@ -725,7 +720,7 @@ export class Server {
         });
         return;
       case "stop_confirmed":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "ready",
           activeTool: null,
@@ -734,7 +729,7 @@ export class Server {
         });
         return;
       case "stop_failed":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "error",
           lastEvent: "Stop failed",
@@ -742,21 +737,21 @@ export class Server {
         });
         return;
       case "permission_request":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           lastEvent: "Permission required",
           priority: 10,
         });
         return;
       case "permission_expired":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           lastEvent: "Permission expired",
           priority: 5,
         });
         return;
       case "permission_cancelled":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           lastEvent: "Permission resolved",
           priority: 5,
@@ -764,7 +759,7 @@ export class Server {
         return;
       case "error":
         if (!event.error.startsWith("Retrying (")) {
-          this.queueLiveActivityUpdate(userId, {
+          this.queueLiveActivityUpdate({
             sessionId,
             status: "error",
             lastEvent: "Error",
@@ -773,7 +768,7 @@ export class Server {
         }
         return;
       case "session_ended":
-        this.queueLiveActivityUpdate(userId, {
+        this.queueLiveActivityUpdate({
           sessionId,
           status: "stopped",
           activeTool: null,
@@ -787,8 +782,8 @@ export class Server {
     }
   }
 
-  private queueLiveActivityUpdate(userId: string, update: PendingLiveActivityUpdate): void {
-    const current = this.liveActivityPending.get(userId) ?? {};
+  private queueLiveActivityUpdate(update: PendingLiveActivityUpdate): void {
+    const current = this.liveActivityPending ?? {};
     const merged: PendingLiveActivityUpdate = {
       sessionId: update.sessionId ?? current.sessionId,
       status: update.status ?? current.status,
@@ -798,35 +793,35 @@ export class Server {
       priority: (Math.max(current.priority ?? 5, update.priority ?? 5) as 5 | 10),
     };
 
-    this.liveActivityPending.set(userId, merged);
+    this.liveActivityPending = merged;
 
-    if (this.liveActivityTimers.has(userId)) {
+    if (this.liveActivityTimer) {
       return;
     }
 
-    const timer = setTimeout(() => this.flushLiveActivityUpdate(userId), this.liveActivityDebounceMs);
-    this.liveActivityTimers.set(userId, timer);
+    const timer = setTimeout(() => this.flushLiveActivityUpdate(), this.liveActivityDebounceMs);
+    this.liveActivityTimer = timer;
   }
 
-  private flushLiveActivityUpdate(userId: string): void {
-    const timer = this.liveActivityTimers.get(userId);
+  private flushLiveActivityUpdate(): void {
+    const timer = this.liveActivityTimer;
     if (timer) {
       clearTimeout(timer);
-      this.liveActivityTimers.delete(userId);
+      this.liveActivityTimer = null;
     }
 
-    const pending = this.liveActivityPending.get(userId);
+    const pending = this.liveActivityPending;
     if (!pending) {
       return;
     }
-    this.liveActivityPending.delete(userId);
+    this.liveActivityPending = null;
 
-    const token = this.storage.getLiveActivityToken(userId);
+    const token = this.storage.getLiveActivityToken();
     if (!token) {
       return;
     }
 
-    const contentState = this.buildLiveActivityContentState(userId, pending);
+    const contentState = this.buildLiveActivityContentState(pending);
     const liveActivityPayload: Record<string, unknown> = { ...contentState };
 
     if (pending.end) {
@@ -834,7 +829,7 @@ export class Server {
         .endLiveActivity(token, liveActivityPayload, undefined, pending.priority ?? 10)
         .then((ok) => {
           if (ok) {
-            this.storage.setLiveActivityToken(userId, null);
+            this.storage.setLiveActivityToken(null);
           }
         });
       return;
@@ -845,12 +840,11 @@ export class Server {
   }
 
   private buildLiveActivityContentState(
-    userId: string,
     pending: PendingLiveActivityUpdate,
   ): LiveActivityContentState {
     const session = pending.sessionId
       ? this.findSessionById(pending.sessionId)
-      : this.findPrimarySessionForUser(userId);
+      : this.findPrimarySessionForUser();
 
     const now = Date.now();
     const elapsedSeconds = session ? Math.max(0, Math.floor((now - session.createdAt) / 1000)) : 0;
@@ -858,14 +852,14 @@ export class Server {
     return {
       status: pending.status ?? this.mapSessionStatusToLiveActivity(session?.status),
       activeTool: pending.activeTool ?? null,
-      pendingPermissions: this.gate.getPendingForUser(userId).length,
+      pendingPermissions: this.gate.getPendingForUser().length,
       lastEvent: pending.lastEvent ?? null,
       elapsedSeconds,
     };
   }
 
-  private findPrimarySessionForUser(userId: string): Session | undefined {
-    const sessions = this.storage.listUserSessions(userId);
+  private findPrimarySessionForUser(): Session | undefined {
+    const sessions = this.storage.listSessions();
     if (sessions.length === 0) {
       return undefined;
     }
@@ -936,27 +930,19 @@ export class Server {
    * Find session from a session_ended message context.
    * We track which user's sessions are active to find the match.
    */
-  private findSessionByReason(userId: string, _msg: ServerMessage): Session | undefined {
-    const sessions = this.storage.listUserSessions(userId);
+  private findSessionByReason(_msg: ServerMessage): Session | undefined {
+    const sessions = this.storage.listSessions();
     // Return the most recently active session (best effort)
     return sessions.find((s) => s.status === "stopped") || sessions[0];
   }
 
-  private trackConnection(userId: string, ws: WebSocket): void {
-    let conns = this.userConnections.get(userId);
-    if (!conns) {
-      conns = new Set();
-      this.userConnections.set(userId, conns);
-    }
+  private trackConnection(ws: WebSocket): void {
+    const conns = this.connections;
     conns.add(ws);
   }
 
-  private untrackConnection(userId: string, ws: WebSocket): void {
-    const conns = this.userConnections.get(userId);
-    if (conns) {
-      conns.delete(ws);
-      if (conns.size === 0) this.userConnections.delete(userId);
-    }
+  private untrackConnection(ws: WebSocket): void {
+    this.connections.delete(ws);
   }
 
   private async refreshModelCatalog(force = false): Promise<void> {
@@ -1028,10 +1014,9 @@ export class Server {
   }
 
   private findSessionById(sessionId: string): Session | undefined {
-    const owner = this.storage.getOwnerUser();
-    if (!owner) return undefined;
+    if (!this.storage.isPaired()) return undefined;
 
-    const sessions = this.storage.listUserSessions(owner.id);
+    const sessions = this.storage.listSessions();
     const match = sessions.find((s) => s.id === sessionId);
     return match ? this.ensureSessionContextWindow(match) : undefined;
   }
@@ -1045,7 +1030,7 @@ export class Server {
     }
 
     if (!session.runtime && session.workspaceId) {
-      const workspace = this.storage.getWorkspace(session.userId, session.workspaceId);
+      const workspace = this.storage.getWorkspace(session.workspaceId);
       if (workspace?.runtime) {
         session.runtime = workspace.runtime;
         changed = true;
@@ -1065,17 +1050,16 @@ export class Server {
 
   // ─── Auth ───
 
-  private authenticate(req: IncomingMessage): User | null {
+  private authenticate(req: IncomingMessage): boolean {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) return null;
+    if (!auth?.startsWith("Bearer ")) return false;
 
     const token = auth.slice(7);
     const configToken = this.storage.getToken();
-    if (!configToken) return null;
-    if (!secureTokenEquals(configToken, token)) return null;
+    if (!configToken) return false;
+    if (!secureTokenEquals(configToken, token)) return false;
 
-    // Return a synthetic User for legacy route compatibility
-    return this.storage.getOwnerUser() ?? null;
+    return true;
   }
 
   // ─── HTTP Router ───
@@ -1088,7 +1072,7 @@ export class Server {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    res.setHeader("X-PiRemote-Protocol", "2");
+    res.setHeader("X-Oppi-Protocol", "2");
 
     if (method === "OPTIONS") {
       res.writeHead(204);
@@ -1100,8 +1084,8 @@ export class Server {
       return;
     }
 
-    const user = this.authenticate(req);
-    if (!user) {
+    const authenticated = this.authenticate(req);
+    if (!authenticated) {
       console.log(
         formatUnauthorizedAuthLog({
           transport: "http",
@@ -1115,7 +1099,7 @@ export class Server {
     }
 
     try {
-      await this.routes.dispatch(method, path, url, user, req, res);
+      await this.routes.dispatch(method, path, url, req, res);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Internal error";
       console.error("HTTP error:", err);
@@ -1135,8 +1119,8 @@ export class Server {
     res.end(JSON.stringify({ error: message } as ApiError));
   }
 
-  private resolveWorkspaceForSession(userId: string, session: Session): Workspace | undefined {
-    return session.workspaceId ? this.storage.getWorkspace(userId, session.workspaceId) : undefined;
+  private resolveWorkspaceForSession(session: Session): Workspace | undefined {
+    return session.workspaceId ? this.storage.getWorkspace(session.workspaceId) : undefined;
   }
 
   // ─── WebSocket ───
@@ -1145,8 +1129,8 @@ export class Server {
     (socket as Socket).setNoDelay?.(true);
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
-    const user = this.authenticate(req);
-    if (!user) {
+    const authenticated = this.authenticate(req);
+    if (!authenticated) {
       console.log(
         formatUnauthorizedAuthLog({
           transport: "ws",
@@ -1161,7 +1145,7 @@ export class Server {
 
     if (url.pathname === "/stream") {
       this.wss.handleUpgrade(req, socket, head, (ws) => {
-        this.streamMux.handleWebSocket(ws, user);
+        this.streamMux.handleWebSocket(ws);
       });
       return;
     }
@@ -1175,9 +1159,9 @@ export class Server {
 
     const workspaceId = wsMatch[1];
     const sessionId = wsMatch[2];
-    const session = this.storage.getSession(user.id, sessionId);
+    const session = this.storage.getSession(sessionId);
     if (!session) {
-      console.log(`${ts()} [ws] 404 session not found: ${sessionId} (user=${user.name})`);
+      console.log(`${ts()} [ws] 404 session not found: ${sessionId} (user=${this.storage.getOwnerName()})`);
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -1185,7 +1169,7 @@ export class Server {
 
     if (session.workspaceId !== workspaceId) {
       console.log(
-        `${ts()} [ws] 404 session/workspace mismatch: session=${sessionId} requested=${workspaceId} actual=${session.workspaceId ?? "none"} (user=${user.name})`,
+        `${ts()} [ws] 404 session/workspace mismatch: session=${sessionId} requested=${workspaceId} actual=${session.workspaceId ?? "none"} (user=${this.storage.getOwnerName()})`,
       );
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
@@ -1193,13 +1177,13 @@ export class Server {
     }
 
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      this.handleWebSocket(ws, user, session);
+      this.handleWebSocket(ws, session);
     });
   }
 
-  private async handleWebSocket(ws: WebSocket, user: User, session: Session): Promise<void> {
-    console.log(`${ts()} [ws] Connected: ${user.name} → ${session.id} (status=${session.status})`);
-    this.trackConnection(user.id, ws);
+  private async handleWebSocket(ws: WebSocket, session: Session): Promise<void> {
+    console.log(`${ts()} [ws] Connected: ${this.storage.getOwnerName()} → ${session.id} (status=${session.status})`);
+    this.trackConnection(ws);
 
     let msgSent = 0;
     let msgRecv = 0;
@@ -1225,10 +1209,10 @@ export class Server {
         const msg = JSON.parse(data.toString()) as ClientMessage;
         msgRecv++;
         console.log(
-          `${ts()} [ws] RECV ${msg.type} from ${user.name} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`,
+          `${ts()} [ws] RECV ${msg.type} from ${this.storage.getOwnerName()} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`,
         );
         if (ready) {
-          await this.handleClientMessage(user, hydratedSession, msg, send);
+          await this.handleClientMessage(hydratedSession, msg, send);
         } else {
           messageQueue.push(msg);
           console.log(
@@ -1247,16 +1231,16 @@ export class Server {
     ws.on("close", (code, reason) => {
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${user.name} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
+        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
       );
       unsubscribe?.();
-      this.untrackConnection(user.id, ws);
+      this.untrackConnection(ws);
     });
 
     ws.on("error", (err) => {
-      console.error(`${ts()} [ws] Error: ${user.name} → ${session.id}:`, err);
+      console.error(`${ts()} [ws] Error: ${this.storage.getOwnerName()} → ${session.id}:`, err);
       unsubscribe?.();
-      this.untrackConnection(user.id, ws);
+      this.untrackConnection(ws);
     });
 
     try {
@@ -1266,20 +1250,18 @@ export class Server {
       send({
         type: "connected",
         session,
-        currentSeq: this.sessions.getCurrentSeq(user.id, session.id),
+        currentSeq: this.sessions.getCurrentSeq(session.id),
       });
 
       // Resolve workspace for this session
-      const workspace = this.resolveWorkspaceForSession(user.id, session);
+      const workspace = this.resolveWorkspaceForSession(session);
 
       console.log(
         `${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"}, runtime=${workspace?.runtime ?? "host"})...`,
       );
       const startTime = Date.now();
-      const activeSession = await this.sessions.startSession(
-        user.id,
-        session.id,
-        user.name,
+      const activeSession = await this.sessions.startSession(session.id,
+        this.storage.getOwnerName(),
         workspace,
       );
       const startMs = Date.now() - startTime;
@@ -1292,7 +1274,7 @@ export class Server {
       send({ type: "state", session: hydratedSession });
 
       // Send pending permission requests
-      const pendingPerms = this.gate.getPendingForUser(user.id);
+      const pendingPerms = this.gate.getPendingForUser();
       if (pendingPerms.length > 0) {
         console.log(
           `${ts()} [ws] Sending ${pendingPerms.length} pending permission(s) → ${session.id}`,
@@ -1315,7 +1297,7 @@ export class Server {
       }
 
       // Subscribe to session events
-      unsubscribe = this.sessions.subscribe(user.id, session.id, send);
+      unsubscribe = this.sessions.subscribe(session.id, send);
 
       // Drain queued messages (sent while pi was starting)
       ready = true;
@@ -1326,7 +1308,7 @@ export class Server {
       }
       for (const msg of messageQueue) {
         console.log(`${ts()} [ws] DRAIN ${msg.type} → ${session.id}`);
-        await this.handleClientMessage(user, hydratedSession, msg, send);
+        await this.handleClientMessage(hydratedSession, msg, send);
       }
       messageQueue.length = 0;
     } catch (err: unknown) {
@@ -1341,13 +1323,12 @@ export class Server {
         code: isRuntimeError ? (err as WorkspaceRuntimeError).code : undefined,
         fatal: isRuntimeError ? true : undefined,
       });
-      this.untrackConnection(user.id, ws);
+      this.untrackConnection(ws);
       ws.close();
     }
   }
 
   private async handleClientMessage(
-    user: User,
     session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
@@ -1379,7 +1360,7 @@ export class Server {
         }));
 
         try {
-          await this.sessions.sendPrompt(user.id, session.id, msg.message, {
+          await this.sessions.sendPrompt(session.id, msg.message, {
             images,
             streamingBehavior: msg.streamingBehavior,
             clientTurnId: msg.clientTurnId,
@@ -1423,7 +1404,7 @@ export class Server {
         }));
 
         try {
-          await this.sessions.sendSteer(user.id, session.id, msg.message, {
+          await this.sessions.sendSteer(session.id, msg.message, {
             images: steerImages,
             clientTurnId: msg.clientTurnId,
             requestId,
@@ -1462,7 +1443,7 @@ export class Server {
         }));
 
         try {
-          await this.sessions.sendFollowUp(user.id, session.id, msg.message, {
+          await this.sessions.sendFollowUp(session.id, msg.message, {
             images: fuImages,
             clientTurnId: msg.clientTurnId,
             requestId,
@@ -1493,7 +1474,7 @@ export class Server {
         const command = msg.type;
         console.log(`${ts()} [ws] STOP ${session.id}`);
         try {
-          await this.sessions.sendAbort(user.id, session.id);
+          await this.sessions.sendAbort(session.id);
           if (requestId) {
             send({ type: "rpc_result", command, requestId, success: true });
           }
@@ -1512,7 +1493,7 @@ export class Server {
         const requestId = msg.requestId;
         console.log(`${ts()} [ws] STOP_SESSION ${session.id}`);
         try {
-          await this.sessions.stopSession(user.id, session.id);
+          await this.sessions.stopSession(session.id);
           if (requestId) {
             send({ type: "rpc_result", command: "stop_session", requestId, success: true });
           }
@@ -1534,7 +1515,7 @@ export class Server {
       }
 
       case "get_state": {
-        const active = this.sessions.getActiveSession(user.id, session.id);
+        const active = this.sessions.getActiveSession(session.id);
         if (active) {
           send({ type: "state", session: this.ensureSessionContextWindow(active) });
         }
@@ -1551,7 +1532,7 @@ export class Server {
       }
 
       case "extension_ui_response": {
-        const ok = this.sessions.respondToUIRequest(user.id, session.id, {
+        const ok = this.sessions.respondToUIRequest(session.id, {
           type: "extension_ui_response",
           id: msg.id,
           value: msg.value,
@@ -1587,7 +1568,6 @@ export class Server {
       case "abort_bash":
       case "get_commands":
         await this.sessions.forwardRpcCommand(
-          user.id,
           session.id,
           msg as unknown as Record<string, unknown>,
           (msg as Record<string, unknown>).requestId as string | undefined,

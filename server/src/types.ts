@@ -2,31 +2,10 @@
  * Core types for oppi-server.
  */
 
-// ─── User & Auth ───
-
-export interface User {
-  id: string;
-  name: string;
-  token: string;
-  createdAt: number;
-  lastSeen?: number;
-  /** APNs device tokens (hex string). Multiple devices in future. */
-  deviceTokens?: string[];
-  /** ActivityKit push token for Live Activity updates (hex string). */
-  liveActivityToken?: string;
-  /**
-   * Per-model thinking preference map.
-   * Key: full model id ("provider/model")
-   * Value: thinking level ("off" | "minimal" | "low" | "medium" | "high" | "xhigh")
-   */
-  thinkingLevelByModel?: Record<string, string>;
-}
-
 // ─── Workspaces ───
 
 export interface Workspace {
   id: string;
-  userId: string;
   name: string; // "coding", "research"
   description?: string; // shown in workspace picker
   icon?: string; // SF Symbol name or emoji
@@ -80,7 +59,6 @@ export interface SessionChangeStats {
 
 export interface Session {
   id: string;
-  userId: string;
   workspaceId?: string; // which workspace spawned this session
   workspaceName?: string; // denormalized for display
   name?: string;
@@ -448,7 +426,7 @@ export interface PiCommand {
 // Server → Client
 export type ServerMessage = // ── Connection ──
 (| { type: "connected"; session: Session; currentSeq?: number }
-  | { type: "stream_connected"; userId: string; userName: string }
+  | { type: "stream_connected"; userName: string }
   | { type: "state"; session: Session }
   | { type: "session_ended"; reason: string }
   | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }

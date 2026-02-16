@@ -377,7 +377,7 @@ function cmdStatus(storage: Storage): void {
     console.log(chalk.dim("  Not paired"));
     console.log(chalk.dim("  Run 'oppi pair'"));
   } else {
-    const sessions = storage.listUserSessions("owner");
+    const sessions = storage.listSessions();
     console.log(`  Status:   ${chalk.green("Paired")}`);
     console.log(`  Sessions: ${sessions.length}`);
   }

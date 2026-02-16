@@ -27,10 +27,10 @@ describe("storage file permissions", () => {
     const storage = new Storage(dir);
     storage.ensurePaired();
 
-    const session = storage.createSession("owner", "security-check", "anthropic/claude-sonnet-4-0");
+    const session = storage.createSession("security-check", "anthropic/claude-sonnet-4-0");
     const sessionPath = join(dir, "sessions", `${session.id}.json`);
 
-    const workspace = storage.createWorkspace("owner", { name: "default", skills: [] });
+    const workspace = storage.createWorkspace({ name: "default", skills: [] });
     const workspacePath = join(dir, "workspaces", `${workspace.id}.json`);
 
     expect(statSync(join(dir, "sessions")).mode & 0o777).toBe(0o700);
