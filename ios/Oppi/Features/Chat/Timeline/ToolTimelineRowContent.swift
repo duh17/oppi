@@ -23,6 +23,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     /// Used for media files so data URIs produce inline previews instead of
     /// monospaced text truncation.
     let expandedUsesReadMediaRenderer: Bool
+    /// Render expanded todo output through the rich SwiftUI card renderer.
+    let expandedUsesTodoRenderer: Bool
     /// When true, expanded separated output uses terminal-like no-wrap
     /// rendering with horizontal scrolling.
     let prefersUnwrappedOutput: Bool
@@ -53,6 +55,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         expandedCodeStartLine: Int? = nil,
         expandedCodeFilePath: String? = nil,
         expandedUsesReadMediaRenderer: Bool = false,
+        expandedUsesTodoRenderer: Bool = false,
         prefersUnwrappedOutput: Bool = false,
         showSeparatedCommandAndOutput: Bool,
         copyCommandText: String?,
@@ -80,6 +83,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
         self.expandedCodeStartLine = expandedCodeStartLine
         self.expandedCodeFilePath = expandedCodeFilePath
         self.expandedUsesReadMediaRenderer = expandedUsesReadMediaRenderer
+        self.expandedUsesTodoRenderer = expandedUsesTodoRenderer
         self.prefersUnwrappedOutput = prefersUnwrappedOutput
         self.showSeparatedCommandAndOutput = showSeparatedCommandAndOutput
         self.copyCommandText = copyCommandText
@@ -514,6 +518,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContentView = hosted
     }
 
+    private func installExpandedTodoView(output: String) {
+        clearExpandedReadMediaView()
+
+        let hosted = UIHostingConfiguration {
+            TodoToolOutputView(output: output)
+        }
+        .margins(.all, 0)
+        .makeContentView()
+
+        hosted.translatesAutoresizingMaskIntoConstraints = false
+        expandedReadMediaContainer.addSubview(hosted)
+        NSLayoutConstraint.activate([
+            hosted.leadingAnchor.constraint(equalTo: expandedReadMediaContainer.leadingAnchor),
+            hosted.trailingAnchor.constraint(equalTo: expandedReadMediaContainer.trailingAnchor),
+            hosted.topAnchor.constraint(equalTo: expandedReadMediaContainer.topAnchor),
+            hosted.bottomAnchor.constraint(equalTo: expandedReadMediaContainer.bottomAnchor),
+        ])
+
+        expandedReadMediaContentView = hosted
+    }
+
     private func clearExpandedReadMediaView() {
         expandedReadMediaContentView?.removeFromSuperview()
         expandedReadMediaContentView = nil
@@ -923,6 +948,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     filePath: configuration.expandedCodeFilePath,
                     startLine: configuration.expandedCodeStartLine ?? 1
                 )
+
+                expandedScrollView.alwaysBounceHorizontal = false
+                expandedScrollView.showsHorizontalScrollIndicator = false
+                expandedViewportMode = .text
+
+                expandedViewportHeightConstraint?.isActive = true
+                expandedContainer.isHidden = false
+                expandedUsesViewport = true
+                expandedShouldAutoFollow = false
+                if textChanged {
+                    resetScrollPosition(expandedScrollView)
+                }
+            } else if configuration.expandedUsesTodoRenderer,
+                      !configuration.isError {
+                let previousTodoRendered = expandedRenderedText ?? previousRendered
+                let textChanged = previousTodoRendered != expandedText
+
+                expandedLabel.attributedText = nil
+                expandedLabel.text = nil
+                expandedLabel.isHidden = true
+                expandedMarkdownView.isHidden = true
+                expandedReadMediaContainer.isHidden = false
+                expandedUsesMarkdownLayout = false
+                expandedUsesReadMediaLayout = true
+                expandedRenderedText = expandedText
+                updateExpandedLabelWidthIfNeeded()
+                updateExpandedReadMediaWidthIfNeeded()
+                setExpandedContainerGestureInterceptionEnabled(false)
+
+                installExpandedTodoView(output: expandedText)
 
                 expandedScrollView.alwaysBounceHorizontal = false
                 expandedScrollView.showsHorizontalScrollIndicator = false

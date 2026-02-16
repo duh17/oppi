@@ -486,8 +486,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
-        #expect(config.expandedTextUsesMarkdown)
-        #expect(config.expandedText?.contains("### Assigned (1)") == true)
+        // Now uses the rich card renderer instead of markdown text
+        #expect(config.expandedUsesTodoRenderer)
         #expect(config.expandedText?.contains("TODO-a27df231") == true)
         #expect(config.trailing == "A1 O1 C0")
     }

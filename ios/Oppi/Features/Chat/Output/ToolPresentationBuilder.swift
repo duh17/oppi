@@ -115,6 +115,7 @@ enum ToolPresentationBuilder {
             expandedCodeStartLine: expanded.codeStartLine,
             expandedCodeFilePath: expanded.codeFilePath,
             expandedUsesReadMediaRenderer: expanded.usesReadMediaRenderer,
+            expandedUsesTodoRenderer: expanded.usesTodoRenderer,
             prefersUnwrappedOutput: expanded.prefersUnwrappedOutput,
             showSeparatedCommandAndOutput: expanded.showSeparatedCommandAndOutput,
             copyCommandText: expanded.copyCommandText,
@@ -231,6 +232,7 @@ enum ToolPresentationBuilder {
         var codeStartLine: Int?
         var codeFilePath: String?
         var usesReadMediaRenderer: Bool = false
+        var usesTodoRenderer: Bool = false
         var prefersUnwrappedOutput: Bool = false
         var showSeparatedCommandAndOutput: Bool = false
         var copyCommandText: String?
@@ -327,11 +329,11 @@ enum ToolPresentationBuilder {
             if let todoMutationDiff {
                 result.diffLines = todoMutationDiff.diffLines
                 result.copyOutputText = todoMutationDiff.unifiedText
-            } else if let todoPresentation {
-                result.text = todoPresentation.text
-                result.textUsesMarkdown = todoPresentation.usesMarkdown
             } else if !outputTrimmed.isEmpty {
+                // Use the rich card renderer for todo output (JSON → cards).
+                // Pass raw output so TodoToolOutputView can parse it.
                 result.text = outputTrimmed
+                result.usesTodoRenderer = true
             }
 
         default:
