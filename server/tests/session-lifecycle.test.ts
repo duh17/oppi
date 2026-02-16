@@ -721,6 +721,26 @@ describe("SessionManager applyPiStateSnapshot", () => {
     expect(session.thinkingLevel).toBe("high");
   });
 
+  it("does not persist thinking preference on state snapshot", () => {
+    // Regression: applyPiStateSnapshot used to call persistThinkingPreference,
+    // which clobbered the user's saved preference with pi's factory default
+    // during bootstrap. This made applyRememberedThinkingLevel a permanent no-op.
+    const setModelPref = vi.fn();
+    const { manager, session } = makeManagerHarness();
+    // Patch in the storage method that persists thinking preferences
+    (
+      (manager as unknown as { storage: Record<string, unknown> }).storage as Record<
+        string,
+        unknown
+      >
+    ).setModelThinkingLevelPreference = setModelPref;
+
+    session.model = "anthropic/claude-sonnet-4-0";
+    callApplySnapshot(manager, session, { thinkingLevel: "high" });
+
+    expect(setModelPref).not.toHaveBeenCalled();
+  });
+
   it("returns false for null/undefined state", () => {
     const { manager, session } = makeManagerHarness();
 
@@ -752,5 +772,410 @@ describe("SessionManager applyPiStateSnapshot", () => {
     });
 
     expect(changed).toBe(false);
+  });
+});
+
+// ─── RPC Response Dispatch ───
+
+describe("handleRpcLine response dispatch", () => {
+  it("dispatches correlated RPC success to pending handler", () => {
+    const { manager, active } = makeManagerHarness();
+    const result = vi.fn();
+    active.pendingResponses.set("req-42", result);
+
+    feedRpcLine(manager, "s1", {
+      type: "response",
+      id: "req-42",
+      success: true,
+      command: "get_state",
+      data: { model: "test" },
+    });
+
+    expect(result).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, command: "get_state" }),
+    );
+    expect(active.pendingResponses.size).toBe(0);
+  });
+
+  it("dispatches correlated RPC failure to pending handler", () => {
+    const { manager, active } = makeManagerHarness();
+    const result = vi.fn();
+    active.pendingResponses.set("req-99", result);
+
+    feedRpcLine(manager, "s1", {
+      type: "response",
+      id: "req-99",
+      success: false,
+      command: "set_thinking_level",
+      error: "unsupported",
+    });
+
+    expect(result).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false }),
+    );
+    expect(active.pendingResponses.size).toBe(0);
+  });
+
+  it("broadcasts error for orphaned failed response with id", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "response",
+      id: "orphan-id",
+      success: false,
+      command: "unknown_cmd",
+      error: "bad request",
+    });
+
+    expect(events.some((e) => e.type === "error")).toBe(true);
+  });
+
+  it("attributes uncorrelated failure to single pending handler", () => {
+    const { manager, active } = makeManagerHarness();
+    const result = vi.fn();
+    active.pendingResponses.set("only-one", result);
+
+    feedRpcLine(manager, "s1", {
+      type: "response",
+      success: false,
+      command: "set_model",
+      error: "model not found",
+    });
+
+    expect(result).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false }),
+    );
+    expect(active.pendingResponses.size).toBe(0);
+  });
+
+  it("broadcasts error for uncorrelated failure with multiple pending", () => {
+    const { manager, active, events } = makeManagerHarness();
+    active.pendingResponses.set("a", vi.fn());
+    active.pendingResponses.set("b", vi.fn());
+
+    feedRpcLine(manager, "s1", {
+      type: "response",
+      success: false,
+      command: "rpc",
+      error: "ambiguous",
+    });
+
+    // Neither handler should be called — broadcast error instead
+    expect(events.some((e) => e.type === "error")).toBe(true);
+    expect(active.pendingResponses.size).toBe(2);
+  });
+
+  it("ignores invalid JSON lines", () => {
+    const { manager, events } = makeManagerHarness();
+    // Feed raw invalid JSON
+    (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
+      "s1",
+      "not valid json {{{",
+    );
+    expect(events.length).toBe(0);
+  });
+
+  it("ignores lines for unknown session", () => {
+    const { manager, events } = makeManagerHarness();
+    feedRpcLine(manager, "nonexistent", {
+      type: "response",
+      success: true,
+      command: "get_state",
+    });
+    expect(events.length).toBe(0);
+  });
+});
+
+// ─── Event Translation & Broadcast ───
+
+describe("handleRpcLine event translation", () => {
+  it("broadcasts tool_execution_start event", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tc-1",
+    });
+
+    expect(events.some((e) => e.type === "tool_start")).toBe(true);
+  });
+
+  it("broadcasts tool_execution_end event", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "tool_execution_end",
+      toolName: "bash",
+      toolCallId: "tc-1",
+    });
+
+    expect(events.some((e) => e.type === "tool_end")).toBe(true);
+  });
+
+  it("broadcasts message_end with assistant content", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+      },
+    });
+
+    const msgEnd = events.find((e) => e.type === "message_end");
+    expect(msgEnd).toBeDefined();
+  });
+
+  it("updates session status to busy on agent_start", () => {
+    const { manager, session } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", { type: "agent_start" });
+
+    expect(session.status).toBe("busy");
+  });
+
+  it("updates session status to ready on agent_end", () => {
+    const { manager, session } = makeManagerHarness();
+    session.status = "busy";
+
+    feedRpcLine(manager, "s1", { type: "agent_end" });
+
+    expect(session.status).toBe("ready");
+  });
+
+  it("broadcasts state after status-changing events", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", { type: "agent_start" });
+
+    const stateEvents = events.filter((e) => e.type === "state");
+    expect(stateEvents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("broadcasts text_delta for message_update with text_delta", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "hello " },
+    });
+
+    expect(events.some((e) => e.type === "text_delta")).toBe(true);
+  });
+
+  it("broadcasts thinking_delta for message_update with thinking_delta", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "let me think..." },
+    });
+
+    expect(events.some((e) => e.type === "thinking_delta")).toBe(true);
+  });
+});
+
+// ─── Extension UI Protocol ───
+
+describe("extension UI protocol", () => {
+  it("forwards dialog UI request to subscribers", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "extension_ui_request",
+      id: "ui-dialog-1",
+      method: "select",
+      title: "Pick one",
+      options: [{ label: "A" }, { label: "B" }],
+    });
+
+    const uiReq = events.find((e) => e.type === "extension_ui_request");
+    expect(uiReq).toBeDefined();
+    expect(manager.hasPendingUIRequest("s1", "ui-dialog-1")).toBe(true);
+  });
+
+  it("forwards fire-and-forget UI methods as notifications", () => {
+    const { manager, events } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "extension_ui_request",
+      id: "ui-notify-1",
+      method: "notify",
+      message: "Done!",
+    });
+
+    const notif = events.find((e) => e.type === "extension_ui_notification");
+    expect(notif).toBeDefined();
+    // Fire-and-forget should NOT be pending
+    expect(manager.hasPendingUIRequest("s1", "ui-notify-1")).toBe(false);
+  });
+
+  it("respondToUIRequest writes to stdin and clears pending", () => {
+    const { manager, stdinWrite } = makeManagerHarness();
+
+    // Set up a pending dialog
+    feedRpcLine(manager, "s1", {
+      type: "extension_ui_request",
+      id: "ui-resp-1",
+      method: "confirm",
+      title: "Are you sure?",
+    });
+
+    const ok = manager.respondToUIRequest("s1", {
+      id: "ui-resp-1",
+      result: true,
+    });
+
+    expect(ok).toBe(true);
+    expect(stdinWrite).toHaveBeenCalled();
+    expect(manager.hasPendingUIRequest("s1", "ui-resp-1")).toBe(false);
+  });
+
+  it("respondToUIRequest returns false for unknown request", () => {
+    const { manager } = makeManagerHarness();
+
+    const ok = manager.respondToUIRequest("s1", {
+      id: "nonexistent",
+      result: null,
+    });
+
+    expect(ok).toBe(false);
+  });
+});
+
+// ─── Session Catch-Up ───
+
+describe("session catch-up", () => {
+  it("getCatchUp returns events after given seq", () => {
+    const { manager, active } = makeManagerHarness();
+
+    // Simulate some events by feeding agent_start/end
+    feedRpcLine(manager, "s1", { type: "agent_start" });
+    feedRpcLine(manager, "s1", { type: "text_delta", text: "hi" });
+    feedRpcLine(manager, "s1", { type: "agent_end" });
+
+    const catchUp = manager.getCatchUp("s1", 0);
+    expect(catchUp).not.toBeNull();
+    expect(catchUp!.events.length).toBeGreaterThan(0);
+  });
+
+  it("getCatchUp returns null for nonexistent session", () => {
+    const { manager } = makeManagerHarness();
+    expect(manager.getCatchUp("nope", 0)).toBeNull();
+  });
+});
+
+// ─── updateSessionFromEvent ───
+
+describe("updateSessionFromEvent", () => {
+  it("increments messageCount on message_end with assistant text", () => {
+    const { manager, session } = makeManagerHarness();
+    const initialCount = session.messageCount;
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+        usage: { input: 10, output: 5 },
+      },
+    });
+
+    expect(session.messageCount).toBe(initialCount + 1);
+  });
+
+  it("updates tokens from message_end with assistant text", () => {
+    const { manager, session } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+      },
+    });
+
+    expect(session.tokens.input).toBe(100);
+    expect(session.tokens.output).toBe(50);
+  });
+
+  it("accumulates tokens across multiple message_end events", () => {
+    const { manager, session } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "first" }],
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+      },
+    });
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "second" }],
+        usage: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0 },
+      },
+    });
+
+    expect(session.tokens.input).toBe(300);
+    expect(session.tokens.output).toBe(150);
+  });
+
+  it("updates lastActivity on events", () => {
+    const { manager, session } = makeManagerHarness();
+    const before = session.lastActivity;
+
+    feedRpcLine(manager, "s1", { type: "agent_start" });
+
+    expect(session.lastActivity).toBeGreaterThanOrEqual(before);
+  });
+
+  it("updates context tokens from message_end usage", () => {
+    const { manager, session } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+        usage: { input: 1000, output: 200, cacheRead: 500, cacheWrite: 100 },
+      },
+    });
+
+    // contextTokens = input + output + cacheRead + cacheWrite
+    expect(session.contextTokens).toBe(1800);
+  });
+
+  it("does not increment messageCount for user message_end", () => {
+    const { manager, session } = makeManagerHarness();
+    const initialCount = session.messageCount;
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+
+    expect(session.messageCount).toBe(initialCount);
+  });
+
+  it("updates cost from message_end usage", () => {
+    const { manager, session } = makeManagerHarness();
+
+    feedRpcLine(manager, "s1", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "response" }],
+        usage: { input: 100, output: 50, cost: { total: 0.003 } },
+      },
+    });
+
+    expect(session.cost).toBeCloseTo(0.003);
   });
 });
