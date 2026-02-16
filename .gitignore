@@ -9,6 +9,7 @@ ios/OppiMac/
 ios/OppiMacTests/
 
 # Agent
+.internal/
 .pi/
 
 # General
