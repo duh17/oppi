@@ -53,7 +53,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
     private let expandedContainerView = UIView()
     private let expandedScrollView = UIScrollView()
-    private let expandedTextView = UITextView()
+    private let expandedTextView = BaselineSafeTextView()
     private var expandedContainerHeight: NSLayoutConstraint?
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration

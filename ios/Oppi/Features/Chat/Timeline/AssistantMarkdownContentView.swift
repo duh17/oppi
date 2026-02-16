@@ -53,7 +53,7 @@ final class AssistantMarkdownContentView: UIView {
     /// Segment types currently rendered — used for structural diff.
     private var renderedSegmentSignatures: [SegmentSignature] = []
     /// References to text views in the stack for in-place content updates.
-    private var textViews: [Int: UITextView] = [:]
+    private var textViews: [Int: BaselineSafeTextView] = [:]
     /// References to code block views for in-place updates.
     private var codeBlockViews: [Int: NativeCodeBlockView] = [:]
 
@@ -213,8 +213,8 @@ final class AssistantMarkdownContentView: UIView {
 
     // MARK: - Text view factory
 
-    private func makeTextView(palette: ThemePalette) -> UITextView {
-        let tv = UITextView()
+    private func makeTextView(palette: ThemePalette) -> BaselineSafeTextView {
+        let tv = BaselineSafeTextView()
         tv.isEditable = false
         tv.isSelectable = true
         tv.isScrollEnabled = false
