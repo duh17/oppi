@@ -112,4 +112,71 @@ describe("globMatch", () => {
     expect(globMatch("a/b/c/d/e", "**/c/**")).toBe(true);
     expect(globMatch("c/d", "**/c/**")).toBe(true);
   });
+
+  // ── Fuzz: ReDoS resistance ──
+  it("resists ReDoS with pathological patterns", () => {
+    // Classic ReDoS: many stars against a long non-matching string
+    const longPath = "a/".repeat(100) + "b";
+    const evilPattern = "*".repeat(50) + "c";
+    const start = Date.now();
+    globMatch(longPath, evilPattern);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it("resists ReDoS with nested ** patterns", () => {
+    const longPath = "/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z";
+    const evilPattern = "**/**/**/**/**/**/**/NOMATCH";
+    const start = Date.now();
+    globMatch(longPath, evilPattern);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  // ── Fuzz: random path/pattern combos don't crash ──
+  it("10K random paths and patterns do not crash", () => {
+    const pathChars = "abcdefghijklmnopqrstuvwxyz0123456789._-/";
+    const patChars = "abcdefghijklmnopqrstuvwxyz0123456789._-/*?[]{}\\!";
+    let crashes = 0;
+
+    for (let i = 0; i < 10_000; i++) {
+      const pathLen = Math.floor(Math.random() * 100) + 1;
+      const patLen = Math.floor(Math.random() * 50) + 1;
+      let path = "";
+      let pat = "";
+      for (let j = 0; j < pathLen; j++) path += pathChars[Math.floor(Math.random() * pathChars.length)];
+      for (let j = 0; j < patLen; j++) pat += patChars[Math.floor(Math.random() * patChars.length)];
+      try {
+        globMatch(path, pat);
+      } catch {
+        crashes++;
+      }
+    }
+    expect(crashes).toBe(0);
+  });
+
+  it("100K glob evaluations in under 5s", () => {
+    const paths = [
+      "/home/user/.pi/agent/auth.json",
+      "/workspace/project/src/index.ts",
+      "node_modules/.package-lock.json",
+      "/var/log/system.log",
+      "src/deeply/nested/path/to/file.test.ts",
+    ];
+    const patterns = [
+      "**/agent/auth.json",
+      "src/**/*.ts",
+      "**/node_modules/**",
+      "*.log",
+      "**/*.test.ts",
+      "src/*",
+      "**",
+      "*",
+    ];
+    const start = Date.now();
+    for (let i = 0; i < 100_000; i++) {
+      const path = paths[i % paths.length];
+      const pat = patterns[i % patterns.length];
+      globMatch(path, pat);
+    }
+    expect(Date.now() - start).toBeLessThan(5000);
+  });
 });
