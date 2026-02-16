@@ -260,7 +260,6 @@ struct ConnectionCoordinatorTests {
     private func makeSession(id: String, name: String) -> Session {
         Session(
             id: id,
-            userId: "u1",
             workspaceId: "w1",
             name: name,
             status: .ready,

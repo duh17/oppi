@@ -223,22 +223,22 @@ struct APIClientTests {
             case "/workspaces":
                 return self.mockResponse(json: """
                 {"workspaces":[
-                    {"id":"w1","userId":"u1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-                    {"id":"w2","userId":"u1","name":"Ops","skills":[],"createdAt":0,"updatedAt":0}
+                    {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
+                    {"id":"w2","name":"Ops","skills":[],"createdAt":0,"updatedAt":0}
                 ]}
                 """)
 
             case "/workspaces/w1/sessions":
                 return self.mockResponse(json: """
                 {"sessions":[
-                    {"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+                    {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
                 ]}
                 """)
 
             case "/workspaces/w2/sessions":
                 return self.mockResponse(json: """
                 {"sessions":[
-                    {"id":"s2","userId":"u1","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
+                    {"id":"s2","workspaceId":"w2","status":"busy","createdAt":0,"lastActivity":2000,"messageCount":5,"tokens":{"input":100,"output":50},"cost":0.01}
                 ]}
                 """)
 
@@ -263,13 +263,13 @@ struct APIClientTests {
             switch request.url?.path {
             case "/workspaces":
                 return self.mockResponse(json: """
-                {"workspaces":[{"id":"w1","userId":"u1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
+                {"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
                 """)
 
             case "/workspaces/w1/sessions":
                 #expect(request.httpMethod == "POST")
                 return self.mockResponse(json: """
-                {"session":{"id":"new","userId":"u1","workspaceId":"w1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+                {"session":{"id":"new","workspaceId":"w1","status":"starting","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
                 """)
 
             default:
@@ -301,7 +301,7 @@ struct APIClientTests {
             }
 
             return self.mockResponse(json: """
-            {"session":{"id":"forked-1","userId":"u1","workspaceId":"w1","name":"Fork: feature branch","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+            {"session":{"id":"forked-1","workspaceId":"w1","name":"Fork: feature branch","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
             """)
         }
 
@@ -326,7 +326,7 @@ struct APIClientTests {
             #expect(request.url?.query == "view=context")
             return self.mockResponse(json: """
             {
-                "session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
                     {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
                 ]
@@ -349,7 +349,7 @@ struct APIClientTests {
             #expect(request.url?.query == "view=full")
             return self.mockResponse(json: """
             {
-                "session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
                     {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"Hello"}
                 ]
@@ -376,7 +376,7 @@ struct APIClientTests {
                 {"type":"agent_end","seq":8}
               ],
               "currentSeq": 8,
-              "session": {"id":"s1","userId":"u1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+              "session": {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
               "catchUpComplete": true
             }
             """)
@@ -402,7 +402,7 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/w1/sessions/s1/stop")
             return self.mockResponse(json: """
-            {"session":{"id":"s1","userId":"u1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+            {"session":{"id":"s1","workspaceId":"w1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
             """)
         }
 
@@ -450,7 +450,7 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { _ in
             self.mockResponse(json: """
-            {"workspaces":[{"id":"w1","userId":"u1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
+            {"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
             """)
         }
 
@@ -465,7 +465,7 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { _ in
             self.mockResponse(json: """
-            {"workspace":{"id":"w1","userId":"u1","name":"Dev","skills":["fetch"],"createdAt":0,"updatedAt":0}}
+            {"workspace":{"id":"w1","name":"Dev","skills":["fetch"],"createdAt":0,"updatedAt":0}}
             """)
         }
 
@@ -480,7 +480,7 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
             return self.mockResponse(json: """
-            {"workspace":{"id":"w2","userId":"u1","name":"New","skills":["searxng"],"createdAt":0,"updatedAt":0}}
+            {"workspace":{"id":"w2","name":"New","skills":["searxng"],"createdAt":0,"updatedAt":0}}
             """)
         }
 
@@ -570,7 +570,7 @@ struct APIClientTests {
                   "timestamp":1700000000000,
                   "sessionId":"s1",
                   "workspaceId":"w1",
-                  "userId":"u1",
+                  
                   "tool":"bash",
                   "displaySummary":"git push",
                   "risk":"medium",
@@ -596,7 +596,7 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "PUT")
             return self.mockResponse(json: """
-            {"workspace":{"id":"w1","userId":"u1","name":"Updated","skills":[],"createdAt":0,"updatedAt":0}}
+            {"workspace":{"id":"w1","name":"Updated","skills":[],"createdAt":0,"updatedAt":0}}
             """)
         }
 

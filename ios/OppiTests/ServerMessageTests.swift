@@ -8,7 +8,7 @@ struct ServerMessageTests {
 
     @Test func decodesConnected() throws {
         let json = """
-        {"type":"connected","session":{"id":"abc","userId":"u1","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+        {"type":"connected","session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .connected(let session) = msg else {
@@ -21,7 +21,7 @@ struct ServerMessageTests {
 
     @Test func decodesConnectedWithCurrentSeq() throws {
         let json = """
-        {"type":"connected","currentSeq":42,"session":{"id":"abc","userId":"u1","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+        {"type":"connected","currentSeq":42,"session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .connected(let session) = msg else {
@@ -33,7 +33,7 @@ struct ServerMessageTests {
 
     @Test func decodesState() throws {
         let json = """
-        {"type":"state","session":{"id":"abc","userId":"u1","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}
+        {"type":"state","session":{"id":"abc","status":"busy","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":5,"tokens":{"input":100,"output":200},"cost":0.05,"lastMessage":"hello"}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .state(let session) = msg else {
@@ -558,7 +558,7 @@ struct ServerMessageTests {
 
     @Test func connectedWithFullSessionFields() throws {
         let json = """
-        {"type":"connected","session":{"id":"s1","userId":"u1","status":"busy","createdAt":1700000000000,\
+        {"type":"connected","session":{"id":"s1","status":"busy","createdAt":1700000000000,\
         "lastActivity":1700000000000,"messageCount":3,"tokens":{"input":50,"output":100},"cost":0.02,\
         "model":"anthropic/claude-sonnet-4-0","contextTokens":150,"contextWindow":200000,"lastMessage":"working"}}
         """

@@ -1,13 +1,13 @@
-# SwiftLint configuration for PiRemote
+# SwiftLint configuration for Oppi
 # Practical rules — catch real issues, not style nitpicks
 
 included:
-  - PiRemote
-  - PiRemoteTests
+  - Oppi
+  - OppiTests
   - Shared
 
 excluded:
-  - PiRemote.xcodeproj
+  - Oppi.xcodeproj
   - .build
 
 # Disable noisy rules that don't catch real bugs

@@ -915,7 +915,6 @@ struct ChatActionHandlerTests {
         let now = Date()
         return Session(
             id: id,
-            userId: "u1",
             workspaceId: nil,
             workspaceName: nil,
             name: name,

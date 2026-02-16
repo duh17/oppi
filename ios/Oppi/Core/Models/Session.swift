@@ -16,7 +16,6 @@ enum SessionStatus: String, Codable, Sendable {
 /// Manual Decodable handles the conversion.
 struct Session: Identifiable, Sendable, Equatable {
     let id: String
-    let userId: String
     var workspaceId: String?
     var workspaceName: String?
     var name: String?
@@ -60,7 +59,7 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
 
 extension Session: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, userId, workspaceId, workspaceName
+        case id, workspaceId, workspaceName
         case name, status, createdAt, lastActivity
         case model, runtime, messageCount, tokens, cost, changeStats
         case contextTokens, contextWindow, lastMessage
@@ -70,7 +69,6 @@ extension Session: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        userId = try c.decode(String.self, forKey: .userId)
         workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
         workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
         name = try c.decodeIfPresent(String.self, forKey: .name)
@@ -97,7 +95,6 @@ extension Session: Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(userId, forKey: .userId)
         try c.encodeIfPresent(workspaceId, forKey: .workspaceId)
         try c.encodeIfPresent(workspaceName, forKey: .workspaceName)
         try c.encodeIfPresent(name, forKey: .name)

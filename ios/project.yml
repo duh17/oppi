@@ -1,3 +1,6 @@
+# ─── Oppi iOS ───
+# Fork setup: change bundleIdPrefix and DEVELOPMENT_TEAM to your own values.
+# See CONTRIBUTING.md for full setup instructions.
 name: Oppi
 packages:
   swift-markdown:

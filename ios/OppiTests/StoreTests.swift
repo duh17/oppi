@@ -16,7 +16,6 @@ struct SessionStoreTests {
         let json = """
         {
             "id": "\(id)",
-            "userId": "u1",
             "status": "\(status.rawValue)",
             "createdAt": \(tsMs),
             "lastActivity": \(tsMs),
@@ -272,7 +271,6 @@ struct WorkspaceStoreTests {
         let json = """
         {
             "id": "\(id)",
-            "userId": "u1",
             "name": "\(name)",
             "skills": [],
             "policyPreset": "container",
