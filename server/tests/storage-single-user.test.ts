@@ -1,74 +1,105 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
 
-describe("Storage single-user mode", () => {
+describe("Storage pairing", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "oppi-server-storage-single-user-"));
+    dir = mkdtempSync(join(tmpdir(), "oppi-server-storage-pairing-"));
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("allows creating exactly one owner user", () => {
+  it("starts unpaired", () => {
     const storage = new Storage(dir);
-
-    const user = storage.createUser("Bob");
-
-    expect(storage.getOwnerUser()?.id).toBe(user.id);
-    expect(storage.hasInvalidOwnerData()).toBe(false);
+    expect(storage.isPaired()).toBe(false);
+    expect(storage.getToken()).toBeUndefined();
+    expect(storage.getOwnerUser()).toBeUndefined();
   });
 
-  it("rejects creating a second user", () => {
+  it("ensurePaired generates a token", () => {
     const storage = new Storage(dir);
-
-    const owner = storage.createUser("Bob");
-
-    expect(() => storage.createUser("Other")).toThrowError(/Single-user mode/);
-    expect(storage.getOwnerUser()?.id).toBe(owner.id);
+    const token = storage.ensurePaired();
+    expect(token).toMatch(/^sk_/);
+    expect(storage.isPaired()).toBe(true);
+    expect(storage.getToken()).toBe(token);
   });
 
-  it("rotates owner token and persists it", () => {
+  it("ensurePaired is idempotent", () => {
     const storage = new Storage(dir);
-    const owner = storage.createUser("Bob");
-
-    const rotated = storage.rotateOwnerToken();
-
-    expect(rotated.id).toBe(owner.id);
-    expect(rotated.token).not.toBe(owner.token);
-
-    const reloaded = new Storage(dir).getOwnerUser();
-    expect(reloaded?.token).toBe(rotated.token);
+    const token1 = storage.ensurePaired();
+    const token2 = storage.ensurePaired();
+    expect(token1).toBe(token2);
   });
 
-  it("rejects token rotation when owner is not paired", () => {
+  it("rejects creating when already paired", () => {
     const storage = new Storage(dir);
-    expect(() => storage.rotateOwnerToken()).toThrowError(/Owner not paired/);
+    storage.createUser("Bob");
+    expect(() => storage.createUser("Other")).toThrowError(/Already paired/);
   });
 
-  it("marks legacy users-array data as invalid", () => {
+  it("rotates token and persists", () => {
+    const storage = new Storage(dir);
+    const original = storage.ensurePaired();
+    const rotated = storage.rotateToken();
+    expect(rotated).not.toBe(original);
+    expect(rotated).toMatch(/^sk_/);
+
+    // Persisted
+    const reloaded = new Storage(dir);
+    expect(reloaded.getToken()).toBe(rotated);
+  });
+
+  it("token persisted in config.json not users.json", () => {
+    const storage = new Storage(dir);
+    storage.ensurePaired();
+    expect(existsSync(join(dir, "users.json"))).toBe(false);
+
+    const config = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
+    expect(config.token).toMatch(/^sk_/);
+  });
+
+  it("migrates legacy users.json into config.json", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "users.json"),
-      JSON.stringify(
-        [
-          { id: "u1", name: "A", token: "sk_a", createdAt: Date.now() },
-          { id: "u2", name: "B", token: "sk_b", createdAt: Date.now() },
-        ],
-        null,
-        2,
-      ),
+      JSON.stringify({
+        id: "old-id",
+        name: "Bob",
+        token: "sk_legacy_token_123",
+        createdAt: Date.now(),
+        deviceTokens: ["apns-hex-1"],
+        thinkingLevelByModel: { "anthropic/claude-sonnet-4-20250514": "high" },
+      }),
       { mode: 0o600 },
     );
 
     const storage = new Storage(dir);
 
-    expect(storage.getOwnerUser()).toBeUndefined();
-    expect(storage.hasInvalidOwnerData()).toBe(true);
+    // users.json should be gone (renamed to .migrated)
+    expect(existsSync(join(dir, "users.json"))).toBe(false);
+    expect(existsSync(join(dir, "users.json.migrated"))).toBe(true);
+
+    // Token migrated
+    expect(storage.getToken()).toBe("sk_legacy_token_123");
+    expect(storage.isPaired()).toBe(true);
+
+    // State migrated
+    expect(storage.getDeviceTokens("owner")).toEqual(["apns-hex-1"]);
+    expect(storage.getModelThinkingLevelPreference("owner", "anthropic/claude-sonnet-4-20250514")).toBe("high");
+  });
+
+  it("ignores malformed users.json gracefully", () => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "users.json"), "[1,2,3]", { mode: 0o600 });
+
+    // Should not crash
+    const storage = new Storage(dir);
+    expect(storage.isPaired()).toBe(false);
   });
 });

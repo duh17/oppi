@@ -18,9 +18,6 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
-    @State private var quickReplySuggestions: [String] = []
-    @State private var quickReplySourceAssistantID: String?
-    @State private var isLoadingQuickReplies = false
 
     @State private var showOutline = false
     @State private var showModelPicker = false
@@ -31,7 +28,6 @@ struct ChatView: View {
     @State private var forkedSessionToOpen: ForkRoute?
 #if DEBUG
     @State private var uploadingClientLogs = false
-    @State private var benchmarkingLocalModel = false
 #endif
     @State private var showCompactConfirmation = false
     @State private var showSkillPanel = false
@@ -149,10 +145,6 @@ struct ChatView: View {
                         uploadClientLogs()
                     }
                     .disabled(uploadingClientLogs)
-                    Button(benchmarkingLocalModel ? "Running Model Benchmark…" : "Benchmark On-Device Model", systemImage: "gauge.with.dots.needle.67percent") {
-                        benchmarkOnDeviceModel()
-                    }
-                    .disabled(benchmarkingLocalModel)
                 }
 #endif
             }
@@ -207,9 +199,6 @@ struct ChatView: View {
                 sessionStore: sessionStore
             )
         }
-        .task(id: quickReplyRequestKey) {
-            await refreshQuickReplySuggestions()
-        }
         .onAppear {
             sessionManager.markAppeared()
             if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
@@ -263,24 +252,6 @@ struct ChatView: View {
             SessionEndedFooter(session: session)
         } else {
             VStack(spacing: 8) {
-                if !quickReplySuggestions.isEmpty {
-                    QuickReplySuggestionList(
-                        suggestions: quickReplySuggestions,
-                        onSelect: sendQuickReply
-                    )
-                    .padding(.horizontal, 16)
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .opacity
-                        )
-                    )
-                } else if isLoadingQuickReplies {
-                    QuickReplySuggestionLoadingRow()
-                        .padding(.horizontal, 16)
-                        .transition(.opacity)
-                }
-
                 ChatInputBar(
                     text: $inputText,
                     pendingImages: $pendingImages,
@@ -331,8 +302,6 @@ struct ChatView: View {
                     )
                 }
             }
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: quickReplySuggestions)
-            .animation(.easeInOut(duration: 0.22), value: isLoadingQuickReplies)
         }
     }
 
@@ -364,102 +333,6 @@ struct ChatView: View {
 
     private func presentComposer() {
         showComposer = true
-    }
-
-    private struct QuickReplyRequest: Equatable {
-        let assistantID: String
-        let assistantText: String
-        let cacheKey: String
-
-        var taskKey: String {
-            cacheKey
-        }
-    }
-
-    private var quickReplyRequest: QuickReplyRequest? {
-        guard !isBusy else { return nil }
-        guard !actionHandler.isSending else { return nil }
-        guard pendingImages.isEmpty else { return nil }
-        guard inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        guard let assistant = latestAssistantMessage else { return nil }
-
-        return QuickReplyRequest(
-            assistantID: assistant.id,
-            assistantText: assistant.text,
-            cacheKey: "\(sessionId)|\(assistant.id)"
-        )
-    }
-
-    private var quickReplyRequestKey: String {
-        quickReplyRequest?.taskKey ?? "quick-replies:inactive"
-    }
-
-    private var latestAssistantMessage: (id: String, text: String)? {
-        for item in reducer.items.reversed() {
-            guard case .assistantMessage(let id, let text, _) = item else { continue }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return (id, trimmed)
-            }
-        }
-        return nil
-    }
-
-    private func refreshQuickReplySuggestions() async {
-        guard let request = quickReplyRequest else {
-            quickReplySourceAssistantID = nil
-            isLoadingQuickReplies = false
-            if !quickReplySuggestions.isEmpty {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    quickReplySuggestions = []
-                }
-            }
-            return
-        }
-
-        if quickReplySourceAssistantID != request.assistantID && !quickReplySuggestions.isEmpty {
-            withAnimation(.easeOut(duration: 0.12)) {
-                quickReplySuggestions = []
-            }
-        }
-
-        if let cached = await actionHandler.cachedQuickReplySuggestions(cacheKey: request.cacheKey) {
-            isLoadingQuickReplies = false
-            quickReplySourceAssistantID = request.assistantID
-            if quickReplySuggestions != cached {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                    quickReplySuggestions = cached
-                }
-            }
-            return
-        }
-
-        let requestKey = request.taskKey
-        isLoadingQuickReplies = true
-
-        let suggestions = await actionHandler.generateQuickReplySuggestions(
-            assistantText: request.assistantText,
-            recentUserReplies: [],
-            limit: QuickReplySuggester.maxSuggestions,
-            cacheKey: request.cacheKey
-        )
-
-        guard requestKey == quickReplyRequestKey else { return }
-
-        isLoadingQuickReplies = false
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-            quickReplySuggestions = suggestions
-        }
-        quickReplySourceAssistantID = request.assistantID
-    }
-
-    private func sendQuickReply(_ text: String) {
-        guard !isBusy else { return }
-        guard !actionHandler.isSending else { return }
-        guard pendingImages.isEmpty else { return }
-
-        inputText = text
-        sendPrompt()
     }
 
     private func sendPrompt() {
@@ -525,27 +398,6 @@ struct ChatView: View {
     }
 
 #if DEBUG
-    private func benchmarkOnDeviceModel() {
-        guard !benchmarkingLocalModel else { return }
-
-        benchmarkingLocalModel = true
-        reducer.appendSystemEvent("Running on-device quick-reply benchmark…")
-        ClientLog.info("ChatView", "On-device model benchmark requested", metadata: [
-            "sessionId": sessionId,
-        ])
-
-        Task { @MainActor in
-            defer { benchmarkingLocalModel = false }
-
-            let summary = await actionHandler.benchmarkOnDeviceQuickReplyModel(iterations: 5)
-            reducer.appendSystemEvent(summary)
-            ClientLog.info("ChatView", "On-device model benchmark finished", metadata: [
-                "sessionId": sessionId,
-                "summary": summary,
-            ])
-        }
-    }
-
     private func uploadClientLogs() {
         guard !uploadingClientLogs else { return }
         guard let api = connection.apiClient else {

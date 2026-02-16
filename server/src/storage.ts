@@ -13,7 +13,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { nanoid } from "nanoid";
 import type {
   User,
@@ -47,16 +47,6 @@ export interface ConfigValidationResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isUserRecord(value: unknown): value is User {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.name === "string" &&
-    typeof value.token === "string" &&
-    typeof value.createdAt === "number"
-  );
 }
 
 function defaultSecurityConfig(): ServerSecurityConfig {
@@ -147,6 +137,10 @@ function normalizeConfig(
     "security",
     "identity",
     "invite",
+    "token",
+    "deviceTokens",
+    "liveActivityToken",
+    "thinkingLevelByModel",
   ]);
 
   if (strictUnknown) {
@@ -474,6 +468,24 @@ function normalizeConfig(
     }
   }
 
+  // Pairing token + runtime state — passthrough (no validation, optional)
+  if ("token" in obj && typeof obj.token === "string") {
+    config.token = obj.token;
+  }
+  if ("deviceTokens" in obj && Array.isArray(obj.deviceTokens)) {
+    config.deviceTokens = (obj.deviceTokens as unknown[]).filter((t): t is string => typeof t === "string");
+  }
+  if ("liveActivityToken" in obj && typeof obj.liveActivityToken === "string") {
+    config.liveActivityToken = obj.liveActivityToken;
+  }
+  if ("thinkingLevelByModel" in obj && isRecord(obj.thinkingLevelByModel)) {
+    const map: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj.thinkingLevelByModel as Record<string, unknown>)) {
+      if (typeof v === "string") map[k] = v;
+    }
+    config.thinkingLevelByModel = map;
+  }
+
   return { valid: errors.length === 0, errors, warnings, config, changed };
 }
 
@@ -505,25 +517,20 @@ function resolveWorkspaceExtensionMode(
 export class Storage {
   private dataDir: string;
   private configPath: string;
-  private usersPath: string;
   private sessionsDir: string;
   private workspacesDir: string;
 
   private config: ServerConfig;
-  private owner: User | undefined;
-  /** Invalid users.json state (malformed owner record) blocks startup in strict single-owner mode. */
-  private invalidOwnerData = false;
 
   constructor(dataDir?: string) {
     this.dataDir = dataDir || DEFAULT_DATA_DIR;
     this.configPath = join(this.dataDir, "config.json");
-    this.usersPath = join(this.dataDir, "users.json");
     this.sessionsDir = join(this.dataDir, "sessions");
     this.workspacesDir = join(this.dataDir, "workspaces");
 
     this.ensureDirectories();
+    this.migrateUsersJson();
     this.config = this.loadConfig();
-    this.loadUsers();
   }
 
   private ensureDirectories(): void {
@@ -531,6 +538,45 @@ export class Storage {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
+    }
+  }
+
+  /**
+   * One-time migration: fold legacy users.json into config.json.
+   * Runs before config load so token is available immediately.
+   */
+  private migrateUsersJson(): void {
+    const usersPath = join(this.dataDir, "users.json");
+    if (!existsSync(usersPath)) return;
+
+    try {
+      const raw = JSON.parse(readFileSync(usersPath, "utf-8"));
+      if (!raw || typeof raw !== "object" || !raw.token) return;
+
+      // Read current config (raw, before normalization)
+      let config: Record<string, unknown> = {};
+      if (existsSync(this.configPath)) {
+        config = JSON.parse(readFileSync(this.configPath, "utf-8"));
+      }
+
+      // Merge user fields into config (don't overwrite existing token)
+      if (!config.token && raw.token) config.token = raw.token;
+      if (!config.deviceTokens && raw.deviceTokens) config.deviceTokens = raw.deviceTokens;
+      if (!config.liveActivityToken && raw.liveActivityToken) config.liveActivityToken = raw.liveActivityToken;
+      if (!config.thinkingLevelByModel && raw.thinkingLevelByModel) config.thinkingLevelByModel = raw.thinkingLevelByModel;
+
+      writeFileSync(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+
+      // Rename instead of delete — safety net
+      const backupPath = join(this.dataDir, "users.json.migrated");
+      if (!existsSync(backupPath)) {
+        writeFileSync(backupPath, readFileSync(usersPath, "utf-8"), { mode: 0o600 });
+      }
+      rmSync(usersPath);
+      console.log("[storage] Migrated users.json → config.json (token + push state)");
+    } catch (err) {
+      console.error("[storage] users.json migration failed:", err);
+      // Non-fatal — old file stays, user can re-pair
     }
   }
 
@@ -654,190 +700,126 @@ export class Storage {
     this.saveConfig(this.config);
   }
 
-  // ─── Users ───
+  // ─── Pairing ───
 
-  private loadUsers(): void {
-    this.owner = undefined;
-    this.invalidOwnerData = false;
-
-    if (!existsSync(this.usersPath)) {
-      return;
-    }
-
-    try {
-      const raw = JSON.parse(readFileSync(this.usersPath, "utf-8")) as unknown;
-      if (!isUserRecord(raw)) {
-        this.invalidOwnerData = true;
-        return;
-      }
-
-      this.owner = raw;
-    } catch {
-      this.invalidOwnerData = true;
-      this.owner = undefined;
-    }
-  }
-
-  private saveUsers(): void {
-    if (!this.owner) {
-      if (existsSync(this.usersPath)) {
-        rmSync(this.usersPath);
-      }
-      return;
-    }
-
-    writeFileSync(this.usersPath, JSON.stringify(this.owner, null, 2), { mode: 0o600 });
-  }
-
-  private generateOwnerToken(): string {
+  private static generateToken(): string {
     return `sk_${nanoid(24)}`;
   }
 
-  createUser(name: string): User {
-    const existingOwner = this.getOwnerUser();
-    if (existingOwner) {
-      throw new Error(
-        `Single-user mode: owner already paired (${existingOwner.name}, id=${existingOwner.id})`,
-      );
-    }
-
-    const id = nanoid(8);
-    const token = this.generateOwnerToken();
-
-    const user: User = {
-      id,
-      name,
-      token,
-      createdAt: Date.now(),
-    };
-
-    this.owner = user;
-    this.invalidOwnerData = false;
-    this.saveUsers();
-
-    return user;
+  /** Whether the server has been paired (has a bearer token). */
+  isPaired(): boolean {
+    return !!this.config.token;
   }
 
-  rotateOwnerToken(): User {
-    const owner = this.getOwnerUser();
-    if (!owner) {
-      throw new Error("Owner not paired");
-    }
-
-    const updated: User = {
-      ...owner,
-      token: this.generateOwnerToken(),
-    };
-
-    this.owner = updated;
-    this.saveUsers();
-    return updated;
+  /** Get the bearer token (undefined if not paired). */
+  getToken(): string | undefined {
+    return this.config.token;
   }
 
-  getOwnerUser(): User | undefined {
-    return this.owner;
+  /** Generate a new token and save to config. Returns the token. */
+  ensurePaired(): string {
+    if (this.config.token) return this.config.token;
+    const token = Storage.generateToken();
+    this.updateConfig({ token });
+    return token;
   }
 
-  hasInvalidOwnerData(): boolean {
-    return this.invalidOwnerData;
+  /** Rotate the bearer token. Existing clients will need to re-pair. */
+  rotateToken(): string {
+    const token = Storage.generateToken();
+    this.updateConfig({ token });
+    return token;
   }
 
   /**
-   * Single-user mode normalizer.
-   *
-   * - When an owner exists, all user-scoped storage resolves to that owner id.
-   * - Before pairing (no owner yet), preserve caller-provided ids for tests/bootstrap.
+   * Legacy compatibility: construct a User object from config state.
+   * Used by routes/auth that still pass User objects internally.
+   * The id is always "owner" — callers should not depend on it.
    */
-  private normalizeUserId(userId: string): string {
-    const owner = this.getOwnerUser();
-    return owner?.id ?? userId;
+  getOwnerUser(): User | undefined {
+    if (!this.config.token) return undefined;
+    return {
+      id: "owner",
+      name: hostname().split(".")[0] || "owner",
+      token: this.config.token,
+      createdAt: 0,
+      deviceTokens: this.config.deviceTokens,
+      liveActivityToken: this.config.liveActivityToken,
+      thinkingLevelByModel: this.config.thinkingLevelByModel,
+    };
   }
 
-  updateUserLastSeen(userId: string): void {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId) return;
-
-    this.owner.lastSeen = Date.now();
-    this.saveUsers();
+  /** Legacy compat: createUser now just ensures pairing. */
+  createUser(_name: string): User {
+    if (this.config.token) {
+      throw new Error("Already paired");
+    }
+    this.ensurePaired();
+    return this.getOwnerUser()!;
   }
+
+  /** Legacy compat stub — always false now. */
+  hasInvalidOwnerData(): boolean {
+    return false;
+  }
+
+  /** No-op — userId concept eliminated. Always resolves to owner. */
+  private normalizeUserId(_userId: string): string {
+    return "owner";
+  }
+
+  /** No-op. */
+  updateUserLastSeen(_userId: string): void {}
 
   // ─── Device Tokens ───
 
-  addDeviceToken(userId: string, token: string): void {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId) return;
-
-    if (!this.owner.deviceTokens) this.owner.deviceTokens = [];
-    // Deduplicate (same device re-registers)
-    if (!this.owner.deviceTokens.includes(token)) {
-      this.owner.deviceTokens.push(token);
+  addDeviceToken(_userId: string, token: string): void {
+    const tokens = this.config.deviceTokens || [];
+    if (!tokens.includes(token)) {
+      this.updateConfig({ deviceTokens: [...tokens, token] });
     }
-    this.saveUsers();
   }
 
-  removeDeviceToken(userId: string, token: string): void {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId || !this.owner.deviceTokens) return;
-
-    this.owner.deviceTokens = this.owner.deviceTokens.filter((t) => t !== token);
-    this.saveUsers();
+  removeDeviceToken(_userId: string, token: string): void {
+    const tokens = this.config.deviceTokens || [];
+    this.updateConfig({ deviceTokens: tokens.filter((t) => t !== token) });
   }
 
-  /** Remove a token globally (APNs token recycled). */
   removeDeviceTokenGlobal(token: string): void {
-    if (!this.owner?.deviceTokens?.includes(token)) return;
-
-    this.owner.deviceTokens = this.owner.deviceTokens.filter((t) => t !== token);
-    this.saveUsers();
+    this.removeDeviceToken("owner", token);
   }
 
-  getDeviceTokens(userId: string): string[] {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId) return [];
-    return this.owner.deviceTokens || [];
+  getDeviceTokens(_userId: string): string[] {
+    return this.config.deviceTokens || [];
   }
 
-  setLiveActivityToken(userId: string, token: string | null): void {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId) return;
-
-    this.owner.liveActivityToken = token || undefined;
-    this.saveUsers();
+  setLiveActivityToken(_userId: string, token: string | null): void {
+    this.updateConfig({ liveActivityToken: token || undefined });
   }
 
-  getLiveActivityToken(userId: string): string | undefined {
-    const normalizedUserId = this.normalizeUserId(userId);
-    if (!this.owner || this.owner.id !== normalizedUserId) return undefined;
-    return this.owner.liveActivityToken;
+  getLiveActivityToken(_userId: string): string | undefined {
+    return this.config.liveActivityToken;
   }
 
   // ─── Thinking Preferences ───
 
-  getModelThinkingLevelPreference(userId: string, modelId: string): string | undefined {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const normalizedModelId = modelId.trim();
-    if (!normalizedModelId) return undefined;
-    if (!this.owner || this.owner.id !== normalizedUserId) return undefined;
-    return this.owner.thinkingLevelByModel?.[normalizedModelId];
+  getModelThinkingLevelPreference(_userId: string, modelId: string): string | undefined {
+    const normalized = modelId.trim();
+    if (!normalized) return undefined;
+    return this.config.thinkingLevelByModel?.[normalized];
   }
 
-  setModelThinkingLevelPreference(userId: string, modelId: string, level: string): void {
-    const normalizedUserId = this.normalizeUserId(userId);
-    const normalizedModelId = modelId.trim();
+  setModelThinkingLevelPreference(_userId: string, modelId: string, level: string): void {
+    const normalizedModel = modelId.trim();
     const normalizedLevel = level.trim();
-    if (!normalizedModelId || !normalizedLevel) return;
-    if (!this.owner || this.owner.id !== normalizedUserId) return;
+    if (!normalizedModel || !normalizedLevel) return;
 
-    if (!this.owner.thinkingLevelByModel) {
-      this.owner.thinkingLevelByModel = {};
-    }
+    const current = this.config.thinkingLevelByModel || {};
+    if (current[normalizedModel] === normalizedLevel) return;
 
-    if (this.owner.thinkingLevelByModel[normalizedModelId] === normalizedLevel) {
-      return;
-    }
-
-    this.owner.thinkingLevelByModel[normalizedModelId] = normalizedLevel;
-    this.saveUsers();
+    this.updateConfig({
+      thinkingLevelByModel: { ...current, [normalizedModel]: normalizedLevel },
+    });
   }
 
   // ─── Sessions ───

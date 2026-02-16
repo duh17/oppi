@@ -1066,21 +1066,16 @@ export class Server {
   // ─── Auth ───
 
   private authenticate(req: IncomingMessage): User | null {
-    // Fail closed on invalid single-user state.
-    if (this.storage.hasInvalidOwnerData()) {
-      return null;
-    }
-
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) return null;
 
     const token = auth.slice(7);
-    const owner = this.storage.getOwnerUser();
-    if (!owner) return null;
-    if (!secureTokenEquals(owner.token, token)) return null;
+    const configToken = this.storage.getToken();
+    if (!configToken) return null;
+    if (!secureTokenEquals(configToken, token)) return null;
 
-    this.storage.updateUserLastSeen(owner.id);
-    return owner;
+    // Return a synthetic User for legacy route compatibility
+    return this.storage.getOwnerUser() ?? null;
   }
 
   // ─── HTTP Router ───

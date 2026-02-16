@@ -11,6 +11,7 @@ struct RestorationStateTests {
         let state = RestorationState(
             version: RestorationState.schemaVersion,
             activeSessionId: "s1",
+            activeServerId: "sha256:abc",
             selectedTab: "workspaces",
             composerDraft: "draft text",
             scrollAnchorItemId: "item-42",
@@ -23,6 +24,7 @@ struct RestorationStateTests {
 
         #expect(decoded.version == state.version)
         #expect(decoded.activeSessionId == "s1")
+        #expect(decoded.activeServerId == "sha256:abc")
         #expect(decoded.selectedTab == "workspaces")
         #expect(decoded.composerDraft == "draft text")
         #expect(decoded.scrollAnchorItemId == "item-42")
@@ -31,8 +33,9 @@ struct RestorationStateTests {
 
     @Test func encodeDecodeNilOptionals() throws {
         let state = RestorationState(
-            version: 1,
+            version: RestorationState.schemaVersion,
             activeSessionId: nil,
+            activeServerId: nil,
             selectedTab: "settings",
             composerDraft: nil,
             scrollAnchorItemId: nil,
@@ -44,6 +47,7 @@ struct RestorationStateTests {
         let decoded = try JSONDecoder().decode(RestorationState.self, from: data)
 
         #expect(decoded.activeSessionId == nil)
+        #expect(decoded.activeServerId == nil)
         #expect(decoded.composerDraft == nil)
         #expect(decoded.scrollAnchorItemId == nil)
         #expect(decoded.wasNearBottom == nil)
@@ -54,17 +58,17 @@ struct RestorationStateTests {
 
     @MainActor
     @Test func saveAndLoad() {
-        // Clean up first
         RestorationState.clear()
 
-        let conn = ServerConnection()
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
         conn.composerDraft = "test draft"
 
         let nav = AppNavigation()
         nav.selectedTab = .workspaces
 
-        RestorationState.save(from: conn, navigation: nav)
+        RestorationState.save(from: conn, coordinator: coordinator, navigation: nav)
 
         let loaded = RestorationState.load()
         #expect(loaded != nil)
@@ -72,22 +76,21 @@ struct RestorationStateTests {
         #expect(loaded?.composerDraft == "test draft")
         #expect(loaded?.selectedTab == "workspaces")
 
-        // Clean up
         RestorationState.clear()
     }
 
     // MARK: - Freshness
 
     @Test func staleStateReturnsNil() {
-        // Save a state with a very old timestamp
         let old = RestorationState(
             version: RestorationState.schemaVersion,
             activeSessionId: "s1",
+            activeServerId: nil,
             selectedTab: "sessions",
             composerDraft: nil,
             scrollAnchorItemId: nil,
             wasNearBottom: nil,
-            timestamp: Date().addingTimeInterval(-7200) // 2 hours ago
+            timestamp: Date().addingTimeInterval(-7200)
         )
 
         if let data = try? JSONEncoder().encode(old) {
@@ -97,7 +100,6 @@ struct RestorationStateTests {
         let loaded = RestorationState.load()
         #expect(loaded == nil, "State older than 1 hour should return nil")
 
-        // Clean up
         RestorationState.clear()
     }
 
@@ -105,8 +107,9 @@ struct RestorationStateTests {
 
     @Test func wrongVersionReturnsNil() {
         let wrong = RestorationState(
-            version: 999, // future version
+            version: 999,
             activeSessionId: "s1",
+            activeServerId: nil,
             selectedTab: "sessions",
             composerDraft: nil,
             scrollAnchorItemId: nil,
@@ -128,9 +131,9 @@ struct RestorationStateTests {
 
     @MainActor
     @Test func clearRemovesState() {
-        let conn = ServerConnection()
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         let nav = AppNavigation()
-        RestorationState.save(from: conn, navigation: nav)
+        RestorationState.save(from: coordinator.connection, coordinator: coordinator, navigation: nav)
 
         #expect(RestorationState.load() != nil)
 
@@ -160,13 +163,14 @@ struct RestorationStateTests {
     @Test func saveAndLoadScrollPosition() {
         RestorationState.clear()
 
-        let conn = ServerConnection()
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
         conn.scrollAnchorItemId = "msg-77"
         conn.scrollWasNearBottom = false
 
         let nav = AppNavigation()
-        RestorationState.save(from: conn, navigation: nav)
+        RestorationState.save(from: conn, coordinator: coordinator, navigation: nav)
 
         let loaded = RestorationState.load()
         #expect(loaded != nil)
@@ -180,13 +184,14 @@ struct RestorationStateTests {
     @Test func scrollNearBottomSavedCorrectly() {
         RestorationState.clear()
 
-        let conn = ServerConnection()
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        let conn = coordinator.connection
         conn.sessionStore.activeSessionId = "s1"
         conn.scrollAnchorItemId = "msg-99"
         conn.scrollWasNearBottom = true
 
         let nav = AppNavigation()
-        RestorationState.save(from: conn, navigation: nav)
+        RestorationState.save(from: conn, coordinator: coordinator, navigation: nav)
 
         let loaded = RestorationState.load()
         #expect(loaded?.wasNearBottom == true)
@@ -196,7 +201,7 @@ struct RestorationStateTests {
     }
 
     @Test func v1StateWithoutScrollFieldsDecodesGracefully() throws {
-        // Simulate a v1 state that lacks scroll fields
+        // Simulate a v1 state that lacks scroll and server fields
         let v1JSON = """
         {"version":1,"activeSessionId":"s1","selectedTab":"sessions","composerDraft":null,"timestamp":0}
         """
@@ -205,6 +210,36 @@ struct RestorationStateTests {
 
         #expect(decoded.scrollAnchorItemId == nil)
         #expect(decoded.wasNearBottom == nil)
+        #expect(decoded.activeServerId == nil)
+    }
+
+    // MARK: - Server ID restoration
+
+    @MainActor
+    @Test func savesAndRestoresServerId() {
+        RestorationState.clear()
+
+        let serverStore = ServerStore()
+        let coordinator = ConnectionCoordinator(serverStore: serverStore)
+
+        // Simulate switching to a server
+        let creds = ServerCredentials(
+            host: "studio.local", port: 7749, token: "sk_t", name: "studio",
+            serverFingerprint: "sha256:test-restore"
+        )
+        if let server = PairedServer(from: creds) {
+            coordinator.addServer(server, switchTo: true)
+        }
+
+        let nav = AppNavigation()
+        RestorationState.save(from: coordinator.connection, coordinator: coordinator, navigation: nav)
+
+        let loaded = RestorationState.load()
+        #expect(loaded?.activeServerId == "sha256:test-restore")
+
+        // Clean up
+        RestorationState.clear()
+        coordinator.removeServer(id: "sha256:test-restore")
     }
 }
 

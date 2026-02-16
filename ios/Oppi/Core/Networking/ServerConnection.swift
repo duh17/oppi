@@ -590,6 +590,9 @@ final class ServerConnection {
     // ── Thinking ──
 
     func setThinkingLevel(_ level: ThinkingLevel) async throws {
+        // Persist user preference per model so it survives session reconnects.
+        let model = sessionStore.sessions.first(where: { $0.id == activeSessionId })?.model
+        ThinkingLevelMemory.set(level, for: model)
         try await send(.setThinkingLevel(level: level))
     }
 
@@ -603,6 +606,19 @@ final class ServerConnection {
               let level = ThinkingLevel(rawValue: levelStr),
               thinkingLevel != level else { return }
         thinkingLevel = level
+    }
+
+    /// Restore thinking level from user's per-model memory.
+    ///
+    /// Called after `syncThinkingLevel(from:)` on initial connect. If the user
+    /// previously set a thinking level for this model, that preference wins over
+    /// the server's session-level default. Pushes the preferred level to the
+    /// server so subsequent turns use the correct budget.
+    func restoreThinkingLevelFromMemory(model: String?) {
+        guard let preferred = ThinkingLevelMemory.level(for: model),
+              preferred != thinkingLevel else { return }
+        thinkingLevel = preferred
+        Task { try? await setThinkingLevel(preferred) }
     }
 
     private func slashCommandCacheKey(for session: Session) -> String {

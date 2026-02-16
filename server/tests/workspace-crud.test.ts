@@ -60,7 +60,7 @@ describe("Storage.createWorkspace", () => {
 
     expect(ws.id).toBeTruthy();
     expect(ws.id.length).toBe(8);
-    expect(ws.userId).toBe(USER);
+    expect(ws.userId).toBe("owner");
     expect(ws.name).toBe("test-workspace");
     expect(ws.skills).toEqual(["searxng", "fetch"]);
     expect(ws.policyPreset).toBe("container");
@@ -110,7 +110,7 @@ describe("Storage.createWorkspace", () => {
     expect(existsSync(path)).toBe(true);
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     expect(raw.name).toBe("test-workspace");
-    expect(raw.userId).toBe(USER);
+    expect(raw.userId).toBe("owner");
   });
 
   it("generates unique IDs for each workspace", () => {
@@ -581,7 +581,7 @@ describe("Storage.ensureDefaultWorkspaces", () => {
     const list = storage.listWorkspaces(USER);
 
     for (const ws of list) {
-      expect(ws.userId).toBe(USER);
+      expect(ws.userId).toBe("owner");
       expect(ws.id.length).toBe(8);
       expect(ws.skills).toBeInstanceOf(Array);
       expect(ws.policyPreset).toBeTruthy();

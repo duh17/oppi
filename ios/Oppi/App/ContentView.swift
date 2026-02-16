@@ -10,7 +10,10 @@ struct ContentView: View {
 
     private var crossSessionPending: [PermissionRequest] {
         let activeSessionId = sessionStore.activeSessionId
-        return permissionStore.pending
+        // Use allPending to include permissions from ALL servers,
+        // not just the active one. Filter out the active session's
+        // permissions (those are shown inline in the chat view).
+        return permissionStore.allPending
             .filter { request in
                 guard let activeSessionId else {
                     return true

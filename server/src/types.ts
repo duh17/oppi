@@ -175,6 +175,16 @@ export interface ServerConfig {
   security?: ServerSecurityConfig;
   identity?: ServerIdentityConfig;
   invite?: ServerInviteConfig;
+
+  // Pairing token — the single bearer token for client auth
+  token?: string;
+
+  // Push notification state (written by iOS client registration)
+  deviceTokens?: string[];
+  liveActivityToken?: string;
+
+  // Per-model thinking preferences (synced from iOS)
+  thinkingLevelByModel?: Record<string, string>;
 }
 
 // ─── API Types ───

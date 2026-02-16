@@ -32,10 +32,13 @@ struct ForegroundReconnectGate {
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var connection = ServerConnection()
+    @State private var coordinator = ConnectionCoordinator(serverStore: ServerStore())
     @State private var navigation = AppNavigation()
-    @State private var serverStore = ServerStore()
     @State private var themeStore = ThemeStore()
+
+    /// Convenience accessor — most lifecycle code targets the active connection.
+    private var connection: ServerConnection { coordinator.connection }
+    private var serverStore: ServerStore { coordinator.serverStore }
 #if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
     @State private var autoClientLogUploadInFlight = false
@@ -51,15 +54,16 @@ struct OppiApp: App {
                 UIHangHarnessView()
             } else {
                 ContentView()
-                    .environment(connection)
-                    .environment(connection.sessionStore)
-                    .environment(connection.permissionStore)
-                    .environment(connection.reducer)
-                    .environment(connection.reducer.toolOutputStore)
-                    .environment(connection.reducer.toolArgsStore)
-                    .environment(connection.audioPlayer)
+                    .environment(coordinator)
+                    .environment(coordinator.connection)
+                    .environment(coordinator.connection.sessionStore)
+                    .environment(coordinator.connection.permissionStore)
+                    .environment(coordinator.connection.reducer)
+                    .environment(coordinator.connection.reducer.toolOutputStore)
+                    .environment(coordinator.connection.reducer.toolArgsStore)
+                    .environment(coordinator.connection.audioPlayer)
                     .environment(navigation)
-                    .environment(serverStore)
+                    .environment(coordinator.serverStore)
                     .environment(themeStore)
                     .environment(\.theme, themeStore.appTheme)
                     .preferredColorScheme(themeStore.preferredColorScheme)
@@ -111,9 +115,11 @@ struct OppiApp: App {
             connection.permissionStore.pending.removeAll()
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
-            // Add to ServerStore (handles fingerprint dedup)
-            serverStore.addOrUpdate(from: bootstrap.effectiveCredentials)
-            try KeychainService.saveCredentials(bootstrap.effectiveCredentials)
+            // Add to ServerStore via coordinator (handles fingerprint dedup + store partitions)
+            coordinator.addServer(
+                PairedServer(from: bootstrap.effectiveCredentials, sortOrder: serverStore.servers.count)!,
+                switchTo: false  // We configure manually below
+            )
             guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")
             }
@@ -125,10 +131,7 @@ struct OppiApp: App {
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
             await PushRegistration.shared.requestAndRegister()
-            // Register push with all servers (new server included)
-            if serverStore.servers.count > 1 {
-                await PushRegistration.shared.registerWithAllServers(serverStore.servers)
-            }
+            await coordinator.registerPushWithAllServers()
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
         } catch {
             connection.sessionStore.markSyncFailed()
@@ -153,7 +156,12 @@ struct OppiApp: App {
             ])
 
             if shouldReconnect {
-                Task { await connection.reconnectIfNeeded() }
+                Task {
+                    // Active server: full reconnect (WS, session metadata, lists)
+                    await connection.reconnectIfNeeded()
+                    // Inactive servers: lightweight REST refresh (workspaces, sessions)
+                    await coordinator.refreshInactiveServers()
+                }
             }
 
         case .background:
@@ -161,7 +169,7 @@ struct OppiApp: App {
             mainThreadLagWatchdog.stop()
 #endif
             connection.flushAndSuspend()
-            RestorationState.save(from: connection, navigation: navigation)
+            RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
 
         case .inactive:
             break
@@ -302,25 +310,30 @@ struct OppiApp: App {
         let notificationService = PermissionNotificationService.shared
         await notificationService.setup()
 
-        // Wire notification actions back to the connection
-        notificationService.onPermissionResponse = { [weak connection] permissionId, action in
-            guard let connection else {
-                return
-            }
+        // Wire notification actions back to the connection.
+        // Permission responses go over WebSocket — if the permission is from
+        // a non-active server, we need to use REST fallback instead.
+        let conn = connection
+        notificationService.onPermissionResponse = { [weak conn] permissionId, action in
+            guard let conn else { return }
             Task {
-                try? await connection.respondToPermission(id: permissionId, action: action)
+                try? await conn.respondToPermission(id: permissionId, action: action)
             }
         }
 
         // Configure push registration with the connection
-        PushRegistration.shared.configure(connection: connection)
+        PushRegistration.shared.configure(connection: conn)
 
-        // Navigate to session when user taps a push notification body
-        notificationService.onNavigateToPermission = { [weak connection] _, sessionId in
-            guard let connection, !sessionId.isEmpty else {
-                return
+        // Navigate to session when user taps a push notification body.
+        // Cross-server: find which server owns the session and switch to it.
+        let coord = coordinator
+        notificationService.onNavigateToPermission = { [weak conn, weak coord] _, sessionId in
+            guard let conn, let coord, !sessionId.isEmpty else { return }
+            // Find the session across all servers
+            if let found = conn.sessionStore.findSession(id: sessionId) {
+                coord.switchToServer(found.serverId)
             }
-            connection.sessionStore.activeSessionId = sessionId
+            conn.sessionStore.activeSessionId = sessionId
             navigation.selectedTab = .workspaces
         }
     }
@@ -373,10 +386,20 @@ struct OppiApp: App {
             }
         }
 
-        // 1. Load credentials — prefer multi-server store, fallback to legacy
+        // 1. Load credentials — prefer restored server, then first server, fallback to legacy
+        let restored = RestorationState.load()
+        let targetServer: PairedServer?
+        if let restoredServerId = restored?.activeServerId,
+           let server = serverStore.server(for: restoredServerId) {
+            targetServer = server
+        } else {
+            targetServer = serverStore.servers.first
+        }
+
         let initialCreds: ServerCredentials
-        if let firstServer = serverStore.servers.first {
-            initialCreds = firstServer.credentials
+        if let server = targetServer {
+            initialCreds = server.credentials
+            coordinator.switchToServer(server)
         } else if let legacy = KeychainService.loadCredentials() {
             initialCreds = legacy
         } else {
@@ -436,9 +459,11 @@ struct OppiApp: App {
 
             let upgraded = creds.applyingSecurityProfile(profile)
             if upgraded != creds {
-                try? KeychainService.saveCredentials(upgraded)
-                // Keep ServerStore in sync with security profile upgrades
-                serverStore.addOrUpdate(from: upgraded)
+                // Save to per-server keychain slot (not legacy)
+                if let server = serverStore.addOrUpdate(from: upgraded) {
+                    try? KeychainService.saveServer(server)
+                }
+                coordinator.invalidateAPIClient(for: upgraded.normalizedServerFingerprint ?? "")
                 creds = upgraded
                 guard connection.configure(credentials: upgraded) else {
                     launchOutcome = "blocked_transport_policy"
@@ -453,7 +478,7 @@ struct OppiApp: App {
         }
 
         // 2. Restore UI state (tab, active session, draft, scroll position)
-        if let restored = RestorationState.load() {
+        if let restored {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
             connection.sessionStore.activeSessionId = restored.activeSessionId
             connection.composerDraft = restored.composerDraft
@@ -482,28 +507,12 @@ struct OppiApp: App {
             let activeIds = Set(sessions.map(\.id))
             Task.detached { await TimelineCache.shared.evictStaleTraces(keepIds: activeIds) }
 
-            // 6. Load workspaces + skills (cache-backed internally)
-            if serverStore.servers.count > 1 {
-                await connection.workspaceStore.loadAll(servers: serverStore.servers)
-            } else {
-                await connection.workspaceStore.load(api: api)
-                // Populate per-server data for grouped UI
-                if let serverId = connection.currentServerId {
-                    connection.workspaceStore.workspacesByServer[serverId] = connection.workspaceStore.workspaces
-                    connection.workspaceStore.skillsByServer[serverId] = connection.workspaceStore.skills
-                    if !connection.workspaceStore.serverOrder.contains(serverId) {
-                        connection.workspaceStore.serverOrder = [serverId]
-                    }
-                    connection.workspaceStore.serverFreshness[serverId] = ServerSyncState()
-                    connection.workspaceStore.serverFreshness[serverId]?.markSyncSucceeded()
-                }
-            }
+            // 6. Load workspaces + skills — coordinator handles multi-server
+            await coordinator.refreshAllServers()
 
             // 7. Register for push notifications with all paired servers
             await PushRegistration.shared.requestAndRegister()
-            if serverStore.servers.count > 1 {
-                await PushRegistration.shared.registerWithAllServers(serverStore.servers)
-            }
+            await coordinator.registerPushWithAllServers()
         } catch {
             connection.sessionStore.markSyncFailed()
             launchOutcome = "offline_cache_only"

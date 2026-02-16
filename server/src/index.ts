@@ -154,14 +154,6 @@ async function cmdServe(storage: Storage): Promise<void> {
     console.log("");
   }
 
-  if (storage.hasInvalidOwnerData()) {
-    console.log(chalk.red("  Error: users.json has invalid owner data."));
-    console.log(chalk.dim("  Keep exactly one owner object in users.json before starting."));
-    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
-    console.log("");
-    process.exit(1);
-  }
-
   // Load APNs config from config file if present
   const apnsConfig = loadAPNsConfig(storage);
   const server = new Server(storage, apnsConfig);
@@ -220,12 +212,11 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log(`  Data:      ${chalk.dim(storage.getDataDir())}`);
   console.log("");
 
-  const owner = storage.getOwnerUser();
-  if (!owner) {
+  if (!storage.isPaired()) {
     console.log(chalk.yellow("  Server not paired yet."));
-    console.log(chalk.dim("  Run 'oppi pair [name]' to generate pairing QR."));
+    console.log(chalk.dim("  Run 'oppi pair' to generate pairing QR."));
   } else {
-    console.log(`  Owner: ${owner.name}`);
+    console.log(chalk.green("  ✓ Paired"));
   }
 
   console.log("");
@@ -243,16 +234,8 @@ async function cmdPair(
 ): Promise<void> {
   printHeader();
 
-  if (storage.hasInvalidOwnerData()) {
-    console.log(chalk.red("  Error: users.json has invalid owner data."));
-    console.log(chalk.dim("  Keep exactly one owner object in users.json, then run pair again."));
-    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
-    console.log("");
-    process.exit(1);
-  }
-
-  const ownerName = requestedName?.trim() || osHostname().split(".")[0] || "Owner";
   const config = storage.getConfig();
+  const token = storage.ensurePaired();
   const inviteHost = resolveInviteHost(hostOverride);
 
   if (!inviteHost) {
@@ -268,28 +251,11 @@ async function cmdPair(
     console.log(chalk.dim(`  (using local-network host: ${inviteHost})`));
   }
 
-  // Reuse existing owner identity or create one.
-  const existingOwner = storage.getOwnerUser();
-  const user = existingOwner ?? storage.createUser(ownerName);
-  if (existingOwner) {
-    console.log(chalk.dim(`  (owner already paired: ${existingOwner.name})`));
-    if (
-      requestedName?.trim() &&
-      requestedName.trim().toLowerCase() !== existingOwner.name.toLowerCase()
-    ) {
-      console.log(
-        chalk.dim(
-          `  (ignoring requested name "${requestedName.trim()}"; keeping existing owner name)`,
-        ),
-      );
-    }
-  }
-
   // Build signed v2 pairing payload.
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
-    token: user.token,
+    token,
     name: shortHostLabel(inviteHost),
   };
 
@@ -326,7 +292,7 @@ async function cmdPair(
   console.log(chalk.dim(`  (pairing format: v2-signed, expires in ${maxAgeSeconds}s)`));
 
   // Display
-  console.log(`  📱 Pair server owner ${chalk.bold(user.name)}`);
+  console.log(`  📱 Pair with ${chalk.bold(shortHostLabel(inviteHost))}`);
   console.log("");
   console.log("  Scan this QR code in Oppi:");
   console.log("");
@@ -360,7 +326,7 @@ async function cmdPair(
   if (showToken) {
     console.log(chalk.yellow("  ⚠️  Manual token display enabled (--show-token)"));
     console.log(chalk.dim("  Owner token:"));
-    console.log(`  ${chalk.dim(user.token)}`);
+    console.log(`  ${chalk.dim(token)}`);
     console.log("");
   } else {
     console.log(chalk.dim("  Manual token output hidden by default."));
@@ -404,19 +370,15 @@ function cmdStatus(storage: Storage): void {
   }
   console.log("");
 
-  const owner = storage.getOwnerUser();
-  console.log("  " + chalk.bold("Owner Pairing"));
+  console.log("  " + chalk.bold("Pairing"));
   console.log("");
 
-  if (storage.hasInvalidOwnerData()) {
-    console.log(chalk.red("  Invalid state: users.json has invalid owner data"));
-    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
-  } else if (!owner) {
+  if (!storage.isPaired()) {
     console.log(chalk.dim("  Not paired"));
-    console.log(chalk.dim("  Run 'oppi pair [name]'"));
+    console.log(chalk.dim("  Run 'oppi pair'"));
   } else {
-    const sessions = storage.listUserSessions(owner.id);
-    console.log(`  Owner:    ${chalk.cyan(owner.name)}`);
+    const sessions = storage.listUserSessions("owner");
+    console.log(`  Status:   ${chalk.green("Paired")}`);
     console.log(`  Sessions: ${sessions.length}`);
   }
   console.log("");
@@ -425,28 +387,19 @@ function cmdStatus(storage: Storage): void {
 function cmdToken(storage: Storage, action: string | undefined): void {
   printHeader();
 
-  if (storage.hasInvalidOwnerData()) {
-    console.log(chalk.red("  Error: users.json has invalid owner data."));
-    console.log(chalk.dim("  Keep exactly one owner object in users.json."));
-    console.log(chalk.dim(`  Data file: ${join(storage.getDataDir(), "users.json")}`));
-    console.log("");
-    process.exit(1);
-  }
-
   const mode = action || "help";
 
   if (mode === "rotate") {
-    const owner = storage.getOwnerUser();
-    if (!owner) {
+    if (!storage.isPaired()) {
       console.log(chalk.red("  Error: server is not paired yet."));
-      console.log(chalk.dim("  Run 'oppi pair [name]' first."));
+      console.log(chalk.dim("  Run 'oppi pair' first."));
       console.log("");
       process.exit(1);
     }
 
-    storage.rotateOwnerToken();
+    storage.rotateToken();
 
-    console.log(chalk.green("  ✓ Owner bearer token rotated."));
+    console.log(chalk.green("  ✓ Bearer token rotated."));
     console.log("");
     console.log(chalk.yellow("  Existing clients will be unauthorized until re-paired."));
     console.log(chalk.dim("  Next step: run 'oppi pair' to issue a fresh invite."));

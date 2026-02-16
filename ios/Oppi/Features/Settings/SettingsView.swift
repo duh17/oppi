@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
@@ -258,13 +259,8 @@ struct SettingsView: View {
     }
 
     private func removeServer(_ server: PairedServer) {
-        // If removing the active server, disconnect first
-        if server.id == connection.currentServerId {
-            connection.disconnectSession()
-        }
-
-        serverStore.remove(id: server.id)
-        connection.workspaceStore.removeServer(server.id)
+        // Coordinator handles: disconnect, clean all stores, switch to next server
+        coordinator.removeServer(id: server.id)
 
         // If no servers left, go to onboarding
         if serverStore.servers.isEmpty {
@@ -275,6 +271,7 @@ struct SettingsView: View {
 }
 
 private struct SecurityProfileEditorView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
 
     @State private var form = SecurityProfileFormState()
@@ -432,7 +429,10 @@ private struct SecurityProfileEditorView: View {
             if let creds = connection.credentials {
                 let upgraded = creds.applyingSecurityProfile(updated)
                 if upgraded != creds {
-                    try? KeychainService.saveCredentials(upgraded)
+                    // Save to per-server keychain slot (not legacy)
+                    if let server = coordinator.serverStore.addOrUpdate(from: upgraded) {
+                        try? KeychainService.saveServer(server)
+                    }
                 }
             }
 
