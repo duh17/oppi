@@ -1055,11 +1055,17 @@ export class Server {
     if (!auth?.startsWith("Bearer ")) return false;
 
     const token = auth.slice(7);
-    const configToken = this.storage.getToken();
-    if (!configToken) return false;
-    if (!secureTokenEquals(configToken, token)) return false;
 
-    return true;
+    // Check main server token
+    const configToken = this.storage.getToken();
+    if (configToken && secureTokenEquals(configToken, token)) return true;
+
+    // Check device tokens (issued during pairing)
+    for (const dt of this.storage.getDeviceTokens()) {
+      if (secureTokenEquals(dt, token)) return true;
+    }
+
+    return false;
   }
 
   // ─── HTTP Router ───

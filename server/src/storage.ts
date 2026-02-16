@@ -558,8 +558,10 @@ export class Storage {
         config = JSON.parse(readFileSync(this.configPath, "utf-8"));
       }
 
-      // Merge user fields into config (don't overwrite existing token)
-      if (!config.token && raw.token) config.token = raw.token;
+      // users.json token is authoritative — iOS clients were paired with it.
+      // Always prefer it over any config.json token (which may be from ensurePaired
+      // running before migration).
+      if (raw.token) config.token = raw.token;
       if (!config.deviceTokens && raw.deviceTokens) config.deviceTokens = raw.deviceTokens;
       if (!config.liveActivityToken && raw.liveActivityToken) config.liveActivityToken = raw.liveActivityToken;
       if (!config.thinkingLevelByModel && raw.thinkingLevelByModel) config.thinkingLevelByModel = raw.thinkingLevelByModel;
