@@ -3,15 +3,10 @@ import Security
 
 /// Secure storage for server credentials in the iOS Keychain.
 ///
-/// Supports multiple paired servers, each stored as a separate Keychain item
-/// keyed by the server's Ed25519 fingerprint.
-///
-/// Legacy single-credential storage is preserved for migration.
+/// Each paired server is stored as a separate Keychain item keyed by
+/// its Ed25519 fingerprint.
 enum KeychainService {
-    private static let service = "dev.chenda.Oppi"
-
-    // Legacy single-credential account (pre-multi-server)
-    private static let legacyAccount = "server-credentials"
+    private static let service = AppIdentifiers.subsystem
 
     // Multi-server account prefix
     private static let serverAccountPrefix = "server-"
@@ -48,19 +43,61 @@ enum KeychainService {
 
     /// Load all paired servers from Keychain.
     ///
-    /// Uses the `pairedServerIds` UserDefaults index to discover which
-    /// Keychain items to read. Returns them in index order.
+    /// Primary: uses `pairedServerIds` UserDefaults index for ordering.
+    /// Fallback: if UserDefaults is empty (e.g. after app reinstall, since
+    /// Keychain persists but UserDefaults doesn't), scans Keychain directly
+    /// for all `server-*` entries and rebuilds the index.
     static func loadServers() -> [PairedServer] {
-        guard let ids = UserDefaults.standard.stringArray(forKey: "pairedServerIds") else {
+        let ids = UserDefaults.standard.stringArray(forKey: "pairedServerIds")
+
+        if let ids, !ids.isEmpty {
+            // Fast path: load in index order
+            var servers: [PairedServer] = []
+            for id in ids {
+                if let server = loadServer(id: id) {
+                    servers.append(server)
+                }
+            }
+            return servers
+        }
+
+        // Fallback: scan Keychain for all server entries (survives reinstall)
+        let discovered = discoverAllServers()
+        if !discovered.isEmpty {
+            // Rebuild the UserDefaults index
+            let ids = discovered.map(\.id)
+            UserDefaults.standard.set(ids, forKey: "pairedServerIds")
+        }
+        return discovered
+    }
+
+    /// Scan Keychain for all items matching the server account prefix.
+    /// Used to recover after app reinstall wipes UserDefaults.
+    private static func discoverAllServers() -> [PairedServer] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
             return []
         }
 
         var servers: [PairedServer] = []
-        for id in ids {
-            if let server = loadServer(id: id) {
-                servers.append(server)
-            }
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix(serverAccountPrefix),
+                  let data = item[kSecValueData as String] as? Data,
+                  let server = try? JSONDecoder().decode(PairedServer.self, from: data)
+            else { continue }
+            servers.append(server)
         }
+        servers.sort { $0.sortOrder < $1.sortOrder }
         return servers
     }
 
@@ -101,107 +138,6 @@ enum KeychainService {
         "\(serverAccountPrefix)\(id)"
     }
 
-    // MARK: - Legacy Migration
-
-    /// Migrate a legacy single-credential entry to a `PairedServer`.
-    ///
-    /// Returns the migrated server if migration occurred, `nil` if no
-    /// legacy credential exists or migration already happened.
-    ///
-    /// The legacy Keychain item is deleted after successful migration.
-    static func migrateLegacyCredential() -> PairedServer? {
-        // Skip if we already have multi-server entries
-        if let ids = UserDefaults.standard.stringArray(forKey: "pairedServerIds"), !ids.isEmpty {
-            return nil
-        }
-
-        // Load legacy credential
-        guard let creds = loadLegacyCredentials() else {
-            return nil
-        }
-
-        // Create PairedServer from legacy credentials
-        guard let server = PairedServer(from: creds, sortOrder: 0) else {
-            // Credentials lack fingerprint — can't migrate to multi-server.
-            // Keep legacy credential in place; user will need to re-pair.
-            return nil
-        }
-
-        // Save as multi-server entry
-        do {
-            try saveServer(server)
-            // Delete legacy entry
-            deleteLegacyCredentials()
-            return server
-        } catch {
-            return nil
-        }
-    }
-
-    // MARK: - Legacy Single-Credential (kept for migration + backward compat)
-
-    /// Save credentials to Keychain (legacy single-credential format).
-    static func saveCredentials(_ credentials: ServerCredentials) throws {
-        let data = try JSONEncoder().encode(credentials)
-
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: legacyAccount,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: legacyAccount,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.saveFailed(status)
-        }
-    }
-
-    /// Load credentials from Keychain (legacy single-credential format).
-    static func loadCredentials() -> ServerCredentials? {
-        loadLegacyCredentials()
-    }
-
-    /// Delete credentials from Keychain (legacy single-credential format).
-    static func deleteCredentials() {
-        deleteLegacyCredentials()
-    }
-
-    private static func loadLegacyCredentials() -> ServerCredentials? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: legacyAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-
-        return try? JSONDecoder().decode(ServerCredentials.self, from: data)
-    }
-
-    private static func deleteLegacyCredentials() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: legacyAccount,
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
 }
 
 enum KeychainError: LocalizedError {

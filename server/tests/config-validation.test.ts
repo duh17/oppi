@@ -86,7 +86,6 @@ describe("Storage config validation", () => {
       workspaceIdleTimeoutMs: 1_800_000,
       maxSessionsPerWorkspace: 3,
       maxSessionsGlobal: 5,
-      legacyExtensionsEnabled: true,
     };
 
     const result = Storage.validateConfig(legacy, dir, false);
@@ -109,7 +108,6 @@ describe("Storage config validation", () => {
       workspaceIdleTimeoutMs: 1_800_000,
       maxSessionsPerWorkspace: 3,
       maxSessionsGlobal: 5,
-      legacyExtensionsEnabled: true,
     };
 
     writeFileSync(join(dir, "config.json"), JSON.stringify(legacy, null, 2));

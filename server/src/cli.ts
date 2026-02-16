@@ -276,7 +276,7 @@ async function cmdPair(
     token: inviteData.token,
     name: inviteData.name,
     fingerprint: identity.fingerprint,
-    securityProfile: config.security?.profile || "legacy",
+    securityProfile: config.security?.profile || "tailscale-permissive",
   };
 
   const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
@@ -523,7 +523,6 @@ const SETTABLE_KEYS: Record<string, { type: "number" | "string" | "boolean"; des
   sessionIdleTimeoutMs:     { type: "number",  desc: "Session idle timeout (ms)" },
   workspaceIdleTimeoutMs:   { type: "number",  desc: "Workspace idle timeout (ms)" },
   approvalTimeoutMs:        { type: "number",  desc: "Permission approval timeout (ms)" },
-  legacyExtensionsEnabled:  { type: "boolean", desc: "Auto-load memory/todos extensions" },
 };
 
 function coerceValue(raw: string, type: "number" | "string" | "boolean"): number | string | boolean {

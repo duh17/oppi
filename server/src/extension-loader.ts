@@ -1,26 +1,16 @@
 /**
  * Workspace extension resolution.
  *
- * Supports two modes:
- * - legacy (default): auto-load legacy memory/todo host extensions
- * - explicit: load only extensions listed in workspace.extensions
- *
- * Backward compatibility:
- * Existing workspaces without extensionMode/extensions continue using legacy mode.
+ * Resolves named extensions from ~/.pi/agent/extensions for workspace spawn/install.
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import type { Workspace } from "./types.js";
 
 export const HOST_EXTENSIONS_DIR = join(homedir(), ".pi", "agent", "extensions");
-export const HOST_MEMORY_EXTENSION = join(HOST_EXTENSIONS_DIR, "memory.ts");
-export const HOST_TODOS_EXTENSION = join(HOST_EXTENSIONS_DIR, "todos.ts");
 
 const EXTENSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-
-export type WorkspaceExtensionMode = "legacy" | "explicit";
 
 export interface ResolvedExtension {
   /** Normalized extension name (without file extension). */
@@ -31,13 +21,7 @@ export interface ResolvedExtension {
   kind: "file" | "directory";
 }
 
-export interface ResolveWorkspaceExtensionsOptions {
-  /** Enable legacy auto-loading for memory/todos extensions. */
-  legacyEnabled: boolean;
-}
-
 export interface ResolveWorkspaceExtensionsResult {
-  mode: WorkspaceExtensionMode;
   extensions: ResolvedExtension[];
   warnings: string[];
 }
@@ -57,7 +41,7 @@ export function isValidExtensionName(name: string): boolean {
 }
 
 /**
- * List host extensions available for explicit workspace selection.
+ * List host extensions available for workspace selection.
  *
  * Scans ~/.pi/agent/extensions and returns discoverable entries.
  * Managed extensions (permission-gate) are excluded.
@@ -116,46 +100,16 @@ export function listHostExtensions(): HostExtensionInfo[] {
 /**
  * Resolve workspace extension paths for spawn/install.
  *
- * Mode selection:
- * 1. workspace.extensionMode when present
- * 2. explicit when workspace.extensions is present
- * 3. legacy fallback (for backward compatibility)
+ * Resolves named extensions from the workspace's `extensions` list.
  */
 export function resolveWorkspaceExtensions(
-  workspace: Workspace | undefined,
-  options: ResolveWorkspaceExtensionsOptions,
+  extensionNames: string[] | undefined,
 ): ResolveWorkspaceExtensionsResult {
-  const explicitNames = workspace?.extensions;
-  const mode: WorkspaceExtensionMode =
-    workspace?.extensionMode ?? (Array.isArray(explicitNames) ? "explicit" : "legacy");
-
-  if (mode === "explicit") {
-    return resolveExplicitExtensions(explicitNames ?? []);
-  }
-
-  return resolveLegacyExtensions(workspace, options);
-}
-
-/** Compute destination filename/directory under agent/extensions/. */
-export function extensionInstallName(extension: ResolvedExtension): string {
-  if (extension.kind === "directory") {
-    return extension.name;
-  }
-
-  const suffix = extname(extension.path);
-  if (suffix.length > 0) {
-    return `${extension.name}${suffix}`;
-  }
-
-  return extension.name;
-}
-
-function resolveExplicitExtensions(names: string[]): ResolveWorkspaceExtensionsResult {
   const warnings: string[] = [];
   const resolved: ResolvedExtension[] = [];
   const seen = new Set<string>();
 
-  for (const raw of names) {
+  for (const raw of extensionNames ?? []) {
     const requested = raw.trim();
     if (requested.length === 0) {
       continue;
@@ -186,47 +140,21 @@ function resolveExplicitExtensions(names: string[]): ResolveWorkspaceExtensionsR
     resolved.push(ext);
   }
 
-  return {
-    mode: "explicit",
-    extensions: resolved,
-    warnings,
-  };
+  return { extensions: resolved, warnings };
 }
 
-function resolveLegacyExtensions(
-  workspace: Workspace | undefined,
-  options: ResolveWorkspaceExtensionsOptions,
-): ResolveWorkspaceExtensionsResult {
-  if (!options.legacyEnabled) {
-    return {
-      mode: "legacy",
-      extensions: [],
-      warnings: [],
-    };
+/** Compute destination filename/directory under agent/extensions/. */
+export function extensionInstallName(extension: ResolvedExtension): string {
+  if (extension.kind === "directory") {
+    return extension.name;
   }
 
-  const warnings: string[] = [];
-  const extensions: ResolvedExtension[] = [];
-
-  if (workspace?.memoryEnabled) {
-    const memory = resolveKnownPath("memory", HOST_MEMORY_EXTENSION);
-    if (memory) {
-      extensions.push(memory);
-    } else {
-      warnings.push(`Legacy memory extension not found: ${HOST_MEMORY_EXTENSION}`);
-    }
+  const suffix = extname(extension.path);
+  if (suffix.length > 0) {
+    return `${extension.name}${suffix}`;
   }
 
-  const todos = resolveKnownPath("todos", HOST_TODOS_EXTENSION);
-  if (todos) {
-    extensions.push(todos);
-  }
-
-  return {
-    mode: "legacy",
-    extensions,
-    warnings,
-  };
+  return extension.name;
 }
 
 function resolveByName(name: string): ResolvedExtension | null {
@@ -250,17 +178,6 @@ function resolveByName(name: string): ResolvedExtension | null {
   }
 
   return null;
-}
-
-function resolveKnownPath(name: string, absPath: string): ResolvedExtension | null {
-  const kind = detectKind(absPath);
-  if (!kind) return null;
-
-  return {
-    name,
-    path: absPath,
-    kind,
-  };
 }
 
 function normalizeName(name: string): string {
@@ -293,7 +210,6 @@ function detectKind(absPath: string): "file" | "directory" | null {
     return null;
   } catch {
     // Test environments may mock existsSync without statSync.
-    // Fall back to suffix-based inference to keep behavior deterministic.
     const suffix = extname(absPath);
     if (suffix === ".ts" || suffix === ".js") {
       return "file";

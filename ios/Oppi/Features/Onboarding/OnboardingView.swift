@@ -137,7 +137,7 @@ struct OnboardingView: View {
         do {
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
-                existingCredentials: KeychainService.loadCredentials()
+                existingCredentials: nil
             ) { reason in
                 await BiometricService.shared.authenticate(reason: reason)
             }
@@ -146,9 +146,6 @@ struct OnboardingView: View {
 
             // Add to ServerStore (handles fingerprint dedup via addOrUpdate)
             serverStore.addOrUpdate(from: effectiveCreds)
-
-            // Also save to legacy Keychain for backward compat
-            try KeychainService.saveCredentials(effectiveCreds)
 
             guard connection.configure(credentials: effectiveCreds) else {
                 connectionTest = .failed("Connection blocked by server transport policy")

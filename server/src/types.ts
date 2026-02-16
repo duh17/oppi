@@ -30,8 +30,7 @@ export interface Workspace {
   memoryNamespace?: string; // Same namespace => shared memory across workspaces
 
   // Extensions
-  extensionMode?: "legacy" | "explicit"; // legacy auto-loads memory/todos, explicit uses `extensions`
-  extensions?: string[]; // Extension names from ~/.pi/agent/extensions (explicit mode)
+  extensions?: string[]; // Extension names from ~/.pi/agent/extensions
 
   // Defaults
   defaultModel?: string; // Override server default for this workspace
@@ -108,7 +107,7 @@ export interface SessionMessage {
 
 // ─── Server Config ───
 
-export type SecurityProfile = "legacy" | "tailscale-permissive" | "strict";
+export type SecurityProfile = "tailscale-permissive" | "strict";
 
 export interface ServerSecurityConfig {
   profile: SecurityProfile;
@@ -138,17 +137,12 @@ export interface ServerConfig {
   host: string;
   dataDir: string;
   defaultModel: string;
-  /** @deprecated Use sessionIdleTimeoutMs. Kept for config compatibility. */
-  sessionTimeout: number;
   sessionIdleTimeoutMs: number;
   workspaceIdleTimeoutMs: number;
   maxSessionsPerWorkspace: number;
   maxSessionsGlobal: number;
   /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
   approvalTimeoutMs?: number;
-  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
-  legacyExtensionsEnabled?: boolean;
-
   // v2 security contract
   security?: ServerSecurityConfig;
   identity?: ServerIdentityConfig;
@@ -194,7 +188,6 @@ export interface CreateWorkspaceRequest {
   hostMount?: string;
   memoryEnabled?: boolean;
   memoryNamespace?: string;
-  extensionMode?: "legacy" | "explicit";
   extensions?: string[];
   defaultModel?: string;
 }
@@ -210,7 +203,6 @@ export interface UpdateWorkspaceRequest {
   hostMount?: string;
   memoryEnabled?: boolean;
   memoryNamespace?: string;
-  extensionMode?: "legacy" | "explicit";
   extensions?: string[];
   defaultModel?: string;
 }
@@ -358,7 +350,6 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
 ) & {
   /**
    * Optional target session for multiplexed user streams.
-   * Legacy per-session streams ignore this field.
    */
   sessionId?: string;
 };

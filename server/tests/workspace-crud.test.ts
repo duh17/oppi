@@ -65,9 +65,8 @@ describe("Storage.createWorkspace", () => {
     expect(ws.updatedAt).toBe(ws.createdAt);
   });
 
-  it("defaults extension mode to legacy for backward compatibility", () => {
+  it("creates workspace with no extensions by default", () => {
     const ws = storage.createWorkspace(createReq());
-    expect(ws.extensionMode).toBe("legacy");
     expect(ws.extensions).toBeUndefined();
   });
 
@@ -80,7 +79,6 @@ describe("Storage.createWorkspace", () => {
         hostMount: "~/workspace/oppi",
         memoryEnabled: true,
         memoryNamespace: "coding",
-        extensionMode: "explicit",
         extensions: ["memory", "todos"],
         defaultModel: "anthropic/claude-sonnet-4-0",
       }),
@@ -93,7 +91,6 @@ describe("Storage.createWorkspace", () => {
     expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.memoryEnabled).toBe(true);
     expect(ws.memoryNamespace).toBe("coding");
-    expect(ws.extensionMode).toBe("explicit");
     expect(ws.extensions).toEqual(["memory", "todos"]);
     expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
@@ -381,22 +378,13 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.memoryNamespace).toBe(`ws-${ws.id}`);
   });
 
-  it("updates extensionMode", () => {
-    const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, { extensionMode: "explicit" });
-
-    expect(updated!.extensionMode).toBe("explicit");
-  });
-
   it("normalizes and updates extensions", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
       extensions: [" memory ", "todos", "memory"],
-      extensionMode: "explicit",
     });
 
     expect(updated!.extensions).toEqual(["memory", "todos"]);
-    expect(updated!.extensionMode).toBe("explicit");
   });
 
   it("updates defaultModel", () => {

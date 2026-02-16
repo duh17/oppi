@@ -6,7 +6,7 @@ import Foundation
 /// Schema-versioned so we can migrate or discard on changes.
 struct RestorationState: Codable {
     static let schemaVersion = 2
-    static let key = "dev.chenda.Oppi.restoration"
+    static let key = "\(AppIdentifiers.subsystem).restoration"
 
     let version: Int
     let activeSessionId: String?
@@ -77,9 +77,6 @@ extension AppTab {
         switch rawString {
         case "settings":
             self = .settings
-        case "sessions":
-            // Backward compatibility for pre-workspace-tab snapshots.
-            self = .workspaces
         default:
             self = .workspaces
         }

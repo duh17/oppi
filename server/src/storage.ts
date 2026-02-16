@@ -31,7 +31,6 @@ import type {
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
 const SECURITY_PROFILES: ReadonlySet<SecurityProfile> = new Set([
-  "legacy",
   "tailscale-permissive",
   "strict",
 ]);
@@ -83,13 +82,12 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     host: "0.0.0.0",
     dataDir,
     defaultModel: "anthropic/claude-sonnet-4-0",
-    sessionTimeout: 10 * 60 * 1000,
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 3,
     maxSessionsGlobal: 5,
     approvalTimeoutMs: 120 * 1000,
-    legacyExtensionsEnabled: true,
+
     security: defaultSecurityConfig(),
     identity: defaultIdentityConfig(dataDir),
     invite: defaultInviteConfig(),
@@ -126,13 +124,12 @@ function normalizeConfig(
     "host",
     "dataDir",
     "defaultModel",
-    "sessionTimeout",
     "sessionIdleTimeoutMs",
     "workspaceIdleTimeoutMs",
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
     "approvalTimeoutMs",
-    "legacyExtensionsEnabled",
+
     "security",
     "identity",
     "invite",
@@ -231,24 +228,11 @@ function normalizeConfig(
     config.defaultModel = model;
   }
 
-  const sessionTimeout = readNumber("sessionTimeout", { min: 1 });
-  const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 });
-
-  if (sessionTimeout !== undefined && sessionIdleTimeoutMs === undefined) {
-    config.sessionTimeout = sessionTimeout;
-    config.sessionIdleTimeoutMs = sessionTimeout;
-    changed = true;
-  } else if (sessionTimeout === undefined && sessionIdleTimeoutMs !== undefined) {
+  // Accept legacy "sessionTimeout" as alias for sessionIdleTimeoutMs
+  const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 })
+    ?? readNumber("sessionTimeout", { min: 1 });
+  if (sessionIdleTimeoutMs !== undefined) {
     config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
-    config.sessionTimeout = sessionIdleTimeoutMs;
-    changed = true;
-  } else {
-    if (sessionTimeout !== undefined) {
-      config.sessionTimeout = sessionTimeout;
-    }
-    if (sessionIdleTimeoutMs !== undefined) {
-      config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
-    }
   }
 
   const workspaceIdleTimeoutMs = readNumber("workspaceIdleTimeoutMs", { min: 1 });
@@ -269,11 +253,6 @@ function normalizeConfig(
   const approvalTimeoutMs = readNumber("approvalTimeoutMs", { min: 0 });
   if (approvalTimeoutMs !== undefined) {
     config.approvalTimeoutMs = approvalTimeoutMs;
-  }
-
-  const legacyExtensionsEnabled = readBoolean("legacyExtensionsEnabled");
-  if (legacyExtensionsEnabled !== undefined) {
-    config.legacyExtensionsEnabled = legacyExtensionsEnabled;
   }
 
   const securityDefaults = defaultSecurityConfig();
@@ -302,6 +281,12 @@ function normalizeConfig(
       }
 
       const security: ServerSecurityConfig = { ...securityDefaults };
+
+      // Migrate removed "legacy" profile to default
+      if (rawSecurity.profile === "legacy") {
+        rawSecurity.profile = "tailscale-permissive";
+        changed = true;
+      }
 
       if (!("profile" in rawSecurity)) {
         changed = true;
@@ -505,14 +490,6 @@ function normalizeExtensionList(extensions: string[] | undefined): string[] | un
   return out;
 }
 
-function resolveWorkspaceExtensionMode(
-  explicitExtensions: string[] | undefined,
-  mode: Workspace["extensionMode"] | undefined,
-): Workspace["extensionMode"] {
-  if (mode === "legacy" || mode === "explicit") return mode;
-  return explicitExtensions ? "explicit" : "legacy";
-}
-
 export class Storage {
   private dataDir: string;
   private configPath: string;
@@ -528,7 +505,6 @@ export class Storage {
     this.workspacesDir = join(this.dataDir, "workspaces");
 
     this.ensureDirectories();
-    this.migrateUsersJson();
     this.config = this.loadConfig();
   }
 
@@ -537,47 +513,6 @@ export class Storage {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
-    }
-  }
-
-  /**
-   * One-time migration: fold legacy users.json into config.json.
-   * Runs before config load so token is available immediately.
-   */
-  private migrateUsersJson(): void {
-    const usersPath = join(this.dataDir, "users.json");
-    if (!existsSync(usersPath)) return;
-
-    try {
-      const raw = JSON.parse(readFileSync(usersPath, "utf-8"));
-      if (!raw || typeof raw !== "object" || !raw.token) return;
-
-      // Read current config (raw, before normalization)
-      let config: Record<string, unknown> = {};
-      if (existsSync(this.configPath)) {
-        config = JSON.parse(readFileSync(this.configPath, "utf-8"));
-      }
-
-      // users.json token is authoritative — iOS clients were paired with it.
-      // Always prefer it over any config.json token (which may be from ensurePaired
-      // running before migration).
-      if (raw.token) config.token = raw.token;
-      if (!config.deviceTokens && raw.deviceTokens) config.deviceTokens = raw.deviceTokens;
-      if (!config.liveActivityToken && raw.liveActivityToken) config.liveActivityToken = raw.liveActivityToken;
-      if (!config.thinkingLevelByModel && raw.thinkingLevelByModel) config.thinkingLevelByModel = raw.thinkingLevelByModel;
-
-      writeFileSync(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-
-      // Rename instead of delete — safety net
-      const backupPath = join(this.dataDir, "users.json.migrated");
-      if (!existsSync(backupPath)) {
-        writeFileSync(backupPath, readFileSync(usersPath, "utf-8"), { mode: 0o600 });
-      }
-      rmSync(usersPath);
-      console.log("[storage] Migrated users.json → config.json (token + push state)");
-    } catch (err) {
-      console.error("[storage] users.json migration failed:", err);
-      // Non-fatal — old file stays, user can re-pair
     }
   }
 
@@ -689,13 +624,6 @@ export class Storage {
       invite: updates.invite ? { ...this.config.invite, ...updates.invite } : this.config.invite,
     };
 
-    // Keep legacy + new idle timeout fields aligned.
-    if (updates.sessionIdleTimeoutMs !== undefined && updates.sessionTimeout === undefined) {
-      merged.sessionTimeout = updates.sessionIdleTimeoutMs;
-    } else if (updates.sessionTimeout !== undefined && updates.sessionIdleTimeoutMs === undefined) {
-      merged.sessionIdleTimeoutMs = updates.sessionTimeout;
-    }
-
     const normalized = normalizeConfig(merged, this.dataDir, false);
     this.config = normalized.config;
     this.saveConfig(this.config);
@@ -735,11 +663,6 @@ export class Storage {
   /** Owner display name derived from hostname. */
   getOwnerName(): string {
     return hostname().split(".")[0] || "owner";
-  }
-
-  /** Legacy compat stub — always false now. */
-  hasInvalidOwnerData(): boolean {
-    return false;
   }
 
   // ─── Device Tokens ───
@@ -957,7 +880,6 @@ export class Storage {
     const runtime =
       req.runtime || (!req.hostMount && policyPreset === "container" ? "container" : "host");
     const extensions = normalizeExtensionList(req.extensions);
-    const extensionMode = resolveWorkspaceExtensionMode(extensions, req.extensionMode);
 
     const workspace: Workspace = {
       id,
@@ -971,7 +893,6 @@ export class Storage {
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
       memoryNamespace: req.memoryEnabled ? req.memoryNamespace || `ws-${id}` : req.memoryNamespace,
-      extensionMode,
       extensions,
       defaultModel: req.defaultModel,
       createdAt: now,
@@ -1009,7 +930,6 @@ export class Storage {
       const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
       ws.runtime = this.validateWorkspaceRuntime(ws);
       ws.extensions = normalizeExtensionList(ws.extensions);
-      ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
       return ws;
     } catch {
       return undefined;
@@ -1028,7 +948,6 @@ export class Storage {
         const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
         ws.runtime = this.validateWorkspaceRuntime(ws);
         ws.extensions = normalizeExtensionList(ws.extensions);
-        ws.extensionMode = resolveWorkspaceExtensionMode(ws.extensions, ws.extensionMode);
         workspaces.push(ws);
       } catch (err) {
         console.error(`[storage] Corrupt workspace file ${join(dir, file)}, skipping:`, err);
@@ -1055,7 +974,6 @@ export class Storage {
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
     if (updates.memoryNamespace !== undefined) workspace.memoryNamespace = updates.memoryNamespace;
-    if (updates.extensionMode !== undefined) workspace.extensionMode = updates.extensionMode;
     if (updates.extensions !== undefined) {
       workspace.extensions = normalizeExtensionList(updates.extensions);
     }
@@ -1065,10 +983,6 @@ export class Storage {
     ) {
       workspace.memoryNamespace = `ws-${workspace.id}`;
     }
-    workspace.extensionMode = resolveWorkspaceExtensionMode(
-      workspace.extensions,
-      workspace.extensionMode,
-    );
     if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
     workspace.updatedAt = Date.now();
 

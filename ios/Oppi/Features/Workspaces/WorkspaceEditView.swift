@@ -17,7 +17,6 @@ struct WorkspaceEditView: View {
     @State private var systemPrompt: String = ""
     @State private var memoryEnabled: Bool = false
     @State private var memoryNamespace: String = ""
-    @State private var extensionMode: String = "legacy"
     @State private var extensionNames: String = ""
     @State private var availableExtensions: [ExtensionInfo] = []
     @State private var isLoadingExtensions = false
@@ -120,20 +119,11 @@ struct WorkspaceEditView: View {
             }
 
             Section("Extensions") {
-                Picker("Mode", selection: $extensionMode) {
-                    Text("Legacy").tag("legacy")
-                    Text("Explicit").tag("explicit")
-                }
-                .pickerStyle(.segmented)
-
-                Text(extensionMode == "legacy"
-                     ? "Legacy auto-loads memory/todos for backward compatibility."
-                     : "Explicit loads only named extensions from ~/.pi/agent/extensions.")
+                Text("Named extensions from ~/.pi/agent/extensions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                if extensionMode == "explicit" {
-                    if isLoadingExtensions && availableExtensions.isEmpty {
+                if isLoadingExtensions && availableExtensions.isEmpty {
                         Text("Loading available extensions…")
                             .foregroundStyle(.secondary)
                     } else if availableExtensions.isEmpty {
@@ -180,7 +170,6 @@ struct WorkspaceEditView: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
-                }
             }
 
             Section("Default Model") {
@@ -345,7 +334,6 @@ struct WorkspaceEditView: View {
         systemPrompt = workspace.systemPrompt ?? ""
         memoryEnabled = workspace.memoryEnabled ?? false
         memoryNamespace = workspace.memoryNamespace ?? ""
-        extensionMode = workspace.extensionMode ?? (workspace.extensions == nil ? "legacy" : "explicit")
         extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
         defaultModel = workspace.defaultModel ?? ""
         normalizePolicyPreset(for: runtime)
@@ -390,8 +378,7 @@ struct WorkspaceEditView: View {
             hostMount: hostMount.isEmpty ? nil : hostMount,
             memoryEnabled: memoryEnabled,
             memoryNamespace: memoryNamespace.isEmpty ? nil : memoryNamespace,
-            extensionMode: extensionMode,
-            extensions: extensionMode == "explicit" ? parseExtensionNames(extensionNames) : nil,
+            extensions: parseExtensionNames(extensionNames),
             defaultModel: defaultModel.isEmpty ? nil : defaultModel
         )
 

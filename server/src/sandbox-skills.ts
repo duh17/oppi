@@ -164,8 +164,7 @@ export function linkSessionSkills(agentDir: string, workspaceSkillsDir: string):
 /**
  * Create symlink shims so skill scripts are on $PATH.
  *
- * Primary location: sessions/<sid>/bin (current layout).
- * Compat location:  sessions/<sid>/agent/bin (older PATHs prepended this).
+ * Location: sessions/<sid>/bin
  * Only creates shims for skills that were actually installed.
  */
 export function createSkillShims(
@@ -174,7 +173,7 @@ export function createSkillShims(
   skillsDir: string,
   installedSkills: string[],
 ): void {
-  const binDirs = [join(sessionRootDir, "bin"), join(agentDir, "bin")];
+  const binDirs = [join(sessionRootDir, "bin")];
   const installedSet = new Set(installedSkills);
 
   for (const binDir of binDirs) {

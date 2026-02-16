@@ -27,7 +27,6 @@ struct CreateWorkspaceRequest: Encodable {
     var hostMount: String?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
-    var extensionMode: String?
     var extensions: [String]?
     var defaultModel: String?
 }
@@ -43,7 +42,6 @@ struct UpdateWorkspaceRequest: Encodable {
     var hostMount: String?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
-    var extensionMode: String?
     var extensions: [String]?
     var defaultModel: String?
 }
@@ -169,7 +167,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let timestamp: Date
     let sessionId: String
     let workspaceId: String
-    let userId: String
     let tool: String
     let displaySummary: String
     let risk: RiskLevel
@@ -181,7 +178,7 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let userChoice: PolicyAuditUserChoice?
 
     enum CodingKeys: String, CodingKey {
-        case id, timestamp, sessionId, workspaceId, userId, tool, displaySummary
+        case id, timestamp, sessionId, workspaceId, tool, displaySummary
         case risk, decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
     }
 
@@ -192,7 +189,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
         timestamp = Date(timeIntervalSince1970: timestampMs / 1000)
         sessionId = try c.decode(String.self, forKey: .sessionId)
         workspaceId = try c.decode(String.self, forKey: .workspaceId)
-        userId = try c.decode(String.self, forKey: .userId)
         tool = try c.decode(String.self, forKey: .tool)
         displaySummary = try c.decode(String.self, forKey: .displaySummary)
         risk = try c.decode(RiskLevel.self, forKey: .risk)

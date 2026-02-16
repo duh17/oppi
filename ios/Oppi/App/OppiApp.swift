@@ -2,7 +2,7 @@ import os.log
 import SwiftUI
 import UIKit
 
-private let appLog = Logger(subsystem: "dev.chenda.Oppi", category: "App")
+private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
 
 /// Gate reconnect work so foreground transitions only trigger recovery
 /// after an actual background cycle (not every inactive↔active bounce).
@@ -102,7 +102,7 @@ struct OppiApp: App {
         }
         inviteBootstrapInFlight = true
         defer { inviteBootstrapInFlight = false }
-        let existingCredentials = connection.credentials ?? KeychainService.loadCredentials()
+        let existingCredentials = connection.credentials
         let hadExistingCredentials = existingCredentials != nil
         do {
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
@@ -386,7 +386,7 @@ struct OppiApp: App {
             }
         }
 
-        // 1. Load credentials — prefer restored server, then first server, fallback to legacy
+        // 1. Load credentials — prefer restored server, then first server
         let restored = RestorationState.load()
         let targetServer: PairedServer?
         if let restoredServerId = restored?.activeServerId,
@@ -396,17 +396,14 @@ struct OppiApp: App {
             targetServer = serverStore.servers.first
         }
 
-        let initialCreds: ServerCredentials
-        if let server = targetServer {
-            initialCreds = server.credentials
-            coordinator.switchToServer(server)
-        } else if let legacy = KeychainService.loadCredentials() {
-            initialCreds = legacy
-        } else {
+        guard let server = targetServer else {
             launchOutcome = "no_credentials"
             navigation.showOnboarding = true
             return
         }
+
+        let initialCreds = server.credentials
+        coordinator.switchToServer(server)
         var creds = initialCreds
 
         guard connection.configure(credentials: creds) else {

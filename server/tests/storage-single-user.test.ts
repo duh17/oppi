@@ -66,42 +66,13 @@ describe("Storage pairing", () => {
     expect(config.token).toMatch(/^sk_/);
   });
 
-  it("migrates legacy users.json into config.json", () => {
+  it("ignores stale users.json (migration removed)", () => {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "users.json"),
-      JSON.stringify({
-        id: "old-id",
-        name: "Bob",
-        token: "sk_legacy_token_123",
-        createdAt: Date.now(),
-        deviceTokens: ["apns-hex-1"],
-        thinkingLevelByModel: { "anthropic/claude-sonnet-4-20250514": "high" },
-      }),
-      { mode: 0o600 },
-    );
+    writeFileSync(join(dir, "users.json"), JSON.stringify({ token: "old" }), { mode: 0o600 });
 
-    const storage = new Storage(dir);
-
-    // users.json should be gone (renamed to .migrated)
-    expect(existsSync(join(dir, "users.json"))).toBe(false);
-    expect(existsSync(join(dir, "users.json.migrated"))).toBe(true);
-
-    // Token migrated
-    expect(storage.getToken()).toBe("sk_legacy_token_123");
-    expect(storage.isPaired()).toBe(true);
-
-    // State migrated
-    expect(storage.getDeviceTokens()).toEqual(["apns-hex-1"]);
-    expect(storage.getModelThinkingLevelPreference("anthropic/claude-sonnet-4-20250514")).toBe("high");
-  });
-
-  it("ignores malformed users.json gracefully", () => {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "users.json"), "[1,2,3]", { mode: 0o600 });
-
-    // Should not crash
+    // users.json is ignored — no migration runs
     const storage = new Storage(dir);
     expect(storage.isPaired()).toBe(false);
+    expect(existsSync(join(dir, "users.json"))).toBe(true);
   });
 });

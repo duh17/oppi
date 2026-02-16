@@ -65,14 +65,17 @@ function ts(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
-// Re-exported from session-protocol — kept here for backward compatibility.
-export { computeAssistantTextTailDelta } from "./session-protocol.js";
-
-// Re-exported from dedicated module — kept here for backward compatibility.
-export { TurnDedupeCache, type TurnDedupeRecord } from "./turn-cache.js";
-
-// Re-exported from dedicated module — kept here for backward compatibility.
-export { EventRing, type SequencedEvent } from "./event-ring.js";
+/**
+ * Compose a canonical `provider/modelId` string.
+ *
+ * Handles nested providers like openrouter where the model ID itself
+ * contains slashes (e.g. provider="openrouter", modelId="z.ai/glm-5"
+ * → "openrouter/z.ai/glm-5").  Avoids double-prefixing when the
+ * model ID already starts with the provider name.
+ */
+export function composeModelId(provider: string, modelId: string): string {
+  return modelId.startsWith(`${provider}/`) ? modelId : `${provider}/${modelId}`;
+}
 
 export interface SessionCatchUpResponse {
   events: ServerMessage[];
@@ -439,7 +442,6 @@ export class SessionManager extends EventEmitter {
       sandbox: this.sandbox,
       authProxy: this.authProxy,
       piExecutable: this.piExecutable,
-      legacyExtensionsEnabled: this.config.legacyExtensionsEnabled !== false,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
     };
@@ -1098,8 +1100,8 @@ export class SessionManager extends EventEmitter {
     const rawModelId = state.model?.id;
     const rawProvider = state.model?.provider;
     const fullModelId =
-      typeof rawProvider === "string" && typeof rawModelId === "string" && !rawModelId.includes("/")
-        ? `${rawProvider}/${rawModelId}`
+      typeof rawProvider === "string" && typeof rawModelId === "string"
+        ? composeModelId(rawProvider, rawModelId)
         : rawModelId;
     if (
       typeof fullModelId === "string" &&
@@ -1236,7 +1238,7 @@ export class SessionManager extends EventEmitter {
         const provider = modelData?.provider;
         const modelId = modelData?.id;
         if (typeof provider === "string" && typeof modelId === "string") {
-          const fullId = `${provider}/${modelId}`;
+          const fullId = composeModelId(provider, modelId);
           if (active.session.model !== fullId) {
             active.session.model = fullId;
             if (this.contextWindowResolver) {

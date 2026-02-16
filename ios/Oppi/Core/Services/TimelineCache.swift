@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "Cache")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Cache")
 
 /// Cached trace snapshot for a session.
 struct CachedTrace: Codable, Sendable {
@@ -48,7 +48,6 @@ actor TimelineCache {
 
     init(
         rootURL: URL? = nil,
-        legacyRootURL: URL? = nil,
         fileManager: FileManager = .default
     ) {
         self.fileManager = fileManager
@@ -56,22 +55,6 @@ actor TimelineCache {
         let resolvedRoot = rootURL ?? Self.defaultRootURL(fileManager: fileManager)
         root = resolvedRoot
         tracesDir = resolvedRoot.appending(path: "traces", directoryHint: .isDirectory)
-
-        let resolvedLegacyRoot = legacyRootURL ?? Self.defaultLegacyRootURL(fileManager: fileManager)
-
-        // One-time migration from old evictable cache location if durable
-        // storage doesn't exist yet.
-        if !fileManager.fileExists(atPath: root.path),
-           fileManager.fileExists(atPath: resolvedLegacyRoot.path) {
-            do {
-                let parent = root.deletingLastPathComponent()
-                try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
-                try fileManager.copyItem(at: resolvedLegacyRoot, to: root)
-                logger.notice("Cache migrated from Caches to Application Support")
-            } catch {
-                logger.warning("Cache migration failed: \(error.localizedDescription)")
-            }
-        }
 
         // Ensure directories exist
         try? fileManager.createDirectory(at: tracesDir, withIntermediateDirectories: true)
@@ -248,13 +231,8 @@ actor TimelineCache {
 
     private static func defaultRootURL(fileManager: FileManager) -> URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let appRoot = appSupport.appending(path: "dev.chenda.Oppi", directoryHint: .isDirectory)
+        let appRoot = appSupport.appending(path: AppIdentifiers.subsystem, directoryHint: .isDirectory)
         return appRoot.appending(path: "cache", directoryHint: .isDirectory)
-    }
-
-    private static func defaultLegacyRootURL(fileManager: FileManager) -> URL {
-        let legacyCaches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return legacyCaches.appending(path: "dev.chenda.Oppi", directoryHint: .isDirectory)
     }
 
     private func traceURL(_ sessionId: String) -> URL {

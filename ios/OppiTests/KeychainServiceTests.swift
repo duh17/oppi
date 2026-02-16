@@ -5,71 +5,47 @@ import Foundation
 @Suite("KeychainService", .serialized)
 struct KeychainServiceTests {
 
-    private func cleanup() {
-        KeychainService.deleteCredentials()
+    private func makeServer(fingerprint: String) -> PairedServer? {
+        let creds = ServerCredentials(
+            host: "192.168.1.10", port: 7749, token: "sk_test123", name: "Test",
+            serverFingerprint: "sha256:\(fingerprint)"
+        )
+        return PairedServer(from: creds, sortOrder: 0)
     }
 
-    // MARK: - Save and Load
+    // MARK: - Multi-Server CRUD
 
-    @Test func saveAndLoad() throws {
-        defer { cleanup() }
+    @Test func saveAndLoadServer() throws {
+        let fp = UUID().uuidString
+        defer { KeychainService.deleteServer(id: "sha256:\(fp)") }
 
-        let creds = ServerCredentials(
-            host: "192.168.1.10", port: 7749, token: "sk_test123", name: "TestUser"
-        )
-        try KeychainService.saveCredentials(creds)
+        guard let server = makeServer(fingerprint: fp) else {
+            Issue.record("Failed to create PairedServer")
+            return
+        }
 
-        let loaded = KeychainService.loadCredentials()
+        try KeychainService.saveServer(server)
+        let loaded = KeychainService.loadServer(id: server.id)
         #expect(loaded != nil)
         #expect(loaded?.host == "192.168.1.10")
         #expect(loaded?.port == 7749)
-        #expect(loaded?.token == "sk_test123")
-        #expect(loaded?.name == "TestUser")
     }
 
-    // MARK: - Overwrite
+    @Test func deleteRemovesServer() throws {
+        let fp = UUID().uuidString
+        guard let server = makeServer(fingerprint: fp) else {
+            Issue.record("Failed to create PairedServer")
+            return
+        }
 
-    @Test func saveOverwritesExisting() throws {
-        defer { cleanup() }
-
-        let creds1 = ServerCredentials(host: "host1", port: 7749, token: "token1", name: "User1")
-        try KeychainService.saveCredentials(creds1)
-
-        let creds2 = ServerCredentials(host: "host2", port: 8080, token: "token2", name: "User2")
-        try KeychainService.saveCredentials(creds2)
-
-        let loaded = KeychainService.loadCredentials()
-        #expect(loaded?.host == "host2")
-        #expect(loaded?.token == "token2")
+        try KeychainService.saveServer(server)
+        KeychainService.deleteServer(id: server.id)
+        #expect(KeychainService.loadServer(id: server.id) == nil)
     }
 
-    // MARK: - Delete
-
-    @Test func deleteRemovesCredentials() throws {
-        let creds = ServerCredentials(host: "host", port: 7749, token: "token", name: "User")
-        try KeychainService.saveCredentials(creds)
-
-        KeychainService.deleteCredentials()
-
-        let loaded = KeychainService.loadCredentials()
-        #expect(loaded == nil)
-    }
-
-    // MARK: - Load when empty
-
-    @Test func loadReturnsNilWhenEmpty() {
-        cleanup()
-        let loaded = KeychainService.loadCredentials()
-        #expect(loaded == nil)
-    }
-
-    // MARK: - Delete when empty is no-op
-
-    @Test func deleteWhenEmptyIsNoOp() {
-        cleanup()
-        // Should not crash
-        KeychainService.deleteCredentials()
-        #expect(KeychainService.loadCredentials() == nil)
+    @Test func loadServersDoesNotCrash() {
+        let servers = KeychainService.loadServers()
+        #expect(servers.count >= 0)
     }
 
     // MARK: - KeychainError

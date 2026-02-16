@@ -56,6 +56,7 @@ describe("session-spawn spawnPiHost", () => {
 
     const workspace = makeWorkspace({
       memoryEnabled: true,
+      extensions: ["memory", "todos"],
       allowedExecutables: ["node", "npx"],
       allowedPaths: [{ path: "~/.config/dotfiles", access: "read" }],
     });
@@ -128,10 +129,9 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.env.OPPI_GATE_PORT).toBe("45678");
   });
 
-  it("supports explicit extension mode without legacy auto-loading", async () => {
+  it("loads named extensions from workspace.extensions", async () => {
     const session = makeSession();
     const workspace = makeWorkspace({
-      extensionMode: "explicit",
       extensions: ["memory"],
       memoryEnabled: true,
     });
@@ -162,39 +162,6 @@ describe("session-spawn spawnPiHost", () => {
     const [, args] = mockedSpawn.mock.calls[0];
     expect(args).toContain("--extension");
     expect(args).toContain(HOST_MEMORY_EXTENSION);
-    expect(args).not.toContain(HOST_TODOS_EXTENSION);
-  });
-
-  it("disables legacy auto-extensions when legacyExtensionsEnabled=false", async () => {
-    const session = makeSession();
-    const workspace = makeWorkspace({ memoryEnabled: true });
-
-    const createSessionSocket = vi.fn(async () => 45680);
-    const setSessionPolicy = vi.fn();
-    const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
-      piExecutable: "/opt/homebrew/bin/pi",
-      legacyExtensionsEnabled: false,
-    });
-
-    const expectedCwd = join(homedir(), "workspace", "oppi");
-    const existing = new Set<string>([
-      expectedCwd,
-      OPPI_GATE_EXTENSION,
-      HOST_MEMORY_EXTENSION,
-      HOST_TODOS_EXTENSION,
-    ]);
-    mockedExistsSync.mockImplementation((path) =>
-      typeof path === "string" && existing.has(path),
-    );
-
-    const proc = new StubProcess();
-    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
-
-    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
-
-    const [, args] = mockedSpawn.mock.calls[0];
-    expect(args).not.toContain(HOST_MEMORY_EXTENSION);
     expect(args).not.toContain(HOST_TODOS_EXTENSION);
   });
 
@@ -237,6 +204,37 @@ describe("session-spawn spawnPiHost", () => {
     expect(args).toContain("--model");
     expect(args).toContain("gpt-5.3-codex");
     expect(args).not.toContain("--provider");
+  });
+
+  it("splits nested provider/model correctly (e.g. openrouter/z.ai/glm-5)", async () => {
+    const session = makeSession();
+    session.model = "openrouter/z.ai/glm-5";
+
+    const workspace = makeWorkspace({ memoryEnabled: false });
+
+    const createSessionSocket = vi.fn(async () => 40010);
+    const setSessionPolicy = vi.fn();
+    const deps = makeDeps({
+      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      piExecutable: "pi",
+    });
+
+    const expectedCwd = join(homedir(), "workspace", "oppi");
+    const existing = new Set<string>([expectedCwd, OPPI_GATE_EXTENSION]);
+    mockedExistsSync.mockImplementation((path) =>
+      typeof path === "string" && existing.has(path),
+    );
+
+    const proc = new StubProcess();
+    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+    const [, args] = mockedSpawn.mock.calls[0];
+    expect(args).toContain("--provider");
+    expect(args).toContain("openrouter");
+    expect(args).toContain("--model");
+    expect(args).toContain("z.ai/glm-5");
   });
 
   it("throws when host workspace cwd does not exist", async () => {

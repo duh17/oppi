@@ -26,7 +26,6 @@ struct ServerConnectionTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         return Session(
             id: id,
-            userId: "u1",
             workspaceId: nil,
             workspaceName: nil,
             name: "Session",
@@ -1219,7 +1218,6 @@ struct ForegroundRecoveryTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         return Session(
             id: id,
-            userId: "u1",
             workspaceId: workspaceId,
             workspaceName: nil,
             name: "Session",
@@ -1242,7 +1240,6 @@ struct ForegroundRecoveryTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         return Workspace(
             id: id,
-            userId: "u1",
             name: "Workspace",
             description: nil,
             icon: nil,
@@ -1253,7 +1250,6 @@ struct ForegroundRecoveryTests {
             hostMount: nil,
             memoryEnabled: nil,
             memoryNamespace: nil,
-            extensionMode: nil,
             extensions: nil,
             defaultModel: nil,
             createdAt: now,

@@ -13,7 +13,7 @@ struct WorkspaceStoreOfflineTests {
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
 
-        let cache = TimelineCache(rootURL: root, legacyRootURL: nil)
+        let cache = TimelineCache(rootURL: root)
         let cachedWorkspaces = [makeWorkspace(id: "w-cached", name: "Cached Workspace")]
         let cachedSkills = [makeSkill(name: "cached-skill")]
         await cache.saveWorkspaces(cachedWorkspaces)
@@ -72,7 +72,6 @@ struct WorkspaceStoreOfflineTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         return Workspace(
             id: id,
-            userId: "u1",
             name: name,
             description: nil,
             icon: nil,
@@ -83,7 +82,6 @@ struct WorkspaceStoreOfflineTests {
             hostMount: nil,
             memoryEnabled: nil,
             memoryNamespace: nil,
-            extensionMode: "legacy",
             extensions: nil,
             defaultModel: nil,
             createdAt: now,

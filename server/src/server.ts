@@ -78,13 +78,19 @@ export function formatUnauthorizedAuthLog(opts: {
   authorization: string | string[] | undefined;
 }): string {
   const authPresent = hasAuthHeader(opts.authorization);
+  // Show token prefix for debugging auth mismatches
+  let tokenHint = "";
+  if (authPresent && typeof opts.authorization === "string") {
+    const tok = opts.authorization.replace(/^Bearer\s+/, "");
+    tokenHint = ` tok=${tok.substring(0, 8)}…`;
+  }
 
   if (opts.transport === "ws") {
-    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}${tokenHint}`;
   }
 
   const method = opts.method || "GET";
-  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}${tokenHint}`;
 }
 
 export function formatPermissionRequestLog(opts: {
@@ -137,12 +143,6 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   if (!loopbackOnly && security && !security.requireTlsOutsideTailnet) {
     warnings.push(
       "security.requireTlsOutsideTailnet=false while binding beyond loopback; public-network clients can fall back to cleartext HTTP/WS.",
-    );
-  }
-
-  if (security?.profile === "legacy") {
-    warnings.push(
-      "security.profile=legacy keeps compatibility transport posture; prefer tailscale-permissive or strict.",
     );
   }
 
@@ -370,9 +370,7 @@ export class Server {
       approvalTimeoutMs: config.approvalTimeoutMs,
     });
     this.authProxy = new AuthProxy();
-    this.sandbox = new SandboxManager({
-      legacyExtensionsEnabled: config.legacyExtensionsEnabled !== false,
-    });
+    this.sandbox = new SandboxManager();
     this.skillRegistry = new SkillRegistry();
     this.userSkillStore = new UserSkillStore();
     this.userSkillStore.init();
@@ -493,12 +491,6 @@ export class Server {
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
-    if (this.storage.hasInvalidOwnerData()) {
-      throw new Error(
-        "Single-user mode violation: invalid owner data in users.json. Keep exactly one owner object.",
-      );
-    }
-
     // Best-effort cleanup from previous crashes before accepting connections.
     await this.sandbox.cleanupOrphanedContainers();
 

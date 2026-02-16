@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "ServerStore")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "ServerStore")
 
 /// Manages the list of paired servers.
 ///
@@ -10,9 +10,6 @@ private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "ServerStore
 @MainActor @Observable
 final class ServerStore {
     private(set) var servers: [PairedServer] = []
-
-    /// Whether migration from legacy single-credential has run.
-    private var migrationComplete = false
 
     init() {
         load()
@@ -80,19 +77,6 @@ final class ServerStore {
     // MARK: - Persistence
 
     private func load() {
-        // 1. Migrate legacy single credential if needed
-        if !migrationComplete {
-            migrationComplete = true
-            if let migrated = KeychainService.migrateLegacyCredential() {
-                servers = [migrated]
-                save(migrated)
-                saveIndex()
-                logger.info("Migrated legacy credential to PairedServer: \(migrated.name, privacy: .public)")
-                return
-            }
-        }
-
-        // 2. Load server list from Keychain
         servers = KeychainService.loadServers()
         servers.sort { $0.sortOrder < $1.sortOrder }
     }

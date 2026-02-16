@@ -1,33 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, it, expect } from "vitest";
 
 import {
   isValidExtensionName,
   listHostExtensions,
   resolveWorkspaceExtensions,
   extensionInstallName,
-  HOST_EXTENSIONS_DIR,
   type ResolvedExtension,
 } from "../src/extension-loader.js";
-import type { Workspace } from "../src/types.js";
-
-// ─── Helpers ───
-
-/** Create a minimal workspace for testing. */
-function ws(overrides: Partial<Workspace> = {}): Workspace {
-  return {
-    id: "ws-test",
-    name: "test",
-    runtime: "host",
-    skills: [],
-    policyPreset: "host",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    ...overrides,
-  };
-}
 
 // ─── isValidExtensionName ───
 
@@ -93,85 +72,51 @@ describe("extensionInstallName", () => {
 // ─── resolveWorkspaceExtensions ───
 
 describe("resolveWorkspaceExtensions", () => {
-  describe("mode selection", () => {
-    it("uses explicit mode when extensionMode is set", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ extensionMode: "explicit", extensions: [] }),
-        { legacyEnabled: true },
-      );
-      expect(result.mode).toBe("explicit");
-    });
-
-    it("infers explicit mode when extensions array is present", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ extensions: ["memory"] }),
-        { legacyEnabled: true },
-      );
-      expect(result.mode).toBe("explicit");
-    });
-
-    it("falls back to legacy mode when no extensions config", () => {
-      const result = resolveWorkspaceExtensions(
-        ws(),
-        { legacyEnabled: true },
-      );
-      expect(result.mode).toBe("legacy");
-    });
+  it("returns empty for undefined extensions", () => {
+    const result = resolveWorkspaceExtensions(undefined);
+    expect(result.extensions).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
   });
 
-  describe("explicit mode", () => {
-    it("warns on invalid extension name", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ extensionMode: "explicit", extensions: ["-bad", ""] }),
-        { legacyEnabled: true },
-      );
-      expect(result.warnings.length).toBeGreaterThanOrEqual(1);
-      expect(result.warnings.some((w) => w.includes("invalid"))).toBe(true);
-    });
-
-    it("warns when extension not found", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ extensionMode: "explicit", extensions: ["nonexistent-ext-xyz"] }),
-        { legacyEnabled: true },
-      );
-      expect(result.warnings.some((w) => w.includes("not found"))).toBe(true);
-    });
-
-    it("warns and ignores permission-gate in explicit list", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ extensionMode: "explicit", extensions: ["permission-gate"] }),
-        { legacyEnabled: true },
-      );
-      expect(result.extensions).toHaveLength(0);
-      expect(result.warnings.some((w) => w.includes("managed"))).toBe(true);
-    });
-
-    it("deduplicates repeated names", () => {
-      // Both entries warn "not found" since they don't exist on disk.
-      // The point: no crash, each entry processed independently.
-      const result = resolveWorkspaceExtensions(
-        ws({ extensionMode: "explicit", extensions: ["zzz-fake", "zzz-fake"] }),
-        { legacyEnabled: true },
-      );
-      const notFoundWarnings = result.warnings.filter((w) => w.includes("not found"));
-      expect(notFoundWarnings.length).toBeGreaterThanOrEqual(1);
-    });
+  it("returns empty for empty array", () => {
+    const result = resolveWorkspaceExtensions([]);
+    expect(result.extensions).toHaveLength(0);
   });
 
-  describe("legacy mode", () => {
-    it("returns empty when legacy disabled", () => {
-      const result = resolveWorkspaceExtensions(
-        ws({ memoryEnabled: true }),
-        { legacyEnabled: false },
-      );
-      expect(result.mode).toBe("legacy");
-      expect(result.extensions).toHaveLength(0);
-    });
+  it("warns on invalid extension name", () => {
+    const result = resolveWorkspaceExtensions(["-bad", ""]);
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(result.warnings.some((w) => w.includes("invalid"))).toBe(true);
+  });
 
-    it("returns empty extensions for undefined workspace", () => {
-      const result = resolveWorkspaceExtensions(undefined, { legacyEnabled: true });
-      expect(result.mode).toBe("legacy");
-      // May include todos if it exists on disk, but no crash
-    });
+  it("warns when extension not found", () => {
+    const result = resolveWorkspaceExtensions(["nonexistent-ext-xyz"]);
+    expect(result.warnings.some((w) => w.includes("not found"))).toBe(true);
+  });
+
+  it("warns and ignores permission-gate in explicit list", () => {
+    const result = resolveWorkspaceExtensions(["permission-gate"]);
+    expect(result.extensions).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes("managed"))).toBe(true);
+  });
+
+  it("deduplicates repeated names", () => {
+    const result = resolveWorkspaceExtensions(["zzz-fake", "zzz-fake"]);
+    const notFoundWarnings = result.warnings.filter((w) => w.includes("not found"));
+    expect(notFoundWarnings.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── listHostExtensions ───
+
+describe("listHostExtensions", () => {
+  it("returns an array (may be empty in test environments)", () => {
+    const extensions = listHostExtensions();
+    expect(Array.isArray(extensions)).toBe(true);
+  });
+
+  it("excludes permission-gate", () => {
+    const extensions = listHostExtensions();
+    expect(extensions.find((e) => e.name === "permission-gate")).toBeUndefined();
   });
 });

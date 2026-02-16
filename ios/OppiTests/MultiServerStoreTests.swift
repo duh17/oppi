@@ -170,7 +170,7 @@ struct MultiServerStoreTests {
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
 
-        let cache = TimelineCache(rootURL: root, legacyRootURL: nil)
+        let cache = TimelineCache(rootURL: root)
 
         let ws1 = makeWorkspace(id: "w1", name: "From Studio")
         let ws2 = makeWorkspace(id: "w2", name: "From Mini")
@@ -254,7 +254,7 @@ struct MultiServerStoreTests {
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
 
-        let cache = TimelineCache(rootURL: root, legacyRootURL: nil)
+        let cache = TimelineCache(rootURL: root)
 
         let ws1 = [makeWorkspace(id: "w1", name: "Server A")]
         let ws2 = [makeWorkspace(id: "w2", name: "Server B")]
@@ -290,7 +290,7 @@ struct MultiServerStoreTests {
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
 
-        let cache = TimelineCache(rootURL: root, legacyRootURL: nil)
+        let cache = TimelineCache(rootURL: root)
 
         let legacyWs = [makeWorkspace(id: "w-legacy", name: "Legacy")]
         let serverWs = [makeWorkspace(id: "w-server", name: "Namespaced")]
@@ -311,7 +311,6 @@ struct MultiServerStoreTests {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         return Workspace(
             id: id,
-            userId: "u1",
             name: name,
             description: nil,
             icon: nil,
@@ -322,7 +321,6 @@ struct MultiServerStoreTests {
             hostMount: nil,
             memoryEnabled: nil,
             memoryNamespace: nil,
-            extensionMode: "legacy",
             extensions: nil,
             defaultModel: nil,
             createdAt: now,

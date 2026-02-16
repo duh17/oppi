@@ -12,7 +12,6 @@ struct SessionCodableTests {
         let json = """
         {
             "id": "s1",
-            "userId": "u1",
             "workspaceId": "w1",
             "workspaceName": "Dev",
             "name": "Test Session",
@@ -32,7 +31,6 @@ struct SessionCodableTests {
         let session = try JSONDecoder().decode(Session.self, from: json.data(using: .utf8)!)
 
         #expect(session.id == "s1")
-        #expect(session.userId == "u1")
         #expect(session.workspaceId == "w1")
         #expect(session.workspaceName == "Dev")
         #expect(session.name == "Test Session")
@@ -56,7 +54,6 @@ struct SessionCodableTests {
         let json = """
         {
             "id": "s2",
-            "userId": "u1",
             "status": "ready",
             "createdAt": 1700000000000,
             "lastActivity": 1700000000000,
@@ -82,7 +79,6 @@ struct SessionCodableTests {
         let json = """
         {
             "id": "s3",
-            "userId": "u1",
             "workspaceId": "w1",
             "workspaceName": "Workspace",
             "name": "Round Trip",
@@ -118,7 +114,7 @@ struct SessionCodableTests {
         for (raw, expected) in statuses {
             let json = """
             {
-                "id": "s", "userId": "u", "status": "\(raw)",
+                "id": "s", "status": "\(raw)",
                 "createdAt": 0, "lastActivity": 0,
                 "messageCount": 0, "tokens": {"input": 0, "output": 0}, "cost": 0
             }
@@ -643,7 +639,6 @@ struct WorkspaceCodableTests {
         let json = """
         {
             "id": "w1",
-            "userId": "u1",
             "name": "Development",
             "description": "Dev workspace",
             "icon": "hammer",
@@ -674,7 +669,6 @@ struct WorkspaceCodableTests {
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.memoryEnabled == true)
         #expect(ws.memoryNamespace == "dev")
-        #expect(ws.extensionMode == "explicit")
         #expect(ws.extensions == ["memory", "todos"])
         #expect(ws.defaultModel == "claude-sonnet-4-20250514")
         #expect(ws.createdAt.timeIntervalSince1970 == 1700000000)
@@ -685,7 +679,6 @@ struct WorkspaceCodableTests {
         let json = """
         {
             "id": "w2",
-            "userId": "u1",
             "name": "Minimal",
             "skills": [],
             "createdAt": 1700000000000,
@@ -704,7 +697,6 @@ struct WorkspaceCodableTests {
         #expect(ws.hostMount == nil)
         #expect(ws.memoryEnabled == nil)
         #expect(ws.memoryNamespace == nil)
-        #expect(ws.extensionMode == "legacy")
         #expect(ws.extensions == nil)
         #expect(ws.defaultModel == nil)
     }
@@ -712,7 +704,7 @@ struct WorkspaceCodableTests {
     @Test func encodeDecodeRoundTrip() throws {
         let json = """
         {
-            "id": "w3", "userId": "u1", "name": "RT",
+            "id": "w3", "name": "RT",
             "description": "test", "icon": "star",
             "runtime": "host", "skills": ["fetch"], "policyPreset": "container",
             "systemPrompt": "prompt", "hostMount": "/work",
@@ -731,7 +723,7 @@ struct WorkspaceCodableTests {
     @Test func policyPresetDefaultsToContainer() throws {
         let json = """
         {
-            "id": "w4", "userId": "u1", "name": "NoPolicyField",
+            "id": "w4", "name": "NoPolicyField",
             "skills": [], "createdAt": 0, "updatedAt": 0
         }
         """

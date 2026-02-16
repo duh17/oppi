@@ -25,7 +25,7 @@
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync, readdirSync, renameSync, rmdirSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncFile, resolvePath as realpath } from "./sync.js";
 import { homedir } from "node:os";
@@ -90,8 +90,6 @@ export interface SandboxConfig {
   cpus: number;
   /** Memory per container (MB) */
   memoryMb: number;
-  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
-  legacyExtensionsEnabled: boolean;
 }
 
 export interface SpawnOptions {
@@ -114,7 +112,6 @@ const DEFAULTS: SandboxConfig = {
   image: IMAGE_NAME,
   cpus: 4,
   memoryMb: 2048,
-  legacyExtensionsEnabled: true,
 };
 
 // ─── SandboxManager ───
@@ -129,49 +126,6 @@ export class SandboxManager {
 
   constructor(config?: Partial<SandboxConfig>) {
     this.config = { ...DEFAULTS, ...config };
-    this.migrateOwnerDir();
-  }
-
-  /**
-   * One-time migration: flatten legacy `<base>/owner/<ws>/` → `<base>/<ws>/`.
-   * Also flattens `<base>/_memory/owner/<ns>/` → `<base>/_memory/<ns>/`.
-   */
-  private migrateOwnerDir(): void {
-    const ownerDir = join(this.config.sandboxBaseDir, "owner");
-    if (!existsSync(ownerDir)) return;
-
-    try {
-      for (const entry of readdirSync(ownerDir)) {
-        const src = join(ownerDir, entry);
-        const dest = join(this.config.sandboxBaseDir, entry);
-        if (!existsSync(dest)) {
-          renameSync(src, dest);
-        }
-      }
-      // Clean up empty owner dir
-      try { rmdirSync(ownerDir); } catch { /* not empty — leave it */ }
-      console.log("[sandbox] Migrated legacy owner/ directory layout");
-    } catch (err) {
-      console.error("[sandbox] owner/ migration failed:", err);
-    }
-
-    // Also flatten _memory/owner/
-    const memOwnerDir = join(this.config.sandboxBaseDir, "_memory", "owner");
-    if (existsSync(memOwnerDir)) {
-      try {
-        const memBaseDir = join(this.config.sandboxBaseDir, "_memory");
-        for (const entry of readdirSync(memOwnerDir)) {
-          const src = join(memOwnerDir, entry);
-          const dest = join(memBaseDir, entry);
-          if (!existsSync(dest)) {
-            renameSync(src, dest);
-          }
-        }
-        try { rmdirSync(memOwnerDir); } catch { /* not empty */ }
-      } catch (err) {
-        console.error("[sandbox] _memory/owner/ migration failed:", err);
-      }
-    }
   }
 
   /** Wire up the skill registry for workspace-driven skill selection. */
@@ -406,9 +360,7 @@ export class SandboxManager {
       cpSync(EXTENSION_SRC, dest, { recursive: true });
     }
 
-    const extensionSelection = resolveWorkspaceExtensions(opts?.workspace, {
-      legacyEnabled: this.config.legacyExtensionsEnabled,
-    });
+    const extensionSelection = resolveWorkspaceExtensions(opts?.workspace?.extensions);
 
     for (const warning of extensionSelection.warnings) {
       console.warn(`[sandbox] extension: ${warning}`);

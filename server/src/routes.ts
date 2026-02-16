@@ -315,7 +315,7 @@ export class RouteHandler {
       invite?: { maxAgeSeconds?: number };
     }>(req);
 
-    const allowedProfiles: SecurityProfile[] = ["legacy", "tailscale-permissive", "strict"];
+    const allowedProfiles: SecurityProfile[] = ["tailscale-permissive", "strict"];
     if (body.profile !== undefined && !allowedProfiles.includes(body.profile)) {
       this.error(res, 400, `profile must be one of: ${allowedProfiles.join(", ")}`);
       return;
@@ -354,7 +354,7 @@ export class RouteHandler {
 
     const current = this.ctx.storage.getConfig();
     const security = {
-      profile: body.profile ?? current.security?.profile ?? "legacy",
+      profile: body.profile ?? current.security?.profile ?? "tailscale-permissive",
       requireTlsOutsideTailnet:
         body.requireTlsOutsideTailnet ?? current.security?.requireTlsOutsideTailnet ?? false,
       allowInsecureHttpInTailnet:
@@ -413,7 +413,7 @@ export class RouteHandler {
 
     return {
       configVersion: config.configVersion ?? 1,
-      profile: security?.profile ?? "legacy",
+      profile: security?.profile ?? "tailscale-permissive",
       requireTlsOutsideTailnet: security?.requireTlsOutsideTailnet ?? false,
       allowInsecureHttpInTailnet: security?.allowInsecureHttpInTailnet ?? true,
       requirePinnedServerIdentity: security?.requirePinnedServerIdentity ?? false,
@@ -788,15 +788,6 @@ export class RouteHandler {
       return;
     }
 
-    if (
-      body.extensionMode &&
-      body.extensionMode !== "legacy" &&
-      body.extensionMode !== "explicit"
-    ) {
-      this.error(res, 400, 'extensionMode must be "legacy" or "explicit"');
-      return;
-    }
-
     if (body.extensions !== undefined) {
       if (!Array.isArray(body.extensions)) {
         this.error(res, 400, "extensions must be an array");
@@ -858,15 +849,6 @@ export class RouteHandler {
 
     if (body.memoryNamespace && !this.ctx.isValidMemoryNamespace(body.memoryNamespace)) {
       this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
-      return;
-    }
-
-    if (
-      body.extensionMode &&
-      body.extensionMode !== "legacy" &&
-      body.extensionMode !== "explicit"
-    ) {
-      this.error(res, 400, 'extensionMode must be "legacy" or "explicit"');
       return;
     }
 

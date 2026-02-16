@@ -51,12 +51,11 @@ describe("startup security warnings", () => {
     ).toBe(true);
   });
 
-  it("warns on legacy profile and disabled trust pinning", () => {
-    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-legacy");
+  it("warns on disabled trust pinning and identity", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-trust");
     config.host = "127.0.0.1";
     config.security = {
       ...config.security!,
-      profile: "legacy",
       requirePinnedServerIdentity: false,
     };
     config.identity = {
@@ -66,7 +65,6 @@ describe("startup security warnings", () => {
 
     const warnings = formatStartupSecurityWarnings(config);
 
-    expect(warnings.some((warning) => warning.includes("security.profile=legacy"))).toBe(true);
     expect(
       warnings.some((warning) => warning.includes("security.requirePinnedServerIdentity=false")),
     ).toBe(true);

@@ -5,7 +5,13 @@ server/dist/
 # iOS
 ios/build/
 ios/*.xcodeproj/
+ios/OppiMac/
+ios/OppiMacTests/
+
+# Agent
+.pi/
 
 # General
 *.tsbuildinfo
 .DS_Store
+server/coverage/

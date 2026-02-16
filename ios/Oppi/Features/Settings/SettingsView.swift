@@ -264,7 +264,6 @@ struct SettingsView: View {
 
         // If no servers left, go to onboarding
         if serverStore.servers.isEmpty {
-            KeychainService.deleteCredentials()
             navigation.showOnboarding = true
         }
     }

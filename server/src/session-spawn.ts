@@ -38,10 +38,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const OPPI_GATE_EXTENSION = join(__dirname, "..", "extensions", "permission-gate");
 
 /** Host memory extension (user's pi config). */
-export { HOST_MEMORY_EXTENSION } from "./extension-loader.js";
+export const HOST_MEMORY_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "memory.ts");
 
 /** Host todo extension (user's pi config). */
-export { HOST_TODOS_EXTENSION } from "./extension-loader.js";
+export const HOST_TODOS_EXTENSION = join(homedir(), ".pi", "agent", "extensions", "todos.ts");
 
 // ─── Dependencies ───
 
@@ -51,8 +51,6 @@ export interface SpawnDeps {
   sandbox: SandboxManager;
   authProxy: AuthProxy | null;
   piExecutable: string;
-  /** Enable backward-compatible legacy extension auto-loading (memory/todos). */
-  legacyExtensionsEnabled?: boolean;
   /** Callback for each RPC line from pi stdout. */
   onRpcLine: (key: string, line: string) => void;
   /** Callback when pi process exits or errors. */
@@ -149,7 +147,7 @@ export async function spawnPiHost(
   // Host-mode uses --no-extensions to suppress auto-discovery of the user's
   // local extensions (which may include a different permission-gate impl).
   // We always load the oppi-server TCP permission gate extension explicitly,
-  // then load workspace extensions resolved via legacy/explicit mode.
+  // then load workspace extensions resolved from workspace.extensions list.
   const piArgs = ["--mode", "rpc", "--no-extensions"];
 
   // 1. Always load the oppi-server TCP permission gate extension
@@ -161,10 +159,8 @@ export async function spawnPiHost(
     );
   }
 
-  // 2. Workspace extensions (legacy auto-load or explicit allowlist)
-  const extensionSelection = resolveWorkspaceExtensions(workspace, {
-    legacyEnabled: deps.legacyExtensionsEnabled ?? true,
-  });
+  // 2. Workspace extensions
+  const extensionSelection = resolveWorkspaceExtensions(workspace?.extensions);
 
   for (const warning of extensionSelection.warnings) {
     console.warn(`${ts()} [session:${session.id}] extension: ${warning}`);

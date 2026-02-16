@@ -66,30 +66,6 @@ const HOST_ONLY_MARKERS = [
   "tmux new-window",
 ];
 
-/**
- * Skills known to work in containers despite having marker false positives.
- * These reference "host" in docs but actually work fine via network access.
- */
-const CONTAINER_SAFE_OVERRIDES = new Set([
-  "searxng", // connects to host SearXNG via network
-  "fetch", // standalone script, no host deps
-  "web-browser", // uses Chromium inside container
-  "weather", // uses fetch skill
-  "youtube-transcript", // uses yt-dlp (installed in container)
-]);
-
-/**
- * Skills that definitely need host access and can't run in containers.
- */
-const HOST_ONLY_SKILLS = new Set([
-  "tmux", // needs host tmux
-  "code-simplifier", // spawns tmux agent
-  "private-agent", // spawns tmux agent with LM Studio
-  "dotfiles-manage", // manages host dotfiles
-  "dotfiles-sync", // syncs host dotfiles to other machines
-  "audio-transcribe", // needs MLX on host
-]);
-
 // ─── Skill Registry ───
 
 /** Emitted when the skill catalog changes after a re-scan. */
@@ -358,11 +334,7 @@ export class SkillRegistry extends EventEmitter {
     if (containerFlag === "true") return true;
     if (containerFlag === "false") return false;
 
-    // 2. Hardcoded overrides (legacy, will migrate to frontmatter)
-    if (HOST_ONLY_SKILLS.has(name)) return false;
-    if (CONTAINER_SAFE_OVERRIDES.has(name)) return true;
-
-    // 3. Heuristic: check for host-only markers in content
+    // 2. Heuristic: check for host-only markers in content
     for (const marker of HOST_ONLY_MARKERS) {
       if (content.includes(marker)) return false;
     }
