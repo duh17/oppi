@@ -1,4 +1,11 @@
-# Pi Remote — Design Document
+# Oppi — Design Document
+
+> **Note:** This is the original design document from early development (Jan 2026).
+> Many details have been implemented differently — see `README.md` for current
+> architecture and `server/docs/` for up-to-date design docs. The system is now
+> single-user (no multi-user alice/bob), uses "Oppi" naming throughout, and
+> the permission gate uses TCP (not UDS). This document is kept as historical
+> architecture context.
 
 ## Overview
 

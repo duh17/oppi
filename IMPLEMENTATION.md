@@ -1,4 +1,9 @@
-# Pi Remote — Implementation Plan
+# Oppi — Implementation Plan
+
+> **Note:** This is a historical implementation tracker from the build phase
+> (Jan–Feb 2026). Step references and TODO IDs correspond to the original
+> development sprint. The project has been renamed from "Pi Remote" to "Oppi"
+> and is now a single-user system. See `README.md` for current state.
 
 Last updated: 2026-02-11
 

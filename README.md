@@ -171,14 +171,14 @@ oppi/
 │   │   └── types.ts        Protocol types (shared with iOS)
 │   ├── extensions/
 │   │   └── permission-gate/ Pi extension for tool call interception
-│   ├── tests/              763 tests (vitest)
+│   ├── tests/              vitest test suite
 │   └── docs/               Design documents
 ├── ios/                    Oppi iOS app (SwiftUI, iOS 26+)
 │   ├── Oppi/               Main app target
 │   │   ├── App/            App entry point
 │   │   ├── Core/           Networking, services, models, formatting
 │   │   └── Features/       Chat, workspaces, permissions, skills, settings
-│   ├── OppiTests/          1,003 unit tests
+│   ├── OppiTests/          Swift Testing unit tests
 │   └── scripts/            Build, deploy, and debug scripts
 └── skills/                 Agent skills for oppi development
 ```
@@ -190,7 +190,7 @@ oppi/
 ```bash
 cd server
 npm install
-npm test          # 763 tests via vitest
+npm test          # vitest test suite
 npm run build     # TypeScript compile
 npm run check     # typecheck + lint + format check
 npm start         # Start server (from compiled dist/)
@@ -215,7 +215,7 @@ xcodebuild test -scheme Oppi -destination 'platform=iOS Simulator,name=iPhone 16
 
 ## Troubleshooting
 
-**"pi not found"** — Install globally: `npm install -g @mariozechner/pi-coding-agent`. Or set `PI_REMOTE_PI_BIN=/path/to/pi`.
+**"pi not found"** — Install globally: `npm install -g @mariozechner/pi-coding-agent`. Or set `OPPI_PI_BIN=/path/to/pi`.
 
 **"auth.json not found"** — Run `pi` then `/login` to authenticate with your LLM provider.
 

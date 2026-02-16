@@ -5,10 +5,12 @@ Self-hosted server for the [Oppi](https://github.com/duh17/oppi) mobile coding a
 ## Quick Start
 
 ```bash
-npm install -g oppi-server
-oppi init
-oppi pair
-oppi serve
+git clone https://github.com/duh17/oppi.git
+cd oppi/server
+npm install
+npx oppi init
+npx oppi pair
+npx oppi serve
 ```
 
 ## What It Does
@@ -20,13 +22,14 @@ Oppi runs coding agents (Claude, etc.) in sandboxed workspaces on your Mac, cont
 - **Tool gating** — approve/deny file writes, shell commands from your phone
 - **Push notifications** — get notified when the agent needs input
 - **Live streaming** — real-time agent output over WebSocket
+- **Skill registry** — curate what your agent can do, with container compatibility detection
 
 ## Requirements
 
-- **Node.js** ≥ 20
-- **[pi](https://github.com/mariozechner/pi)** — the coding agent runtime (installed globally via npm)
-- **macOS** (tested on 14+; Linux should work but untested)
-- An Anthropic API key (or compatible provider)
+- **Node.js** ≥ 22
+- **[pi](https://github.com/badlogic/pi-mono)** — the coding agent runtime (`npm install -g @mariozechner/pi-coding-agent`)
+- **macOS 15+** (Sequoia) — required for Apple container support; host mode may work on Linux but is untested
+- An LLM provider account (Anthropic, OpenAI, etc. — via `pi login`)
 
 ## Commands
 
@@ -38,6 +41,10 @@ oppi status                Show server + pairing status
 oppi token rotate          Rotate bearer token (invalidates existing clients)
 oppi config get <key>      Read a config value
 oppi config set <key> <v>  Write a config value
+oppi config show           Show effective config
+oppi config validate       Validate config file
+oppi env init              Capture shell PATH for host sessions
+oppi env show              Show resolved host PATH
 ```
 
 ## Configuration
@@ -49,9 +56,10 @@ Key settings:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `port` | `7749` | HTTP/WS listen port |
-| `model` | `anthropic/claude-sonnet-4-20250514` | Default model |
-| `maxConcurrentSessions` | `3` | Session limit |
-| `apiKeys.anthropic` | — | Anthropic API key |
+| `defaultModel` | `anthropic/claude-sonnet-4-20250514` | Default model for new sessions |
+| `maxSessionsPerWorkspace` | `3` | Session limit per workspace |
+| `maxSessionsGlobal` | `5` | Total session limit |
+| `security.profile` | `tailscale-permissive` | Security profile (`tailscale-permissive` or `strict`) |
 
 Run `oppi init` to set these interactively.
 
@@ -62,19 +70,37 @@ All state (config, sessions, workspaces) lives under one directory:
 ```
 ~/.config/oppi/
 ├── config.json          # Server configuration
+├── identity/            # Ed25519 server keys
 ├── sessions/            # Session state + history
 ├── workspaces/          # Workspace definitions
+├── rules.json           # Learned policy rules
+├── skills/              # User-defined skills
 └── sandbox/             # Container/host sandbox mounts
 ```
 
 Override with `OPPI_DATA_DIR` or `--data-dir`.
 
+## Development
+
+```bash
+npm install
+npm test          # vitest test suite
+npm run build     # TypeScript compile
+npm run check     # typecheck + lint + format check
+npm start         # Start server (from compiled dist/)
+npm run dev       # Start with tsx watch (auto-reload)
+```
+
 ## Security
 
-- Bearer token auth on all endpoints
+- Ed25519 signed pairing invites (time-limited, single-use)
+- Timing-safe bearer token auth on all endpoints
+- Credential isolation — API keys never enter containers (auth proxy injects on the host)
 - Config files written 0600, directories 0700
-- Optional security profiles: `tailscale-permissive`, `local-trust`, `locked-down`
-- Signed pairing invites (Ed25519)
+- Security profiles: `tailscale-permissive` (default) or `strict`
+- Hard deny rules block dangerous operations regardless of user policy
+
+See `docs/` for detailed security documentation.
 
 ## License
 

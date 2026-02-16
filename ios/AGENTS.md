@@ -1,6 +1,6 @@
-# Oppi iOS — Claude Code Instructions
+# Oppi iOS — Agent Instructions
 
-This file provides guidance to Claude Code when working with the iOS app in this directory.
+This file provides guidance to coding agents working with the Oppi iOS app.
 
 ## Build and Development Commands
 
@@ -27,13 +27,6 @@ xcodebuild -project Oppi.xcodeproj -scheme Oppi \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test
 ```
 
-Test files in `OppiTests/`:
-- `ServerMessageTests.swift` — wire format decoding (manual `Decodable`)
-- `ClientMessageTests.swift` — client message encoding
-- `JSONValueTests.swift` — recursive JSON type
-- `TimelineReducerTests.swift` — event pipeline state machine
-- `ToolOutputStoreTests.swift` — memory-bounded output storage
-
 ### Setup
 
 The Xcode project file (`Oppi.xcodeproj/`) is gitignored. Always regenerate from `project.yml` via XcodeGen before building.
@@ -46,148 +39,129 @@ xcodegen generate
 ### Repeatable local deploy flow (from repo root)
 
 ```bash
-./scripts/ios-dev-up.sh -- --device <iphone-udid>
-```
-
-This runs a combined loop:
-- starts/restarts `pi-remote` in background tmux window `pi-remote-server`
-- waits for server port `7749`
-- runs `ios/scripts/build-install.sh` (adds `--launch` by default)
-
-Useful variants:
-
-```bash
-# keep existing server window
-./scripts/ios-dev-up.sh --no-restart-server -- --device <iphone-udid>
-
-# install without auto-launch
-./scripts/ios-dev-up.sh --no-launch -- --device <iphone-udid>
+ios/scripts/build-install.sh --launch --device <iphone-udid>
 ```
 
 ## Project Architecture
 
 ### High-Level Structure
 
-Pi Remote is an iPhone app (portrait-locked, iOS 26+) that supervises pi coding agents running on a home server. The phone is the **permission authority** — not a terminal. The agent works autonomously; you approve or deny dangerous actions.
+Oppi is an iPhone app (portrait-locked, iOS 26+) that supervises pi coding agents running on a home server. The phone is the **permission authority** — not a terminal. The agent works autonomously; you approve or deny dangerous actions.
 
-The server (`../pi-remote/`) handles pi process management, policy evaluation, and WebSocket streaming. This app connects over Tailscale.
+The server (`../server/`) handles pi process management, policy evaluation, and WebSocket streaming. The app connects over the local network or VPN.
 
 ### App Structure
 
 ```
 Oppi/
-├── App/                    # App entry, navigation, delegates
-│   ├── OppiApp.swift   # @main, scene setup, scenePhase
-│   ├── AppNavigation.swift  # Tab-based navigation state
-│   ├── AppDelegate.swift    # Push notification registration
-│   └── ContentView.swift    # Root view with tab bar
+├── App/                        App entry, navigation, delegates
+│   ├── OppiApp.swift           @main, scene setup, scenePhase
+│   ├── AppNavigation.swift     Tab-based navigation state
+│   ├── AppDelegate.swift       Push notification registration
+│   └── ContentView.swift       Root view with tab bar
 │
 ├── Core/
 │   ├── Networking/
-│   │   ├── APIClient.swift        # REST (sessions, auth, device tokens)
-│   │   ├── WebSocketClient.swift  # WS streaming, keepalive pings
-│   │   └── ServerConnection.swift # Top-level coordinator: stores + pipeline
+│   │   ├── APIClient.swift              REST client (sessions, workspaces, skills)
+│   │   ├── WebSocketClient.swift        WS streaming, keepalive pings
+│   │   ├── ServerConnection.swift       Top-level coordinator: stores + pipeline
+│   │   ├── ServerConnection+MessageRouter.swift  Event dispatch
+│   │   ├── ServerConnection+Refresh.swift        Single-flight metadata refresh
+│   │   ├── ServerConnection+ModelCommands.swift   Model/thinking commands
+│   │   └── ServerConnection+Fork.swift           Session forking
 │   │
 │   ├── Models/
-│   │   ├── Session.swift          # Session, SessionMessage
-│   │   ├── Permission.swift       # PermissionRequest, RiskLevel, PermissionAction
-│   │   ├── User.swift             # ServerCredentials, Keychain token
-│   │   ├── ClientMessage.swift    # Client → Server (Encodable)
-│   │   ├── ServerMessage.swift    # Server → Client (manual Decodable)
-│   │   ├── JSONValue.swift        # Recursive Codable JSON type
-│   │   └── TraceEvent.swift       # Pi session JSONL format
+│   │   ├── Session.swift          Session, SessionMessage, ModelInfo
+│   │   ├── Workspace.swift        Workspace model
+│   │   ├── Permission.swift       PermissionRequest, RiskLevel, PermissionAction
+│   │   ├── PairedServer.swift     Multi-server credentials
+│   │   ├── ClientMessage.swift    Client → Server (Encodable)
+│   │   ├── ServerMessage.swift    Server → Client (manual Decodable)
+│   │   ├── JSONValue.swift        Recursive Codable JSON type
+│   │   └── ...                    SkillInfo, SlashCommand, TraceEvent, etc.
 │   │
 │   ├── Runtime/
-│   │   ├── AgentEvent.swift       # Transport-agnostic domain events
-│   │   ├── ChatItem.swift         # Unified timeline model + ToolOutputStore
-│   │   ├── TimelineReducer.swift  # ServerMessage → ChatItem state machine
-│   │   ├── ToolEventMapper.swift  # Correlates tool_start/output/end (client-side IDs)
-│   │   └── DeltaCoalescer.swift   # Batches text/thinking deltas at 33ms for 30fps
+│   │   ├── AgentEvent.swift       Transport-agnostic domain events
+│   │   ├── ChatItem.swift         Unified timeline model
+│   │   ├── TimelineReducer.swift  ServerMessage → ChatItem state machine
+│   │   ├── ToolEventMapper.swift  Correlates tool_start/output/end
+│   │   ├── DeltaCoalescer.swift   Batches text/thinking deltas at 33ms
+│   │   ├── ToolOutputStore.swift  Memory-bounded output (256KB/item, 2MB total)
+│   │   └── ToolArgsStore.swift    Tool call arguments storage
 │   │
 │   ├── Services/
-│   │   ├── SessionStore.swift     # Observable session list
-│   │   ├── PermissionStore.swift  # Pending permission queue
-│   │   ├── KeychainService.swift  # Secure token storage
-│   │   ├── LiveActivityManager.swift  # ActivityKit integration
-│   │   └── RestorationState.swift # Foreground/background state persistence
+│   │   ├── ServerStore.swift          Multi-server management
+│   │   ├── SessionStore.swift         Observable session list
+│   │   ├── WorkspaceStore.swift       Workspace list + cache
+│   │   ├── PermissionStore.swift      Pending permission queue
+│   │   ├── ConnectionCoordinator.swift  Multi-server connection lifecycle
+│   │   ├── KeychainService.swift      Secure credential storage
+│   │   ├── TimelineCache.swift        Durable offline timeline cache
+│   │   ├── LiveActivityManager.swift  ActivityKit integration
+│   │   ├── RestorationState.swift     Foreground/background persistence
+│   │   └── ...                        Biometric, dictation, Sentry, audio
 │   │
-│   ├── Views/                     # Reusable view components
-│   │   ├── MarkdownText.swift
-│   │   └── ImageBlobView.swift
-│   │
-│   ├── Extensions/
-│   │   ├── Color+Risk.swift       # Risk-tier color palette
-│   │   └── Date+Relative.swift    # "2m ago" formatting
-│   │
-│   ├── Push/
-│   │   └── PushRegistration.swift
-│   │
-│   └── Notifications/
-│       └── PermissionNotificationService.swift
+│   ├── Formatting/         Text formatting + parsing utilities
+│   ├── Theme/              Colors, dynamic themes
+│   ├── Views/              Reusable view components
+│   ├── Extensions/         Swift extensions
+│   ├── Push/               APNs push registration
+│   ├── Notifications/      Local notification service
+│   └── Security/           Certificate pinning
 │
 ├── Features/
 │   ├── Chat/
-│   │   ├── ChatView.swift         # Main chat + live stream
-│   │   ├── ChatInputBar.swift     # Text input + send
-│   │   └── ChatItemRow.swift      # Renders one ChatItem
+│   │   ├── Timeline/       UIKit collection view + cells
+│   │   ├── Composer/       Text input bar + expanded composer
+│   │   ├── Output/         Tool output rendering (bash, file, diff, etc.)
+│   │   ├── Session/        Chat session manager + action handler
+│   │   └── Support/        Toolbar, subviews, model picker
 │   │
-│   ├── Sessions/
-│   │   ├── SessionListView.swift  # All sessions for this user
-│   │   └── NewSessionView.swift   # Create session sheet + model picker
-│   │
-│   ├── Permissions/
-│   │   └── PermissionCardView.swift  # Approve/deny with risk tiers
-│   │
-│   ├── Live/
-│   │   └── LiveFeedView.swift     # Cross-session activity feed
-│   │
-│   ├── Onboarding/
-│   │   └── QRScannerView.swift    # DataScannerViewController wrapper
-│   │
-│   └── Settings/
-│       └── SettingsView.swift
+│   ├── Workspaces/         Workspace list, create, edit
+│   ├── Sessions/           Session list per workspace
+│   ├── Permissions/        Approve/deny with risk tiers
+│   ├── Skills/             Skill browser + editor
+│   ├── Servers/            Multi-server management
+│   ├── Onboarding/         QR scanner + pairing
+│   └── Settings/           App settings
 │
-├── Resources/
-│   ├── Assets.xcassets
-│   ├── Info.plist
-│   └── Oppi.entitlements
+├── Resources/              Assets, Info.plist, entitlements
 │
-OppiActivityExtension/        # Live Activity widget extension
-Shared/                            # Shared between app and extension
-│   └── PiSessionAttributes.swift  # ActivityKit attributes
-OppiTests/                     # Unit tests
+OppiActivityExtension/      Live Activity widget extension
+Shared/                     Shared between app and extension
+│   └── PiSessionAttributes.swift
+OppiTests/                  Unit tests (Swift Testing)
 ```
 
 ### Key Architectural Patterns
 
-**Event Pipeline (the core data flow):**
+**Event Pipeline (core data flow):**
 ```
 ServerMessage (WebSocket)
   → ServerConnection.handleServerMessage()
   → DeltaCoalescer (batches text/thinking at 33ms)
   → TimelineReducer (state machine → [ChatItem])
-  → ChatView (LazyVStack)
+  → ChatTimelineCollectionView (UIKit)
 ```
 
 Direct state updates (session metadata, extension UI) bypass the pipeline and update stores directly.
 
 **Observable Stores (scoped re-renders):**
-- `SessionStore` — session list, active session ID
+- `SessionStore` — session list
+- `WorkspaceStore` — workspace list + cache
 - `PermissionStore` — pending permission queue
-- `TimelineReducer` — `[ChatItem]` timeline, `renderVersion` counter
-- `ToolOutputStore` — full tool output (memory-bounded: 256KB/item, 2MB total)
+- `TimelineReducer` — `[ChatItem]` timeline
+- `ToolOutputStore` / `ToolArgsStore` — tool data (memory-bounded)
 
 These are separate `@Observable` objects to prevent permission timer ticks from re-rendering the session list.
 
-**ServerConnection** is the top-level coordinator. It owns the API client, WebSocket client, all stores, and the event pipeline. Injected via `@Environment`.
+**ServerConnection** is the top-level coordinator per server. It owns the API client, WebSocket client, all stores, and the event pipeline. Multi-server support via `ConnectionCoordinator`.
 
-**One WebSocket at a time (v1).** Opening a new session stream disconnects the previous one.
-
-**Forward-compatible decoding.** `ServerMessage` has an `.unknown(type:)` case. Unknown server message types are logged and skipped, not fatal decode errors.
+**Forward-compatible decoding.** `ServerMessage` has an `.unknown(type:)` case. Unknown server message types are logged and skipped.
 
 ### Wire Protocol
 
-Client-server messages defined in `../pi-remote/src/types.ts`. The Swift models must stay in sync:
+Client-server messages defined in `../server/src/types.ts`. The Swift models must stay in sync:
 
 | Server type (TypeScript) | Swift model |
 |--------------------------|-------------|
@@ -196,45 +170,33 @@ Client-server messages defined in `../pi-remote/src/types.ts`. The Swift models 
 | `PermissionRequest` fields | `Permission.swift` |
 | `Session`, `SessionMessage` | `Session.swift` |
 
-When the server adds new message types, add a new case to `ServerMessage` and handle it in `ServerConnection.handleServerMessage()`. The `default → .unknown` case in the decoder ensures the app won't crash on unrecognized types.
+When the server adds new message types, add a new case to `ServerMessage` and handle it in `ServerConnection+MessageRouter`. The `default → .unknown` case in the decoder ensures the app won't crash on unrecognized types.
 
-Timestamps come from the server as Unix milliseconds. Convert to `Date` via `Date(timeIntervalSince1970: ms / 1000)`.
+Timestamps are Unix milliseconds from the server. Convert via `Date(timeIntervalSince1970: ms / 1000)`.
 
-### Live Activity / Dynamic Island
-
-`OppiActivityExtension` uses `Shared/PiSessionAttributes.swift` for the ActivityKit `ActivityAttributes` definition. The main app updates Live Activities via `LiveActivityManager`.
-
-## Code Formatting
-
-Prefer idiomatic modern Swift.
+## Code Style
 
 - Swift 6 strict concurrency (`SWIFT_STRICT_CONCURRENCY: complete`)
 - All `@Observable` classes must be `@MainActor`
-- Prefer `if let x` and `guard let x` over `if let x = x` and `guard let x = x`
+- Prefer `if let x` and `guard let x` over `if let x = x`
 - No force unwraps in production code
-- Guard statements: always put `return` on a separate line
-- Use `Codable` with explicit `CodingKeys` for server types — never trust default synthesis for wire formats
+- Guard statements: `return` on a separate line
 - Manual `Decodable` for `ServerMessage` (discriminated union on `type` field)
 - Prefer value types (`struct`, `enum`) over classes where possible
 - Mark `Sendable` conformance explicitly
 - No `...` or `…` in Logger messages
+- Use `AppIdentifiers.subsystem` for all os.log subsystem strings
 
 ### Liquid Glass Rules (iOS 26)
 
-Use Liquid Glass for navigation chrome only:
-- Tab bar, toolbars, navigation bars
-- Floating action buttons
-- Permission card action buttons
-- Sheet presentations
-
-Never use Liquid Glass for scrollable content (chat bubbles, list rows, feed entries). High-contrast text on all glass surfaces. Minimum touch target 44x44pt (48x48pt for primary actions).
+Use Liquid Glass for navigation chrome only (tab bar, toolbars, navigation bars, floating action buttons, sheet presentations). Never for scrollable content. High-contrast text on all glass surfaces. Minimum touch target 44×44pt.
 
 ## Things to Know
 
-- `ToolEventMapper` generates client-side tool event IDs because v1 server messages have no tool call ID. If server adds IDs later, the mapper becomes a passthrough.
-- `DeltaCoalescer` batches `textDelta`/`thinkingDelta` at 33ms but delivers tool/permission/error events immediately (terminal-like feedback).
+- `ToolEventMapper` generates client-side tool event IDs because the server's streaming events don't carry them. If the server adds IDs later, the mapper becomes a passthrough.
+- `DeltaCoalescer` batches at 33ms but delivers tool/permission/error events immediately.
 - `ToolOutputStore` is separate from `ChatItem` to keep `Equatable` diffs cheap. Full output fetched on-demand when user expands a tool call.
-- Image upload (when enabled) must use workspace-scoped REST routes (`POST /workspaces/:workspaceId/sessions/:id/attachments`), not base64 over WebSocket.
-- On background → foreground, the app calls `GET /workspaces/:workspaceId/sessions/:id` to rebuild chat state. The server does not replay missed streaming events.
-- Just because unit tests pass doesn't mean a given bug is fixed. It may not have a test. It may require manual testing on device.
+- Image upload uses workspace-scoped REST routes (`POST /workspaces/:wid/sessions/:sid/attachments`), not base64 over WebSocket.
+- On background → foreground, the app calls REST to rebuild chat state. The server does not replay missed streaming events.
 - The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.
+- Fork setup: update `bundleIdPrefix` and `DEVELOPMENT_TEAM` in `project.yml`.
