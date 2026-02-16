@@ -1,7 +1,7 @@
 import SwiftUI
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "RemoteFileView")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "RemoteFileView")
 
 /// Fetches and displays a file from the session's working directory.
 ///

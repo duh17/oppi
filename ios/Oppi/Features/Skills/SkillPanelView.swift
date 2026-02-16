@@ -1,7 +1,7 @@
 import SwiftUI
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "SkillPanel")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillPanel")
 
 /// Quick skill browser shown from the runtime badge in ChatView.
 ///

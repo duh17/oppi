@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "AudioPlayer")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
 
 /// Manages audio playback for chat-rendered media.
 ///

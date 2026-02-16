@@ -2,7 +2,7 @@ import Foundation
 import LocalAuthentication
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "Biometric")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Biometric")
 
 /// Biometric authentication gate for high-risk permission approvals.
 ///
@@ -41,8 +41,8 @@ final class BiometricService {
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey) }
     }
 
-    private static let thresholdKey = "dev.chenda.Oppi.biometric.threshold"
-    private static let enabledKey = "dev.chenda.Oppi.biometric.enabled"
+    private static let thresholdKey = "\(AppIdentifiers.subsystem).biometric.threshold"
+    private static let enabledKey = "\(AppIdentifiers.subsystem).biometric.enabled"
 
     private init() {}
 

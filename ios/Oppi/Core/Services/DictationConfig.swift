@@ -52,7 +52,7 @@ struct DictationConfig: Codable, Equatable, Sendable {
 
     // MARK: - UserDefaults Persistence
 
-    private static let storageKey = "dev.chenda.Oppi.dictation.config"
+    private static let storageKey = "\(AppIdentifiers.subsystem).dictation.config"
 
     static func load() -> DictationConfig {
         guard let data = UserDefaults.standard.data(forKey: storageKey),

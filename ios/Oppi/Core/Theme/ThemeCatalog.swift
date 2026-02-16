@@ -35,7 +35,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     /// All built-in themes for pickers. Custom themes added separately.
     static let builtins: [ThemeID] = [.tokyoNight, .tokyoNightStorm, .tokyoNightDay, .appleDark]
 
-    static let storageKey = "dev.chenda.Oppi.theme.id"
+    static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
     /// Stable string ID for persistence.
     var rawValue: String {

@@ -1,9 +1,9 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "APIClient")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
-/// REST client for pi-remote server.
+/// REST client for oppi server.
 ///
 /// Handles session CRUD, health checks, and authentication.
 /// All methods throw on network/server errors with descriptive messages.

@@ -5,7 +5,7 @@ import OSLog
 import Sentry
 #endif
 
-private let sentryLog = Logger(subsystem: "dev.chenda.Oppi", category: "Sentry")
+private let sentryLog = Logger(subsystem: AppIdentifiers.subsystem, category: "Sentry")
 
 /// Thin async wrapper around Sentry SDK setup + common diagnostics hooks.
 ///
@@ -193,7 +193,7 @@ actor SentryService {
     private static func releaseName() -> String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        return "dev.chenda.Oppi@\(version)+\(build)"
+        return "\(AppIdentifiers.subsystem)@\(version)+\(build)"
     }
 
 #if canImport(Sentry)

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "SkillEditor")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillEditor")
 
 // MARK: - SkillEditorView
 
@@ -295,7 +295,7 @@ enum FormatAction {
 }
 
 extension Notification.Name {
-    static let editorFormatAction = Notification.Name("dev.chenda.Oppi.editorFormatAction")
+    static let editorFormatAction = Notification.Name("\(AppIdentifiers.subsystem).editorFormatAction")
 }
 
 // MARK: - FormatButton

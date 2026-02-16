@@ -83,7 +83,7 @@ private extension Color {
 
 /// Stores imported custom themes in UserDefaults so they survive app restarts.
 enum CustomThemeStore {
-    private static let storageKey = "dev.chenda.Oppi.customThemes"
+    private static let storageKey = "\(AppIdentifiers.subsystem).customThemes"
 
     /// Save a remote theme locally.
     static func save(_ theme: RemoteTheme) {

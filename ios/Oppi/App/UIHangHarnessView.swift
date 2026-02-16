@@ -662,7 +662,7 @@ struct MainThreadStallContext: Sendable {
 
 final class MainThreadLagWatchdog {
     var onStall: ((MainThreadStallContext) -> Void)?
-    private let queue = DispatchQueue(label: "dev.chenda.Oppi.main-thread-watchdog", qos: .utility)
+    private let queue = DispatchQueue(label: "\(AppIdentifiers.subsystem).main-thread-watchdog", qos: .utility)
     private var timer: DispatchSourceTimer?
 
     private let intervalMs = 1_000

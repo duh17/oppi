@@ -34,7 +34,7 @@ enum ChatTimelinePerf {
     }
 
     private static let signposter = OSSignposter(
-        subsystem: "dev.chenda.Oppi",
+        subsystem: AppIdentifiers.subsystem,
         category: "ChatTimelinePerf"
     )
 

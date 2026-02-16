@@ -2,7 +2,7 @@
 import Foundation
 import os.log
 
-private let loadSessionLog = Logger(subsystem: "dev.chenda.Oppi", category: "LoadSession")
+private let loadSessionLog = Logger(subsystem: AppIdentifiers.subsystem, category: "LoadSession")
 
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///

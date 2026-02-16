@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "Coordinator")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
 
 /// Orchestrates multi-server connections.
 ///

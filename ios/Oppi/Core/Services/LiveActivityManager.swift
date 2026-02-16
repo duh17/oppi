@@ -2,7 +2,7 @@ import ActivityKit
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "LiveActivity")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "LiveActivity")
 
 /// Manages Live Activity lifecycle for pi sessions.
 ///

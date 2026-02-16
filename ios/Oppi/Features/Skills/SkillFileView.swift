@@ -1,7 +1,7 @@
 import SwiftUI
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "SkillFile")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillFile")
 
 /// Displays the content of a single file from a skill directory.
 ///

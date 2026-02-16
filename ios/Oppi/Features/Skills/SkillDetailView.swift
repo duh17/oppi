@@ -1,7 +1,7 @@
 import SwiftUI
 import os.log
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "SkillDetail")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillDetail")
 
 /// Displays a skill's SKILL.md content, metadata badges, and file tree.
 ///

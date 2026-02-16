@@ -19,7 +19,7 @@ import UIKit
 ///   dedicated action row below the capsule.
 /// - Expand stays on the trailing side without taking text width.
 /// UserDefaults key for the colored thinking-level border on the composer capsule.
-let coloredThinkingBorderDefaultsKey = "dev.chenda.Oppi.chat.coloredThinkingBorder"
+let coloredThinkingBorderDefaultsKey = "\(AppIdentifiers.subsystem).chat.coloredThinkingBorder"
 
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String

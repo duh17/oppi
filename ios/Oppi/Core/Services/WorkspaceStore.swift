@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "WorkspaceStore")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WorkspaceStore")
 
 /// Per-server sync state for freshness tracking.
 struct ServerSyncState: Sendable {

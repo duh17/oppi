@@ -2,7 +2,7 @@ import UIKit
 import UserNotifications
 import OSLog
 
-private let logger = Logger(subsystem: "dev.chenda.Oppi", category: "Push")
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push")
 
 /// Manages remote push notification registration and device token forwarding.
 ///

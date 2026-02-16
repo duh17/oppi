@@ -5,7 +5,7 @@ import Foundation
 /// This enables model-specific defaults (e.g. fast model -> off, deep model -> high)
 /// that are restored when the user switches models.
 enum ThinkingLevelMemory {
-    private static let defaultsKey = "dev.chenda.Oppi.thinkingLevelByModel"
+    private static let defaultsKey = "\(AppIdentifiers.subsystem).thinkingLevelByModel"
 
     static func level(for model: String?) -> ThinkingLevel? {
         guard let model = normalizedModelID(model) else { return nil }
