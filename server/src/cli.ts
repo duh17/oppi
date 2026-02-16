@@ -762,7 +762,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const storage = new Storage();
+  const storage = new Storage(process.env.OPPI_DATA_DIR || undefined);
 
   switch (command) {
     case "serve":
