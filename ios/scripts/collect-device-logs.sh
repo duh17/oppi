@@ -3,7 +3,7 @@ set -euo pipefail
 
 DEVICE_QUERY=""
 LAST="15m"
-SUBSYSTEM="dev.chenda.Oppi"
+SUBSYSTEM="${OPPI_BUNDLE_ID:-dev.chenda.Oppi}"
 PROCESS_NAME="Oppi"
 PREDICATE_OVERRIDE=""
 OUTPUT_DIR="$HOME/Library/Logs/Oppi/device"
@@ -20,7 +20,7 @@ Usage:
 Options:
   -d, --device <id|name|udid>  Device selector (optional; auto-detect paired booted iPhone)
       --last <duration>        Lookback window for log collect (default: 15m)
-      --subsystem <name>       Subsystem filter (default: dev.chenda.Oppi)
+      --subsystem <name>       Subsystem filter (default: $OPPI_BUNDLE_ID or dev.chenda.Oppi)
       --process <name>         Process filter (default: Oppi)
       --predicate <expr>       Full NSPredicate override (takes precedence)
       --output-dir <path>      Output directory (default: ~/Library/Logs/Oppi/device)

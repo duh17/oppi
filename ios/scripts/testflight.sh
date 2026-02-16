@@ -7,16 +7,17 @@ set -euo pipefail
 # and uploads to App Store Connect / TestFlight.
 #
 # Prerequisites (one-time setup):
-#   1. Apple Developer account with team ID AZAQMY4SPZ
+#   1. Apple Developer account (set OPPI_TEAM_ID or edit TEAM_ID below)
 #   2. App Store Connect API key (.p8 file) with "Admin" or "App Manager" role
-#   3. App created in App Store Connect with bundle ID: dev.chenda.Oppi
+#   3. App created in App Store Connect matching your bundle ID in project.yml
 #
 # Setup:
 #   mkdir -p ~/.appstoreconnect
 #   mv ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.appstoreconnect/
-#   # Add to ~/.config/fish/config.fish (or .bashrc):
-#   set -gx ASC_KEY_ID "XXXXXXXXXX"
-#   set -gx ASC_ISSUER_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#   # Add to your shell profile:
+#   export ASC_KEY_ID="XXXXXXXXXX"
+#   export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#   export OPPI_TEAM_ID="YOUR_TEAM_ID"   # optional, defaults to project.yml value
 #
 # Usage:
 #   ios/scripts/testflight.sh              # build + upload
@@ -28,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SCHEME="Oppi"
-TEAM_ID="AZAQMY4SPZ"
+TEAM_ID="${OPPI_TEAM_ID:-AZAQMY4SPZ}"
 
 BUILD_ONLY=0
 BUMP=0

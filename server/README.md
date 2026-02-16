@@ -24,6 +24,7 @@ Oppi runs coding agents (Claude, etc.) in sandboxed workspaces on your Mac, cont
 ## Requirements
 
 - **Node.js** ≥ 20
+- **[pi](https://github.com/mariozechner/pi)** — the coding agent runtime (installed globally via npm)
 - **macOS** (tested on 14+; Linux should work but untested)
 - An Anthropic API key (or compatible provider)
 
