@@ -77,7 +77,7 @@ final class ServerConnection {
     var thinkingLevel: ThinkingLevel = .medium
 
     /// Cached slash command metadata for composer autocomplete.
-    private(set) var slashCommands: [SlashCommand] = []
+    internal(set) var slashCommands: [SlashCommand] = []
 
     /// Cached model list — populated eagerly on connect, survives sheet open/close.
     var cachedModels: [ModelInfo] = []
@@ -415,7 +415,7 @@ final class ServerConnection {
         }
     }
 
-    private func sendRPCCommandAwaitingResult(
+    func sendRPCCommandAwaitingResult(
         command: String,
         timeout: Duration = ServerConnection.rpcRequestTimeoutDefault,
         message: (String) -> ClientMessage
@@ -478,7 +478,7 @@ final class ServerConnection {
         }
     }
 
-    private func getForkMessages() async throws -> [ForkMessage] {
+    func getForkMessages() async throws -> [ForkMessage] {
         let data = try await sendRPCCommandAwaitingResult(command: "get_fork_messages") { requestId in
             .getForkMessages(requestId: requestId)
         }
@@ -579,259 +579,9 @@ final class ServerConnection {
 
     // ── Model ──
 
-    func setModel(provider: String, modelId: String) async throws {
-        try await send(.setModel(provider: provider, modelId: modelId))
-    }
-
-    func cycleModel() async throws {
-        try await send(.cycleModel())
-    }
-
-    // ── Thinking ──
-
-    func setThinkingLevel(_ level: ThinkingLevel) async throws {
-        // Persist user preference per model so it survives session reconnects.
-        let model = sessionStore.sessions.first(where: { $0.id == activeSessionId })?.model
-        ThinkingLevelMemory.set(level, for: model)
-        try await send(.setThinkingLevel(level: level))
-    }
-
-    func cycleThinkingLevel() async throws {
-        try await send(.cycleThinkingLevel())
-    }
-
-    /// Sync thinking level from a session state update (connected/state messages).
-    func syncThinkingLevel(from session: Session) {
-        guard let levelStr = session.thinkingLevel,
-              let level = ThinkingLevel(rawValue: levelStr),
-              thinkingLevel != level else { return }
-        thinkingLevel = level
-    }
-
-    /// Restore thinking level from user's per-model memory.
-    ///
-    /// Called after `syncThinkingLevel(from:)` on initial connect. If the user
-    /// previously set a thinking level for this model, that preference wins over
-    /// the server's session-level default. Pushes the preferred level to the
-    /// server so subsequent turns use the correct budget.
-    func restoreThinkingLevelFromMemory(model: String?) {
-        guard let preferred = ThinkingLevelMemory.level(for: model),
-              preferred != thinkingLevel else { return }
-        thinkingLevel = preferred
-        Task { try? await setThinkingLevel(preferred) }
-    }
-
-    private func slashCommandCacheKey(for session: Session) -> String {
-        "\(session.id)|\(session.workspaceId ?? "")"
-    }
-
-    func scheduleSlashCommandsRefresh(for session: Session, force: Bool) {
-        slashCommandsTask?.cancel()
-        slashCommandsTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.refreshSlashCommands(for: session, force: force)
-        }
-    }
-
-    private func refreshSlashCommands(for session: Session, force: Bool) async {
-        let cacheKey = slashCommandCacheKey(for: session)
-        if !force,
-           slashCommandsCacheKey == cacheKey,
-           !slashCommands.isEmpty {
-            return
-        }
-
-        let requestId = UUID().uuidString
-        slashCommandsRequestId = requestId
-
-        do {
-            try await send(.getCommands(requestId: requestId))
-        } catch {
-            slashCommandsRequestId = nil
-        }
-    }
-
-    func handleSlashCommandsResult(
-        requestId: String?,
-        success: Bool,
-        data: JSONValue?,
-        error: String?,
-        sessionId: String
-    ) {
-        if let expectedRequestId = slashCommandsRequestId,
-           let requestId,
-           requestId != expectedRequestId {
-            return
-        }
-
-        defer { slashCommandsRequestId = nil }
-
-        guard success else {
-            return
-        }
-
-        slashCommands = Self.parseSlashCommands(from: data)
-
-        if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
-            slashCommandsCacheKey = slashCommandCacheKey(for: session)
-        } else {
-            slashCommandsCacheKey = nil
-        }
-    }
-
-    private static func parseSlashCommands(from data: JSONValue?) -> [SlashCommand] {
-        guard let commandValues = data?.objectValue?["commands"]?.arrayValue else {
-            return []
-        }
-
-        var deduped: [String: SlashCommand] = [:]
-        for value in commandValues {
-            guard let command = SlashCommand(value) else { continue }
-            let key = command.name.lowercased()
-            if deduped[key] == nil {
-                deduped[key] = command
-            }
-        }
-
-        return deduped.values.sorted { lhs, rhs in
-            let lhsName = lhs.name.lowercased()
-            let rhsName = rhs.name.lowercased()
-            if lhsName == rhsName {
-                return lhs.source.sortRank < rhs.source.sortRank
-            }
-            return lhsName < rhsName
-        }
-    }
-
-    // ── Session ──
-
-    func newSession() async throws {
-        try await send(.newSession())
-    }
-
-    func setSessionName(_ name: String) async throws {
-        try await send(.setSessionName(name: name))
-    }
-
-    func compact(instructions: String? = nil) async throws {
-        try await send(.compact(customInstructions: instructions))
-    }
-
-    /// Fork from a canonical session entry ID (mirrors pi CLI behavior).
-    ///
-    /// Flow:
-    /// 1. `get_fork_messages` to resolve valid fork entry IDs
-    /// 2. Verify requested entry is in that server-authored list
-    /// 3. `fork(entryId)` with correlated requestId
-    func forkFromTimelineEntry(_ entryId: String) async throws {
-        guard UUID(uuidString: entryId) == nil else {
-            throw ForkRequestError.turnInProgress
-        }
-
-        let forkMessages = try await getForkMessages()
-        guard !forkMessages.isEmpty else {
-            throw ForkRequestError.noForkableMessages
-        }
-
-        guard let resolvedEntryId = Self.resolveForkEntryId(entryId, from: forkMessages) else {
-            throw ForkRequestError.entryNotForkable
-        }
-
-        _ = try await sendRPCCommandAwaitingResult(command: "fork") { requestId in
-            .fork(entryId: resolvedEntryId, requestId: requestId)
-        }
-    }
-
-    /// Create a new forked app session from a timeline entry.
-    ///
-    /// Unlike raw pi `fork`, this keeps the current app session untouched and
-    /// materializes the branch as a new session row in the workspace.
-    func forkIntoNewSessionFromTimelineEntry(
-        _ entryId: String,
-        sourceSessionId: String,
-        workspaceId: String
-    ) async throws -> Session {
-        guard let apiClient else {
-            throw RPCRequestError.rejected(command: "fork", reason: "API client unavailable")
-        }
-
-        guard UUID(uuidString: entryId) == nil else {
-            throw ForkRequestError.turnInProgress
-        }
-
-        let forkMessages = try await getForkMessages()
-        guard !forkMessages.isEmpty else {
-            throw ForkRequestError.noForkableMessages
-        }
-
-        guard let resolvedEntryId = Self.resolveForkEntryId(entryId, from: forkMessages) else {
-            throw ForkRequestError.entryNotForkable
-        }
-
-        let sourceName = sessionStore.sessions
-            .first(where: { $0.id == sourceSessionId })?
-            .name?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackName = "Session \(sourceSessionId.prefix(8))"
-        let baseName = (sourceName?.isEmpty == false ? sourceName! : fallbackName)
-        let forkName = "Fork: \(baseName)"
-
-        let forkedSession = try await apiClient.forkWorkspaceSession(
-            workspaceId: workspaceId,
-            sessionId: sourceSessionId,
-            entryId: resolvedEntryId,
-            name: forkName
-        )
-
-        sessionStore.upsert(forkedSession)
-
-        if let refreshed = try? await apiClient.listWorkspaceSessions(workspaceId: workspaceId) {
-            for session in refreshed {
-                sessionStore.upsert(session)
-            }
-        }
-
-        return forkedSession
-    }
-
-    private static func resolveForkEntryId(_ requestedEntryId: String, from messages: [ForkMessage]) -> String? {
-        if messages.contains(where: { $0.entryId == requestedEntryId }) {
-            return requestedEntryId
-        }
-
-        let normalized = normalizeTraceDerivedEntryId(requestedEntryId)
-        guard normalized != requestedEntryId else {
-            return nil
-        }
-
-        if messages.contains(where: { $0.entryId == normalized }) {
-            return normalized
-        }
-
-        return nil
-    }
-
-    /// Trace assistant rows may use synthetic IDs (`<entry>-text-0`,
-    /// `<entry>-think-0`, `<entry>-tool-0`). Normalize those back to the
-    /// canonical session entry ID before validating against `get_fork_messages`.
-    private static func normalizeTraceDerivedEntryId(_ id: String) -> String {
-        for marker in ["-text-", "-think-", "-tool-"] {
-            if let range = id.range(of: marker, options: .backwards) {
-                let prefix = id[..<range.lowerBound]
-                if !prefix.isEmpty {
-                    return String(prefix)
-                }
-            }
-        }
-
-        return id
-    }
-
-    // ── Bash ──
-
-    func runBash(_ command: String) async throws {
-        try await send(.bash(command: command))
-    }
+    // Model, thinking, slash commands, session commands, fork, and bash
+    // operations are in ServerConnection+ModelCommands.swift and
+    // ServerConnection+Fork.swift extensions.
 
     // MARK: - Reconnect State (used by ServerConnection+Refresh)
 
