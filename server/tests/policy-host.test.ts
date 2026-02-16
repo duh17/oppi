@@ -163,7 +163,7 @@ describe("host preset: host-control flows gated", () => {
   });
 
   it("asks for oppi-server serve command", () => {
-    expect(policy.evaluate(bash("npx tsx src/index.ts serve")).action).toBe("ask");
+    expect(policy.evaluate(bash("npx tsx src/cli.ts serve")).action).toBe("ask");
   });
 
   it("asks for chained ios-dev-up script", () => {

@@ -22,4 +22,4 @@ load_secret OPENROUTER_API_KEY
 
 # Start oppi-server server
 cd /path/to/pios/oppi-server
-exec npx tsx src/index.ts serve "$@"
+exec npx tsx src/cli.ts serve "$@"

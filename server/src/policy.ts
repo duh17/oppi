@@ -1294,7 +1294,7 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   {
     tool: "bash",
     exec: "npx",
-    pattern: "npx tsx src/index.ts serve*",
+    pattern: "npx tsx src/cli.ts serve*",
     action: "ask",
     label: "Start/restart oppi-server server",
     risk: "high",
@@ -1302,7 +1302,7 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   {
     tool: "bash",
     exec: "tsx",
-    pattern: "tsx src/index.ts serve*",
+    pattern: "tsx src/cli.ts serve*",
     action: "ask",
     label: "Start/restart oppi-server server",
     risk: "high",
