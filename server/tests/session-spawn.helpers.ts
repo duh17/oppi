@@ -37,7 +37,7 @@ export function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
 export class StubProcess extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
-  stdin = { write: vi.fn() };
+  stdin = { write: vi.fn(), writable: true, on: vi.fn() };
   killed = false;
 }
 

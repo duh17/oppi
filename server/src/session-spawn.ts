@@ -334,6 +334,13 @@ export async function setupProcHandlers(
     console.error(`${ts()} [pi:${session.id}] ${data.toString().trim()}`);
   });
 
+  // Prevent EPIPE on stdin from crashing the server when the process exits
+  // between a writable check and the actual write completing.
+  proc.stdin?.on("error", (err) => {
+    if ((err as NodeJS.ErrnoException).code === "EPIPE") return; // expected on process exit
+    console.error(`${ts()} [pi:${session.id}] stdin error:`, err);
+  });
+
   // Process exit
   proc.on("exit", (code) => {
     if (readyReject) {
@@ -366,10 +373,14 @@ export async function setupProcHandlers(
       reject(err);
     };
 
-    // Probe readiness
+    // Probe readiness — safe against EPIPE if process exits before timer fires
     setTimeout(() => {
-      if (!proc.killed) {
-        proc.stdin?.write(JSON.stringify({ type: "get_state" }) + "\n");
+      try {
+        if (!proc.killed && proc.stdin?.writable) {
+          proc.stdin.write(JSON.stringify({ type: "get_state" }) + "\n");
+        }
+      } catch {
+        // Process exited between check and write — harmless.
       }
     }, 500);
   });

@@ -48,7 +48,7 @@ function makeProcessStub(): {
 } {
   const stdinWrite = vi.fn();
   const proc = {
-    stdin: { write: stdinWrite },
+    stdin: { write: stdinWrite, writable: true },
     killed: false,
   } as unknown as ChildProcess;
 

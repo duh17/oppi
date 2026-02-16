@@ -43,6 +43,7 @@ function makeProcessStub(): {
   const process = {
     stdin: {
       write: stdinWrite,
+      writable: true,
     },
     killed: false,
   } as unknown as ChildProcess;

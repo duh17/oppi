@@ -66,9 +66,11 @@ beforeAll(async () => {
 }, 15_000);
 
 afterAll(async () => {
-  await server.stop();
+  await server.stop().catch(() => {});
+  // Small delay to let sockets drain before rmSync
+  await new Promise((r) => setTimeout(r, 100));
   rmSync(dataDir, { recursive: true, force: true });
-});
+}, 10_000);
 
 // ── Health ──
 
@@ -478,6 +480,92 @@ describe("workspace lifecycle", () => {
     // 404 after delete
     const afterRes = await get(`/workspaces/${id}`);
     expect(afterRes.status).toBe(404);
+  });
+});
+
+// ── Per-session WebSocket ──
+
+describe("per-session WebSocket", () => {
+  it("connects to /workspaces/:wid/sessions/:sid/stream and receives connected", async () => {
+    // Create workspace + session
+    const wsRes = await post("/workspaces", { name: "ws-stream", skills: [] });
+    const { workspace } = await wsRes.json();
+    const sessRes = await post(`/workspaces/${workspace.id}/sessions`, {
+      model: "anthropic/claude-sonnet-4-20250514",
+    });
+    const { session } = await sessRes.json();
+
+    const ws = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/workspaces/${workspace.id}/sessions/${session.id}/stream`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    const msg = await new Promise<Record<string, unknown> | null>((resolve) => {
+      ws.on("message", (data) => {
+        resolve(JSON.parse(data.toString()));
+      });
+      ws.on("error", () => resolve(null));
+      setTimeout(() => resolve(null), 3000);
+    });
+
+    expect(msg).not.toBeNull();
+    expect(msg!.type).toBe("connected");
+    expect(msg!.session).toBeDefined();
+    expect((msg!.session as Record<string, unknown>).id).toBe(session.id);
+
+    // Wait for close to complete to avoid EPIPE on teardown
+    await new Promise<void>((resolve) => {
+      ws.on("close", () => resolve());
+      ws.close();
+    });
+  });
+
+  it("rejects WS to nonexistent session", async () => {
+    const wsRes = await post("/workspaces", { name: "ws-404", skills: [] });
+    const { workspace } = await wsRes.json();
+
+    const ws = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/workspaces/${workspace.id}/sessions/NONEXISTENT/stream`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    const closed = await new Promise<boolean>((resolve) => {
+      ws.on("error", () => resolve(true));
+      ws.on("close", () => resolve(true));
+      ws.on("open", () => {
+        ws.close();
+        resolve(false);
+      });
+    });
+    expect(closed).toBe(true);
+  });
+
+  it("rejects WS with mismatched workspace/session", async () => {
+    // Create session in one workspace, try to connect via another
+    const ws1Res = await post("/workspaces", { name: "ws-a", skills: [] });
+    const { workspace: ws1 } = await ws1Res.json();
+    const ws2Res = await post("/workspaces", { name: "ws-b", skills: [] });
+    const { workspace: ws2 } = await ws2Res.json();
+
+    const sessRes = await post(`/workspaces/${ws1.id}/sessions`, {
+      model: "anthropic/claude-sonnet-4-20250514",
+    });
+    const { session } = await sessRes.json();
+
+    const ws = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/workspaces/${ws2.id}/sessions/${session.id}/stream`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    const closed = await new Promise<boolean>((resolve) => {
+      ws.on("error", () => resolve(true));
+      ws.on("close", () => resolve(true));
+      ws.on("open", () => {
+        ws.close();
+        resolve(false);
+      });
+    });
+    expect(closed).toBe(true);
   });
 });
 

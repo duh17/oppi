@@ -23,7 +23,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawn: vi.fn((_cmd: string, _args: string[]) => {
       return {
         pid: 9999,
-        stdin: { write: vi.fn() },
+        stdin: { write: vi.fn(), writable: true },
         stdout: { on: vi.fn() },
         stderr: { on: vi.fn() },
         on: vi.fn(),

@@ -51,7 +51,7 @@ describe("session-spawn setupProcHandlers", () => {
     const proc = {
       stdout: null,
       stderr: null,
-      stdin: { write: vi.fn() },
+      stdin: { write: vi.fn(), writable: true, on: vi.fn() },
       killed: false,
       on: vi.fn(),
     } as unknown as ChildProcess;

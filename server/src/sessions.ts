@@ -88,6 +88,21 @@ export interface SessionBroadcastEvent {
 }
 
 
+// ─── Helpers ───
+
+/** Safely write to a child process stdin. No-op if pipe is closed or process exited. */
+function safeStdinWrite(proc: ChildProcess, data: string): boolean {
+  try {
+    if (!proc.killed && proc.stdin?.writable) {
+      proc.stdin.write(data);
+      return true;
+    }
+  } catch {
+    // Process exited between the check and the write — harmless.
+  }
+  return false;
+}
+
 // ─── Types ───
 
 interface ActiveSession {
@@ -604,7 +619,7 @@ export class SessionManager extends EventEmitter {
     if (!req) return false;
 
     active.pendingUIRequests.delete(response.id);
-    active.process.stdin?.write(JSON.stringify(response) + "\n");
+    safeStdinWrite(active.process, JSON.stringify(response) + "\n");
     return true;
   }
 
@@ -1011,6 +1026,10 @@ export class SessionManager extends EventEmitter {
       }
 
       this.persistThinkingPreference(active.session);
+
+      // Broadcast corrected session so iOS subscribers see the restored level.
+      this.broadcast(key, { type: "state", session: active.session });
+
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1105,9 +1124,12 @@ export class SessionManager extends EventEmitter {
       changed = true;
     }
 
-    if (observedThinkingLevel && typeof session.model === "string" && session.model.trim().length > 0) {
-      this.persistThinkingPreference(session);
-    }
+    // NOTE: Do NOT persist thinking preference here. This method is called
+    // during bootstrap (get_state) when pi reports its factory-default level.
+    // Persisting would clobber the user's real preference with the default,
+    // making applyRememberedThinkingLevel a permanent no-op.
+    // Callers that handle user-initiated changes (forwardRpcCommand for
+    // set_thinking_level/cycle_thinking_level/cycle_model) persist explicitly.
 
     return changed;
   }
@@ -1393,7 +1415,7 @@ export class SessionManager extends EventEmitter {
       command.id = `rpc-${++this.rpcIdCounter}`;
     }
 
-    active.process.stdin?.write(JSON.stringify(command) + "\n");
+    safeStdinWrite(active.process, JSON.stringify(command) + "\n");
     this.resetIdleTimer(key);
   }
 
@@ -1427,7 +1449,7 @@ export class SessionManager extends EventEmitter {
         }
       });
 
-      active.process.stdin?.write(JSON.stringify(command) + "\n");
+      safeStdinWrite(active.process, JSON.stringify(command) + "\n");
     });
   }
 
@@ -1556,7 +1578,8 @@ export class SessionManager extends EventEmitter {
 
     // Cancel pending UI requests
     for (const [id] of active.pendingUIRequests) {
-      active.process.stdin?.write(
+      safeStdinWrite(
+        active.process,
         JSON.stringify({
           type: "extension_ui_response",
           id,
@@ -1869,11 +1892,7 @@ export class SessionManager extends EventEmitter {
         }
 
         // Graceful: abort current operation
-        try {
-          active.process.stdin?.write(JSON.stringify({ type: "abort" }) + "\n");
-        } catch {
-          // process stdin already closed
-        }
+        safeStdinWrite(active.process, JSON.stringify({ type: "abort" }) + "\n");
 
         // Wait briefly then stop
         await new Promise((r) => setTimeout(r, this.stopSessionGraceMs));
