@@ -107,20 +107,12 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
     private static let maxValidHeight: CGFloat = 10_000
-    private static let maxShellHighlightBytes = 64 * 1024
-    private static let maxANSIHighlightBytes = 64 * 1024
-    private static let maxSyntaxHighlightBytes = 64 * 1024
-    private static let maxRenderedCommandCharacters = 6_000
-    private static let maxRenderedOutputCharacters = 2_000
-    private static let maxRenderedDiffLines = 400
-    private static let maxRenderedDiffLineCharacters = 800
     private static let minOutputViewportHeight: CGFloat = 56
     private static let minDiffViewportHeight: CGFloat = 68
     private static let maxOutputViewportHeight: CGFloat = 620
     private static let maxDiffViewportHeight: CGFloat = 760
     private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
-    private static let maxDiffSyntaxHighlightBytes = 48 * 1024
     private static let autoFollowBottomThreshold: CGFloat = 18
     private static let genericLanguageBadgeSymbolName = "chevron.left.forwardslash.chevron.right"
 
@@ -483,25 +475,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return CGSize(width: width, height: height)
     }
 
-    private static func truncatedDisplayText(_ text: String, maxCharacters: Int, note: String) -> String {
-        guard text.count > maxCharacters else { return text }
-        return String(text.prefix(maxCharacters)) + note
-    }
-
     private static func displayCommandText(_ text: String) -> String {
-        truncatedDisplayText(
-            text,
-            maxCharacters: maxRenderedCommandCharacters,
-            note: "\n… command truncated for display"
-        )
+        ToolRowTextRenderer.displayCommandText(text)
     }
 
     private static func displayOutputText(_ text: String) -> String {
-        truncatedDisplayText(
-            text,
-            maxCharacters: maxRenderedOutputCharacters,
-            note: "\n… output truncated for display. Use Copy Output for full content."
-        )
+        ToolRowTextRenderer.displayOutputText(text)
     }
 
     private func installExpandedReadMediaView(
@@ -814,7 +793,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
 
-        titleLabel.attributedText = Self.styledTitle(
+        titleLabel.attributedText = ToolRowTextRenderer.styledTitle(
             title: configuration.title,
             toolNamePrefix: configuration.toolNamePrefix,
             toolNameColor: configuration.toolNameColor
@@ -884,7 +863,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let wasLegacyExpandedVisible = !expandedContainer.isHidden
         setExpandedContainerGestureInterceptionEnabled(true)
         if showDiff, let diffLines {
-            let diffText = Self.makeDiffAttributedText(
+            let diffText = ToolRowTextRenderer.makeDiffAttributedText(
                 lines: diffLines,
                 filePath: configuration.expandedDiffPath
             )
@@ -957,7 +936,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     resetScrollPosition(expandedScrollView)
                 }
             } else if let codeStartLine = configuration.expandedCodeStartLine {
-                let codeText = Self.makeCodeAttributedText(
+                let codeText = ToolRowTextRenderer.makeCodeAttributedText(
                     text: displayExpandedText,
                     language: configuration.expandedOutputLanguage,
                     startLine: codeStartLine
@@ -1027,15 +1006,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     scheduleExpandedAutoScrollToBottomIfNeeded()
                 }
             } else {
-                let presentation: ANSIOutputPresentation
+                let presentation: ToolRowTextRenderer.ANSIOutputPresentation
                 if let language = configuration.expandedOutputLanguage,
                    !configuration.isError {
-                    presentation = Self.makeSyntaxOutputPresentation(
+                    presentation = ToolRowTextRenderer.makeSyntaxOutputPresentation(
                         displayExpandedText,
                         language: language
                     )
                 } else {
-                    presentation = Self.makeANSIOutputPresentation(
+                    presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
                         displayExpandedText,
                         isError: configuration.isError
                     )
@@ -1051,7 +1030,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedUsesReadMediaLayout = false
                 clearExpandedReadMediaView()
 
-                Self.applyANSIOutputPresentation(
+                ToolRowTextRenderer.applyANSIOutputPresentation(
                     presentation,
                     to: expandedLabel,
                     plainTextColor: outputColor
@@ -1112,8 +1091,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let wasCommandVisible = !commandContainer.isHidden
         if let commandText, showCommand {
             let displayCommandText = Self.displayCommandText(commandText)
-            if displayCommandText.utf8.count <= Self.maxShellHighlightBytes {
-                commandLabel.attributedText = Self.shellHighlighted(displayCommandText)
+            if displayCommandText.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
+                commandLabel.attributedText = ToolRowTextRenderer.shellHighlighted(displayCommandText)
                 // NB: Do NOT set commandLabel.textColor here — UILabel overrides
                 // ALL per-character foreground colors in the attributed string.
             } else {
@@ -1143,7 +1122,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let wasOutputVisible = !outputContainer.isHidden
         if let outputText, showOutput {
             let displayOutputText = Self.displayOutputText(outputText)
-            let presentation = Self.makeANSIOutputPresentation(
+            let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
                 displayOutputText,
                 isError: configuration.isError
             )
@@ -1151,7 +1130,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
             let textChanged = previousRendered != nextRendered
 
-            Self.applyANSIOutputPresentation(
+            ToolRowTextRenderer.applyANSIOutputPresentation(
                 presentation,
                 to: outputLabel,
                 plainTextColor: outputColor
@@ -1576,472 +1555,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return Self.genericLanguageBadgeSymbolName
     }
 
-    struct ANSIOutputPresentation {
-        let attributedText: NSAttributedString?
-        let plainText: String?
-    }
-
-    static func makeANSIOutputPresentation(
-        _ text: String,
-        isError: Bool,
-        maxHighlightBytes: Int = maxANSIHighlightBytes
-    ) -> ANSIOutputPresentation {
-        if text.utf8.count <= maxHighlightBytes {
-            return ANSIOutputPresentation(
-                attributedText: ansiHighlighted(
-                    text,
-                    baseForeground: isError ? .tokyoRed : .tokyoFg
-                ),
-                plainText: nil
-            )
-        }
-
-        return ANSIOutputPresentation(
-            attributedText: nil,
-            plainText: ANSIParser.strip(text)
-        )
-    }
-
-    static func makeSyntaxOutputPresentation(
-        _ text: String,
-        language: SyntaxLanguage,
-        maxHighlightBytes: Int = maxSyntaxHighlightBytes
-    ) -> ANSIOutputPresentation {
-        guard language != .unknown else {
-            return ANSIOutputPresentation(attributedText: nil, plainText: text)
-        }
-
-        guard text.utf8.count <= maxHighlightBytes else {
-            return ANSIOutputPresentation(attributedText: nil, plainText: text)
-        }
-
-        return ANSIOutputPresentation(
-            attributedText: NSAttributedString(SyntaxHighlighter.highlight(text, language: language)),
-            plainText: nil
-        )
-    }
-
-    private static func applyANSIOutputPresentation(
-        _ presentation: ANSIOutputPresentation,
-        to label: UILabel,
-        plainTextColor: UIColor
-    ) {
-        if let attributed = presentation.attributedText {
-            label.attributedText = attributed
-            return
-        }
-
-        label.attributedText = nil
-        label.text = presentation.plainText
-        label.textColor = plainTextColor
-    }
-
-    private static func makeMarkdownAttributedText(_ text: String) -> NSAttributedString {
-        let markdownOptions = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .full,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-
-        let rendered: NSMutableAttributedString
-        if let markdown = try? AttributedString(markdown: text, options: markdownOptions) {
-            rendered = NSMutableAttributedString(attributedString: NSAttributedString(markdown))
-        } else {
-            rendered = NSMutableAttributedString(string: text)
-        }
-
-        let fullRange = NSRange(location: 0, length: rendered.length)
-        guard fullRange.length > 0 else { return rendered }
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 1
-        paragraph.lineBreakMode = .byWordWrapping
-
-        rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
-        rendered.addAttribute(.foregroundColor, value: UIColor(Color.tokyoFg), range: fullRange)
-        rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            if value == nil {
-                rendered.addAttribute(
-                    .font,
-                    value: UIFont.systemFont(ofSize: 12, weight: .regular),
-                    range: range
-                )
-            }
-        }
-
-        return rendered
-    }
-
-    private static func makeCodeAttributedText(
-        text: String,
-        language: SyntaxLanguage?,
-        startLine: Int
-    ) -> NSAttributedString {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let safeStartLine = max(1, startLine)
-        let lastLineNumber = safeStartLine + max(0, lines.count - 1)
-        let numberDigits = max(2, String(lastLineNumber).count)
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byClipping
-        paragraph.lineSpacing = 1
-
-        let lineNumberColor = UIColor(Color.tokyoComment.opacity(0.55))
-        let separatorColor = UIColor(Color.tokyoComment.opacity(0.35))
-        let foregroundColor = UIColor(Color.tokyoFg)
-        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        let lineNumberFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-
-        let lineNumAttrs: [NSAttributedString.Key: Any] = [
-            .font: lineNumberFont,
-            .foregroundColor: lineNumberColor,
-            .paragraphStyle: paragraph,
-        ]
-        let separatorAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont,
-            .foregroundColor: separatorColor,
-            .paragraphStyle: paragraph,
-        ]
-        let codeAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont,
-            .foregroundColor: foregroundColor,
-            .paragraphStyle: paragraph,
-        ]
-
-        let result = NSMutableAttributedString()
-        for (index, rawLine) in lines.enumerated() {
-            let lineNumber = safeStartLine + index
-            result.append(NSAttributedString(
-                string: "\(paddedLineNumber(lineNumber, digits: numberDigits)) ",
-                attributes: lineNumAttrs
-            ))
-            result.append(NSAttributedString(string: "│ ", attributes: separatorAttrs))
-
-            let displayLine = rawLine.isEmpty ? " " : rawLine
-            if let language,
-               language != .unknown,
-               displayLine.utf8.count <= Self.maxDiffSyntaxHighlightBytes {
-                let highlighted = NSMutableAttributedString(
-                    attributedString: NSAttributedString(
-                        SyntaxHighlighter.highlightLine(displayLine, language: language)
-                    )
-                )
-                let fullRange = NSRange(location: 0, length: highlighted.length)
-                highlighted.addAttributes(
-                    [.font: codeFont, .paragraphStyle: paragraph],
-                    range: fullRange
-                )
-                highlighted.enumerateAttribute(
-                    .foregroundColor,
-                    in: fullRange,
-                    options: []
-                ) { value, range, _ in
-                    if value == nil {
-                        highlighted.addAttribute(
-                            .foregroundColor,
-                            value: foregroundColor,
-                            range: range
-                        )
-                    }
-                }
-                result.append(highlighted)
-            } else {
-                result.append(NSAttributedString(string: displayLine, attributes: codeAttrs))
-            }
-
-            if index < lines.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
-            }
-        }
-
-        return result
-    }
-
-    private static func makeDiffAttributedText(
-        lines: [DiffLine],
-        filePath: String?
-    ) -> NSAttributedString {
-        let renderedLines = Array(lines.prefix(Self.maxRenderedDiffLines))
-        let truncatedByLineCount = lines.count > renderedLines.count
-
-        let result = NSMutableAttributedString()
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byClipping
-        paragraph.lineSpacing = 1
-
-        let language = diffLanguage(for: filePath)
-        let numberDigits = max(2, lineNumberDigits(for: renderedLines))
-
-        if renderedLines.isEmpty {
-            result.append(
-                NSAttributedString(
-                    string: "No textual changes",
-                    attributes: [
-                        .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                        .foregroundColor: UIColor(Color.tokyoComment),
-                        .paragraphStyle: paragraph,
-                    ]
-                )
-            )
-            return result
-        }
-
-        // Pre-compute reusable attributes (avoids per-line dictionary allocations).
-        let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        let numFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        let prefixFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
-
-        let addedBg = UIColor(Color.tokyoGreen.opacity(0.20))
-        let removedBg = UIColor(Color.tokyoRed.opacity(0.18))
-        let addedAccent = UIColor(Color.tokyoGreen)
-        let removedAccent = UIColor(Color.tokyoRed)
-        let contextDim = UIColor(Color.tokyoComment.opacity(0.45))
-        let lineNumColor = UIColor(Color.tokyoComment.opacity(0.5))
-        let fgColor = UIColor(Color.tokyoFg)
-        let fgDimColor = UIColor(Color.tokyoFgDim)
-
-        let gutterAddedAttrs: [NSAttributedString.Key: Any] = [
-            .font: prefixFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph,
-        ]
-        let gutterRemovedAttrs: [NSAttributedString.Key: Any] = [
-            .font: prefixFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph,
-        ]
-        let gutterContextAttrs: [NSAttributedString.Key: Any] = [
-            .font: prefixFont, .foregroundColor: contextDim, .paragraphStyle: paragraph,
-        ]
-        let lineNumAttrs: [NSAttributedString.Key: Any] = [
-            .font: numFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph,
-        ]
-        let codeFgAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph,
-        ]
-        let codeDimAttrs: [NSAttributedString.Key: Any] = [
-            .font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph,
-        ]
-
-        var oldLineNumber = 1
-        var newLineNumber = 1
-
-        for (index, line) in renderedLines.enumerated() {
-            let lineNumber: Int?
-            switch line.kind {
-            case .context:
-                lineNumber = newLineNumber
-                oldLineNumber += 1
-                newLineNumber += 1
-            case .removed:
-                lineNumber = oldLineNumber
-                oldLineNumber += 1
-            case .added:
-                lineNumber = newLineNumber
-                newLineNumber += 1
-            }
-
-            let clippedText: String
-            if line.text.count > Self.maxRenderedDiffLineCharacters {
-                clippedText = String(line.text.prefix(Self.maxRenderedDiffLineCharacters - 1)) + "…"
-            } else {
-                clippedText = line.text
-            }
-
-            let rowStart = result.length
-
-            // Gutter: ▎+  ▎-  or    (space for context).
-            switch line.kind {
-            case .added:
-                result.append(NSAttributedString(string: "▎+ ", attributes: gutterAddedAttrs))
-            case .removed:
-                result.append(NSAttributedString(string: "▎− ", attributes: gutterRemovedAttrs))
-            case .context:
-                result.append(NSAttributedString(string: "   ", attributes: gutterContextAttrs))
-            }
-
-            // Line number.
-            result.append(NSAttributedString(
-                string: "\(paddedLineNumber(lineNumber, digits: numberDigits)) ",
-                attributes: lineNumAttrs
-            ))
-
-            // Code text.
-            let displayText = clippedText.isEmpty ? " " : clippedText
-
-            if let language, language != .unknown,
-               displayText.utf8.count <= Self.maxDiffSyntaxHighlightBytes {
-                // Syntax highlight all lines — the subtle tinted backgrounds
-                // (≈20% opacity) provide enough add/remove context while
-                // token colors keep the code readable.
-                let highlighted = NSMutableAttributedString(
-                    attributedString: NSAttributedString(
-                        SyntaxHighlighter.highlight(displayText, language: language)
-                    )
-                )
-                let fullRange = NSRange(location: 0, length: highlighted.length)
-                highlighted.addAttributes(
-                    [.font: codeFont, .paragraphStyle: paragraph],
-                    range: fullRange
-                )
-                // Fill in missing foreground colors.
-                let defaultFg = line.kind == .context ? fgDimColor : fgColor
-                highlighted.enumerateAttribute(
-                    .foregroundColor, in: fullRange, options: []
-                ) { value, range, _ in
-                    if value == nil {
-                        highlighted.addAttribute(.foregroundColor, value: defaultFg, range: range)
-                    }
-                }
-                result.append(highlighted)
-            } else {
-                let attrs = line.kind == .context ? codeDimAttrs : codeFgAttrs
-                result.append(NSAttributedString(string: displayText, attributes: attrs))
-            }
-
-            // Row background for changed lines.
-            let rowEnd = result.length
-            switch line.kind {
-            case .added:
-                result.addAttribute(
-                    .backgroundColor, value: addedBg,
-                    range: NSRange(location: rowStart, length: rowEnd - rowStart)
-                )
-            case .removed:
-                result.addAttribute(
-                    .backgroundColor, value: removedBg,
-                    range: NSRange(location: rowStart, length: rowEnd - rowStart)
-                )
-            case .context:
-                break
-            }
-
-            if index < renderedLines.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
-            }
-        }
-
-        if truncatedByLineCount {
-            result.append(NSAttributedString(
-                string: "\n… diff truncated for display",
-                attributes: [
-                    .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-                    .foregroundColor: UIColor(Color.tokyoComment),
-                    .paragraphStyle: paragraph,
-                ]
-            ))
-        }
-
-        return result
-    }
-
-    private static func lineNumberDigits(for lines: [DiffLine]) -> Int {
-        var oldNumber = 1
-        var newNumber = 1
-        var maxSeen = 1
-
-        for line in lines {
-            switch line.kind {
-            case .context:
-                maxSeen = max(maxSeen, oldNumber, newNumber)
-                oldNumber += 1
-                newNumber += 1
-            case .removed:
-                maxSeen = max(maxSeen, oldNumber)
-                oldNumber += 1
-            case .added:
-                maxSeen = max(maxSeen, newNumber)
-                newNumber += 1
-            }
-        }
-
-        return String(maxSeen).count
-    }
-
-    private static func paddedLineNumber(_ number: Int?, digits: Int) -> String {
-        guard let number else {
-            return String(repeating: " ", count: digits)
-        }
-
-        return String(format: "%\(digits)d", number)
-    }
-
-    private static func paddedHeader(_ value: String, digits: Int) -> String {
-        if value.count >= digits {
-            return String(value.suffix(digits))
-        }
-
-        return String(repeating: " ", count: digits - value.count) + value
-    }
-
-    private static func diffLanguage(for filePath: String?) -> SyntaxLanguage? {
-        guard let filePath, !filePath.isEmpty else { return nil }
-
-        switch FileType.detect(from: filePath) {
-        case .code(let language):
-            return language
-        case .json:
-            return .json
-        case .plain, .markdown, .image, .audio:
-            return nil
-        }
-    }
-
-    // Diff color/attribute helpers inlined into makeDiffAttributedText
-    // for performance (pre-computed dictionaries, zero per-line allocations).
-
-    private static func shellHighlighted(_ text: String) -> NSAttributedString {
-        let highlighted = SyntaxHighlighter.highlight(text, language: .shell)
-        let ns = NSMutableAttributedString(highlighted)
-        // Ensure monospace font is embedded — UILabel ignores its own .font
-        // when attributedText is set.
-        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        ns.addAttribute(.font, value: font, range: NSRange(location: 0, length: ns.length))
-        return ns
-    }
-
-    private static func ansiHighlighted(
-        _ text: String,
-        baseForeground: Color = .tokyoFg
-    ) -> NSAttributedString {
-        let highlighted = ANSIParser.attributedString(from: text, baseForeground: baseForeground)
-        return NSAttributedString(highlighted)
-    }
-
-    private static func styledTitle(
-        title: String,
-        toolNamePrefix: String?,
-        toolNameColor: UIColor
-    ) -> NSAttributedString {
-        let base = NSMutableAttributedString(
-            string: title,
-            attributes: [
-                .font: UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: UIColor(Color.tokyoFg),
-            ]
-        )
-
-        guard let toolNamePrefix,
-              !toolNamePrefix.isEmpty else {
-            return base
-        }
-
-        let prefixLength = (toolNamePrefix as NSString).length
-        guard prefixLength > 0 else { return base }
-
-        let highlightRange: NSRange?
-        if title.hasPrefix(toolNamePrefix) {
-            highlightRange = NSRange(location: 0, length: prefixLength)
-        } else {
-            let nsTitle = title as NSString
-            let spacedPrefix = "\(toolNamePrefix) "
-            let range = nsTitle.range(of: spacedPrefix)
-            highlightRange = range.location == NSNotFound
-                ? nil
-                : NSRange(location: range.location, length: prefixLength)
-        }
-
-        if let highlightRange {
-            base.addAttribute(.foregroundColor, value: toolNameColor, range: highlightRange)
-        }
-
-        return base
-    }
 }
 
 extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {

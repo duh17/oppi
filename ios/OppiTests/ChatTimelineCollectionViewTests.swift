@@ -2195,7 +2195,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func errorOutputPresentationStripsANSIEscapeCodes() {
         let input = "\u{001B}[31mFAIL\u{001B}[39m tests/workspace-crud.test.ts"
 
-        let presentation = ToolTimelineRowContentView.makeANSIOutputPresentation(
+        let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
             input,
             isError: true
         )
@@ -2210,7 +2210,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func errorOutputFallbackStillStripsANSIWhenHighlightingSkipped() {
         let input = "\u{001B}[31mFAIL\u{001B}[39m " + String(repeating: "x", count: 80)
 
-        let presentation = ToolTimelineRowContentView.makeANSIOutputPresentation(
+        let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
             input,
             isError: true,
             maxHighlightBytes: 8
@@ -2227,7 +2227,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func syntaxOutputPresentationHighlightsKnownLanguage() {
         let source = "guard value else { return }"
 
-        let presentation = ToolTimelineRowContentView.makeSyntaxOutputPresentation(
+        let presentation = ToolRowTextRenderer.makeSyntaxOutputPresentation(
             source,
             language: .swift
         )

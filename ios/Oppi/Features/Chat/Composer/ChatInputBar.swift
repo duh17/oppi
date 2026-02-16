@@ -46,6 +46,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var inlineVisualLineCount = 1
 
     private let inlineMaxLines = 8
+    private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
     private let actionVisualDiameter: CGFloat = 32
     private let expandVisualDiameter: CGFloat = 28
@@ -112,9 +113,16 @@ struct ChatInputBar<ActionRow: View>: View {
         return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
     }
 
+    /// Effective max lines — reduced when images are present to prevent the
+    /// capsule from growing tall enough to push the send button off-screen.
+    private var effectiveMaxLines: Int {
+        pendingImages.isEmpty ? inlineMaxLines : inlineMaxLinesWithImages
+    }
+
     /// Show manual expand only when input is getting long.
     private var showsExpandButton: Bool {
         inlineVisualLineCount >= expandVisibilityLineThreshold
+            || (!pendingImages.isEmpty && inlineVisualLineCount >= inlineMaxLinesWithImages)
     }
 
     /// Text binding for the input field.
@@ -232,7 +240,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         font: .monospacedSystemFont(ofSize: 17, weight: .regular),
                         textColor: UIColor(Color.tokyoFg),
                         tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
-                        maxLines: inlineMaxLines,
+                        maxLines: effectiveMaxLines,
                         onPasteImages: handlePastedImages,
                         onOverflowChange: nil,
                         onLineCountChange: handleInlineLineCountChange,
