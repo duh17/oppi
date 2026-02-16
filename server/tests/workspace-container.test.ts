@@ -58,13 +58,13 @@ afterEach(() => {
 
 describe("SandboxManager workspace container tracking", () => {
   it("isRunningWorkspace returns false for untracked workspace", () => {
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(false);
+    expect(sandbox.isRunningWorkspace("w1")).toBe(false);
   });
 
   it("stopWorkspaceContainer is safe to call on untracked workspace", async () => {
     // Should not throw — just attempts to stop by conventional name.
-    await sandbox.stopWorkspaceContainer("u1", "w1");
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(false);
+    await sandbox.stopWorkspaceContainer("w1");
+    expect(sandbox.isRunningWorkspace("w1")).toBe(false);
   });
 
   it("stopAll clears all tracked workspace containers", async () => {
@@ -73,13 +73,13 @@ describe("SandboxManager workspace container tracking", () => {
     running.set("w1", { containerId: "oppi-server-ws-w1" });
     running.set("w2", { containerId: "oppi-server-ws-w2" });
 
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(true);
-    expect(sandbox.isRunningWorkspace("u1", "w2")).toBe(true);
+    expect(sandbox.isRunningWorkspace("w1")).toBe(true);
+    expect(sandbox.isRunningWorkspace("w2")).toBe(true);
 
     await sandbox.stopAll();
 
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(false);
-    expect(sandbox.isRunningWorkspace("u1", "w2")).toBe(false);
+    expect(sandbox.isRunningWorkspace("w1")).toBe(false);
+    expect(sandbox.isRunningWorkspace("w2")).toBe(false);
     expect(running.size).toBe(0);
   });
 
@@ -88,10 +88,10 @@ describe("SandboxManager workspace container tracking", () => {
     running.set("w1", { containerId: "oppi-server-ws-w1" });
     running.set("w2", { containerId: "oppi-server-ws-w2" });
 
-    await sandbox.stopWorkspaceContainer("u1", "w1");
+    await sandbox.stopWorkspaceContainer("w1");
 
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(false);
-    expect(sandbox.isRunningWorkspace("u1", "w2")).toBe(true);
+    expect(sandbox.isRunningWorkspace("w1")).toBe(false);
+    expect(sandbox.isRunningWorkspace("w2")).toBe(true);
   });
 
   it("cleanupOrphanedContainers stops containers not in tracking map", async () => {
@@ -134,7 +134,6 @@ describe("SandboxManager workspace container tracking", () => {
     const ensureWorkspaceContainer = (
       sandbox as unknown as {
         ensureWorkspaceContainer: (
-          userId: string,
           workspaceId: string,
           workMount: string,
           workspaceRootMount: string,
@@ -144,17 +143,16 @@ describe("SandboxManager workspace container tracking", () => {
 
     const containerId = ensureWorkspaceContainer.call(
       sandbox,
-      "u1",
       "w1",
       "/tmp/work",
       "/tmp/workspace",
     );
     expect(containerId).toBe("oppi-server-ws-w1");
-    expect(sandbox.isRunningWorkspace("u1", "w1")).toBe(true);
+    expect(sandbox.isRunningWorkspace("w1")).toBe(true);
   });
 
   it("stopWorkspaceContainer tries canonical name when untracked", async () => {
-    await sandbox.stopWorkspaceContainer("u1", "w1");
+    await sandbox.stopWorkspaceContainer("w1");
 
     const commands = mockedExecSync.mock.calls
       .map((call) => (typeof call[0] === "string" ? call[0] : ""))
@@ -166,18 +164,18 @@ describe("SandboxManager workspace container tracking", () => {
 
 describe("SandboxManager workspace path generation", () => {
   it("getWorkspaceDir returns expected path", () => {
-    expect(sandbox.getWorkspaceDir("u1", "w1")).toBe(join(tmp, "u1", "w1"));
+    expect(sandbox.getWorkspaceDir("w1")).toBe(join(tmp, "w1"));
   });
 
   it("getSessionRootDir nests under workspace/sessions/", () => {
-    expect(sandbox.getSessionRootDir("u1", "w1", "s1")).toBe(
-      join(tmp, "u1", "w1", "sessions", "s1"),
+    expect(sandbox.getSessionRootDir("w1", "s1")).toBe(
+      join(tmp, "w1", "sessions", "s1"),
     );
   });
 
   it("getWorkDir creates and returns workspace/workspace/ directory", () => {
-    const workDir = sandbox.getWorkDir("u1", "s1", "w1");
-    expect(workDir).toBe(join(tmp, "u1", "w1", "workspace"));
+    const workDir = sandbox.getWorkDir("w1");
+    expect(workDir).toBe(join(tmp, "w1", "workspace"));
   });
 
 });

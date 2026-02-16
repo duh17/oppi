@@ -29,7 +29,6 @@ function makeSession(status: Session["status"] = "busy"): Session {
   const now = Date.now();
   return {
     id: "s1",
-    userId: "u1",
     workspaceId: "w1",
     status,
     createdAt: now,
@@ -112,7 +111,7 @@ function makeManagerHarness(status: Session["status"] = "busy"): {
   ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
 
   const events: ServerMessage[] = [];
-  manager.subscribe(session.userId, session.id, (msg) => {
+  manager.subscribe(session.id, (msg) => {
     events.push(msg);
   });
 
@@ -129,8 +128,8 @@ describe("stop lifecycle", () => {
   it("dedupes duplicate stop taps while graceful stop is pending", async () => {
     const { manager, events, stdinWrite, active } = makeManagerHarness("busy");
 
-    await manager.sendAbort("u1", "s1");
-    await manager.sendAbort("u1", "s1");
+    await manager.sendAbort("s1");
+    await manager.sendAbort("s1");
 
     expect(stdinWrite).toHaveBeenCalledTimes(1);
     const stopRequested = events.filter((event) => event.type === "stop_requested");
@@ -143,7 +142,7 @@ describe("stop lifecycle", () => {
     try {
       const { manager, events, kill, active } = makeManagerHarness("busy");
 
-      await manager.sendAbort("u1", "s1");
+      await manager.sendAbort("s1");
 
       // Phase 1: after stopAbortTimeoutMs, sends SIGINT (not SIGTERM)
       vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
@@ -159,7 +158,7 @@ describe("stop lifecycle", () => {
       expect(interruptRequested).toBeTruthy();
 
       // Session should still be alive
-      expect(manager.isActive("u1", "s1")).toBe(true);
+      expect(manager.isActive("s1")).toBe(true);
       expect(events.some((event) => event.type === "session_ended")).toBe(false);
 
       // Phase 2: after stopAbortSigintTimeoutMs, gives up but keeps session alive
@@ -174,7 +173,7 @@ describe("stop lifecycle", () => {
       expect(failed).toBeTruthy();
 
       // Session stays alive — user can send another message or stop session explicitly
-      expect(manager.isActive("u1", "s1")).toBe(true);
+      expect(manager.isActive("s1")).toBe(true);
       expect(events.some((event) => event.type === "session_ended")).toBe(false);
       expect(active.session.status).toBe("busy"); // restored from "stopping"
     } finally {
@@ -189,7 +188,7 @@ describe("stop lifecycle", () => {
       const { manager, events, kill } = makeManagerHarness("busy");
       const key = "s1";
 
-      await manager.sendAbort("u1", "s1");
+      await manager.sendAbort("s1");
 
       // Phase 1 timeout: sends SIGINT
       vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
@@ -203,7 +202,7 @@ describe("stop lifecycle", () => {
 
       const confirmed = events.filter((event) => event.type === "stop_confirmed");
       expect(confirmed).toHaveLength(1);
-      expect(manager.isActive("u1", "s1")).toBe(true);
+      expect(manager.isActive("s1")).toBe(true);
 
       // Phase 2 timeout should be a no-op since abort already succeeded
       vi.advanceTimersByTime(
@@ -222,7 +221,7 @@ describe("stop lifecycle", () => {
     const { manager, events, active } = makeManagerHarness("busy");
     const key = "s1";
 
-    await manager.sendAbort("u1", "s1");
+    await manager.sendAbort("s1");
 
     (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
       key,

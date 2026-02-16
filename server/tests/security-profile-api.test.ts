@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import { Storage } from "../src/storage.js";
-import type { User } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -95,7 +94,6 @@ describe("GET /security/profile", () => {
       "GET",
       "/security/profile",
       new URL("http://localhost/security/profile"),
-      makeUser(),
       {} as never,
       res as never,
     );
@@ -148,7 +146,6 @@ describe("GET /security/profile", () => {
       "GET",
       "/security/profile",
       new URL("http://localhost/security/profile"),
-      makeUser(),
       {} as never,
       res as never,
     );
@@ -232,7 +229,6 @@ describe("PUT /security/profile", () => {
       "PUT",
       "/security/profile",
       new URL("http://localhost/security/profile"),
-      makeUser(),
       makeJsonRequest({
         profile: "strict",
         requireTlsOutsideTailnet: true,
@@ -273,7 +269,6 @@ describe("PUT /security/profile", () => {
       "PUT",
       "/security/profile",
       new URL("http://localhost/security/profile"),
-      makeUser(),
       makeJsonRequest({ invite: { maxAgeSeconds: 0 } }),
       res as never,
     );

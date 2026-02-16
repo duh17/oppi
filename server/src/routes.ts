@@ -51,7 +51,6 @@ import { PRESETS, type RiskLevel } from "./policy.js";
 import type { LearnedRule } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
-  User,
   Session,
   Workspace,
   CreateWorkspaceRequest,
@@ -85,7 +84,7 @@ export interface RouteContext {
   userSkillStore: UserSkillStore;
   streamMux: UserStreamMux;
   ensureSessionContextWindow: (session: Session) => Session;
-  resolveWorkspaceForSession: (userId: string, session: Session) => Workspace | undefined;
+  resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   isValidMemoryNamespace: (ns: string) => boolean;
   refreshModelCatalog: () => Promise<void>;
   getModelCatalog: () => ModelInfo[];
@@ -130,28 +129,27 @@ export class RouteHandler {
     method: string,
     path: string,
     url: URL,
-    user: User,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     // Static routes
     if (path === "/stream/events" && method === "GET")
-      return this.handleGetUserStreamEvents(user, url, res);
+      return this.handleGetUserStreamEvents(url, res);
     if (path === "/permissions/pending" && method === "GET")
-      return this.handleGetPendingPermissions(user, url, res);
+      return this.handleGetPendingPermissions(url, res);
     if (path === "/security/profile" && method === "GET") return this.handleGetSecurityProfile(res);
     if (path === "/security/profile" && method === "PUT")
       return this.handleUpdateSecurityProfile(req, res);
     if (path === "/policy/profile" && method === "GET")
-      return this.handleGetPolicyProfile(user, url, res);
+      return this.handleGetPolicyProfile(url, res);
     if (path === "/policy/rules" && method === "GET")
-      return this.handleGetPolicyRules(user, url, res);
+      return this.handleGetPolicyRules(url, res);
     if (path.startsWith("/policy/rules/") && method === "DELETE")
-      return this.handleDeletePolicyRule(user, path, res);
+      return this.handleDeletePolicyRule(path, res);
     if (path === "/policy/audit" && method === "GET")
-      return this.handleGetPolicyAudit(user, url, res);
-    if (path === "/me" && method === "GET") return this.handleGetMe(user, res);
-    if (path === "/server/info" && method === "GET") return this.handleGetServerInfo(user, res);
+      return this.handleGetPolicyAudit(url, res);
+    if (path === "/me" && method === "GET") return this.handleGetMe(res);
+    if (path === "/server/info" && method === "GET") return this.handleGetServerInfo(res);
     if (path === "/models" && method === "GET") return this.handleListModels(res);
     if (path === "/skills" && method === "GET") return this.handleListSkills(res);
     if (path === "/skills/rescan" && method === "POST") return this.handleRescanSkills(res);
@@ -170,69 +168,68 @@ export class RouteHandler {
       return this.handleListDirectories(url, res);
 
     // Workspaces
-    if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(user, res);
+    if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(res);
     if (path === "/workspaces" && method === "POST")
-      return this.handleCreateWorkspace(user, req, res);
+      return this.handleCreateWorkspace(req, res);
 
     const wsMatch = path.match(/^\/workspaces\/([^/]+)$/);
     if (wsMatch) {
-      if (method === "GET") return this.handleGetWorkspace(user, wsMatch[1], res);
-      if (method === "PUT") return this.handleUpdateWorkspace(user, wsMatch[1], req, res);
-      if (method === "DELETE") return this.handleDeleteWorkspace(user, wsMatch[1], res);
+      if (method === "GET") return this.handleGetWorkspace(wsMatch[1], res);
+      if (method === "PUT") return this.handleUpdateWorkspace(wsMatch[1], req, res);
+      if (method === "DELETE") return this.handleDeleteWorkspace(wsMatch[1], res);
     }
 
     const wsGraphMatch = path.match(/^\/workspaces\/([^/]+)\/graph$/);
     if (wsGraphMatch && method === "GET") {
-      return this.handleGetWorkspaceGraph(user, wsGraphMatch[1], url, res);
+      return this.handleGetWorkspaceGraph(wsGraphMatch[1], url, res);
     }
 
     // Device tokens
     if (path === "/me/device-token" && method === "POST")
-      return this.handleRegisterDeviceToken(user, req, res);
+      return this.handleRegisterDeviceToken(req, res);
     if (path === "/me/device-token" && method === "DELETE")
-      return this.handleDeleteDeviceToken(user, req, res);
+      return this.handleDeleteDeviceToken(req, res);
 
     // User skills CRUD
-    if (path === "/me/skills" && method === "GET") return this.handleListUserSkills(user, res);
-    if (path === "/me/skills" && method === "POST") return this.handleSaveUserSkill(user, req, res);
+    if (path === "/me/skills" && method === "GET") return this.handleListUserSkills(res);
+    if (path === "/me/skills" && method === "POST") return this.handleSaveUserSkill(req, res);
 
     const userSkillFileMatch = path.match(/^\/me\/skills\/([^/]+)\/files$/);
     if (userSkillFileMatch && method === "GET")
-      return this.handleGetUserSkillFile(user, userSkillFileMatch[1], url, res);
+      return this.handleGetUserSkillFile(userSkillFileMatch[1], url, res);
 
     const userSkillMatch = path.match(/^\/me\/skills\/([^/]+)$/);
     if (userSkillMatch) {
-      if (method === "GET") return this.handleGetUserSkill(user, userSkillMatch[1], res);
+      if (method === "GET") return this.handleGetUserSkill(userSkillMatch[1], res);
       if (method === "PUT")
-        return this.handlePutUserSkill(user, userSkillMatch[1], req, res);
-      if (method === "DELETE") return this.handleDeleteUserSkill(user, userSkillMatch[1], res);
+        return this.handlePutUserSkill(userSkillMatch[1], req, res);
+      if (method === "DELETE") return this.handleDeleteUserSkill(userSkillMatch[1], res);
     }
 
     // ── Workspace-scoped session routes (v2 API) ──
 
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
     if (wsSessionsMatch) {
-      if (method === "GET") return this.handleListWorkspaceSessions(user, wsSessionsMatch[1], res);
+      if (method === "GET") return this.handleListWorkspaceSessions(wsSessionsMatch[1], res);
       if (method === "POST")
-        return this.handleCreateWorkspaceSession(user, wsSessionsMatch[1], req, res);
+        return this.handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
     }
 
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
     if (wsSessionStopMatch && method === "POST") {
-      return this.handleStopSession(user, wsSessionStopMatch[2], res);
+      return this.handleStopSession(wsSessionStopMatch[2], res);
     }
 
     const wsSessionClientLogsMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/client-logs$/,
     );
     if (wsSessionClientLogsMatch && method === "POST") {
-      return this.handleUploadClientLogs(user, wsSessionClientLogsMatch[2], req, res);
+      return this.handleUploadClientLogs(wsSessionClientLogsMatch[2], req, res);
     }
 
     const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
     if (wsSessionResumeMatch && method === "POST") {
       return this.handleResumeWorkspaceSession(
-        user,
         wsSessionResumeMatch[1],
         wsSessionResumeMatch[2],
         res,
@@ -242,7 +239,6 @@ export class RouteHandler {
     const wsSessionForkMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/);
     if (wsSessionForkMatch && method === "POST") {
       return this.handleForkWorkspaceSession(
-        user,
         wsSessionForkMatch[1],
         wsSessionForkMatch[2],
         req,
@@ -255,7 +251,6 @@ export class RouteHandler {
     );
     if (wsSessionToolOutputMatch && method === "GET") {
       return this.handleGetToolOutput(
-        user,
         wsSessionToolOutputMatch[2],
         wsSessionToolOutputMatch[3],
         res,
@@ -264,25 +259,25 @@ export class RouteHandler {
 
     const wsSessionFilesMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/);
     if (wsSessionFilesMatch && method === "GET") {
-      return this.handleGetSessionFile(user, wsSessionFilesMatch[2], url, res);
+      return this.handleGetSessionFile(wsSessionFilesMatch[2], url, res);
     }
 
     const wsSessionOverallDiffMatch = path.match(
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
     );
     if (wsSessionOverallDiffMatch && method === "GET") {
-      return this.handleGetSessionOverallDiff(user, wsSessionOverallDiffMatch[2], url, res);
+      return this.handleGetSessionOverallDiff(wsSessionOverallDiffMatch[2], url, res);
     }
 
     const wsSessionEventsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/);
     if (wsSessionEventsMatch && method === "GET") {
-      return this.handleGetSessionEvents(user, wsSessionEventsMatch[2], url, res);
+      return this.handleGetSessionEvents(wsSessionEventsMatch[2], url, res);
     }
 
     const wsSessionMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/);
     if (wsSessionMatch) {
-      if (method === "GET") return this.handleGetSession(user, wsSessionMatch[2], url, res);
-      if (method === "DELETE") return this.handleDeleteSession(user, wsSessionMatch[2], res);
+      if (method === "GET") return this.handleGetSession(wsSessionMatch[2], url, res);
+      if (method === "DELETE") return this.handleDeleteSession(wsSessionMatch[2], res);
     }
 
     // ─── Theme routes ───
@@ -435,15 +430,15 @@ export class RouteHandler {
     };
   }
 
-  private handleGetMe(user: User, res: ServerResponse): void {
-    this.json(res, { user: user.id, name: user.name });
+  private handleGetMe(res: ServerResponse): void {
+    this.json(res, { name: this.ctx.storage.getOwnerName() });
   }
 
-  private handleGetServerInfo(user: User, res: ServerResponse): void {
+  private handleGetServerInfo(res: ServerResponse): void {
     const config = this.ctx.storage.getConfig();
     const identity = config.identity;
-    const workspaces = this.ctx.storage.listWorkspaces(user.id);
-    const sessions = this.ctx.storage.listUserSessions(user.id);
+    const workspaces = this.ctx.storage.listWorkspaces();
+    const sessions = this.ctx.storage.listSessions();
     const activeSessions = sessions.filter(
       (s) => s.status !== "stopped" && s.status !== "error",
     );
@@ -521,9 +516,9 @@ export class RouteHandler {
 
   // ─── User Skills CRUD ───
 
-  private handleListUserSkills(user: User, res: ServerResponse): void {
+  private handleListUserSkills(res: ServerResponse): void {
     // Build enabledIn map: skill name → workspace IDs
-    const workspaces = this.ctx.storage.listWorkspaces(user.id);
+    const workspaces = this.ctx.storage.listWorkspaces();
     const enabledIn = new Map<string, string[]>();
     for (const ws of workspaces) {
       for (const skill of ws.skills) {
@@ -538,17 +533,17 @@ export class RouteHandler {
       builtIn: true as const,
       enabledIn: enabledIn.get(s.name) || [],
     }));
-    const userSkills = this.ctx.userSkillStore.listSkills(user.id).map((s) => ({
+    const userSkills = this.ctx.userSkillStore.listSkills().map((s) => ({
       ...s,
       enabledIn: enabledIn.get(s.name) || [],
     }));
     this.json(res, { skills: [...builtIn, ...userSkills] });
   }
 
-  private handleGetUserSkill(user: User, name: string, res: ServerResponse): void {
-    const userSkill = this.ctx.userSkillStore.getSkill(user.id, name);
+  private handleGetUserSkill(name: string, res: ServerResponse): void {
+    const userSkill = this.ctx.userSkillStore.getSkill(name);
     if (userSkill) {
-      const files = this.ctx.userSkillStore.listFiles(user.id, name);
+      const files = this.ctx.userSkillStore.listFiles(name);
       this.json(res, { skill: userSkill, files });
       return;
     }
@@ -567,7 +562,6 @@ export class RouteHandler {
   }
 
   private async handleSaveUserSkill(
-    user: User,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
@@ -582,13 +576,13 @@ export class RouteHandler {
       return;
     }
 
-    const session = this.ctx.storage.getSession(user.id, body.sessionId);
+    const session = this.ctx.storage.getSession(body.sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
     }
 
-    const workRoot = this.resolveWorkRoot(session, user.id);
+    const workRoot = this.resolveWorkRoot(session);
     if (!workRoot) {
       this.error(res, 404, "No workspace root for session");
       return;
@@ -612,7 +606,7 @@ export class RouteHandler {
     }
 
     try {
-      const skill = this.ctx.userSkillStore.saveSkill(user.id, body.name, resolvedSource);
+      const skill = this.ctx.userSkillStore.saveSkill(body.name, resolvedSource);
       // scan() first (re-reads disk), then register user skill on top
       this.ctx.skillRegistry.scan();
       this.ctx.skillRegistry.registerUserSkills([skill]);
@@ -634,7 +628,6 @@ export class RouteHandler {
    *   files: optional extra files as { "scripts/run.sh": "#!/bin/bash\n..." }
    */
   private async handlePutUserSkill(
-    user: User,
     name: string,
     req: IncomingMessage,
     res: ServerResponse,
@@ -668,7 +661,7 @@ export class RouteHandler {
         }
         // Re-scan picks up changes; re-register user skills after (scan clears map)
         this.ctx.skillRegistry.scan();
-        const userSkills = this.ctx.userSkillStore.listSkills(user.id);
+        const userSkills = this.ctx.userSkillStore.listSkills();
         this.ctx.skillRegistry.registerUserSkills(userSkills);
         const updated = this.ctx.skillRegistry.get(name);
         this.json(res, { skill: updated ?? existing });
@@ -697,7 +690,7 @@ export class RouteHandler {
         }
       }
 
-      const skill = this.ctx.userSkillStore.saveSkill(user.id, name, tmpDir);
+      const skill = this.ctx.userSkillStore.saveSkill(name, tmpDir);
       this.ctx.skillRegistry.scan();
       this.ctx.skillRegistry.registerUserSkills([skill]);
       this.json(res, { skill });
@@ -712,9 +705,9 @@ export class RouteHandler {
     }
   }
 
-  private handleDeleteUserSkill(user: User, name: string, res: ServerResponse): void {
+  private handleDeleteUserSkill(name: string, res: ServerResponse): void {
     const builtIn = this.ctx.skillRegistry.get(name);
-    const userSkill = this.ctx.userSkillStore.getSkill(user.id, name);
+    const userSkill = this.ctx.userSkillStore.getSkill(name);
 
     if (!userSkill) {
       if (builtIn) {
@@ -725,12 +718,12 @@ export class RouteHandler {
       return;
     }
 
-    this.ctx.userSkillStore.deleteSkill(user.id, name);
+    this.ctx.userSkillStore.deleteSkill(name);
     this.ctx.skillRegistry.scan(); // refresh catalog
     res.writeHead(204).end();
   }
 
-  private handleGetUserSkillFile(user: User, name: string, url: URL, res: ServerResponse): void {
+  private handleGetUserSkillFile(name: string, url: URL, res: ServerResponse): void {
     const filePath = url.searchParams.get("path");
     if (!filePath) {
       this.error(res, 400, "path parameter required");
@@ -738,7 +731,7 @@ export class RouteHandler {
     }
 
     const content =
-      this.ctx.userSkillStore.readFile(user.id, name, filePath) ??
+      this.ctx.userSkillStore.readFile(name, filePath) ??
       this.ctx.skillRegistry.getFileContent(name, filePath);
 
     if (content === undefined) {
@@ -754,14 +747,13 @@ export class RouteHandler {
     this.json(res, { directories: dirs });
   }
 
-  private handleListWorkspaces(user: User, res: ServerResponse): void {
-    this.ctx.storage.ensureDefaultWorkspaces(user.id);
-    const workspaces = this.ctx.storage.listWorkspaces(user.id);
+  private handleListWorkspaces(res: ServerResponse): void {
+    this.ctx.storage.ensureDefaultWorkspaces();
+    const workspaces = this.ctx.storage.listWorkspaces();
     this.json(res, { workspaces });
   }
 
   private async handleCreateWorkspace(
-    user: User,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
@@ -820,12 +812,12 @@ export class RouteHandler {
       }
     }
 
-    const workspace = this.ctx.storage.createWorkspace(user.id, body);
+    const workspace = this.ctx.storage.createWorkspace(body);
     this.json(res, { workspace }, 201);
   }
 
-  private handleGetWorkspace(user: User, wsId: string, res: ServerResponse): void {
-    const workspace = this.ctx.storage.getWorkspace(user.id, wsId);
+  private handleGetWorkspace(wsId: string, res: ServerResponse): void {
+    const workspace = this.ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
@@ -834,12 +826,11 @@ export class RouteHandler {
   }
 
   private async handleUpdateWorkspace(
-    user: User,
     wsId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = this.ctx.storage.getWorkspace(user.id, wsId);
+    const workspace = this.ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
@@ -894,7 +885,7 @@ export class RouteHandler {
       }
     }
 
-    const updated = this.ctx.storage.updateWorkspace(user.id, wsId, body);
+    const updated = this.ctx.storage.updateWorkspace(wsId, body);
     if (!updated) {
       this.error(res, 404, "Workspace not found");
       return;
@@ -902,31 +893,30 @@ export class RouteHandler {
 
     // If skills changed on a container workspace, re-sync the sandbox
     if (body.skills && updated.runtime === "container") {
-      this.ctx.sandbox.resyncWorkspaceSkills(user.id, wsId, updated.skills);
+      this.ctx.sandbox.resyncWorkspaceSkills(wsId, updated.skills);
     }
 
     this.json(res, { workspace: updated });
   }
 
-  private handleDeleteWorkspace(user: User, wsId: string, res: ServerResponse): void {
-    this.ctx.storage.deleteWorkspace(user.id, wsId);
+  private handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
+    this.ctx.storage.deleteWorkspace(wsId);
     this.json(res, { ok: true });
   }
 
   private handleGetWorkspaceGraph(
-    user: User,
     workspaceId: string,
     url: URL,
     res: ServerResponse,
   ): void {
-    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
     }
 
     const sessions = this.ctx.storage
-      .listUserSessions(user.id)
+      .listSessions()
       .filter((session) => session.workspaceId === workspaceId);
 
     const currentSessionId = url.searchParams.get("sessionId") || undefined;
@@ -947,7 +937,7 @@ export class RouteHandler {
 
     const activeSessionIds = new Set<string>();
     for (const session of sessions) {
-      if (this.ctx.sessions.isActive(user.id, session.id)) {
+      if (this.ctx.sessions.isActive(session.id)) {
         activeSessionIds.add(session.id);
       }
     }
@@ -966,7 +956,6 @@ export class RouteHandler {
   }
 
   private async handleRegisterDeviceToken(
-    user: User,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
@@ -978,36 +967,34 @@ export class RouteHandler {
 
     const tokenType = body.tokenType || "apns";
     if (tokenType === "liveactivity") {
-      this.ctx.storage.setLiveActivityToken(user.id, body.deviceToken);
-      console.log(`[push] Live Activity token registered for ${user.name}`);
+      this.ctx.storage.setLiveActivityToken(body.deviceToken);
+      console.log(`[push] Live Activity token registered for ${this.ctx.storage.getOwnerName()}`);
     } else {
-      this.ctx.storage.addDeviceToken(user.id, body.deviceToken);
-      console.log(`[push] Device token registered for ${user.name}`);
+      this.ctx.storage.addDeviceToken(body.deviceToken);
+      console.log(`[push] Device token registered for ${this.ctx.storage.getOwnerName()}`);
     }
 
     this.json(res, { ok: true });
   }
 
   private async handleDeleteDeviceToken(
-    user: User,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const body = await this.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
-      this.ctx.storage.removeDeviceToken(user.id, body.deviceToken);
-      console.log(`[push] Device token removed for ${user.name}`);
+      this.ctx.storage.removeDeviceToken(body.deviceToken);
+      console.log(`[push] Device token removed for ${this.ctx.storage.getOwnerName()}`);
     }
     this.json(res, { ok: true });
   }
 
   private async handleUploadClientLogs(
-    user: User,
     sessionId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1065,7 +1052,7 @@ export class RouteHandler {
       return;
     }
 
-    const logsDir = join(this.ctx.storage.getDataDir(), "client-logs", user.id);
+    const logsDir = join(this.ctx.storage.getDataDir(), "client-logs");
     if (!existsSync(logsDir)) {
       mkdirSync(logsDir, { recursive: true, mode: 0o700 });
     }
@@ -1085,7 +1072,6 @@ export class RouteHandler {
       buildNumber: typeof body.buildNumber === "string" ? body.buildNumber.slice(0, 64) : undefined,
       osVersion: typeof body.osVersion === "string" ? body.osVersion.slice(0, 128) : undefined,
       deviceModel: typeof body.deviceModel === "string" ? body.deviceModel.slice(0, 64) : undefined,
-      userId: user.id,
       sessionId,
       workspaceId: session.workspaceId,
       entries,
@@ -1097,22 +1083,22 @@ export class RouteHandler {
     });
 
     console.log(
-      `${ts()} [diagnostics] client logs uploaded: user=${user.name} session=${sessionId} entries=${entries.length}`,
+      `${ts()} [diagnostics] client logs uploaded: user=${this.ctx.storage.getOwnerName()} session=${sessionId} entries=${entries.length}`,
     );
     this.json(res, { ok: true, accepted: entries.length });
   }
 
   // ─── Workspace-scoped session handlers (v2 API) ───
 
-  private handleListWorkspaceSessions(user: User, workspaceId: string, res: ServerResponse): void {
-    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+  private handleListWorkspaceSessions(workspaceId: string, res: ServerResponse): void {
+    const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
     }
 
     const sessions = this.ctx.storage
-      .listUserSessions(user.id)
+      .listSessions()
       .filter((s) => s.workspaceId === workspaceId)
       .map((s) => this.ctx.ensureSessionContextWindow(s));
 
@@ -1120,12 +1106,11 @@ export class RouteHandler {
   }
 
   private async handleCreateWorkspaceSession(
-    user: User,
     workspaceId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
@@ -1133,7 +1118,7 @@ export class RouteHandler {
 
     const body = await this.parseBody<{ name?: string; model?: string }>(req);
     const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
-    const session = this.ctx.storage.createSession(user.id, body.name, model);
+    const session = this.ctx.storage.createSession(body.name, model);
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
@@ -1145,18 +1130,17 @@ export class RouteHandler {
   }
 
   private async handleResumeWorkspaceSession(
-    user: User,
     workspaceId: string,
     sessionId: string,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
     }
 
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1167,8 +1151,8 @@ export class RouteHandler {
       return;
     }
 
-    if (this.ctx.sessions.isActive(user.id, sessionId)) {
-      const active = this.ctx.sessions.getActiveSession(user.id, sessionId);
+    if (this.ctx.sessions.isActive(sessionId)) {
+      const active = this.ctx.sessions.getActiveSession(sessionId);
       const hydrated = active ? this.ctx.ensureSessionContextWindow(active) : session;
       this.json(res, { session: hydrated });
       return;
@@ -1176,9 +1160,8 @@ export class RouteHandler {
 
     try {
       const started = await this.ctx.sessions.startSession(
-        user.id,
         sessionId,
-        user.name,
+        this.ctx.storage.getOwnerName(),
         workspace,
       );
       const hydrated = this.ctx.ensureSessionContextWindow(started);
@@ -1190,19 +1173,18 @@ export class RouteHandler {
   }
 
   private async handleForkWorkspaceSession(
-    user: User,
     workspaceId: string,
     sourceSessionId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+    const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
       return;
     }
 
-    const sourceSession = this.ctx.storage.getSession(user.id, sourceSessionId);
+    const sourceSession = this.ctx.storage.getSession(sourceSessionId);
     if (!sourceSession) {
       this.error(res, 404, "Session not found");
       return;
@@ -1220,9 +1202,9 @@ export class RouteHandler {
       return;
     }
 
-    await this.ctx.sessions.refreshSessionState(user.id, sourceSessionId);
+    await this.ctx.sessions.refreshSessionState(sourceSessionId);
 
-    const latestSource = this.ctx.storage.getSession(user.id, sourceSessionId) || sourceSession;
+    const latestSource = this.ctx.storage.getSession(sourceSessionId) || sourceSession;
     const sourceSessionFile =
       latestSource.piSessionFile ||
       latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
@@ -1239,7 +1221,6 @@ export class RouteHandler {
     ).slice(0, 160);
 
     const forkSession = this.ctx.storage.createSession(
-      user.id,
       forkName,
       latestSource.model || workspace.defaultModel,
     );
@@ -1258,32 +1239,30 @@ export class RouteHandler {
     this.ctx.storage.saveSession(forkSession);
 
     try {
-      await this.ctx.sessions.startSession(user.id, forkSession.id, user.name, workspace);
+      await this.ctx.sessions.startSession(forkSession.id, this.ctx.storage.getOwnerName(), workspace);
       await this.ctx.sessions.runRpcCommand(
-        user.id,
         forkSession.id,
         { type: "fork", entryId },
         30_000,
       );
-      await this.ctx.sessions.refreshSessionState(user.id, forkSession.id);
+      await this.ctx.sessions.refreshSessionState(forkSession.id);
     } catch (err: unknown) {
-      await this.ctx.sessions.stopSession(user.id, forkSession.id).catch(() => {});
-      this.ctx.storage.deleteSession(user.id, forkSession.id);
+      await this.ctx.sessions.stopSession(forkSession.id).catch(() => {});
+      this.ctx.storage.deleteSession(forkSession.id);
       const message = err instanceof Error ? err.message : "Fork failed";
       this.error(res, 500, message);
       return;
     }
 
-    const created = this.ctx.storage.getSession(user.id, forkSession.id) || forkSession;
+    const created = this.ctx.storage.getSession(forkSession.id) || forkSession;
     this.json(res, { session: this.ctx.ensureSessionContextWindow(created) }, 201);
   }
 
   private async handleStopSession(
-    user: User,
     sessionId: string,
     res: ServerResponse,
   ): Promise<void> {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1291,15 +1270,15 @@ export class RouteHandler {
 
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
 
-    if (this.ctx.sessions.isActive(user.id, sessionId)) {
-      await this.ctx.sessions.stopSession(user.id, sessionId);
+    if (this.ctx.sessions.isActive(sessionId)) {
+      await this.ctx.sessions.stopSession(sessionId);
     } else {
       hydratedSession.status = "stopped";
       hydratedSession.lastActivity = Date.now();
       this.ctx.storage.saveSession(hydratedSession);
     }
 
-    const updatedSession = this.ctx.storage.getSession(user.id, sessionId);
+    const updatedSession = this.ctx.storage.getSession(sessionId);
     const hydratedUpdated = updatedSession
       ? this.ctx.ensureSessionContextWindow(updatedSession)
       : updatedSession;
@@ -1309,12 +1288,11 @@ export class RouteHandler {
   // ─── Tool Output by ID ───
 
   private handleGetToolOutput(
-    user: User,
     sessionId: string,
     toolCallId: string,
     res: ServerResponse,
   ): void {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1328,7 +1306,6 @@ export class RouteHandler {
       containerDirs.push(
         join(
           sandboxBaseDir,
-          user.id,
           session.workspaceId,
           "sessions",
           sessionId,
@@ -1377,8 +1354,8 @@ export class RouteHandler {
 
   // ─── Session File Access ───
 
-  private handleGetSessionFile(user: User, sessionId: string, url: URL, res: ServerResponse): void {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+  private handleGetSessionFile(sessionId: string, url: URL, res: ServerResponse): void {
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1390,7 +1367,7 @@ export class RouteHandler {
       return;
     }
 
-    const workRoot = this.resolveWorkRoot(session, user.id);
+    const workRoot = this.resolveWorkRoot(session);
     if (!workRoot) {
       this.error(res, 404, "No workspace root for session");
       return;
@@ -1439,12 +1416,11 @@ export class RouteHandler {
   }
 
   private handleGetSessionOverallDiff(
-    user: User,
     sessionId: string,
     url: URL,
     res: ServerResponse,
   ): void {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1456,7 +1432,7 @@ export class RouteHandler {
       return;
     }
 
-    const trace = this.loadSessionTrace(user.id, session);
+    const trace = this.loadSessionTrace(session);
     if (!trace || trace.length === 0) {
       this.error(res, 404, "Session trace not found");
       return;
@@ -1469,7 +1445,7 @@ export class RouteHandler {
       return;
     }
 
-    const currentText = this.readCurrentFileText(session, user.id, reqPath);
+    const currentText = this.readCurrentFileText(session, reqPath);
     const baselineText = reconstructBaselineFromCurrent(currentText, mutations);
     const diffLines = computeDiffLines(baselineText, currentText);
     const stats = computeLineDiffStatsFromLines(diffLines);
@@ -1486,8 +1462,8 @@ export class RouteHandler {
     });
   }
 
-  private readCurrentFileText(session: Session, userId: string, reqPath: string): string {
-    const workRoot = this.resolveWorkRoot(session, userId);
+  private readCurrentFileText(session: Session, reqPath: string): string {
+    const workRoot = this.resolveWorkRoot(session);
     if (!workRoot) return "";
 
     const target = resolve(workRoot, reqPath);
@@ -1505,9 +1481,9 @@ export class RouteHandler {
     }
   }
 
-  private loadSessionTrace(userId: string, session: Session, traceView: TraceViewMode = "context") {
+  private loadSessionTrace(session: Session, traceView: TraceViewMode = "context") {
     const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
-    let trace = readSessionTrace(sandboxBaseDir, userId, session.id, session.workspaceId, {
+    let trace = readSessionTrace(sandboxBaseDir, session.id, session.workspaceId, {
       view: traceView,
     });
 
@@ -1520,7 +1496,6 @@ export class RouteHandler {
     if ((!trace || trace.length === 0) && session.piSessionId) {
       trace = readSessionTraceByUuid(
         sandboxBaseDir,
-        userId,
         session.piSessionId,
         session.workspaceId,
         { view: traceView },
@@ -1530,9 +1505,9 @@ export class RouteHandler {
     return trace;
   }
 
-  private resolveWorkRoot(session: Session, userId: string): string | null {
+  private resolveWorkRoot(session: Session): string | null {
     const workspace = session.workspaceId
-      ? this.ctx.storage.getWorkspace(userId, session.workspaceId)
+      ? this.ctx.storage.getWorkspace(session.workspaceId)
       : undefined;
 
     if (session.runtime === "container") {
@@ -1546,7 +1521,6 @@ export class RouteHandler {
 
       const workspaceSandbox = join(
         this.ctx.sandbox.getBaseDir(),
-        userId,
         session.workspaceId,
         "workspace",
       );
@@ -1575,30 +1549,29 @@ export class RouteHandler {
     return runtime === "container" ? "container" : "host";
   }
 
-  private isRuleVisibleToUser(userId: string, rule: LearnedRule): boolean {
+  private isRuleVisibleToUser(rule: LearnedRule): boolean {
     switch (rule.scope) {
       case "session":
         return rule.sessionId
-          ? Boolean(this.ctx.storage.getSession(userId, rule.sessionId))
+          ? Boolean(this.ctx.storage.getSession(rule.sessionId))
           : false;
       case "workspace":
         return rule.workspaceId
-          ? Boolean(this.ctx.storage.getWorkspace(userId, rule.workspaceId))
+          ? Boolean(this.ctx.storage.getWorkspace(rule.workspaceId))
           : false;
       case "global":
-        return !rule.createdBy || rule.createdBy === userId;
+        return true; // single-owner: all rules are visible
       default:
         return false;
     }
   }
 
   private sessionBelongsToWorkspace(
-    userId: string,
     sessionId: string | undefined,
     workspaceId: string,
   ): boolean {
     if (!sessionId) return false;
-    const session = this.ctx.storage.getSession(userId, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     return session?.workspaceId === workspaceId;
   }
 
@@ -1727,7 +1700,7 @@ export class RouteHandler {
     };
   }
 
-  private handleGetUserStreamEvents(user: User, url: URL, res: ServerResponse): void {
+  private handleGetUserStreamEvents(url: URL, res: ServerResponse): void {
     const sinceParam = url.searchParams.get("since");
     const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
     if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
@@ -1735,7 +1708,7 @@ export class RouteHandler {
       return;
     }
 
-    const catchUp = this.ctx.streamMux.getUserStreamCatchUp(user.id, sinceSeq);
+    const catchUp = this.ctx.streamMux.getUserStreamCatchUp(sinceSeq);
 
     this.json(res, {
       events: catchUp.events,
@@ -1744,12 +1717,12 @@ export class RouteHandler {
     });
   }
 
-  private handleGetPendingPermissions(user: User, url: URL, res: ServerResponse): void {
+  private handleGetPendingPermissions(url: URL, res: ServerResponse): void {
     const sessionIdFilter = url.searchParams.get("sessionId") || undefined;
     const workspaceIdFilter = url.searchParams.get("workspaceId") || undefined;
 
     if (sessionIdFilter) {
-      const session = this.ctx.storage.getSession(user.id, sessionIdFilter);
+      const session = this.ctx.storage.getSession(sessionIdFilter);
       if (!session) {
         this.error(res, 404, "Session not found");
         return;
@@ -1757,7 +1730,7 @@ export class RouteHandler {
     }
 
     if (workspaceIdFilter) {
-      const workspace = this.ctx.storage.getWorkspace(user.id, workspaceIdFilter);
+      const workspace = this.ctx.storage.getWorkspace(workspaceIdFilter);
       if (!workspace) {
         this.error(res, 404, "Workspace not found");
         return;
@@ -1766,7 +1739,7 @@ export class RouteHandler {
 
     const serverTime = Date.now();
     const pending = this.ctx.gate
-      .getPendingForUser(user.id)
+      .getPendingForUser()
       .filter((decision) => decision.expires === false || decision.timeoutAt > serverTime)
       .filter((decision) => !sessionIdFilter || decision.sessionId === sessionIdFilter)
       .filter((decision) => !workspaceIdFilter || decision.workspaceId === workspaceIdFilter)
@@ -1790,12 +1763,12 @@ export class RouteHandler {
     });
   }
 
-  private handleGetPolicyProfile(user: User, url: URL, res: ServerResponse): void {
+  private handleGetPolicyProfile(url: URL, res: ServerResponse): void {
     const workspaceId = url.searchParams.get("workspaceId") || undefined;
 
     let workspace: Workspace | undefined;
     if (workspaceId) {
-      workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      workspace = this.ctx.storage.getWorkspace(workspaceId);
       if (!workspace) {
         this.error(res, 404, "Workspace not found");
         return;
@@ -1809,10 +1782,10 @@ export class RouteHandler {
     this.json(res, { profile });
   }
 
-  private handleGetPolicyRules(user: User, url: URL, res: ServerResponse): void {
+  private handleGetPolicyRules(url: URL, res: ServerResponse): void {
     const workspaceId = url.searchParams.get("workspaceId") || undefined;
     if (workspaceId) {
-      const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      const workspace = this.ctx.storage.getWorkspace(workspaceId);
       if (!workspace) {
         this.error(res, 404, "Workspace not found");
         return;
@@ -1827,14 +1800,14 @@ export class RouteHandler {
 
     let rules = this.ctx.gate.ruleStore
       .getAll()
-      .filter((rule) => this.isRuleVisibleToUser(user.id, rule));
+      .filter((rule) => this.isRuleVisibleToUser(rule));
 
     if (workspaceId) {
       rules = rules.filter((rule) => {
         if (rule.scope === "global") return true;
         if (rule.scope === "workspace") return rule.workspaceId === workspaceId;
         if (rule.scope === "session") {
-          return this.sessionBelongsToWorkspace(user.id, rule.sessionId, workspaceId);
+          return this.sessionBelongsToWorkspace(rule.sessionId, workspaceId);
         }
         return false;
       });
@@ -1849,7 +1822,7 @@ export class RouteHandler {
     this.json(res, { rules });
   }
 
-  private handleDeletePolicyRule(user: User, path: string, res: ServerResponse): void {
+  private handleDeletePolicyRule(path: string, res: ServerResponse): void {
     const ruleId = path.split("/").pop();
     if (!ruleId) {
       this.error(res, 400, "Missing rule ID");
@@ -1864,7 +1837,7 @@ export class RouteHandler {
       return;
     }
 
-    if (!this.isRuleVisibleToUser(user.id, rule)) {
+    if (!this.isRuleVisibleToUser(rule)) {
       this.error(res, 404, "Rule not found");
       return;
     }
@@ -1876,17 +1849,17 @@ export class RouteHandler {
     }
 
     console.log(
-      `[policy] Rule ${ruleId} deleted by user ${user.id}: ${rule.description}`,
+      `[policy] Rule ${ruleId} deleted: ${rule.description}`,
     );
     this.json(res, { ok: true, deleted: ruleId });
   }
 
-  private handleGetPolicyAudit(user: User, url: URL, res: ServerResponse): void {
+  private handleGetPolicyAudit(url: URL, res: ServerResponse): void {
     const sessionId = url.searchParams.get("sessionId") || undefined;
     const workspaceId = url.searchParams.get("workspaceId") || undefined;
 
     if (sessionId) {
-      const session = this.ctx.storage.getSession(user.id, sessionId);
+      const session = this.ctx.storage.getSession(sessionId);
       if (!session) {
         this.error(res, 404, "Session not found");
         return;
@@ -1894,7 +1867,7 @@ export class RouteHandler {
     }
 
     if (workspaceId) {
-      const workspace = this.ctx.storage.getWorkspace(user.id, workspaceId);
+      const workspace = this.ctx.storage.getWorkspace(workspaceId);
       if (!workspace) {
         this.error(res, 404, "Workspace not found");
         return;
@@ -1929,19 +1902,17 @@ export class RouteHandler {
       before,
       sessionId,
       workspaceId,
-      userId: user.id,
     });
 
     this.json(res, { entries });
   }
 
   private handleGetSessionEvents(
-    user: User,
     sessionId: string,
     url: URL,
     res: ServerResponse,
   ): void {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1954,7 +1925,7 @@ export class RouteHandler {
       return;
     }
 
-    const catchUp = this.ctx.sessions.getCatchUp(user.id, sessionId, sinceSeq);
+    const catchUp = this.ctx.sessions.getCatchUp(sessionId, sinceSeq);
     if (!catchUp) {
       this.error(res, 404, "Session not active");
       return;
@@ -1974,12 +1945,11 @@ export class RouteHandler {
   }
 
   private async handleGetSession(
-    user: User,
     sessionId: string,
     url: URL,
     res: ServerResponse,
   ): Promise<void> {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
@@ -1989,48 +1959,46 @@ export class RouteHandler {
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
     const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
 
-    let trace = this.loadSessionTrace(user.id, hydratedSession, traceView);
+    let trace = this.loadSessionTrace(hydratedSession, traceView);
 
     if (!trace || trace.length === 0) {
-      const live = await this.ctx.sessions.refreshSessionState(user.id, sessionId);
+      const live = await this.ctx.sessions.refreshSessionState(sessionId);
       if (live?.sessionFile) {
         trace = readSessionTraceFromFile(live.sessionFile, { view: traceView });
       }
       if ((!trace || trace.length === 0) && live?.sessionId) {
         trace = readSessionTraceByUuid(
-          sandboxBaseDir,
-          user.id,
+        sandboxBaseDir,
           live.sessionId,
           hydratedSession.workspaceId,
           { view: traceView },
         );
       }
 
-      const refreshed = this.ctx.storage.getSession(user.id, sessionId);
+      const refreshed = this.ctx.storage.getSession(sessionId);
       if (refreshed && (!trace || trace.length === 0)) {
         this.ctx.ensureSessionContextWindow(refreshed);
-        trace = this.loadSessionTrace(user.id, refreshed, traceView);
+        trace = this.loadSessionTrace(refreshed, traceView);
       }
     }
 
-    const latestSession = this.ctx.storage.getSession(user.id, sessionId) || hydratedSession;
+    const latestSession = this.ctx.storage.getSession(sessionId) || hydratedSession;
     const hydratedLatest = this.ctx.ensureSessionContextWindow(latestSession);
     this.json(res, { session: hydratedLatest, trace: trace || [] });
   }
 
   private async handleDeleteSession(
-    user: User,
     sessionId: string,
     res: ServerResponse,
   ): Promise<void> {
-    const session = this.ctx.storage.getSession(user.id, sessionId);
+    const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
       return;
     }
 
-    await this.ctx.sessions.stopSession(user.id, sessionId);
-    this.ctx.storage.deleteSession(user.id, sessionId);
+    await this.ctx.sessions.stopSession(sessionId);
+    this.ctx.storage.deleteSession(sessionId);
     this.json(res, { ok: true });
   }
 

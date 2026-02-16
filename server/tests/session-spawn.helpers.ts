@@ -10,7 +10,6 @@ export function makeSession(): Session {
   const now = Date.now();
   return {
     id: "s1",
-    userId: "u1",
     status: "starting",
     createdAt: now,
     lastActivity: now,
@@ -24,7 +23,6 @@ export function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
   const now = Date.now();
   return {
     id: "w1",
-    userId: "u1",
     name: "pios",
     runtime: "host",
     skills: [],

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import type { PendingDecision } from "../src/gate.js";
-import type { User } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -40,7 +39,6 @@ function makePending(overrides: Partial<PendingDecision> = {}): PendingDecision 
   const now = Date.now();
   return {
     id: "perm-1",
-    userId: "u1",
     sessionId: "s1",
     workspaceId: "w1",
     tool: "bash",
@@ -62,8 +60,7 @@ function makeHarness(options?: {
   pending?: PendingDecision[];
   sessions?: Set<string>;
   workspaces?: Set<string>;
-}): { routes: RouteHandler; user: User; pending: PendingDecision[] } {
-  const user = makeUser();
+}): { routes: RouteHandler; pending: PendingDecision[] } {
   const pending = options?.pending ?? [];
   const sessions = options?.sessions ?? new Set(["s1", "s2"]);
   const workspaces = options?.workspaces ?? new Set(["w1", "w2"]);
@@ -73,24 +70,23 @@ function makeHarness(options?: {
       getPendingForUser: vi.fn(() => pending),
     },
     storage: {
-      getSession: vi.fn((userId: string, sessionId: string) => {
-        if (userId !== user.id || !sessions.has(sessionId)) return undefined;
+      getSession: vi.fn((sessionId: string) => {
+        if (!sessions.has(sessionId)) return undefined;
         return { id: sessionId };
       }),
-      getWorkspace: vi.fn((userId: string, workspaceId: string) => {
-        if (userId !== user.id || !workspaces.has(workspaceId)) return undefined;
+      getWorkspace: vi.fn((workspaceId: string) => {
+        if (!workspaces.has(workspaceId)) return undefined;
         return { id: workspaceId };
       }),
     },
   } as unknown as RouteContext;
 
   const routes = new RouteHandler(ctx);
-  return { routes, user, pending };
+  return { routes, pending };
 }
 
 async function callPendingEndpoint(
   routes: RouteHandler,
-  user: User,
   url: URL,
 ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
   const res = makeResponse();
@@ -99,7 +95,6 @@ async function callPendingEndpoint(
     "GET",
     "/permissions/pending",
     url,
-    user,
     {} as never,
     res as never,
   );
@@ -120,8 +115,8 @@ describe("GET /permissions/pending", () => {
     const activeB = makePending({ id: "perm-b", sessionId: "s2", workspaceId: "w2" });
     const expired = makePending({ id: "perm-expired", timeoutAt: now - 1 });
 
-    const { routes, user } = makeHarness({ pending: [activeA, expired, activeB] });
-    const result = await callPendingEndpoint(routes, user, new URL("http://localhost/permissions/pending"));
+    const { routes } = makeHarness({ pending: [activeA, expired, activeB] });
+    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
 
     expect(result.statusCode).toBe(200);
     const body = result.body;
@@ -134,7 +129,7 @@ describe("GET /permissions/pending", () => {
   });
 
   it("filters by sessionId query param with 404 on unknown session", async () => {
-    const { routes, user } = makeHarness({
+    const { routes } = makeHarness({
       pending: [
         makePending({ id: "perm-1", sessionId: "s1" }),
         makePending({ id: "perm-2", sessionId: "s2" }),
@@ -143,7 +138,6 @@ describe("GET /permissions/pending", () => {
 
     const filtered = await callPendingEndpoint(
       routes,
-      user,
       new URL("http://localhost/permissions/pending?sessionId=s1"),
     );
     expect(filtered.statusCode).toBe(200);
@@ -152,14 +146,13 @@ describe("GET /permissions/pending", () => {
 
     const notFound = await callPendingEndpoint(
       routes,
-      user,
       new URL("http://localhost/permissions/pending?sessionId=nonexistent"),
     );
     expect(notFound.statusCode).toBe(404);
   });
 
   it("filters by workspaceId query param", async () => {
-    const { routes, user } = makeHarness({
+    const { routes } = makeHarness({
       pending: [
         makePending({ id: "perm-1", workspaceId: "w1" }),
         makePending({ id: "perm-2", workspaceId: "w2" }),
@@ -168,7 +161,6 @@ describe("GET /permissions/pending", () => {
 
     const filtered = await callPendingEndpoint(
       routes,
-      user,
       new URL("http://localhost/permissions/pending?workspaceId=w2"),
     );
     expect(filtered.statusCode).toBe(200);
@@ -192,8 +184,8 @@ describe("GET /permissions/pending", () => {
       expires: true,
     });
 
-    const { routes, user } = makeHarness({ pending: [nonExpiring, expiring] });
-    const result = await callPendingEndpoint(routes, user, new URL("http://localhost/permissions/pending"));
+    const { routes } = makeHarness({ pending: [nonExpiring, expiring] });
+    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
 
     expect(result.statusCode).toBe(200);
     const pending = result.body.pending as { id: string; expires?: boolean }[];
@@ -221,9 +213,9 @@ describe("GET /permissions/pending", () => {
       makeTimedPending("cycle-5", baseTime + 1),
     ];
 
-    const { routes, user } = makeHarness({ pending: allPending });
+    const { routes } = makeHarness({ pending: allPending });
 
-    const result = await callPendingEndpoint(routes, user, new URL("http://localhost/permissions/pending"));
+    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
     expect(result.statusCode).toBe(200);
 
     const ids = (result.body.pending as { id: string }[]).map((p) => p.id);

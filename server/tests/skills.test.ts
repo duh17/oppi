@@ -59,35 +59,33 @@ describe("UserSkillStore", () => {
 
   describe("listSkills", () => {
     it("returns empty for new user", () => {
-      expect(store.listSkills("u1")).toEqual([]);
+      expect(store.listSkills()).toEqual([]);
     });
 
     it("returns saved skills", () => {
       makeSkillDir(workDir, "my-skill");
-      store.saveSkill("u1", "my-skill", join(workDir, "my-skill"));
+      store.saveSkill("my-skill", join(workDir, "my-skill"));
 
-      const skills = store.listSkills("u1");
+      const skills = store.listSkills();
       expect(skills).toHaveLength(1);
       expect(skills[0].name).toBe("my-skill");
       expect(skills[0].description).toBe("A test skill for unit tests");
       expect(skills[0].builtIn).toBe(false);
-      expect(skills[0].userId).toBe("u1");
     });
 
     it("skips directories without SKILL.md", () => {
       // Create a user dir with a random directory (no SKILL.md)
-      mkdirSync(join(storeDir, "u1", "junk"), { recursive: true });
-      writeFileSync(join(storeDir, "u1", "junk", "notes.txt"), "hello");
+      mkdirSync(join(storeDir, "junk"), { recursive: true });
+      writeFileSync(join(storeDir, "junk", "notes.txt"), "hello");
 
-      expect(store.listSkills("u1")).toEqual([]);
+      expect(store.listSkills()).toEqual([]);
     });
 
-    it("isolates users", () => {
+    it("single owner sees own skills", () => {
       makeSkillDir(workDir, "skill-a");
-      store.saveSkill("u1", "skill-a", join(workDir, "skill-a"));
+      store.saveSkill("skill-a", join(workDir, "skill-a"));
 
-      expect(store.listSkills("u1")).toHaveLength(1);
-      expect(store.listSkills("u2")).toHaveLength(0);
+      expect(store.listSkills()).toHaveLength(1);
     });
   });
 
@@ -95,14 +93,14 @@ describe("UserSkillStore", () => {
 
   describe("getSkill", () => {
     it("returns null for missing skill", () => {
-      expect(store.getSkill("u1", "nonexistent")).toBeNull();
+      expect(store.getSkill("nonexistent")).toBeNull();
     });
 
     it("returns skill with metadata", () => {
       makeSkillDir(workDir, "analyzer");
-      store.saveSkill("u1", "analyzer", join(workDir, "analyzer"));
+      store.saveSkill("analyzer", join(workDir, "analyzer"));
 
-      const skill = store.getSkill("u1", "analyzer");
+      const skill = store.getSkill("analyzer");
       expect(skill).not.toBeNull();
       expect(skill!.name).toBe("analyzer");
       expect(skill!.description).toBe("A test skill for unit tests");
@@ -117,9 +115,9 @@ describe("UserSkillStore", () => {
       const src = makeSkillDir(workDir, "copier");
       writeFileSync(join(src, "helper.py"), "print('hello')");
 
-      store.saveSkill("u1", "copier", src);
+      store.saveSkill("copier", src);
 
-      const destDir = join(storeDir, "u1", "copier");
+      const destDir = join(storeDir, "copier");
       expect(existsSync(join(destDir, "SKILL.md"))).toBe(true);
       expect(existsSync(join(destDir, "helper.py"))).toBe(true);
     });
@@ -127,33 +125,33 @@ describe("UserSkillStore", () => {
     it("overwrites existing skill", () => {
       const src = makeSkillDir(workDir, "evolving");
       writeFileSync(join(src, "v1.txt"), "version 1");
-      store.saveSkill("u1", "evolving", src);
+      store.saveSkill("evolving", src);
 
       // Update source
       writeFileSync(join(src, "SKILL.md"), VALID_SKILL_MD);
       writeFileSync(join(src, "v2.txt"), "version 2");
       rmSync(join(src, "v1.txt"));
-      store.saveSkill("u1", "evolving", src);
+      store.saveSkill("evolving", src);
 
-      const destDir = join(storeDir, "u1", "evolving");
+      const destDir = join(storeDir, "evolving");
       expect(existsSync(join(destDir, "v2.txt"))).toBe(true);
       expect(existsSync(join(destDir, "v1.txt"))).toBe(false);
     });
 
     it("rejects invalid name", () => {
       const src = makeSkillDir(workDir, "Bad_Name");
-      expect(() => store.saveSkill("u1", "Bad_Name", src))
+      expect(() => store.saveSkill("Bad_Name", src))
         .toThrow("Invalid skill name");
     });
 
     it("rejects name starting with number", () => {
       const src = makeSkillDir(workDir, "1bad");
-      expect(() => store.saveSkill("u1", "1bad", src))
+      expect(() => store.saveSkill("1bad", src))
         .toThrow("Invalid skill name");
     });
 
     it("rejects missing source dir", () => {
-      expect(() => store.saveSkill("u1", "ghost", "/nonexistent/path"))
+      expect(() => store.saveSkill("ghost", "/nonexistent/path"))
         .toThrow("Source directory not found");
     });
 
@@ -162,7 +160,7 @@ describe("UserSkillStore", () => {
       mkdirSync(src, { recursive: true });
       writeFileSync(join(src, "readme.md"), "not a skill");
 
-      expect(() => store.saveSkill("u1", "no-skill-md", src))
+      expect(() => store.saveSkill("no-skill-md", src))
         .toThrow("SKILL.md not found");
     });
 
@@ -171,7 +169,7 @@ describe("UserSkillStore", () => {
       // Write a 200KB file (limit is 100KB)
       writeFileSync(join(src, "big.bin"), Buffer.alloc(200 * 1024));
 
-      expect(() => store.saveSkill("u1", "chonky", src))
+      expect(() => store.saveSkill("chonky", src))
         .toThrow("too large");
     });
 
@@ -181,7 +179,7 @@ describe("UserSkillStore", () => {
         writeFileSync(join(src, `file-${i}.txt`), `content ${i}`);
       }
 
-      expect(() => store.saveSkill("u1", "many-files", src))
+      expect(() => store.saveSkill("many-files", src))
         .toThrow("Too many files");
     });
 
@@ -190,7 +188,7 @@ describe("UserSkillStore", () => {
       mkdirSync(src, { recursive: true });
       writeFileSync(join(src, "SKILL.md"), NO_DESC_SKILL_MD);
 
-      expect(() => store.saveSkill("u1", "no-desc", src))
+      expect(() => store.saveSkill("no-desc", src))
         .toThrow("Failed to read saved skill");
     });
   });
@@ -200,16 +198,16 @@ describe("UserSkillStore", () => {
   describe("deleteSkill", () => {
     it("removes a saved skill", () => {
       makeSkillDir(workDir, "doomed");
-      store.saveSkill("u1", "doomed", join(workDir, "doomed"));
-      expect(store.getSkill("u1", "doomed")).not.toBeNull();
+      store.saveSkill("doomed", join(workDir, "doomed"));
+      expect(store.getSkill("doomed")).not.toBeNull();
 
-      const result = store.deleteSkill("u1", "doomed");
+      const result = store.deleteSkill("doomed");
       expect(result).toBe(true);
-      expect(store.getSkill("u1", "doomed")).toBeNull();
+      expect(store.getSkill("doomed")).toBeNull();
     });
 
     it("returns false for nonexistent skill", () => {
-      expect(store.deleteSkill("u1", "nope")).toBe(false);
+      expect(store.deleteSkill("nope")).toBe(false);
     });
   });
 
@@ -220,15 +218,15 @@ describe("UserSkillStore", () => {
       const src = makeSkillDir(workDir, "with-files");
       mkdirSync(join(src, "scripts"), { recursive: true });
       writeFileSync(join(src, "scripts", "run.sh"), "#!/bin/bash");
-      store.saveSkill("u1", "with-files", src);
+      store.saveSkill("with-files", src);
 
-      const files = store.listFiles("u1", "with-files");
+      const files = store.listFiles("with-files");
       expect(files).toContain("SKILL.md");
       expect(files).toContain("scripts/run.sh");
     });
 
     it("returns empty for missing skill", () => {
-      expect(store.listFiles("u1", "nope")).toEqual([]);
+      expect(store.listFiles("nope")).toEqual([]);
     });
   });
 
@@ -236,39 +234,39 @@ describe("UserSkillStore", () => {
     it("reads a file from a saved skill", () => {
       const src = makeSkillDir(workDir, "readable");
       writeFileSync(join(src, "data.txt"), "hello world");
-      store.saveSkill("u1", "readable", src);
+      store.saveSkill("readable", src);
 
-      const content = store.readFile("u1", "readable", "data.txt");
+      const content = store.readFile("readable", "data.txt");
       expect(content).toBe("hello world");
     });
 
     it("returns SKILL.md content", () => {
       makeSkillDir(workDir, "readable");
-      store.saveSkill("u1", "readable", join(workDir, "readable"));
+      store.saveSkill("readable", join(workDir, "readable"));
 
-      const content = store.readFile("u1", "readable", "SKILL.md");
+      const content = store.readFile("readable", "SKILL.md");
       expect(content).toContain("A test skill for unit tests");
     });
 
     it("blocks path traversal", () => {
       makeSkillDir(workDir, "trapped");
-      store.saveSkill("u1", "trapped", join(workDir, "trapped"));
+      store.saveSkill("trapped", join(workDir, "trapped"));
 
       // Attempt to escape skill directory
-      expect(store.readFile("u1", "trapped", "../../etc/passwd")).toBeUndefined();
+      expect(store.readFile("trapped", "../../etc/passwd")).toBeUndefined();
       // Attempt to read another user's skill
-      expect(store.readFile("u1", "trapped", "../../other-user/other-skill/SKILL.md")).toBeUndefined();
+      expect(store.readFile("trapped", "../../other-user/other-skill/SKILL.md")).toBeUndefined();
     });
 
     it("returns undefined for missing file", () => {
       makeSkillDir(workDir, "sparse");
-      store.saveSkill("u1", "sparse", join(workDir, "sparse"));
+      store.saveSkill("sparse", join(workDir, "sparse"));
 
-      expect(store.readFile("u1", "sparse", "nonexistent.txt")).toBeUndefined();
+      expect(store.readFile("sparse", "nonexistent.txt")).toBeUndefined();
     });
 
     it("returns undefined for missing skill", () => {
-      expect(store.readFile("u1", "ghost", "SKILL.md")).toBeUndefined();
+      expect(store.readFile("ghost", "SKILL.md")).toBeUndefined();
     });
   });
 
@@ -277,15 +275,15 @@ describe("UserSkillStore", () => {
   describe("getPath", () => {
     it("returns path for saved skill", () => {
       makeSkillDir(workDir, "findable");
-      store.saveSkill("u1", "findable", join(workDir, "findable"));
+      store.saveSkill("findable", join(workDir, "findable"));
 
-      const path = store.getPath("u1", "findable");
+      const path = store.getPath("findable");
       expect(path).not.toBeNull();
       expect(existsSync(path!)).toBe(true);
     });
 
     it("returns null for missing skill", () => {
-      expect(store.getPath("u1", "missing")).toBeNull();
+      expect(store.getPath("missing")).toBeNull();
     });
   });
 });
@@ -581,7 +579,6 @@ describe("SkillRegistry", () => {
         {
           name: "custom",
           description: "Custom skill",
-          userId: "u1",
           builtIn: false,
           createdAt: Date.now(),
           sizeBytes: 100,

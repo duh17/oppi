@@ -10,7 +10,7 @@
  *   /uv-cache          ← shared uv cache (bind mount)
  *
  * Host layout per workspace:
- *   <sandboxBaseDir>/<userId>/<workspaceId>/
+ *   <sandboxBaseDir>/<workspaceId>/
  *   ├── workspace/          # Shared working directory
  *   ├── skills/             # Shared skills (workspace-level)
  *   └── sessions/<sessionId>/
@@ -25,7 +25,7 @@
  */
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync, readdirSync, renameSync, rmdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncFile, resolvePath as realpath } from "./sync.js";
 import { homedir } from "node:os";
@@ -96,7 +96,7 @@ export interface SandboxConfig {
 
 export interface SpawnOptions {
   sessionId: string;
-  userId: string;
+  
   workspaceId: string;
   userName?: string;
   model?: string;
@@ -129,6 +129,49 @@ export class SandboxManager {
 
   constructor(config?: Partial<SandboxConfig>) {
     this.config = { ...DEFAULTS, ...config };
+    this.migrateOwnerDir();
+  }
+
+  /**
+   * One-time migration: flatten legacy `<base>/owner/<ws>/` → `<base>/<ws>/`.
+   * Also flattens `<base>/_memory/owner/<ns>/` → `<base>/_memory/<ns>/`.
+   */
+  private migrateOwnerDir(): void {
+    const ownerDir = join(this.config.sandboxBaseDir, "owner");
+    if (!existsSync(ownerDir)) return;
+
+    try {
+      for (const entry of readdirSync(ownerDir)) {
+        const src = join(ownerDir, entry);
+        const dest = join(this.config.sandboxBaseDir, entry);
+        if (!existsSync(dest)) {
+          renameSync(src, dest);
+        }
+      }
+      // Clean up empty owner dir
+      try { rmdirSync(ownerDir); } catch { /* not empty — leave it */ }
+      console.log("[sandbox] Migrated legacy owner/ directory layout");
+    } catch (err) {
+      console.error("[sandbox] owner/ migration failed:", err);
+    }
+
+    // Also flatten _memory/owner/
+    const memOwnerDir = join(this.config.sandboxBaseDir, "_memory", "owner");
+    if (existsSync(memOwnerDir)) {
+      try {
+        const memBaseDir = join(this.config.sandboxBaseDir, "_memory");
+        for (const entry of readdirSync(memOwnerDir)) {
+          const src = join(memOwnerDir, entry);
+          const dest = join(memBaseDir, entry);
+          if (!existsSync(dest)) {
+            renameSync(src, dest);
+          }
+        }
+        try { rmdirSync(memOwnerDir); } catch { /* not empty */ }
+      } catch (err) {
+        console.error("[sandbox] _memory/owner/ migration failed:", err);
+      }
+    }
   }
 
   /** Wire up the skill registry for workspace-driven skill selection. */
@@ -146,11 +189,11 @@ export class SandboxManager {
     return this.config.sandboxBaseDir;
   }
 
-  private workspaceKey(_userId: string, workspaceId: string): string {
+  private workspaceKey(workspaceId: string): string {
     return workspaceId;
   }
 
-  private workspaceContainerId(_userId: string, workspaceId: string): string {
+  private workspaceContainerId(workspaceId: string): string {
     return `${WORKSPACE_CONTAINER_PREFIX}${workspaceId}`;
   }
 
@@ -299,12 +342,12 @@ export class SandboxManager {
 
   // ─── Directory Layout ───
 
-  getWorkspaceDir(userId: string, workspaceId: string): string {
-    return join(this.config.sandboxBaseDir, userId, workspaceId);
+  getWorkspaceDir(workspaceId: string): string {
+    return join(this.config.sandboxBaseDir, workspaceId);
   }
 
-  getSessionRootDir(userId: string, workspaceId: string, sessionId: string): string {
-    return join(this.getWorkspaceDir(userId, workspaceId), "sessions", sessionId);
+  getSessionRootDir(workspaceId: string, sessionId: string): string {
+    return join(this.getWorkspaceDir(workspaceId), "sessions", sessionId);
   }
 
   // ─── Session Init ───
@@ -313,7 +356,7 @@ export class SandboxManager {
    * Initialize sandbox directories and sync host config. Idempotent.
    *
    * Host layout (workspace-scoped):
-   *   <sandboxBaseDir>/<userId>/<workspaceId>/
+   *   <sandboxBaseDir>/<workspaceId>/
    *   ├── workspace/                    # Shared working directory
    *   ├── skills/                       # Shared skills (workspace-level)
    *   └── sessions/<sessionId>/
@@ -324,13 +367,12 @@ export class SandboxManager {
    *       └── system-prompt.md          # Generated system prompt
    */
   initSession(
-    userId: string,
     workspaceId: string,
     sessionId: string,
     opts?: { userName?: string; model?: string; workspace?: Workspace },
   ): { piDir: string; workDir: string } {
-    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
-    const piDir = this.getSessionRootDir(userId, workspaceId, sessionId);
+    const workspaceRoot = this.getWorkspaceDir(workspaceId);
+    const piDir = this.getSessionRootDir(workspaceId, sessionId);
     const agentDir = join(piDir, "agent");
     const workDir = join(workspaceRoot, "workspace");
 
@@ -431,11 +473,10 @@ export class SandboxManager {
    * Returns the list of skills that were installed.
    */
   resyncWorkspaceSkills(
-    userId: string,
     workspaceId: string,
     requestedSkills: string[],
   ): string[] {
-    const workspaceRoot = this.getWorkspaceDir(userId, workspaceId);
+    const workspaceRoot = this.getWorkspaceDir(workspaceId);
     const workspaceSkillsDir = join(workspaceRoot, "skills");
 
     // Only sync if workspace dir exists (was ever initialized)
@@ -473,7 +514,7 @@ export class SandboxManager {
       console.log(
         `[sandbox] Skills changed: ${overlap.join(", ")} → re-syncing workspace ${workspace.id}`,
       );
-      this.resyncWorkspaceSkills(workspace.userId, workspace.id, workspace.skills);
+      this.resyncWorkspaceSkills(workspace.id, workspace.skills);
     }
   }
 
@@ -485,7 +526,6 @@ export class SandboxManager {
   spawnPi(opts: SpawnOptions): ChildProcess {
     const {
       sessionId,
-      userId,
       workspaceId,
       userName,
       model,
@@ -493,21 +533,20 @@ export class SandboxManager {
       gatePort,
       env: extraEnv,
     } = opts;
-    const { piDir, workDir } = this.initSession(userId, workspaceId, sessionId, {
+    const { piDir, workDir } = this.initSession(workspaceId, sessionId, {
       userName,
       model,
       workspace,
     });
 
     // Resolve mounts
-    const workspaceRootMount = realpath(this.getWorkspaceDir(userId, workspaceId));
+    const workspaceRootMount = realpath(this.getWorkspaceDir(workspaceId));
     const workMount = workspace?.hostMount
       ? realpath(resolveHomePath(workspace.hostMount))
       : realpath(workDir);
 
     // Ensure the workspace container is running
     const containerId = this.ensureWorkspaceContainer(
-      userId,
       workspaceId,
       workMount,
       workspaceRootMount,
@@ -553,7 +592,7 @@ export class SandboxManager {
       "-e",
       `OPPI_WORKSPACE=${workspaceId}`,
       "-e",
-      `OPPI_USER=${userId}`,
+      `OPPI_USER=owner`,
     ];
 
     if (gatePort) {
@@ -575,20 +614,19 @@ export class SandboxManager {
   }
 
   private ensureWorkspaceContainer(
-    userId: string,
     workspaceId: string,
     workMount: string,
     workspaceRootMount: string,
     workspace?: Workspace,
   ): string {
-    const key = this.workspaceKey(userId, workspaceId);
+    const key = this.workspaceKey(workspaceId);
     const tracked = this.running.get(key);
 
     if (tracked && this.isContainerRunning(tracked.containerId)) {
       return tracked.containerId;
     }
 
-    const containerId = this.workspaceContainerId(userId, workspaceId);
+    const containerId = this.workspaceContainerId(workspaceId);
 
     // Reuse existing running canonical container after server restart.
     if (this.isContainerRunning(containerId)) {
@@ -596,7 +634,7 @@ export class SandboxManager {
       return containerId;
     }
 
-    const memoryMount = this.resolveMemoryMount(userId, workspace);
+    const memoryMount = this.resolveMemoryMount(workspace);
     const lmstudioBridgePort = this.loopbackBridges.bridgePortForTarget(1234) ?? 1234;
 
     const args = [
@@ -630,7 +668,7 @@ export class SandboxManager {
       "-e",
       `OPPI_WORKSPACE=${workspaceId}`,
       "-e",
-      `OPPI_USER=${userId}`,
+      `OPPI_USER=owner`,
     ];
 
     if (memoryMount) {
@@ -653,8 +691,8 @@ export class SandboxManager {
     return containerId;
   }
 
-  async stopWorkspaceContainer(userId: string, workspaceId: string): Promise<void> {
-    const key = this.workspaceKey(userId, workspaceId);
+  async stopWorkspaceContainer(workspaceId: string): Promise<void> {
+    const key = this.workspaceKey(workspaceId);
     const tracked = this.running.get(key);
 
     if (tracked) {
@@ -663,7 +701,7 @@ export class SandboxManager {
       return;
     }
 
-    const containerId = this.workspaceContainerId(userId, workspaceId);
+    const containerId = this.workspaceContainerId(workspaceId);
     this.stopContainerById(containerId);
     this.running.delete(key);
   }
@@ -690,8 +728,8 @@ export class SandboxManager {
     }
   }
 
-  isRunningWorkspace(userId: string, workspaceId: string): boolean {
-    return this.running.has(this.workspaceKey(userId, workspaceId));
+  isRunningWorkspace(workspaceId: string): boolean {
+    return this.running.has(this.workspaceKey(workspaceId));
   }
 
   private listRunningManagedContainerIds(): string[] {
@@ -747,8 +785,8 @@ export class SandboxManager {
 
   // ─── Convenience Getters ───
 
-  getWorkDir(userId: string, _sessionId: string, workspaceId: string): string {
-    const workDir = join(this.config.sandboxBaseDir, userId, workspaceId, "workspace");
+  getWorkDir(workspaceId: string): string {
+    const workDir = join(this.config.sandboxBaseDir, workspaceId, "workspace");
     if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
     return workDir;
   }
@@ -756,16 +794,13 @@ export class SandboxManager {
   // ─── Session Validation ───
 
   validateSession(
-    userId: string,
     sessionId: string,
     opts?: { memoryEnabled?: boolean; workspaceId?: string },
   ): { errors: string[]; warnings: string[] } {
     const workspaceId = opts?.workspaceId || sessionId;
 
     const agentDir = join(
-      this.config.sandboxBaseDir,
-      userId,
-      workspaceId,
+      this.getWorkspaceDir(workspaceId),
       "sessions",
       sessionId,
       "agent",
@@ -806,13 +841,12 @@ export class SandboxManager {
   // ─── Helpers ───
 
   private resolveMemoryMount(
-    userId: string,
     workspace?: Workspace,
   ): { hostDir: string; namespace: string } | null {
     if (!workspace?.memoryEnabled) return null;
 
     const namespace = sanitizeMemoryNamespace(workspace.memoryNamespace || `ws-${workspace.id}`);
-    const hostDir = join(this.config.sandboxBaseDir, "_memory", userId, namespace);
+    const hostDir = join(this.config.sandboxBaseDir, "_memory", namespace);
     const journalDir = join(hostDir, "journal");
 
     mkdirSync(journalDir, { recursive: true, mode: 0o700 });

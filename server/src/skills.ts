@@ -6,7 +6,7 @@
  * metadata, and determines container compatibility. Workspaces reference
  * skills by name from this pool.
  *
- * User skills: Stored in ~/.config/oppi/skills/<userId>/<name>/ with a
+ * User skills: Stored in ~/.config/oppi/skills/<name>/ with a
  * SKILL.md file. Saved from session workspaces via REST API. Merged
  * into the registry alongside built-ins (user skills can shadow built-ins).
  */
@@ -377,7 +377,6 @@ export class SkillRegistry extends EventEmitter {
 export interface UserSkill {
   name: string;
   description: string;
-  userId: string;
   builtIn: false;
   createdAt: number; // epoch ms
   /** Total size in bytes (all files). */
@@ -408,7 +407,7 @@ export class SkillValidationError extends Error {
  * Manages user-created skills on disk.
  *
  * Storage layout:
- *   <baseDir>/<userId>/<skill-name>/
+ *   <baseDir>/<skill-name>/
  *     SKILL.md
  *     scripts/...
  *
@@ -429,8 +428,8 @@ export class UserSkillStore {
   }
 
   /** List all user skills for a given user. */
-  listSkills(userId: string): UserSkill[] {
-    const userDir = join(this.baseDir, userId);
+  listSkills(): UserSkill[] {
+    const userDir = this.baseDir;
     if (!existsSync(userDir)) return [];
 
     const results: UserSkill[] = [];
@@ -442,7 +441,7 @@ export class UserSkillStore {
         continue;
       }
 
-      const skill = this.readSkill(userId, entry, skillDir);
+      const skill = this.readSkill(entry, skillDir);
       if (skill) results.push(skill);
     }
 
@@ -450,15 +449,15 @@ export class UserSkillStore {
   }
 
   /** Get a single user skill by name. Returns null if not found. */
-  getSkill(userId: string, name: string): UserSkill | null {
-    const skillDir = join(this.baseDir, userId, name);
+  getSkill(name: string): UserSkill | null {
+    const skillDir = join(this.baseDir, name);
     if (!existsSync(skillDir)) return null;
-    return this.readSkill(userId, name, skillDir);
+    return this.readSkill(name, skillDir);
   }
 
   /** Get the host path for a user skill (for syncing into containers). */
-  getPath(userId: string, name: string): string | null {
-    const dir = join(this.baseDir, userId, name);
+  getPath(name: string): string | null {
+    const dir = join(this.baseDir, name);
     return existsSync(dir) ? dir : null;
   }
 
@@ -471,12 +470,11 @@ export class UserSkillStore {
    * - Total size under 100KB
    * - Max 50 files
    *
-   * @param userId - Owner
    * @param name - Skill name (must match SKILL_NAME_RE)
    * @param sourceDir - Directory to copy from (must contain SKILL.md)
    * @returns The saved skill
    */
-  saveSkill(userId: string, name: string, sourceDir: string): UserSkill {
+  saveSkill(name: string, sourceDir: string): UserSkill {
     // Validate name
     if (!SKILL_NAME_RE.test(name)) {
       throw new SkillValidationError(
@@ -515,7 +513,7 @@ export class UserSkillStore {
     }
 
     // Ensure user dir exists
-    const userDir = join(this.baseDir, userId);
+    const userDir = this.baseDir;
     if (!existsSync(userDir)) {
       mkdirSync(userDir, { recursive: true, mode: 0o700 });
     }
@@ -527,7 +525,7 @@ export class UserSkillStore {
     }
     cpSync(sourceDir, destDir, { recursive: true, dereference: true });
 
-    const skill = this.readSkill(userId, name, destDir);
+    const skill = this.readSkill(name, destDir);
     if (!skill) {
       throw new SkillValidationError(
         `Failed to read saved skill — SKILL.md may be malformed`,
@@ -536,31 +534,31 @@ export class UserSkillStore {
     }
 
     console.log(
-      `[skills] Saved user skill "${name}" for ${userId} (${(totalSize / 1024).toFixed(1)}KB, ${fileCount} files)`,
+      `[skills] Saved user skill "${name}" for owner (${(totalSize / 1024).toFixed(1)}KB, ${fileCount} files)`,
     );
     return skill;
   }
 
   /** Delete a user skill. Returns true if it existed. */
-  deleteSkill(userId: string, name: string): boolean {
-    const skillDir = join(this.baseDir, userId, name);
+  deleteSkill(name: string): boolean {
+    const skillDir = join(this.baseDir, name);
     if (!existsSync(skillDir)) return false;
 
     rmSync(skillDir, { recursive: true });
-    console.log(`[skills] Deleted user skill "${name}" for ${userId}`);
+    console.log(`[skills] Deleted user skill "${name}" for owner`);
     return true;
   }
 
   /** List files in a user skill (relative paths). */
-  listFiles(userId: string, name: string): string[] {
-    const skillDir = join(this.baseDir, userId, name);
+  listFiles(name: string): string[] {
+    const skillDir = join(this.baseDir, name);
     if (!existsSync(skillDir)) return [];
     return listFilesRecursive(skillDir);
   }
 
   /** Read a file from a user skill. Path-safe. */
-  readFile(userId: string, name: string, relPath: string): string | undefined {
-    const skillDir = join(this.baseDir, userId, name);
+  readFile(name: string, relPath: string): string | undefined {
+    const skillDir = join(this.baseDir, name);
     if (!existsSync(skillDir)) return undefined;
 
     const target = join(skillDir, relPath);
@@ -594,7 +592,7 @@ export class UserSkillStore {
 
   // ─── Internal ───
 
-  private readSkill(userId: string, name: string, dir: string): UserSkill | null {
+  private readSkill(name: string, dir: string): UserSkill | null {
     const skillMd = join(dir, "SKILL.md");
     if (!existsSync(skillMd)) return null;
 
@@ -608,7 +606,7 @@ export class UserSkillStore {
     return {
       name,
       description,
-      userId,
+      
       builtIn: false as const,
       createdAt: dirStat.mtimeMs,
       sizeBytes: totalSize,

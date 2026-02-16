@@ -1,13 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { Server } from "../src/server.js";
-import type { ClientMessage, ServerMessage, Session, User } from "../src/types.js";
+import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 
-function makeSession(id: string, userId = "u1"): Session {
+function makeSession(id: string): Session {
   const now = Date.now();
   return {
     id,
-    userId,
     workspaceId: "w1",
     status: "ready",
     createdAt: now,
@@ -73,17 +72,15 @@ async function flushQueue(): Promise<void> {
 
 describe("single-session websocket stream behavior", () => {
   it("keeps single-session prompt flow unchanged", async () => {
-    const user = makeUser();
-    const session = makeSession("s1", user.id);
+    const session = makeSession("s1", "owner");
     const ws = new FakeWebSocket();
 
     const server = Object.create(Server.prototype) as Server & {
-      userConnections: Map<string, Set<WebSocket>>;
+      connections: Set<WebSocket>;
     };
 
     const handleClientMessage = vi.fn(
       async (
-        _user: User,
         _session: Session,
         _msg: ClientMessage,
         send: (msg: ServerMessage) => void,
@@ -92,33 +89,29 @@ describe("single-session websocket stream behavior", () => {
       },
     );
 
-    server.userConnections = new Map();
+    server.connections = new Set();
 
     (server as unknown as {
       ensureSessionContextWindow: (session: Session) => Session;
-      resolveWorkspaceForSession: (userId: string, session: Session) => undefined;
+      resolveWorkspaceForSession: (session: Session) => undefined;
       handleClientMessage: typeof handleClientMessage;
       sessions: {
-        getCurrentSeq: (userId: string, sessionId: string) => number;
-        startSession: (
-          userId: string,
-          sessionId: string,
+        getCurrentSeq: (sessionId: string) => number;
+        startSession: (sessionId: string,
           userName?: string,
           workspace?: unknown,
         ) => Promise<Session>;
-        subscribe: (
-          userId: string,
-          sessionId: string,
+        subscribe: (sessionId: string,
           callback: (msg: ServerMessage) => void,
         ) => () => void;
       };
       gate: {
-        getPendingForUser: (userId: string) => unknown[];
+        getPendingForUser: () => unknown[];
       };
     }).ensureSessionContextWindow = (value: Session) => value;
 
     (server as unknown as {
-      resolveWorkspaceForSession: (userId: string, session: Session) => undefined;
+      resolveWorkspaceForSession: (session: Session) => undefined;
     }).resolveWorkspaceForSession = () => undefined;
 
     (server as unknown as { handleClientMessage: typeof handleClientMessage }).handleClientMessage =
@@ -126,16 +119,12 @@ describe("single-session websocket stream behavior", () => {
 
     (server as unknown as {
       sessions: {
-        getCurrentSeq: (userId: string, sessionId: string) => number;
-        startSession: (
-          userId: string,
-          sessionId: string,
+        getCurrentSeq: (sessionId: string) => number;
+        startSession: (sessionId: string,
           userName?: string,
           workspace?: unknown,
         ) => Promise<Session>;
-        subscribe: (
-          userId: string,
-          sessionId: string,
+        subscribe: (sessionId: string,
           callback: (msg: ServerMessage) => void,
         ) => () => void;
       };
@@ -147,15 +136,21 @@ describe("single-session websocket stream behavior", () => {
 
     (server as unknown as {
       gate: {
-        getPendingForUser: (userId: string) => unknown[];
+        getPendingForUser: () => unknown[];
       };
     }).gate = {
       getPendingForUser: vi.fn(() => []),
     };
 
+    (server as unknown as {
+      storage: { getOwnerName: () => string };
+    }).storage = {
+      getOwnerName: vi.fn(() => "test-host"),
+    };
+
     await (server as unknown as {
-      handleWebSocket: (ws: WebSocket, user: User, session: Session) => Promise<void>;
-    }).handleWebSocket(ws as unknown as WebSocket, user, session);
+      handleWebSocket: (ws: WebSocket, session: Session) => Promise<void>;
+    }).handleWebSocket(ws as unknown as WebSocket, session);
 
     const base = ws.sent.length;
     ws.emitMessage({ type: "prompt", message: "hello legacy" });
@@ -163,7 +158,7 @@ describe("single-session websocket stream behavior", () => {
 
     expect(handleClientMessage).toHaveBeenCalledTimes(1);
 
-    const forwarded = handleClientMessage.mock.calls[0][2] as ClientMessage;
+    const forwarded = handleClientMessage.mock.calls[0][1] as ClientMessage;
     expect(forwarded.type).toBe("prompt");
     if (forwarded.type === "prompt") {
       expect((forwarded as { sessionId?: string }).sessionId).toBeUndefined();

@@ -108,7 +108,7 @@ describe("parseJsonl: tool call matching", () => {
 
   const events = parseJsonl(toolJsonl);
 
-  it("produces 6 events: user, thinking, assistant, toolCall, toolResult, assistant", () => {
+  it("produces 6 events: thinking, assistant, toolCall, toolResult, assistant", () => {
     expect(events).toHaveLength(6);
   });
 

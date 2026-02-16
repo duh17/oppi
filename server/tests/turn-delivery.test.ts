@@ -24,7 +24,6 @@ function makeSession(status: Session["status"] = "ready"): Session {
   const now = Date.now();
   return {
     id: "s1",
-    userId: "u1",
     workspaceId: "w1",
     status,
     createdAt: now,
@@ -63,12 +62,12 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   const addSessionMessage = vi.fn();
   const thinkingLevelByModel = new Map<string, string>();
 
-  const getModelThinkingLevelPreference = vi.fn((_userId: string, modelId: string) => {
+  const getModelThinkingLevelPreference = vi.fn((modelId: string) => {
     return thinkingLevelByModel.get(modelId);
   });
 
   const setModelThinkingLevelPreference = vi.fn(
-    (_userId: string, modelId: string, level: string) => {
+    (modelId: string, level: string) => {
       thinkingLevelByModel.set(modelId, level);
     },
   );
@@ -121,7 +120,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
 
   const events: ServerMessage[] = [];
-  manager.subscribe(session.userId, session.id, (msg) => {
+  manager.subscribe(session.id, (msg) => {
     events.push(msg);
   });
 
@@ -158,13 +157,13 @@ describe("turn delivery idempotency", () => {
   it("dedupes duplicate prompt retries by clientTurnId", async () => {
     const { manager, events, stdinWrite, addSessionMessage, session } = makeManagerHarness("ready");
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-1",
       timestamp: 1,
     });
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-2",
       timestamp: 2,
@@ -186,14 +185,14 @@ describe("turn delivery idempotency", () => {
   it("rejects conflicting payload reuse for the same clientTurnId", async () => {
     const { manager, events, stdinWrite, addSessionMessage } = makeManagerHarness("ready");
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-1",
       timestamp: 1,
     });
 
     await expect(
-      manager.sendPrompt("u1", "s1", "different payload", {
+      manager.sendPrompt("s1", "different payload", {
         clientTurnId: "turn-1",
         requestId: "req-2",
         timestamp: 2,
@@ -211,7 +210,7 @@ describe("turn delivery idempotency", () => {
     const { manager, events, stdinWrite, addSessionMessage } = makeManagerHarness("ready");
     const key = "s1";
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-1",
       timestamp: 1,
@@ -221,7 +220,7 @@ describe("turn delivery idempotency", () => {
     for (let i = 2; i <= 12; i += 1) {
       const requestId = `req-${i}`;
       dispatchedDuplicateReqIds.push(requestId);
-      await manager.sendPrompt("u1", "s1", "hello", {
+      await manager.sendPrompt("s1", "hello", {
         clientTurnId: "turn-1",
         requestId,
         timestamp: i,
@@ -240,7 +239,7 @@ describe("turn delivery idempotency", () => {
     for (let i = 13; i <= 20; i += 1) {
       const requestId = `req-${i}`;
       startedDuplicateReqIds.push(requestId);
-      await manager.sendPrompt("u1", "s1", "hello", {
+      await manager.sendPrompt("s1", "hello", {
         clientTurnId: "turn-1",
         requestId,
         timestamp: i,
@@ -268,7 +267,7 @@ describe("turn delivery idempotency", () => {
     const { manager, events, stdinWrite } = makeManagerHarness("ready");
     const key = "s1";
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-1",
       timestamp: 1,
@@ -279,7 +278,7 @@ describe("turn delivery idempotency", () => {
       JSON.stringify({ type: "agent_start" }),
     );
 
-    await manager.sendPrompt("u1", "s1", "hello", {
+    await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
       requestId: "req-2",
       timestamp: 2,
@@ -315,9 +314,7 @@ describe("turn delivery idempotency", () => {
 
     (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
 
-    await manager.forwardRpcCommand(
-      "u1",
-      "s1",
+    await manager.forwardRpcCommand("s1",
       { type: "fork", entryId: "msg-123" },
       "req-fork-1",
     );
@@ -371,16 +368,14 @@ describe("turn delivery idempotency", () => {
 
     (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
 
-    await manager.forwardRpcCommand(
-      "u1",
-      "s1",
+    await manager.forwardRpcCommand("s1",
       { type: "set_thinking_level", level: "high" },
       "req-thinking-1",
     );
 
     expect(session.thinkingLevel).toBe("high");
     expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      "u1",
+      
       "anthropic/claude-sonnet-4-0",
       "high",
     );
@@ -398,7 +393,7 @@ describe("turn delivery idempotency", () => {
       setModelThinkingLevelPreference,
     } = makeManagerHarness("ready");
 
-    getModelThinkingLevelPreference.mockImplementation((_userId: string, modelId: string) => {
+    getModelThinkingLevelPreference.mockImplementation((modelId: string) => {
       if (modelId === "anthropic/claude-sonnet-4-0") {
         return "minimal";
       }
@@ -427,9 +422,7 @@ describe("turn delivery idempotency", () => {
 
     (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
 
-    await manager.forwardRpcCommand(
-      "u1",
-      "s1",
+    await manager.forwardRpcCommand("s1",
       { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
       "req-model-1",
     );
@@ -458,7 +451,7 @@ describe("turn delivery idempotency", () => {
     expect(session.model).toBe("anthropic/claude-sonnet-4-0");
     expect(session.thinkingLevel).toBe("minimal");
     expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      "u1",
+      
       "anthropic/claude-sonnet-4-0",
       "minimal",
     );

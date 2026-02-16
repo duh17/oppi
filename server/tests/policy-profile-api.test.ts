@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
-import type { User, Workspace } from "../src/types.js";
+import type { Workspace } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -36,7 +36,6 @@ function makeWorkspace(policyPreset: string): Workspace {
   const now = Date.now();
   return {
     id: "w1",
-    userId: "u1",
     name: "Workspace",
     runtime: "host",
     skills: [],
@@ -49,7 +48,7 @@ function makeWorkspace(policyPreset: string): Workspace {
 function makeRoutes(workspace: Workspace): RouteHandler {
   const ctx = {
     storage: {
-      getWorkspace: (_userId: string, workspaceId: string) =>
+      getWorkspace: (workspaceId: string) =>
         workspaceId === workspace.id ? workspace : undefined,
     },
   } as unknown as RouteContext;
@@ -66,7 +65,6 @@ describe("GET /policy/profile", () => {
       "GET",
       "/policy/profile",
       new URL("http://localhost/policy/profile?workspaceId=w1"),
-      makeUser(),
       {} as never,
       res as never,
     );
@@ -93,7 +91,6 @@ describe("GET /policy/profile", () => {
       "GET",
       "/policy/profile",
       new URL("http://localhost/policy/profile?workspaceId=w1"),
-      makeUser(),
       {} as never,
       res as never,
     );
@@ -122,7 +119,6 @@ describe("GET /policy/profile", () => {
       "GET",
       "/policy/profile",
       new URL("http://localhost/policy/profile?workspaceId=w1"),
-      makeUser(),
       {} as never,
       res as never,
     );

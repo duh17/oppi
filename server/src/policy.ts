@@ -1907,7 +1907,7 @@ export class PolicyEngine {
   suggestRule(
     req: GateRequest,
     scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string; userId: string; risk: RiskLevel },
+    context: { sessionId: string; workspaceId: string; risk: RiskLevel },
   ): Omit<LearnedRule, "id" | "createdAt"> | null {
     const parsed = this.parseRequestContext(req);
 
@@ -1928,7 +1928,7 @@ export class PolicyEngine {
         source: "learned",
         description: `Allow browser navigation to ${parsed.domain}`,
         risk: context.risk,
-        createdBy: context.userId,
+        createdBy: "server",
       };
     }
 
@@ -1944,7 +1944,7 @@ export class PolicyEngine {
         source: "learned",
         description: `Allow ${parsed.executable} operations`,
         risk: context.risk,
-        createdBy: context.userId,
+        createdBy: "server",
       };
     }
 
@@ -1965,7 +1965,7 @@ export class PolicyEngine {
         source: "learned",
         description: `Allow ${req.tool} in ${pattern}`,
         risk: context.risk,
-        createdBy: context.userId,
+        createdBy: "server",
       };
     }
 
@@ -1979,7 +1979,7 @@ export class PolicyEngine {
   suggestDenyRule(
     req: GateRequest,
     scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string; userId: string; risk: RiskLevel },
+    context: { sessionId: string; workspaceId: string; risk: RiskLevel },
   ): Omit<LearnedRule, "id" | "createdAt"> | null {
     const parsed = this.parseRequestContext(req);
 
@@ -1995,7 +1995,7 @@ export class PolicyEngine {
         source: "learned",
         description: `Deny browser navigation to ${parsed.domain}`,
         risk: context.risk,
-        createdBy: context.userId,
+        createdBy: "server",
       };
     }
 
@@ -2011,7 +2011,7 @@ export class PolicyEngine {
         source: "learned",
         description: `Deny ${parsed.executable} operations`,
         risk: context.risk,
-        createdBy: context.userId,
+        createdBy: "server",
       };
     }
 

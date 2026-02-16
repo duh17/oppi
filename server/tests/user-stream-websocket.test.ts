@@ -1,13 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { UserStreamMux, type StreamContext } from "../src/stream.js";
-import type { ClientMessage, ServerMessage, Session, User } from "../src/types.js";
+import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 
-function makeSession(id: string, userId = "u1"): Session {
+function makeSession(id: string): Session {
   const now = Date.now();
   return {
     id,
-    userId,
     workspaceId: "w1",
     status: "ready",
     createdAt: now,
@@ -77,7 +76,6 @@ class FakeWebSocket {
 
 interface Harness {
   mux: UserStreamMux;
-  user: User;
   sessionCallbacks: Map<string, (msg: ServerMessage) => void>;
   unsubscribeCalls: string[];
   handleClientMessage: ReturnType<typeof vi.fn>;
@@ -95,18 +93,17 @@ function makeHarness(options?: {
     }
   >;
 }): Harness {
-  const user = makeUser();
-  const sessions = options?.sessions ?? [makeSession("s1", user.id)];
+  const sessions = options?.sessions ?? [makeSession("s1", "owner")];
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const sessionCallbacks = new Map<string, (msg: ServerMessage) => void>();
   const unsubscribeCalls: string[] = [];
 
-  const getCurrentSeq = vi.fn((_userId: string, sessionId: string) => {
+  const getCurrentSeq = vi.fn((sessionId: string) => {
     const fixture = options?.catchUpBySession?.[sessionId];
     return fixture?.currentSeq ?? 0;
   });
 
-  const getCatchUp = vi.fn((_userId: string, sessionId: string, _sinceSeq: number) => {
+  const getCatchUp = vi.fn((sessionId: string, _sinceSeq: number) => {
     const session = sessionsById.get(sessionId);
     if (!session) return null;
 
@@ -124,7 +121,6 @@ function makeHarness(options?: {
 
   const handleClientMessage = vi.fn(
     async (
-      _user: User,
       _session: Session,
       _msg: ClientMessage,
       send: (msg: ServerMessage) => void,
@@ -135,12 +131,12 @@ function makeHarness(options?: {
 
   const ctx: StreamContext = {
     sessions: {
-      startSession: vi.fn(async (_userId: string, sessionId: string) => {
+      startSession: vi.fn(async (sessionId: string) => {
         const session = sessionsById.get(sessionId);
         if (!session) throw new Error(`Session not found: ${sessionId}`);
         return session;
       }),
-      subscribe: vi.fn((_userId: string, sessionId: string, cb: (msg: ServerMessage) => void) => {
+      subscribe: vi.fn((sessionId: string, cb: (msg: ServerMessage) => void) => {
         sessionCallbacks.set(sessionId, cb);
         return () => {
           unsubscribeCalls.push(sessionId);
@@ -149,15 +145,13 @@ function makeHarness(options?: {
           }
         };
       }),
-      getActiveSession: vi.fn((_userId: string, sessionId: string) => sessionsById.get(sessionId)),
+      getActiveSession: vi.fn((sessionId: string) => sessionsById.get(sessionId)),
       getCurrentSeq,
       getCatchUp,
     } as unknown as StreamContext["sessions"],
     storage: {
-      getSession: vi.fn((userId: string, sessionId: string) => {
-        if (userId !== user.id) return undefined;
-        return sessionsById.get(sessionId);
-      }),
+      getSession: vi.fn((sessionId: string) => sessionsById.get(sessionId)),
+      getOwnerName: vi.fn(() => "test-host"),
     } as unknown as StreamContext["storage"],
     gate: {
       getPendingForUser: vi.fn(() => []),
@@ -174,7 +168,6 @@ function makeHarness(options?: {
 
   return {
     mux,
-    user,
     sessionCallbacks,
     unsubscribeCalls,
     handleClientMessage,
@@ -407,6 +400,6 @@ describe("/stream websocket behavior", () => {
 
     expect(normalize(ws2.sent)).toEqual(normalize(ws1.sent));
 
-    expect(harness.getCatchUp).toHaveBeenCalledWith("u1", "s1", 5);
+    expect(harness.getCatchUp).toHaveBeenCalledWith("s1", 5);
   });
 });

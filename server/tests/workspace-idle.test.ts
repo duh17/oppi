@@ -15,7 +15,6 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 // ─── Minimal workspace idle scheduler (mirrors SessionManager logic) ───
 
 interface ActiveEntry {
-  userId: string;
   workspaceId: string;
   sessionId: string;
   runtime: "host" | "container";
@@ -23,16 +22,12 @@ interface ActiveEntry {
 
 function createWorkspaceIdleScheduler(opts: {
   workspaceIdleTimeoutMs: number;
-  onStopWorkspace: (userId: string, workspaceId: string) => void;
+  onStopWorkspace: (workspaceId: string) => void;
 }) {
   const active = new Map<string, ActiveEntry>();
   const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  function wsKey(_userId: string, workspaceId: string): string {
-    return workspaceId;
-  }
-
-  function hasActiveContainerSession(_userId: string, workspaceId: string): boolean {
+  function hasActiveContainerSession(workspaceId: string): boolean {
     for (const entry of active.values()) {
       if (entry.runtime === "container" && entry.workspaceId === workspaceId) {
         return true;
@@ -41,28 +36,26 @@ function createWorkspaceIdleScheduler(opts: {
     return false;
   }
 
-  function clearWorkspaceIdleTimer(userId: string, workspaceId: string): void {
-    const key = wsKey(userId, workspaceId);
-    const timer = idleTimers.get(key);
+  function clearWorkspaceIdleTimer(workspaceId: string): void {
+    const timer = idleTimers.get(workspaceId);
     if (timer) {
       clearTimeout(timer);
-      idleTimers.delete(key);
+      idleTimers.delete(workspaceId);
     }
   }
 
-  function scheduleWorkspaceIdleStop(userId: string, workspaceId: string): void {
-    clearWorkspaceIdleTimer(userId, workspaceId);
+  function scheduleWorkspaceIdleStop(workspaceId: string): void {
+    clearWorkspaceIdleTimer(workspaceId);
 
-    const key = wsKey(userId, workspaceId);
     const timer = setTimeout(() => {
-      if (hasActiveContainerSession(userId, workspaceId)) {
+      if (hasActiveContainerSession(workspaceId)) {
         return;
       }
-      opts.onStopWorkspace(userId, workspaceId);
-      idleTimers.delete(key);
+      opts.onStopWorkspace(workspaceId);
+      idleTimers.delete(workspaceId);
     }, opts.workspaceIdleTimeoutMs);
 
-    idleTimers.set(key, timer);
+    idleTimers.set(workspaceId, timer);
   }
 
   return {
@@ -71,7 +64,7 @@ function createWorkspaceIdleScheduler(opts: {
       active.set(key, entry);
 
       if (entry.runtime === "container") {
-        clearWorkspaceIdleTimer(entry.userId, entry.workspaceId);
+        clearWorkspaceIdleTimer(entry.workspaceId);
       }
     },
 
@@ -79,8 +72,8 @@ function createWorkspaceIdleScheduler(opts: {
       const key = entry.sessionId;
       active.delete(key);
 
-      if (entry.runtime === "container" && !hasActiveContainerSession(entry.userId, entry.workspaceId)) {
-        scheduleWorkspaceIdleStop(entry.userId, entry.workspaceId);
+      if (entry.runtime === "container" && !hasActiveContainerSession(entry.workspaceId)) {
+        scheduleWorkspaceIdleStop(entry.workspaceId);
       }
     },
 
@@ -110,35 +103,35 @@ describe("Workspace idle timer scheduling", () => {
   });
 
   it("schedules workspace stop when last container session ends", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
 
     expect(scheduler.getPendingTimerCount()).toBe(1);
     expect(stopped).toHaveLength(0);
 
     vi.advanceTimersByTime(30_000);
 
-    expect(stopped).toEqual([{ userId: "u1", workspaceId: "w1" }]);
+    expect(stopped).toEqual(["w1"]);
     expect(scheduler.getPendingTimerCount()).toBe(0);
   });
 
   it("does not schedule stop when sibling container session still active", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s2", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s2", runtime: "container" });
 
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
 
     expect(scheduler.getPendingTimerCount()).toBe(0);
 
@@ -148,20 +141,20 @@ describe("Workspace idle timer scheduling", () => {
   });
 
   it("cancels idle timer when new container session starts before timeout", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
 
     expect(scheduler.getPendingTimerCount()).toBe(1);
 
     // Start new session before timeout fires.
     vi.advanceTimersByTime(15_000);
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s2", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s2", runtime: "container" });
 
     expect(scheduler.getPendingTimerCount()).toBe(0);
 
@@ -171,14 +164,14 @@ describe("Workspace idle timer scheduling", () => {
   });
 
   it("does not schedule idle for host-mode sessions", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "host" });
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "host" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "host" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "host" });
 
     expect(scheduler.getPendingTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000);
@@ -186,72 +179,69 @@ describe("Workspace idle timer scheduling", () => {
   });
 
   it("handles multiple workspaces with independent idle timers", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.addSession({ userId: "u1", workspaceId: "w2", sessionId: "s2", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w2", sessionId: "s2", runtime: "container" });
 
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
 
     vi.advanceTimersByTime(15_000);
 
-    scheduler.removeSession({ userId: "u1", workspaceId: "w2", sessionId: "s2", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w2", sessionId: "s2", runtime: "container" });
 
     expect(scheduler.getPendingTimerCount()).toBe(2);
 
     // w1 fires at 30s
     vi.advanceTimersByTime(15_000);
-    expect(stopped).toEqual([{ userId: "u1", workspaceId: "w1" }]);
+    expect(stopped).toEqual(["w1"]);
 
     // w2 fires at 45s (15s after w2 session ended)
     vi.advanceTimersByTime(15_000);
-    expect(stopped).toEqual([
-      { userId: "u1", workspaceId: "w1" },
-      { userId: "u1", workspaceId: "w2" },
-    ]);
+    expect(stopped).toEqual(["w1", "w2"]);
   });
 
   it("timer no-ops if a session was added between schedule and fire", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
 
     // Simulate: s2 starts after removal but doesn't cancel the timer
     // because in the real code addSession calls clearWorkspaceIdleTimer.
     // Here we directly add — the timer IS cancelled.
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s2", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s2", runtime: "container" });
 
     vi.advanceTimersByTime(60_000);
     expect(stopped).toHaveLength(0);
   });
 
   it("resets idle timer if session ends while timer already pending", () => {
-    const stopped: Array<{ userId: string; workspaceId: string }> = [];
+    const stopped: string[] = [];
     const scheduler = createWorkspaceIdleScheduler({
       workspaceIdleTimeoutMs: 30_000,
-      onStopWorkspace: (userId, workspaceId) => stopped.push({ userId, workspaceId }),
+      onStopWorkspace: (workspaceId) => stopped.push(workspaceId),
     });
 
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
-    scheduler.addSession({ userId: "u1", workspaceId: "w1", sessionId: "s2", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.addSession({ workspaceId: "w1", sessionId: "s2", runtime: "container" });
 
     // Remove s1 — s2 still active, no timer.
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s1", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s1", runtime: "container" });
     expect(scheduler.getPendingTimerCount()).toBe(0);
 
     vi.advanceTimersByTime(20_000);
 
     // Remove s2 — timer starts NOW.
-    scheduler.removeSession({ userId: "u1", workspaceId: "w1", sessionId: "s2", runtime: "container" });
+    scheduler.removeSession({ workspaceId: "w1", sessionId: "s2", runtime: "container" });
     expect(scheduler.getPendingTimerCount()).toBe(1);
 
     // 20s more — not enough (only 20s of 30s elapsed since s2 ended).
@@ -260,6 +250,6 @@ describe("Workspace idle timer scheduling", () => {
 
     // 10s more — fires.
     vi.advanceTimersByTime(10_000);
-    expect(stopped).toEqual([{ userId: "u1", workspaceId: "w1" }]);
+    expect(stopped).toEqual(["w1"]);
   });
 });

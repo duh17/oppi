@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
-import type { Session, User, Workspace } from "../src/types.js";
+import type { Session, Workspace } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -42,7 +42,6 @@ function makeWorkspace(): Workspace {
   const now = Date.now();
   return {
     id: "w1",
-    userId: "u1",
     name: "Workspace",
     runtime: "host",
     skills: [],
@@ -56,7 +55,6 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   const now = Date.now();
   return {
     id,
-    userId: "u1",
     workspaceId: "w1",
     status: "ready",
     createdAt: now,
@@ -73,8 +71,7 @@ function makeHarness(opts: {
   workspace?: Workspace;
   sessions?: Session[];
   activeSessionIds?: Set<string>;
-}): { routes: RouteHandler; user: User } {
-  const user = makeUser();
+}): { routes: RouteHandler; } {
   const workspace = opts.workspace;
   const sessions = opts.sessions ?? [];
   const activeSessionIds = opts.activeSessionIds ?? new Set<string>();
@@ -83,34 +80,27 @@ function makeHarness(opts: {
 
   const ctx = {
     storage: {
-      getWorkspace: (userId: string, workspaceId: string) => {
-        if (userId !== user.id || !workspace || workspace.id !== workspaceId) {
+      getWorkspace: (workspaceId: string) => {
+        if (!workspace || workspace.id !== workspaceId) {
           return undefined;
         }
         return workspace;
       },
-      listUserSessions: (userId: string) => (userId === user.id ? sessions : []),
-      getSession: (userId: string, sessionId: string) => {
-        if (userId !== user.id) {
-          return undefined;
-        }
-        return sessionById.get(sessionId);
-      },
+      listSessions: () => sessions,
+      getSession: (sessionId: string) => sessionById.get(sessionId),
     },
     sessions: {
-      isActive: (_userId: string, sessionId: string) => activeSessionIds.has(sessionId),
+      isActive: (sessionId: string) => activeSessionIds.has(sessionId),
     },
   } as unknown as RouteContext;
 
   return {
     routes: new RouteHandler(ctx),
-    user,
-  };
+    };
 }
 
 async function callGraphEndpoint(
   routes: RouteHandler,
-  user: User,
   pathWithQuery: string,
 ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
   const url = new URL(`http://localhost${pathWithQuery}`);
@@ -120,7 +110,6 @@ async function callGraphEndpoint(
     "GET",
     "/workspaces/w1/graph",
     url,
-    user,
     {} as never,
     res as never,
   );
@@ -169,13 +158,13 @@ describe("GET /workspaces/:wid/graph", () => {
         piSessionId: "22222222-2222-2222-2222-222222222222",
       });
 
-      const { routes, user } = makeHarness({
+      const { routes } = makeHarness({
         workspace,
         sessions: [session],
         activeSessionIds: new Set(["s1"]),
       });
 
-      const result = await callGraphEndpoint(routes, user, "/workspaces/w1/graph");
+      const result = await callGraphEndpoint(routes, "/workspaces/w1/graph");
 
       expect(result.statusCode).toBe(200);
 
@@ -271,10 +260,9 @@ describe("GET /workspaces/:wid/graph", () => {
         piSessionId: "22222222-2222-2222-2222-222222222222",
       });
 
-      const { routes, user } = makeHarness({ workspace, sessions: [session] });
+      const { routes } = makeHarness({ workspace, sessions: [session] });
       const result = await callGraphEndpoint(
         routes,
-        user,
         "/workspaces/w1/graph?sessionId=s1&include=entry&includePaths=true",
       );
 
@@ -307,16 +295,16 @@ describe("GET /workspaces/:wid/graph", () => {
   });
 
   it("returns 404 when workspace does not exist", async () => {
-    const { routes, user } = makeHarness({ workspace: undefined, sessions: [] });
-    const result = await callGraphEndpoint(routes, user, "/workspaces/w1/graph");
+    const { routes } = makeHarness({ workspace: undefined, sessions: [] });
+    const result = await callGraphEndpoint(routes, "/workspaces/w1/graph");
     expect(result.statusCode).toBe(404);
   });
 
   it("returns 404 when sessionId query does not belong to workspace", async () => {
     const workspace = makeWorkspace();
-    const { routes, user } = makeHarness({ workspace, sessions: [] });
+    const { routes } = makeHarness({ workspace, sessions: [] });
 
-    const result = await callGraphEndpoint(routes, user, "/workspaces/w1/graph?sessionId=missing");
+    const result = await callGraphEndpoint(routes, "/workspaces/w1/graph?sessionId=missing");
     expect(result.statusCode).toBe(404);
   });
 });

@@ -27,7 +27,6 @@ export interface AuditEntry {
   timestamp: number;
   sessionId: string;
   workspaceId: string;
-  userId: string;
 
   // What was requested
   tool: string;
@@ -95,7 +94,6 @@ export class AuditLog {
       before?: number;
       sessionId?: string;
       workspaceId?: string;
-      userId?: string;
     } = {},
   ): AuditEntry[] {
     const limit = Math.min(opts.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
@@ -121,9 +119,6 @@ export class AuditLog {
     }
 
     // Filter
-    if (opts.userId) {
-      entries = entries.filter((e) => e.userId === opts.userId);
-    }
     if (opts.workspaceId) {
       entries = entries.filter((e) => e.workspaceId === opts.workspaceId);
     }

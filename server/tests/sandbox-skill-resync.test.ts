@@ -38,7 +38,6 @@ function makeWorkspace(id: string, skills: string[], runtime: "host" | "containe
   const now = Date.now();
   return {
     id,
-    userId: "owner",
     name: `ws-${id}`,
     runtime,
     skills,
@@ -74,10 +73,10 @@ afterEach(() => {
 describe("resyncWorkspaceSkills", () => {
   it("syncs skills into an existing workspace dir", () => {
     // Create workspace dir structure (as if initSession had run)
-    const wsDir = sandbox.getWorkspaceDir("owner", "w1");
+    const wsDir = sandbox.getWorkspaceDir("w1");
     mkdirSync(wsDir, { recursive: true });
 
-    const installed = sandbox.resyncWorkspaceSkills("owner", "w1", ["search", "fetch"]);
+    const installed = sandbox.resyncWorkspaceSkills("w1", ["search", "fetch"]);
 
     expect(installed).toEqual(["search", "fetch"]);
     expect(existsSync(join(wsDir, "skills", "search", "SKILL.md"))).toBe(true);
@@ -85,16 +84,16 @@ describe("resyncWorkspaceSkills", () => {
   });
 
   it("skips if workspace dir does not exist", () => {
-    const installed = sandbox.resyncWorkspaceSkills("owner", "nonexistent", ["search"]);
+    const installed = sandbox.resyncWorkspaceSkills("nonexistent", ["search"]);
     expect(installed).toEqual([]);
   });
 
   it("updates skill content when source changes", () => {
-    const wsDir = sandbox.getWorkspaceDir("owner", "w1");
+    const wsDir = sandbox.getWorkspaceDir("w1");
     mkdirSync(wsDir, { recursive: true });
 
     // Initial sync
-    sandbox.resyncWorkspaceSkills("owner", "w1", ["search"]);
+    sandbox.resyncWorkspaceSkills("w1", ["search"]);
     const v1 = readFileSync(join(wsDir, "skills", "search", "SKILL.md"), "utf-8");
     expect(v1).toContain("Search v1");
 
@@ -105,7 +104,7 @@ describe("resyncWorkspaceSkills", () => {
     );
 
     // Re-sync picks up change
-    sandbox.resyncWorkspaceSkills("owner", "w1", ["search"]);
+    sandbox.resyncWorkspaceSkills("w1", ["search"]);
     const v2 = readFileSync(join(wsDir, "skills", "search", "SKILL.md"), "utf-8");
     expect(v2).toContain("Search v2");
   });
@@ -115,11 +114,11 @@ describe("resyncWorkspaceSkills", () => {
 
 describe("handleSkillsChanged", () => {
   it("re-syncs container workspaces that use changed skills", () => {
-    const wsDir = sandbox.getWorkspaceDir("owner", "w1");
+    const wsDir = sandbox.getWorkspaceDir("w1");
     mkdirSync(wsDir, { recursive: true });
 
     // Initial sync
-    sandbox.resyncWorkspaceSkills("owner", "w1", ["search", "fetch"]);
+    sandbox.resyncWorkspaceSkills("w1", ["search", "fetch"]);
 
     // Simulate skill change on disk
     writeFileSync(
@@ -138,7 +137,7 @@ describe("handleSkillsChanged", () => {
   });
 
   it("skips host-mode workspaces", () => {
-    const wsDir = sandbox.getWorkspaceDir("owner", "w-host");
+    const wsDir = sandbox.getWorkspaceDir("w-host");
     mkdirSync(join(wsDir, "skills", "search"), { recursive: true });
     writeFileSync(join(wsDir, "skills", "search", "SKILL.md"), "old");
 
@@ -153,9 +152,9 @@ describe("handleSkillsChanged", () => {
   });
 
   it("skips workspaces that dont use changed skills", () => {
-    const wsDir = sandbox.getWorkspaceDir("owner", "w2");
+    const wsDir = sandbox.getWorkspaceDir("w2");
     mkdirSync(wsDir, { recursive: true });
-    sandbox.resyncWorkspaceSkills("owner", "w2", ["fetch"]);
+    sandbox.resyncWorkspaceSkills("w2", ["fetch"]);
 
     // Change search — w2 only uses fetch
     writeFileSync(
@@ -183,12 +182,12 @@ describe("handleSkillsChanged", () => {
   });
 
   it("re-syncs multiple workspaces that share a skill", () => {
-    const ws1Dir = sandbox.getWorkspaceDir("owner", "w1");
-    const ws2Dir = sandbox.getWorkspaceDir("owner", "w2");
+    const ws1Dir = sandbox.getWorkspaceDir("w1");
+    const ws2Dir = sandbox.getWorkspaceDir("w2");
     mkdirSync(ws1Dir, { recursive: true });
     mkdirSync(ws2Dir, { recursive: true });
-    sandbox.resyncWorkspaceSkills("owner", "w1", ["search"]);
-    sandbox.resyncWorkspaceSkills("owner", "w2", ["search", "fetch"]);
+    sandbox.resyncWorkspaceSkills("w1", ["search"]);
+    sandbox.resyncWorkspaceSkills("w2", ["search", "fetch"]);
 
     writeFileSync(
       join(skillDir, "search", "SKILL.md"),

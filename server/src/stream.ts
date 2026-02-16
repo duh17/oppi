@@ -11,7 +11,7 @@ import { EventRing } from "./event-ring.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer, PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
-import type { ClientMessage, ServerMessage, Session, User, Workspace } from "./types.js";
+import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 
 // ─── Types ───
 
@@ -28,15 +28,14 @@ export interface StreamContext {
   sessions: SessionManager;
   gate: GateServer;
   ensureSessionContextWindow: (session: Session) => Session;
-  resolveWorkspaceForSession: (userId: string, session: Session) => Workspace | undefined;
+  resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   handleClientMessage: (
-    user: User,
-    session: Session,
+        session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
   ) => Promise<void>;
-  trackConnection: (userId: string, ws: WebSocket) => void;
-  untrackConnection: (userId: string, ws: WebSocket) => void;
+  trackConnection: (ws: WebSocket) => void;
+  untrackConnection: (ws: WebSocket) => void;
 }
 
 function ts(): string {
@@ -48,8 +47,8 @@ const STREAM_MAX_BUFFERED_BYTES = 64 * 1024;
 // ─── Stream Mux ───
 
 export class UserStreamMux {
-  private userStreamSeq: Map<string, number> = new Map();
-  private userStreamRings: Map<string, EventRing> = new Map();
+  private streamSeq = 0;
+  private streamRing: EventRing | null = null;
   private readonly ringCapacity: number;
 
   constructor(
@@ -93,30 +92,25 @@ export class UserStreamMux {
 
   // ─── Sequence Tracking ───
 
-  nextUserStreamSeq(userId: string): number {
-    const next = (this.userStreamSeq.get(userId) ?? 0) + 1;
-    this.userStreamSeq.set(userId, next);
-    return next;
+  nextUserStreamSeq(): number {
+    return ++this.streamSeq;
   }
 
-  getUserStreamRing(userId: string): EventRing {
-    let ring = this.userStreamRings.get(userId);
-    if (!ring) {
-      ring = new EventRing(this.ringCapacity);
-      this.userStreamRings.set(userId, ring);
+  getUserStreamRing(): EventRing {
+    if (!this.streamRing) {
+      this.streamRing = new EventRing(this.ringCapacity);
     }
-    return ring;
+    return this.streamRing;
   }
 
   getUserStreamCatchUp(
-    userId: string,
     sinceSeq: number,
   ): {
     events: ServerMessage[];
     currentSeq: number;
     catchUpComplete: boolean;
   } {
-    const ring = this.getUserStreamRing(userId);
+    const ring = this.getUserStreamRing();
     const catchUpComplete = ring.canServe(sinceSeq);
     const events = catchUpComplete ? ring.since(sinceSeq).map((entry) => entry.event) : [];
 
@@ -125,7 +119,7 @@ export class UserStreamMux {
       const seq = event.streamSeq;
       if (typeof seq !== "number" || !Number.isInteger(seq) || seq <= expected) {
         throw new Error(
-          `Invalid user stream replay ordering for ${userId}: expected > ${expected}, got ${seq}`,
+          `Invalid stream replay ordering: expected > ${expected}, got ${seq}`,
         );
       }
       expected = seq;
@@ -133,14 +127,14 @@ export class UserStreamMux {
 
     return {
       events,
-      currentSeq: this.userStreamSeq.get(userId) ?? ring.currentSeq,
+      currentSeq: this.streamSeq || ring.currentSeq,
       catchUpComplete,
     };
   }
 
-  recordUserStreamEvent(userId: string, sessionId: string, msg: ServerMessage): number {
-    const streamSeq = this.nextUserStreamSeq(userId);
-    const ring = this.getUserStreamRing(userId);
+  recordUserStreamEvent(sessionId: string, msg: ServerMessage): number {
+    const streamSeq = this.nextUserStreamSeq();
+    const ring = this.getUserStreamRing();
 
     const event: ServerMessage = {
       ...msg,
@@ -154,9 +148,9 @@ export class UserStreamMux {
 
   // ─── WebSocket Handler ───
 
-  async handleWebSocket(ws: WebSocket, user: User): Promise<void> {
-    console.log(`${ts()} [ws] Connected: ${user.name} → /stream`);
-    this.ctx.trackConnection(user.id, ws);
+  async handleWebSocket(ws: WebSocket): Promise<void> {
+    console.log(`${ts()} [ws] Connected: ${this.ctx.storage.getOwnerName()} → /stream`);
+    this.ctx.trackConnection(ws);
 
     let msgSent = 0;
     let msgRecv = 0;
@@ -224,7 +218,7 @@ export class UserStreamMux {
         return;
       }
 
-      const session = this.ctx.storage.getSession(user.id, sessionId);
+      const session = this.ctx.storage.getSession(sessionId);
       if (!session) {
         send({
           type: "rpc_result",
@@ -249,11 +243,10 @@ export class UserStreamMux {
       try {
         let hydratedSession = this.ctx.ensureSessionContextWindow(session);
         if (level === "full") {
-          const workspace = this.ctx.resolveWorkspaceForSession(user.id, session);
+          const workspace = this.ctx.resolveWorkspaceForSession(session);
           const started = await this.ctx.sessions.startSession(
-            user.id,
             sessionId,
-            user.name,
+            this.ctx.storage.getOwnerName(),
             workspace,
           );
           hydratedSession = this.ctx.ensureSessionContextWindow(started);
@@ -262,7 +255,7 @@ export class UserStreamMux {
           sendForSession(sessionId, {
             type: "connected",
             session: hydratedSession,
-            currentSeq: this.ctx.sessions.getCurrentSeq(user.id, sessionId),
+            currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
           });
         }
 
@@ -279,19 +272,19 @@ export class UserStreamMux {
           sendForSession(sessionId, msg);
         };
 
-        const unsubscribe = this.ctx.sessions.subscribe(user.id, sessionId, callback);
+        const unsubscribe = this.ctx.sessions.subscribe(sessionId, callback);
         subscriptions.set(sessionId, { level, unsubscribe });
 
         sendForSession(sessionId, {
           type: "state",
           session: this.ctx.ensureSessionContextWindow(
-            this.ctx.sessions.getActiveSession(user.id, sessionId) ?? hydratedSession,
+            this.ctx.sessions.getActiveSession(sessionId) ?? hydratedSession,
           ),
         });
 
         let catchUpComplete = true;
         if (sinceSeq !== undefined) {
-          const catchUp = this.ctx.sessions.getCatchUp(user.id, sessionId, sinceSeq);
+          const catchUp = this.ctx.sessions.getCatchUp(sessionId, sinceSeq);
           if (catchUp) {
             catchUpComplete = catchUp.catchUpComplete;
             for (const event of catchUp.events) {
@@ -301,7 +294,7 @@ export class UserStreamMux {
         }
 
         const pendingPerms = this.ctx.gate
-          .getPendingForUser(user.id)
+          .getPendingForUser()
           .filter((p: PendingDecision) => p.sessionId === sessionId);
         for (const pending of pendingPerms) {
           send({
@@ -327,7 +320,7 @@ export class UserStreamMux {
           data: {
             sessionId,
             level,
-            currentSeq: this.ctx.sessions.getCurrentSeq(user.id, sessionId),
+            currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
             catchUpComplete,
           },
           sessionId,
@@ -345,14 +338,14 @@ export class UserStreamMux {
       }
     };
 
-    send({ type: "stream_connected", userId: user.id, userName: user.name });
+    send({ type: "stream_connected", userName: this.ctx.storage.getOwnerName() });
 
     ws.on("message", (data) => {
       queue = queue
         .then(async () => {
           const msg = JSON.parse(data.toString()) as ClientMessage;
           msgRecv++;
-          console.log(`${ts()} [ws] RECV ${msg.type} from ${user.name} → /stream`);
+          console.log(`${ts()} [ws] RECV ${msg.type} from ${this.ctx.storage.getOwnerName()} → /stream`);
 
           switch (msg.type) {
             case "subscribe": {
@@ -410,13 +403,13 @@ export class UserStreamMux {
                 return;
               }
 
-              const targetSession = this.ctx.storage.getSession(user.id, targetSessionId);
+              const targetSession = this.ctx.storage.getSession(targetSessionId);
               if (!targetSession) {
                 send({ type: "error", error: `Session not found: ${targetSessionId}` });
                 return;
               }
 
-              await this.ctx.handleClientMessage(user, targetSession, msg, (out) => {
+              await this.ctx.handleClientMessage(targetSession, msg, (out) => {
                 sendForSession(targetSessionId, out);
               });
               break;
@@ -433,16 +426,16 @@ export class UserStreamMux {
     ws.on("close", (code, reason) => {
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${user.name} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
+        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
       );
       clearAllSubscriptions();
-      this.ctx.untrackConnection(user.id, ws);
+      this.ctx.untrackConnection(ws);
     });
 
     ws.on("error", (err) => {
-      console.error(`${ts()} [ws] Error: ${user.name} → /stream:`, err);
+      console.error(`${ts()} [ws] Error: ${this.ctx.storage.getOwnerName()} → /stream:`, err);
       clearAllSubscriptions();
-      this.ctx.untrackConnection(user.id, ws);
+      this.ctx.untrackConnection(ws);
     });
   }
 }

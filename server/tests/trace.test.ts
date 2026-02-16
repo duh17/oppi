@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseJsonl, readSessionTrace } from "../src/trace.js";
+import { parseJsonl, readSessionTrace, buildSessionContext, type TraceEvent } from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
 
@@ -352,25 +352,25 @@ describe("readSessionTrace", () => {
   });
 
   it("returns null when workspaceId is missing", () => {
-    const result = readSessionTrace(tmp, "user1", "sess1");
+    const result = readSessionTrace(tmp, "sess1");
     expect(result).toBeNull();
   });
 
   it("returns null when sessions dir does not exist", () => {
-    const result = readSessionTrace(tmp, "user1", "sess1", "ws1");
+    const result = readSessionTrace(tmp, "sess1", "ws1");
     expect(result).toBeNull();
   });
 
   it("returns null when no JSONL files exist", () => {
-    const dir = join(tmp, "user1", "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
+    const dir = join(tmp, "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
     mkdirSync(dir, { recursive: true });
 
-    const result = readSessionTrace(tmp, "user1", "sess1", "ws1");
+    const result = readSessionTrace(tmp, "sess1", "ws1");
     expect(result).toBeNull();
   });
 
   it("merges all JSONL files in chronological order", () => {
-    const dir = join(tmp, "user1", "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
+    const dir = join(tmp, "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
     mkdirSync(dir, { recursive: true });
 
     // Older file
@@ -390,7 +390,7 @@ describe("readSessionTrace", () => {
       message: { role: "user", content: "new message" },
     }));
 
-    const events = readSessionTrace(tmp, "user1", "sess1", "ws1");
+    const events = readSessionTrace(tmp, "sess1", "ws1");
     expect(events).not.toBeNull();
     expect(events).toHaveLength(2);
     expect(events![0].text).toBe("old message");
@@ -398,7 +398,7 @@ describe("readSessionTrace", () => {
   });
 
   it("parses a full conversation from JSONL file", () => {
-    const dir = join(tmp, "user1", "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
+    const dir = join(tmp, "ws1", "sessions", "sess1", "agent", "sessions", "--work--");
     mkdirSync(dir, { recursive: true });
 
     const lines = [
@@ -434,10 +434,172 @@ describe("readSessionTrace", () => {
 
     writeFileSync(join(dir, "2026-01-01_session.jsonl"), lines);
 
-    const events = readSessionTrace(tmp, "user1", "sess1", "ws1");
+    const events = readSessionTrace(tmp, "sess1", "ws1");
     expect(events).toHaveLength(3);
     expect(events![0].type).toBe("user");
     expect(events![1].type).toBe("toolCall");
     expect(events![2].type).toBe("toolResult");
+  });
+});
+
+// ─── buildSessionContext edge cases (S5) ───
+
+describe("buildSessionContext edge cases", () => {
+  function entry(id: string, parentId: string | null, type: string, extra: Record<string, unknown> = {}): string {
+    return JSON.stringify({ type, id, parentId, timestamp: `2026-01-01T00:00:0${id}Z`, ...extra });
+  }
+
+  function msgEntry(id: string, parentId: string | null, role: string, content: string): string {
+    return entry(id, parentId, "message", { message: { role, content } });
+  }
+
+  it("returns empty for empty input", () => {
+    const events = buildSessionContext([]);
+    expect(events).toHaveLength(0);
+  });
+
+  it("handles single user message", () => {
+    const entries = parseJsonl(msgEntry("1", null, "user", "hello"), { view: "full" });
+    // parseJsonl uses buildSessionContext internally, just check it doesn't crash
+    expect(entries.length).toBeGreaterThanOrEqual(1);
+    expect(entries[0].type).toBe("user");
+  });
+
+  it("handles compaction with post-compaction messages", () => {
+    const lines = [
+      msgEntry("1", null, "user", "first question"),
+      msgEntry("2", "1", "assistant", "first answer"),
+      entry("3", "2", "compaction", { summary: "User asked a question and got an answer.", firstKeptEntryId: "2" }),
+      msgEntry("4", "3", "user", "follow up"),
+      msgEntry("5", "4", "assistant", "follow up answer"),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    // Context view: should show compaction summary + kept messages + post-compaction
+    expect(events.some((e) => e.type === "compaction")).toBe(true);
+    expect(events.some((e) => e.text === "follow up")).toBe(true);
+    expect(events.some((e) => e.text === "follow up answer")).toBe(true);
+    // Pre-compaction content before firstKeptEntryId should be hidden
+    expect(events.find((e) => e.text === "first question")).toBeUndefined();
+  });
+
+  it("handles multi-compaction (compact twice)", () => {
+    const lines = [
+      msgEntry("1", null, "user", "q1"),
+      msgEntry("2", "1", "assistant", "a1"),
+      entry("3", "2", "compaction", { summary: "Summary 1", firstKeptEntryId: "2" }),
+      msgEntry("4", "3", "user", "q2"),
+      msgEntry("5", "4", "assistant", "a2"),
+      entry("6", "5", "compaction", { summary: "Summary 2", firstKeptEntryId: "5" }),
+      msgEntry("7", "6", "user", "q3"),
+      msgEntry("8", "7", "assistant", "a3"),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    // The LAST compaction summary should be present
+    expect(events.some((e) => e.type === "compaction")).toBe(true);
+    // Post-second-compaction messages should be visible
+    expect(events.some((e) => e.text === "q3")).toBe(true);
+    expect(events.some((e) => e.text === "a3")).toBe(true);
+    // Pre-second-compaction messages should be hidden in context view
+    expect(events.find((e) => e.text === "q1")).toBeUndefined();
+  });
+
+  it("handles orphaned entry (parentId points to missing)", () => {
+    // Entry "2" points to nonexistent "999" — walk stops early
+    const lines = [
+      msgEntry("2", "999", "user", "orphan"),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    // Should not crash, orphan is the leaf, walk stops at it
+    expect(events).toHaveLength(1);
+    expect(events[0].text).toBe("orphan");
+  });
+
+  it("handles session with only compaction entry", () => {
+    const lines = entry("1", null, "compaction", {
+      summary: "Previous context was compacted.",
+      firstKeptEntryId: null,
+    });
+
+    const events = parseJsonl(lines);
+    expect(events.some((e) => e.type === "compaction")).toBe(true);
+  });
+
+  it("handles branch with multiple children (fork)", () => {
+    // Two children of entry "2" — simulates a fork
+    const lines = [
+      msgEntry("1", null, "user", "question"),
+      msgEntry("2", "1", "assistant", "answer"),
+      msgEntry("3a", "2", "user", "branch A follow-up"),
+      msgEntry("3b", "2", "user", "branch B follow-up"),
+      msgEntry("4a", "3a", "assistant", "branch A answer"),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    // Leaf is "4a" (last entry), so context should follow the A branch
+    expect(events.some((e) => e.text === "branch A follow-up")).toBe(true);
+    expect(events.some((e) => e.text === "branch A answer")).toBe(true);
+    // Branch B follow-up is NOT on the leaf's ancestor path
+    expect(events.find((e) => e.text === "branch B follow-up")).toBeUndefined();
+  });
+
+  it("full view includes pre-compaction entries", () => {
+    const lines = [
+      msgEntry("1", null, "user", "before compaction"),
+      msgEntry("2", "1", "assistant", "response"),
+      entry("3", "2", "compaction", { summary: "Compacted.", firstKeptEntryId: "2" }),
+      msgEntry("4", "3", "user", "after compaction"),
+    ].join("\n");
+
+    const events = parseJsonl(lines, { view: "full" });
+    // Full view should include everything
+    expect(events.some((e) => e.text === "before compaction")).toBe(true);
+    expect(events.some((e) => e.text === "after compaction")).toBe(true);
+  });
+
+  it("handles thinking content in assistant messages", () => {
+    const lines = JSON.stringify({
+      type: "message",
+      id: "1",
+      parentId: null,
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Let me think about this..." },
+          { type: "text", text: "Here's my answer." },
+        ],
+      },
+    });
+
+    const events = parseJsonl(lines);
+    expect(events.some((e) => e.type === "thinking")).toBe(true);
+    expect(events.some((e) => e.type === "assistant" && e.text === "Here's my answer.")).toBe(true);
+  });
+
+  it("handles model_change entries", () => {
+    const lines = entry("1", null, "model_change", {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4",
+    });
+
+    const events = parseJsonl(lines);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("system");
+  });
+
+  it("handles empty lines in JSONL gracefully", () => {
+    const lines = [
+      msgEntry("1", null, "user", "hello"),
+      "",
+      "",
+      msgEntry("2", "1", "assistant", "hi"),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    expect(events.some((e) => e.text === "hello")).toBe(true);
+    expect(events.some((e) => e.text === "hi")).toBe(true);
   });
 });

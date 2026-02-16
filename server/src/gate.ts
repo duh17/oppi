@@ -37,7 +37,6 @@ export type GuardState = "unguarded" | "guarded" | "fail_safe";
 
 export interface SessionGuard {
   sessionId: string;
-  userId: string;
   workspaceId: string;
   state: GuardState;
   port: number;
@@ -50,7 +49,6 @@ export interface SessionGuard {
 export interface PendingDecision {
   id: string;
   sessionId: string;
-  userId: string;
   workspaceId: string;
   tool: string;
   input: Record<string, unknown>;
@@ -151,7 +149,6 @@ export class GateServer extends EventEmitter {
    */
   async createSessionSocket(
     sessionId: string,
-    userId: string,
     workspaceId: string = "",
   ): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -167,7 +164,6 @@ export class GateServer extends EventEmitter {
 
         const guard: SessionGuard = {
           sessionId,
-          userId,
           workspaceId,
           state: "unguarded",
           port,
@@ -264,7 +260,6 @@ export class GateServer extends EventEmitter {
       const context = {
         sessionId: pending.sessionId,
         workspaceId: pending.workspaceId,
-        userId: pending.userId,
         risk: pending.risk || "medium",
       };
 
@@ -302,7 +297,6 @@ export class GateServer extends EventEmitter {
     this.auditLog.record({
       sessionId: pending.sessionId,
       workspaceId: pending.workspaceId,
-      userId: pending.userId,
       tool: pending.tool,
       displaySummary: pending.displaySummary,
       risk: pending.risk || "medium",
@@ -323,7 +317,6 @@ export class GateServer extends EventEmitter {
     this.emit("approval_resolved", {
       requestId,
       sessionId: pending.sessionId,
-      userId: pending.userId,
       action,
       scope,
       expiresAt,
@@ -350,8 +343,8 @@ export class GateServer extends EventEmitter {
   /**
    * Get pending decisions for a specific user.
    */
-  getPendingForUser(userId: string): PendingDecision[] {
-    return Array.from(this.pending.values()).filter((d) => d.userId === userId);
+  getPendingForUser(): PendingDecision[] {
+    return Array.from(this.pending.values());
   }
 
   /**
@@ -486,7 +479,6 @@ export class GateServer extends EventEmitter {
       this.auditLog.record({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
-        userId: guard.userId,
         tool: msg.tool,
         displaySummary,
         risk: decision.risk,
@@ -505,7 +497,6 @@ export class GateServer extends EventEmitter {
       this.auditLog.record({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
-        userId: guard.userId,
         tool: msg.tool,
         displaySummary,
         risk: decision.risk,
@@ -534,7 +525,6 @@ export class GateServer extends EventEmitter {
       const pending: PendingDecision = {
         id: requestId,
         sessionId: guard.sessionId,
-        userId: guard.userId,
         workspaceId: guard.workspaceId,
         tool: msg.tool,
         input: msg.input,
@@ -557,7 +547,6 @@ export class GateServer extends EventEmitter {
             this.auditLog.record({
               sessionId: guard.sessionId,
               workspaceId: guard.workspaceId,
-              userId: guard.userId,
               tool: msg.tool,
               displaySummary,
               risk: decision.risk,
@@ -600,7 +589,6 @@ export class GateServer extends EventEmitter {
         this.auditLog.record({
           sessionId: pd.sessionId,
           workspaceId: pd.workspaceId,
-          userId: pd.userId,
           tool: pd.tool,
           displaySummary: pd.displaySummary,
           risk: pd.risk || "medium",

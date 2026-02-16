@@ -84,7 +84,7 @@ describe("session-spawn spawnPiHost", () => {
 
     await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
 
-    expect(createSessionSocket).toHaveBeenCalledWith("s1", "u1", "w1");
+    expect(createSessionSocket).toHaveBeenCalledWith("s1", "w1");
     const hostPolicy = getSpawnPolicy(setSessionPolicy, "s1", "host");
     const hostDecision = hostPolicy.evaluate({
       tool: "bash",
@@ -124,8 +124,7 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.cwd).toBe(expectedCwd);
     expect(opts.stdio).toEqual(["pipe", "pipe", "pipe"]);
     expect(opts.env.OPPI_SESSION).toBe("s1");
-    expect(opts.env.OPPI_USER).toBe("u1");
-    expect(opts.env.OPPI_GATE_HOST).toBe("127.0.0.1");
+        expect(opts.env.OPPI_GATE_HOST).toBe("127.0.0.1");
     expect(opts.env.OPPI_GATE_PORT).toBe("45678");
   });
 

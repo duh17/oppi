@@ -19,13 +19,13 @@ describe("WorkspaceRuntime lifecycle locks", () => {
     const runtime = new WorkspaceRuntime(LIMITS);
     const events: string[] = [];
 
-    const first = runtime.withWorkspaceLock("u1", "w1", async () => {
+    const first = runtime.withWorkspaceLock("w1", async () => {
       events.push("first-start");
       await sleep(20);
       events.push("first-end");
     });
 
-    const second = runtime.withWorkspaceLock("u1", "w1", async () => {
+    const second = runtime.withWorkspaceLock("w1", async () => {
       events.push("second-start");
       events.push("second-end");
     });
@@ -45,7 +45,7 @@ describe("WorkspaceRuntime lifecycle locks", () => {
     let inFlight = 0;
     let maxInFlight = 0;
 
-    const run = (workspaceId: string) => runtime.withWorkspaceLock("u1", workspaceId, async () => {
+    const run = (workspaceId: string) => runtime.withWorkspaceLock(workspaceId, async () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await sleep(20);
@@ -61,13 +61,13 @@ describe("WorkspaceRuntime lifecycle locks", () => {
     const runtime = new WorkspaceRuntime(LIMITS);
     const events: string[] = [];
 
-    const first = runtime.withSessionLock("u1", "s1", async () => {
+    const first = runtime.withSessionLock("s1", async () => {
       events.push("first-start");
       await sleep(15);
       events.push("first-end");
     });
 
-    const second = runtime.withSessionLock("u1", "s1", async () => {
+    const second = runtime.withSessionLock("s1", async () => {
       events.push("second-start");
       events.push("second-end");
     });

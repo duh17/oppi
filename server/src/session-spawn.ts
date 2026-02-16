@@ -114,7 +114,6 @@ export async function spawnPiHost(
   // Create gate TCP socket (extension connects via localhost)
   const gatePort = await deps.gate.createSessionSocket(
     session.id,
-    session.userId,
     workspace?.id || "",
   );
 
@@ -224,7 +223,6 @@ export async function spawnPiHost(
     env: {
       ...HOST_ENV,
       OPPI_SESSION: session.id,
-      OPPI_USER: session.userId,
       OPPI_GATE_HOST: "127.0.0.1",
       OPPI_GATE_PORT: String(gatePort),
     },
@@ -248,10 +246,10 @@ export async function spawnPiContainer(
   const key = session.id;
 
   // Register session with auth proxy (proxy validates session tokens on API requests)
-  deps.authProxy?.registerSession(session.id, session.userId);
+  deps.authProxy?.registerSession(session.id);
 
   // Create gate TCP socket (extension connects from container to host-gateway)
-  const gatePort = await deps.gate.createSessionSocket(session.id, session.userId, workspaceId);
+  const gatePort = await deps.gate.createSessionSocket(session.id, workspaceId);
 
   // Configure per-session policy for container (permissive — container IS the boundary)
   const presetName = workspace?.policyPreset || "container";
@@ -268,7 +266,6 @@ export async function spawnPiContainer(
   // Spawn pi in container
   const proc = deps.sandbox.spawnPi({
     sessionId: session.id,
-    userId: session.userId,
     workspaceId,
     userName,
     model: session.model,

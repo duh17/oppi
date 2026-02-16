@@ -479,9 +479,9 @@ export function countLines(text: string): number {
 export function appendSessionMessage(
   session: Session,
   message: Omit<SessionMessage, "id" | "sessionId">,
-  addMessage: (userId: string, sessionId: string, message: Omit<SessionMessage, "id" | "sessionId">) => void,
+  addMessage: (sessionId: string, message: Omit<SessionMessage, "id" | "sessionId">) => void,
 ): void {
-  addMessage(session.userId, session.id, message);
+  addMessage(session.id, message);
 
   // Keep the active in-memory session aligned with persisted stats.
   session.messageCount += 1;
@@ -507,7 +507,7 @@ export function applyMessageEndToSession(
   session: Session,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
   message: any,
-  addMessage: (userId: string, sessionId: string, msg: Omit<SessionMessage, "id" | "sessionId">) => void,
+  addMessage: (sessionId: string, msg: Omit<SessionMessage, "id" | "sessionId">) => void,
 ): void {
   const role = message?.role;
 

@@ -10,18 +10,18 @@ describe("WorkspaceRuntime session limits", () => {
       workspaceIdleTimeoutMs: 30 * 60_000,
     });
 
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w1", sessionId: "s1" });
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w1", sessionId: "s2" });
+    runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s1" });
+    runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s2" });
 
     expect(() => {
-      runtime.reserveSessionStart({ userId: "u1", workspaceId: "w1", sessionId: "s3" });
+      runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s3" });
     }).toThrow("Workspace session limit reached (2)");
 
-    runtime.markSessionReady({ userId: "u1", workspaceId: "w1", sessionId: "s1" });
-    runtime.releaseSession({ userId: "u1", workspaceId: "w1", sessionId: "s2" });
+    runtime.markSessionReady({ workspaceId: "w1", sessionId: "s1" });
+    runtime.releaseSession({ workspaceId: "w1", sessionId: "s2" });
 
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w1", sessionId: "s3" });
-    expect(runtime.getWorkspaceSessionCount("u1", "w1")).toBe(2);
+    runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s3" });
+    expect(runtime.getWorkspaceSessionCount("w1")).toBe(2);
   });
 
   it("enforces global limits across workspaces", () => {
@@ -32,15 +32,15 @@ describe("WorkspaceRuntime session limits", () => {
       workspaceIdleTimeoutMs: 30 * 60_000,
     });
 
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w1", sessionId: "s1" });
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w2", sessionId: "s2" });
+    runtime.reserveSessionStart({ workspaceId: "w1", sessionId: "s1" });
+    runtime.reserveSessionStart({ workspaceId: "w2", sessionId: "s2" });
 
     expect(() => {
-      runtime.reserveSessionStart({ userId: "u1", workspaceId: "w3", sessionId: "s3" });
+      runtime.reserveSessionStart({ workspaceId: "w3", sessionId: "s3" });
     }).toThrow("Global session limit reached (2)");
 
-    runtime.releaseSession({ userId: "u1", workspaceId: "w1", sessionId: "s1" });
-    runtime.reserveSessionStart({ userId: "u1", workspaceId: "w3", sessionId: "s3" });
+    runtime.releaseSession({ workspaceId: "w1", sessionId: "s1" });
+    runtime.reserveSessionStart({ workspaceId: "w3", sessionId: "s3" });
 
     expect(runtime.getGlobalSessionCount()).toBe(2);
   });

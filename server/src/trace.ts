@@ -3,7 +3,7 @@
  *
  * Pi saves full conversation history (including tool calls, tool results,
  * thinking, compaction, and branching) in JSONL files inside the sandbox:
- *   <sandboxBaseDir>/<userId>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/<timestamp>_<uuid>.jsonl
+ *   <sandboxBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/<timestamp>_<uuid>.jsonl
  *
  * This module reads those files and produces a structured session context
  * that iOS can render as a timeline — matching pi TUI's `buildSessionContext()`.
@@ -378,11 +378,10 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
  * Find and read the latest pi JSONL file for a workspace-scoped session sandbox.
  *
  * Layout:
- *   <sandboxBaseDir>/<userId>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/*.jsonl
+ *   <sandboxBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/*.jsonl
  */
 export function readSessionTrace(
   sandboxBaseDir: string,
-  userId: string,
   sessionId: string,
   workspaceId?: string,
   options: TraceReadOptions = {},
@@ -391,7 +390,6 @@ export function readSessionTrace(
 
   const sessionsDir = join(
     sandboxBaseDir,
-    userId,
     workspaceId,
     "sessions",
     sessionId,
@@ -409,12 +407,11 @@ export function readSessionTrace(
  */
 export function readSessionTraceByUuid(
   sandboxBaseDir: string,
-  userId: string,
   piSessionUuid: string,
   workspaceId?: string,
   options: TraceReadOptions = {},
 ): TraceEvent[] | null {
-  const candidateDirs = collectWorkspaceTraceDirs(sandboxBaseDir, userId, workspaceId);
+  const candidateDirs = collectWorkspaceTraceDirs(sandboxBaseDir, workspaceId);
 
   for (const sessionsDir of candidateDirs) {
     if (!existsSync(sessionsDir)) continue;
@@ -429,11 +426,10 @@ export function readSessionTraceByUuid(
 
 function collectWorkspaceTraceDirs(
   sandboxBaseDir: string,
-  userId: string,
   workspaceId?: string,
 ): string[] {
   if (workspaceId) {
-    const workspaceSessionsDir = join(sandboxBaseDir, userId, workspaceId, "sessions");
+    const workspaceSessionsDir = join(sandboxBaseDir, workspaceId, "sessions");
     if (!existsSync(workspaceSessionsDir)) return [];
 
     return readdirSync(workspaceSessionsDir).map((sessionDir) =>
@@ -441,14 +437,14 @@ function collectWorkspaceTraceDirs(
     );
   }
 
-  const userDir = join(sandboxBaseDir, userId);
-  if (!existsSync(userDir)) return [];
+  const baseDir = sandboxBaseDir;
+  if (!existsSync(baseDir)) return [];
 
   const traceDirs: string[] = [];
-  for (const workspaceDir of readdirSync(userDir)) {
+  for (const workspaceDir of readdirSync(baseDir)) {
     if (workspaceDir.startsWith(".") || workspaceDir.startsWith("_")) continue;
 
-    const workspaceSessionsDir = join(userDir, workspaceDir, "sessions");
+    const workspaceSessionsDir = join(baseDir, workspaceDir, "sessions");
     if (!existsSync(workspaceSessionsDir)) continue;
 
     for (const sessionDir of readdirSync(workspaceSessionsDir)) {

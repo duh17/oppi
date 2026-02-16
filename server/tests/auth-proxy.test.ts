@@ -130,7 +130,7 @@ describe("session lifecycle", () => {
   });
 
   it("rejects missing token with 401", async () => {
-    proxy.registerSession("sess-001", "user-001");
+    proxy.registerSession("sess-001");
     const { status } = await fetchProxy("/anthropic/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -155,7 +155,7 @@ describe("session lifecycle", () => {
   });
 
   it("rejects after removeSession with 403", async () => {
-    proxy.registerSession("sess-rm-test", "user-001");
+    proxy.registerSession("sess-rm-test");
     proxy.removeSession("sess-rm-test");
     const { status } = await fetchProxy("/anthropic/v1/messages", {
       method: "POST",
@@ -242,7 +242,7 @@ describe("OpenAI-Codex header injection", () => {
 
 describe("OpenAI-Codex e2e session validation", () => {
   it("request with valid fake JWT passes session check", async () => {
-    proxy.registerSession("sess-codex-e2e", "user-001");
+    proxy.registerSession("sess-codex-e2e");
 
     const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64");
     const payload = Buffer.from(JSON.stringify({
@@ -307,7 +307,7 @@ describe("expired token handling", () => {
     }));
     proxy.reloadAuth();
 
-    proxy.registerSession("sess-expired", "user-001");
+    proxy.registerSession("sess-expired");
     const { status } = await fetchProxy("/anthropic/v1/messages", {
       method: "POST",
       headers: {

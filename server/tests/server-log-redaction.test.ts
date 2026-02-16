@@ -36,14 +36,13 @@ describe("permission log redaction", () => {
 
     const line = formatPermissionRequestLog({
       requestId: "perm-1",
-      userId: "user-1",
       sessionId: "sess-1",
       tool: "bash",
       risk: "critical",
       displaySummary: summary,
     });
 
-    expect(line).toContain("[gate] Permission request perm-1 → user-1");
+    expect(line).toContain("[gate] Permission request perm-1 (session=sess-1");
     expect(line).toContain("tool=bash");
     expect(line).toContain("risk=critical");
     expect(line).toContain(`summaryChars=${summary.length}`);

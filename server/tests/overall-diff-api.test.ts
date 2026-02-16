@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
-import type { Session, User } from "../src/types.js";
+import type { Session } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -42,7 +42,6 @@ function makeSession(id: string): Session {
   const now = Date.now();
   return {
     id,
-    userId: "u1",
     workspaceId: "w1",
     status: "ready",
     createdAt: now,
@@ -54,10 +53,9 @@ function makeSession(id: string): Session {
   };
 }
 
-function workspaceTraceDir(baseDir: string, user: User, session: Session): string {
+function workspaceTraceDir(baseDir: string, session: Session): string {
   return join(
     baseDir,
-    user.id,
     session.workspaceId!,
     "sessions",
     session.id,
@@ -67,21 +65,20 @@ function workspaceTraceDir(baseDir: string, user: User, session: Session): strin
   );
 }
 
-function workspaceRootDir(baseDir: string, user: User, session: Session): string {
-  return join(baseDir, user.id, session.workspaceId!, "workspace");
+function workspaceRootDir(baseDir: string, session: Session): string {
+  return join(baseDir, session.workspaceId!, "workspace");
 }
 
 describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
   it("returns baseline/current text and net stats for edit revisions", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
-    const user = makeUser();
     const session = makeSession("s1");
 
     try {
-      const traceDir = workspaceTraceDir(baseDir, user, session);
+      const traceDir = workspaceTraceDir(baseDir, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = workspaceRootDir(baseDir, user, session);
+      const workspaceDir = workspaceRootDir(baseDir, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "B", "utf8");
 
@@ -121,8 +118,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (userId: string, sessionId: string) =>
-            userId === user.id && sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) =>
+            sessionId === session.id ? session : undefined,
           getWorkspace: () => undefined,
         },
         sandbox: {
@@ -137,7 +134,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         "GET",
         "/workspaces/w1/sessions/s1/overall-diff",
         new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
-        user,
         {} as never,
         res as never,
       );
@@ -170,11 +166,10 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
   it("returns 404 when requested path has no mutations", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
-    const user = makeUser();
     const session = makeSession("s1");
 
     try {
-      const traceDir = workspaceTraceDir(baseDir, user, session);
+      const traceDir = workspaceTraceDir(baseDir, session);
       mkdirSync(traceDir, { recursive: true });
       writeFileSync(join(traceDir, "20260211_uuid.jsonl"), "", "utf8");
 
@@ -195,7 +190,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         "GET",
         "/workspaces/w1/sessions/s1/overall-diff",
         new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
-        user,
         {} as never,
         res as never,
       );
@@ -208,7 +202,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
   it("returns 400 when path query parameter is missing", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
-    const user = makeUser();
     const session = makeSession("s1");
 
     try {
@@ -229,7 +222,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         "GET",
         "/workspaces/w1/sessions/s1/overall-diff",
         new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff"),
-        user,
         {} as never,
         res as never,
       );
@@ -243,14 +235,13 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
   it("supports namespaced write tool calls and ignores non-mutations", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
-    const user = makeUser();
     const session = makeSession("s1");
 
     try {
-      const traceDir = workspaceTraceDir(baseDir, user, session);
+      const traceDir = workspaceTraceDir(baseDir, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = workspaceRootDir(baseDir, user, session);
+      const workspaceDir = workspaceRootDir(baseDir, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "hello", "utf8");
 
@@ -290,8 +281,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (userId: string, sessionId: string) =>
-            userId === user.id && sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) =>
+            sessionId === session.id ? session : undefined,
           getWorkspace: () => undefined,
         },
         sandbox: {
@@ -306,7 +297,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         "GET",
         "/workspaces/w1/sessions/s1/overall-diff",
         new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
-        user,
         {} as never,
         res as never,
       );
@@ -332,14 +322,13 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
   it("supports workspace-scoped overall diff route", async () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oppi-server-overall-diff-"));
-    const user = makeUser();
     const session = makeSession("s1");
 
     try {
-      const traceDir = workspaceTraceDir(baseDir, user, session);
+      const traceDir = workspaceTraceDir(baseDir, session);
       mkdirSync(traceDir, { recursive: true });
 
-      const workspaceDir = workspaceRootDir(baseDir, user, session);
+      const workspaceDir = workspaceRootDir(baseDir, session);
       mkdirSync(workspaceDir, { recursive: true });
       writeFileSync(join(workspaceDir, "file.txt"), "B", "utf8");
 
@@ -372,8 +361,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
 
       const ctx = {
         storage: {
-          getSession: (userId: string, sessionId: string) =>
-            userId === user.id && sessionId === session.id ? session : undefined,
+          getSession: (sessionId: string) =>
+            sessionId === session.id ? session : undefined,
           getWorkspace: () => undefined,
         },
         sandbox: {
@@ -388,7 +377,6 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         "GET",
         "/workspaces/w1/sessions/s1/overall-diff",
         new URL("http://localhost/workspaces/w1/sessions/s1/overall-diff?path=file.txt"),
-        user,
         {} as never,
         res as never,
       );

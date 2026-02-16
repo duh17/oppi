@@ -10,7 +10,6 @@ import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
 
 const SESSION_ID = "test-session-1";
-const USER_ID = "test-user";
 
 let gate: GateServer;
 let client: Socket;
@@ -60,7 +59,7 @@ async function setupGuardedSession(): Promise<void> {
     setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 200);
   });
 
-  const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+  const port = await activeGate.createSessionSocket(SESSION_ID);
   await new Promise(r => setTimeout(r, 50));
   client = await connect(port);
 
@@ -76,7 +75,7 @@ async function setupGuardedSession(): Promise<void> {
 describe("GateServer", () => {
   it("completes guard handshake", async () => {
     gate = createGate("container");
-    const port = await gate.createSessionSocket(SESSION_ID, USER_ID);
+    const port = await gate.createSessionSocket(SESSION_ID);
     await new Promise(r => setTimeout(r, 50));
 
     client = await connect(port);
@@ -140,7 +139,7 @@ describe("GateServer", () => {
       setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    const port = await activeGate.createSessionSocket(SESSION_ID);
     await new Promise(r => setTimeout(r, 50));
     client = await connect(port);
 
@@ -170,7 +169,7 @@ describe("GateServer", () => {
       setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    const port = await activeGate.createSessionSocket(SESSION_ID);
     await new Promise(r => setTimeout(r, 50));
     client = await connect(port);
 
@@ -203,7 +202,7 @@ describe("GateServer", () => {
       setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 20);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID);
+    const port = await activeGate.createSessionSocket(SESSION_ID);
     await new Promise(r => setTimeout(r, 50));
     client = await connect(port);
 
@@ -237,7 +236,7 @@ describe("GateServer", () => {
       activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID, "w1");
+    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
     await new Promise((r) => setTimeout(r, 50));
     client = await connect(port);
 
@@ -280,7 +279,7 @@ describe("GateServer", () => {
       activeGate.resolveDecision(pending.id, "allow", "workspace", 10 * 365 * 24 * 60 * 60 * 1000);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, USER_ID, "w1");
+    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
     await new Promise((r) => setTimeout(r, 50));
     client = await connect(port);
 

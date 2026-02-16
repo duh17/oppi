@@ -76,7 +76,6 @@ function makeAllowlist(domains: string[]): string {
 const ruleCtx = {
   sessionId: "sess-1",
   workspaceId: "ws-1",
-  userId: "user-1",
   risk: "medium" as RiskLevel,
 };
 
@@ -410,7 +409,7 @@ describe("AuditLog", () => {
   it("record() assigns id and timestamp", () => {
     const { log } = makeAudit();
     const entry = log.record({
-      sessionId: "s1", workspaceId: "ws1", userId: "u1",
+      sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "git status", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default",
     });
@@ -420,10 +419,10 @@ describe("AuditLog", () => {
 
   it("query() returns entries in reverse chronological order", () => {
     const { log } = makeAudit();
-    log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+    log.record({ sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "first", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
-    log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+    log.record({ sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "second", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
@@ -435,10 +434,10 @@ describe("AuditLog", () => {
 
   it("query with sessionId filters", () => {
     const { log } = makeAudit();
-    log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+    log.record({ sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "s1-cmd", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
-    log.record({ sessionId: "s2", workspaceId: "ws1", userId: "u1",
+    log.record({ sessionId: "s2", workspaceId: "ws1",
       tool: "bash", displaySummary: "s2-cmd", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
@@ -447,16 +446,16 @@ describe("AuditLog", () => {
     expect(s1[0].sessionId).toBe("s1");
   });
 
-  it("query with userId/workspaceId filters", () => {
+  it("query with workspaceId filters", () => {
     const { log } = makeAudit();
-    log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+    log.record({ sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "u1-ws1", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
-    log.record({ sessionId: "s2", workspaceId: "ws2", userId: "u2",
+    log.record({ sessionId: "s2", workspaceId: "ws2",
       tool: "bash", displaySummary: "u2-ws2", risk: "low",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
-    const filtered = log.query({ userId: "u1", workspaceId: "ws1" });
+    const filtered = log.query({ workspaceId: "ws1" });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].displaySummary).toBe("u1-ws1");
   });
@@ -464,7 +463,7 @@ describe("AuditLog", () => {
   it("query with limit", () => {
     const { log } = makeAudit();
     for (let i = 0; i < 5; i++) {
-      log.record({ sessionId: "s1", workspaceId: "ws1", userId: "u1",
+      log.record({ sessionId: "s1", workspaceId: "ws1",
         tool: "bash", displaySummary: `cmd-${i}`, risk: "low",
         decision: "allow", resolvedBy: "policy", layer: "default" });
     }
@@ -480,7 +479,7 @@ describe("AuditLog", () => {
     for (let i = 0; i < 5; i++) {
       const entry = {
         id: `e${i}`, timestamp: baseTs + i * 1000,
-        sessionId: "s1", workspaceId: "ws1", userId: "u1",
+        sessionId: "s1", workspaceId: "ws1",
         tool: "bash", displaySummary: `cmd-${i}`, risk: "low",
         decision: "allow", resolvedBy: "policy", layer: "default",
       };
@@ -495,7 +494,7 @@ describe("AuditLog", () => {
   it("user choice with learnedRuleId recorded", () => {
     const { log } = makeAudit();
     log.record({
-      sessionId: "s1", workspaceId: "ws1", userId: "u1",
+      sessionId: "s1", workspaceId: "ws1",
       tool: "bash", displaySummary: "git push", risk: "medium",
       decision: "allow", resolvedBy: "user", layer: "user_response",
       userChoice: { action: "allow", scope: "global", learnedRuleId: "rule-abc" },

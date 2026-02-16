@@ -153,7 +153,7 @@ describe("host preset: host-control flows gated", () => {
   it("asks for direct device install via devicectl", () => {
     expect(
       policy.evaluate(
-        bash("xcrun devicectl device install app --device 0000 /tmp/PiRemote.app"),
+        bash("xcrun devicectl device install app --device 0000 /tmp/Oppi.app"),
       ).action,
     ).toBe("ask");
   });

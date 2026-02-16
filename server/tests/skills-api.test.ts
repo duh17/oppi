@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import { SkillRegistry, UserSkillStore } from "../src/skills.js";
-import type { User, Workspace, Session } from "../src/types.js";
+import type { Workspace, Session } from "../src/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 // ─── Helpers ───
@@ -74,12 +74,7 @@ function makeRequest(body: unknown): IncomingMessage {
   return readable as unknown as IncomingMessage;
 }
 
-const USER: User = {
-  id: "u1",
-  name: "Bob",
-  token: "tok",
-  createdAt: Date.now(),
-};
+// User object removed — single-owner server
 
 // ─── Test Setup ───
 
@@ -97,7 +92,6 @@ function makeWorkspace(
   const now = Date.now();
   return {
     id,
-    userId: "u1",
     name: `ws-${id}`,
     runtime: "container",
     skills,
@@ -170,7 +164,6 @@ async function callRoute(
     method,
     url.pathname,
     url,
-    USER,
     req as unknown as IncomingMessage,
     res as unknown as ServerResponse,
   );
@@ -288,7 +281,7 @@ describe("PUT /me/skills/:name", () => {
     expect(data.skill.name).toBe("scripted");
 
     // Verify files were written
-    const content = userStore.readFile("u1", "scripted", "scripts/run.sh");
+    const content = userStore.readFile("scripted", "scripts/run.sh");
     expect(content).toContain("echo hello");
   });
 
@@ -350,7 +343,7 @@ describe("DELETE /me/skills/:name", () => {
     expect(res.statusCode).toBe(204);
 
     // Verify removed
-    expect(userStore.getSkill("u1", "doomed")).toBeNull();
+    expect(userStore.getSkill("doomed")).toBeNull();
   });
 
   it("rejects deleting a built-in skill", async () => {

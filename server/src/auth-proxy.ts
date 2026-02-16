@@ -225,7 +225,6 @@ export function buildUpstreamUrl(upstreamBase: string, routePrefix: string, inco
 // ─── Types ───
 
 interface SessionEntry {
-  userId: string;
   providers: Set<string>;
 }
 
@@ -281,9 +280,9 @@ export class AuthProxy {
 
   // ─── Session Registry ───
 
-  registerSession(sessionId: string, userId: string, providers?: string[]): void {
+  registerSession(sessionId: string, providers?: string[]): void {
     const providerSet = new Set(providers ?? this.getHostProviders());
-    this.sessions.set(sessionId, { userId, providers: providerSet });
+    this.sessions.set(sessionId, { providers: providerSet });
     console.log(`[auth-proxy] Session registered: ${sessionId} (${[...providerSet].join(", ")})`);
   }
 

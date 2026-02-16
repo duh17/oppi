@@ -34,8 +34,8 @@ describe("session-spawn spawnPiContainer", () => {
 
     await awaitProcessReady(spawnPiContainer(session, "w-container", "Bob", workspace, deps), proc);
 
-    expect(registerSession).toHaveBeenCalledWith("s1", "u1");
-    expect(createSessionSocket).toHaveBeenCalledWith("s1", "u1", "w-container");
+    expect(registerSession).toHaveBeenCalledWith("s1");
+    expect(createSessionSocket).toHaveBeenCalledWith("s1", "w-container");
 
     const containerPolicy = getSpawnPolicy(setSessionPolicy, "s1", "container");
     const containerDecision = containerPolicy.evaluate({
@@ -48,7 +48,6 @@ describe("session-spawn spawnPiContainer", () => {
     expect(spawnPi).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: "s1",
-        userId: "u1",
         workspaceId: "w-container",
         userName: "Bob",
         model: "openai-codex/gpt-5.3-codex",
@@ -74,7 +73,7 @@ describe("session-spawn spawnPiContainer", () => {
 
     await awaitProcessReady(spawnPiContainer(session, "w-no-auth", undefined, undefined, deps), proc);
 
-    expect(createSessionSocket).toHaveBeenCalledWith("s1", "u1", "w-no-auth");
+    expect(createSessionSocket).toHaveBeenCalledWith("s1", "w-no-auth");
 
     const containerPolicy = getSpawnPolicy(setSessionPolicy, "s1", "container");
     const denyDecision = containerPolicy.evaluate({
@@ -87,7 +86,6 @@ describe("session-spawn spawnPiContainer", () => {
     expect(spawnPi).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: "s1",
-        userId: "u1",
         workspaceId: "w-no-auth",
         userName: undefined,
         model: undefined,

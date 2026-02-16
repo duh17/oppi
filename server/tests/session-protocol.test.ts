@@ -12,7 +12,6 @@ function makeSession(): Session {
   const now = Date.now();
   return {
     id: "s1",
-    userId: "u1",
     status: "ready",
     createdAt: now,
     lastActivity: now,

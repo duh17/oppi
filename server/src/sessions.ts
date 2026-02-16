@@ -82,7 +82,6 @@ export interface SessionCatchUpResponse {
 }
 
 export interface SessionBroadcastEvent {
-  userId: string;
   sessionId: string;
   event: ServerMessage;
   durable: boolean;
@@ -220,7 +219,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Single-user runtime key.
    */
-  private sessionKey(_userId: string, sessionId: string): string {
+  private sessionKey(sessionId: string): string {
     return sessionId;
   }
 
@@ -235,12 +234,11 @@ export class SessionManager extends EventEmitter {
    * Start a new session — spawns pi on the host or in a container.
    */
   async startSession(
-    userId: string,
     sessionId: string,
     userName?: string,
     workspace?: Workspace,
   ): Promise<Session> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
 
     const existing = this.active.get(key);
     if (existing) {
@@ -256,13 +254,13 @@ export class SessionManager extends EventEmitter {
       return pending;
     }
 
-    const promise = this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+    const promise = this.runtimeManager.withSessionLock(sessionId, async () => {
       const active = this.active.get(key);
       if (active) {
         this.resetIdleTimer(key);
         return active.session;
       }
-      return this.startSessionInner(userId, sessionId, userName, workspace);
+      return this.startSessionInner(sessionId, userName, workspace);
     });
 
     this.starting.set(key, promise);
@@ -274,21 +272,19 @@ export class SessionManager extends EventEmitter {
   }
 
   private async startSessionInner(
-    userId: string,
     sessionId: string,
     userName?: string,
     workspace?: Workspace,
   ): Promise<Session> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
 
-    const session = this.storage.getSession(userId, sessionId);
+    const session = this.storage.getSession(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
 
     return this.runtimeManager.withWorkspaceLock(
-      identity.userId,
-      identity.workspaceId,
+            identity.workspaceId,
       async () => {
         this.runtimeManager.reserveSessionStart(identity);
 
@@ -306,7 +302,7 @@ export class SessionManager extends EventEmitter {
 
           // Validate sandbox (container mode only — host mode has no sandbox to validate)
           if (runtime === "container") {
-            const { errors, warnings } = this.sandbox.validateSession(userId, sessionId, {
+            const { errors, warnings } = this.sandbox.validateSession(sessionId, {
               memoryEnabled: workspace?.memoryEnabled,
               workspaceId: identity.workspaceId,
             });
@@ -328,11 +324,10 @@ export class SessionManager extends EventEmitter {
               // the workspace container so we don't leave an idle shell around.
               if (
                 this.runtimeManager.getWorkspaceSessionCount(
-                  identity.userId,
-                  identity.workspaceId,
+                                    identity.workspaceId,
                 ) <= 1
               ) {
-                await this.sandbox.stopWorkspaceContainer(identity.userId, identity.workspaceId);
+                await this.sandbox.stopWorkspaceContainer(identity.workspaceId);
               }
 
               this.gate.destroySessionSocket(sessionId);
@@ -386,10 +381,10 @@ export class SessionManager extends EventEmitter {
 
           if (
             runtime === "container" &&
-            this.runtimeManager.getWorkspaceSessionCount(identity.userId, identity.workspaceId) ===
+            this.runtimeManager.getWorkspaceSessionCount(identity.workspaceId) ===
               0
           ) {
-            await this.sandbox.stopWorkspaceContainer(identity.userId, identity.workspaceId);
+            await this.sandbox.stopWorkspaceContainer(identity.workspaceId);
           }
 
           throw err;
@@ -403,8 +398,7 @@ export class SessionManager extends EventEmitter {
     workspace?: Workspace,
   ): WorkspaceSessionIdentity {
     return {
-      userId: session.userId,
-      workspaceId: this.resolveSessionWorkspaceId(session, workspace),
+            workspaceId: this.resolveSessionWorkspaceId(session, workspace),
       sessionId: session.id,
     };
   }
@@ -601,8 +595,8 @@ export class SessionManager extends EventEmitter {
    * Send extension_ui_response back to pi on stdin.
    * Called by server.ts when phone responds to a UI dialog.
    */
-  respondToUIRequest(userId: string, sessionId: string, response: ExtensionUIResponse): boolean {
-    const key = this.sessionKey(userId, sessionId);
+  respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) return false;
 
@@ -737,7 +731,6 @@ export class SessionManager extends EventEmitter {
    * - If agent is streaming: must specify behavior
    */
   async sendPrompt(
-    userId: string,
     sessionId: string,
     message: string,
     opts?: {
@@ -748,7 +741,7 @@ export class SessionManager extends EventEmitter {
       timestamp?: number;
     },
   ): Promise<void> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -776,8 +769,8 @@ export class SessionManager extends EventEmitter {
         content: message,
         timestamp: opts?.timestamp ?? Date.now(),
       },
-      (uid, sid, msg) => {
-        this.storage.addSessionMessage(uid, sid, msg);
+      (sid, msg) => {
+        this.storage.addSessionMessage(sid, msg);
       },
     );
 
@@ -819,7 +812,6 @@ export class SessionManager extends EventEmitter {
    * surface feedback instead of appearing stuck.
    */
   async sendSteer(
-    userId: string,
     sessionId: string,
     message: string,
     opts?: {
@@ -828,7 +820,7 @@ export class SessionManager extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -864,7 +856,6 @@ export class SessionManager extends EventEmitter {
    * Guard: follow-up queueing is only meaningful while a turn is streaming.
    */
   async sendFollowUp(
-    userId: string,
     sessionId: string,
     message: string,
     opts?: {
@@ -873,7 +864,7 @@ export class SessionManager extends EventEmitter {
       requestId?: string;
     },
   ): Promise<void> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -929,10 +920,9 @@ export class SessionManager extends EventEmitter {
    * Used by REST trace endpoint to recover host-session traces.
    */
   async refreshSessionState(
-    userId: string,
     sessionId: string,
   ): Promise<{ sessionFile?: string; sessionId?: string } | null> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) return null;
 
@@ -950,17 +940,17 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private getRememberedThinkingLevel(userId: string, modelId: string | undefined): string | undefined {
+  private getRememberedThinkingLevel(modelId: string | undefined): string | undefined {
     const normalizedModelId = modelId?.trim();
     if (!normalizedModelId) {
       return undefined;
     }
 
     const storageWithPrefs = this.storage as unknown as {
-      getModelThinkingLevelPreference?: (userId: string, modelId: string) => string | undefined;
+      getModelThinkingLevelPreference?: (modelId: string) => string | undefined;
     };
 
-    return storageWithPrefs.getModelThinkingLevelPreference?.(userId, normalizedModelId);
+    return storageWithPrefs.getModelThinkingLevelPreference?.(normalizedModelId);
   }
 
   private persistThinkingPreference(session: Session): void {
@@ -971,10 +961,10 @@ export class SessionManager extends EventEmitter {
     }
 
     const storageWithPrefs = this.storage as unknown as {
-      setModelThinkingLevelPreference?: (userId: string, modelId: string, level: string) => void;
+      setModelThinkingLevelPreference?: (modelId: string, level: string) => void;
     };
 
-    storageWithPrefs.setModelThinkingLevelPreference?.(session.userId, modelId, level);
+    storageWithPrefs.setModelThinkingLevelPreference?.(modelId, level);
   }
 
   /**
@@ -985,7 +975,7 @@ export class SessionManager extends EventEmitter {
     const model = session.model?.trim();
     if (!model || !session.workspaceId) return;
 
-    const workspace = this.storage.getWorkspace(session.userId, session.workspaceId);
+    const workspace = this.storage.getWorkspace(session.workspaceId);
     if (!workspace || workspace.lastUsedModel === model) return;
 
     workspace.lastUsedModel = model;
@@ -994,7 +984,7 @@ export class SessionManager extends EventEmitter {
   }
 
   private async applyRememberedThinkingLevel(key: string, active: ActiveSession): Promise<boolean> {
-    const preferred = this.getRememberedThinkingLevel(active.session.userId, active.session.model);
+    const preferred = this.getRememberedThinkingLevel(active.session.model);
     if (!preferred) {
       return false;
     }
@@ -1034,12 +1024,11 @@ export class SessionManager extends EventEmitter {
    * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
    */
   async runRpcCommand(
-    userId: string,
     sessionId: string,
     command: Record<string, unknown>,
     timeoutMs = 30_000,
   ): Promise<unknown> {
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     if (!this.active.has(key)) {
       throw new Error(`Session not active: ${sessionId}`);
     }
@@ -1172,7 +1161,6 @@ export class SessionManager extends EventEmitter {
    * broadcast back as an `rpc_result` ServerMessage.
    */
   async forwardRpcCommand(
-    userId: string,
     sessionId: string,
     message: Record<string, unknown>,
     requestId?: string,
@@ -1182,7 +1170,7 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Command not allowed: ${cmdType}`);
     }
 
-    const key = this.sessionKey(userId, sessionId);
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
@@ -1330,10 +1318,10 @@ export class SessionManager extends EventEmitter {
    * Abort the current turn. Does NOT stop the session — the pi process
    * stays alive and ready for the next prompt.
    */
-  async sendAbort(userId: string, sessionId: string): Promise<void> {
-    const key = this.sessionKey(userId, sessionId);
+  async sendAbort(sessionId: string): Promise<void> {
+    const key = this.sessionKey(sessionId);
 
-    await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+    await this.runtimeManager.withSessionLock(sessionId, async () => {
       const active = this.active.get(key);
       if (!active) {
         return;
@@ -1483,8 +1471,8 @@ export class SessionManager extends EventEmitter {
         break;
 
       case "message_end":
-        applyMessageEndToSession(session, event.message, (userId, sessionId, msg) => {
-          this.storage.addSessionMessage(userId, sessionId, msg);
+        applyMessageEndToSession(session, event.message, (sessionId, msg) => {
+          this.storage.addSessionMessage(sessionId, msg);
         });
         break;
     }
@@ -1583,20 +1571,19 @@ export class SessionManager extends EventEmitter {
     this.active.delete(key);
 
     this.runtimeManager.releaseSession({
-      userId: active.session.userId,
-      workspaceId: active.workspaceId,
+            workspaceId: active.workspaceId,
       sessionId: active.session.id,
     });
 
     if (active.runtime === "container" && !this.hasActiveContainerSession(active.workspaceId)) {
-      this.scheduleWorkspaceIdleStop(active.session.userId, active.workspaceId);
+      this.scheduleWorkspaceIdleStop(active.workspaceId);
     }
   }
 
   // ─── Subscribe / Broadcast ───
 
-  subscribe(userId: string, sessionId: string, callback: (msg: ServerMessage) => void): () => void {
-    const key = this.sessionKey(userId, sessionId);
+  subscribe(sessionId: string, callback: (msg: ServerMessage) => void): () => void {
+    const key = this.sessionKey(sessionId);
     const active = this.active.get(key);
     if (active) {
       active.subscribers.add(callback);
@@ -1639,8 +1626,7 @@ export class SessionManager extends EventEmitter {
     });
 
     this.emit("session_event", {
-      userId: active.session.userId,
-      sessionId: active.session.id,
+            sessionId: active.session.id,
       event: sequenced,
       durable: true,
     } satisfies SessionBroadcastEvent);
@@ -1663,8 +1649,7 @@ export class SessionManager extends EventEmitter {
     // through EventEmitter to avoid hot-path overhead.
     if (message.type === "state") {
       this.emit("session_event", {
-        userId: active.session.userId,
-        sessionId: active.session.id,
+                sessionId: active.session.id,
         event: message,
         durable: false,
       } satisfies SessionBroadcastEvent);
@@ -1871,14 +1856,14 @@ export class SessionManager extends EventEmitter {
     }, this.stopAbortTimeoutMs);
   }
 
-  async stopSession(userId: string, sessionId: string): Promise<void> {
-    const key = this.sessionKey(userId, sessionId);
+  async stopSession(sessionId: string): Promise<void> {
+    const key = this.sessionKey(sessionId);
 
-    await this.runtimeManager.withSessionLock(userId, sessionId, async () => {
+    await this.runtimeManager.withSessionLock(sessionId, async () => {
       const active = this.active.get(key);
       if (!active) return;
 
-      await this.runtimeManager.withWorkspaceLock(userId, active.workspaceId, async () => {
+      await this.runtimeManager.withWorkspaceLock(active.workspaceId, async () => {
         if (!this.beginPendingStop(key, active, "terminate", "user")) {
           this.promotePendingStop(key, active, "terminate", "user");
         }
@@ -1909,7 +1894,7 @@ export class SessionManager extends EventEmitter {
         if (!active) {
           return Promise.resolve();
         }
-        return this.stopSession(active.session.userId, active.session.id);
+        return this.stopSession(active.session.id);
       }),
     );
 
@@ -1923,21 +1908,21 @@ export class SessionManager extends EventEmitter {
 
   // ─── State Queries ───
 
-  isActive(userId: string, sessionId: string): boolean {
-    return this.active.has(this.sessionKey(userId, sessionId));
+  isActive(sessionId: string): boolean {
+    return this.active.has(this.sessionKey(sessionId));
   }
 
-  getActiveSession(userId: string, sessionId: string): Session | undefined {
-    return this.active.get(this.sessionKey(userId, sessionId))?.session;
+  getActiveSession(sessionId: string): Session | undefined {
+    return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
-  getCurrentSeq(userId: string, sessionId: string): number {
-    const active = this.active.get(this.sessionKey(userId, sessionId));
+  getCurrentSeq(sessionId: string): number {
+    const active = this.active.get(this.sessionKey(sessionId));
     return active?.seq ?? 0;
   }
 
-  getCatchUp(userId: string, sessionId: string, sinceSeq: number): SessionCatchUpResponse | null {
-    const active = this.active.get(this.sessionKey(userId, sessionId));
+  getCatchUp(sessionId: string, sinceSeq: number): SessionCatchUpResponse | null {
+    const active = this.active.get(this.sessionKey(sessionId));
     if (!active) {
       return null;
     }
@@ -1953,8 +1938,8 @@ export class SessionManager extends EventEmitter {
     };
   }
 
-  hasPendingUIRequest(userId: string, sessionId: string, requestId: string): boolean {
-    const active = this.active.get(this.sessionKey(userId, sessionId));
+  hasPendingUIRequest(sessionId: string, requestId: string): boolean {
+    const active = this.active.get(this.sessionKey(sessionId));
     return active?.pendingUIRequests.has(requestId) ?? false;
   }
 
@@ -1968,7 +1953,7 @@ export class SessionManager extends EventEmitter {
       console.log(`${ts()} [session] idle timeout: ${key}`);
       const active = this.active.get(key);
       if (!active) return;
-      void this.stopSession(active.session.userId, active.session.id);
+      void this.stopSession(active.session.id);
     }, timeoutMs);
 
     this.idleTimers.set(key, timer);
@@ -2004,7 +1989,7 @@ export class SessionManager extends EventEmitter {
     return false;
   }
 
-  private scheduleWorkspaceIdleStop(userId: string, workspaceId: string): void {
+  private scheduleWorkspaceIdleStop(workspaceId: string): void {
     this.clearWorkspaceIdleTimer(workspaceId);
 
     const key = this.workspaceKey(workspaceId);
@@ -2016,7 +2001,7 @@ export class SessionManager extends EventEmitter {
       }
 
       console.log(`${ts()} [workspace] idle timeout: ${key}`);
-      void this.sandbox.stopWorkspaceContainer(userId, workspaceId);
+      void this.sandbox.stopWorkspaceContainer(workspaceId);
       this.workspaceIdleTimers.delete(key);
     }, timeoutMs);
 

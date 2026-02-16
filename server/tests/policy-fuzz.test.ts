@@ -78,7 +78,7 @@ describe("external actions gated", () => {
     "./ios/scripts/build-install.sh --launch",
     "./scripts/ios-dev-up.sh -- --device ABC",
     "npx tsx src/index.ts serve",
-    "xcrun devicectl device install app --device 0000 /tmp/PiRemote.app",
+    "xcrun devicectl device install app --device 0000 /tmp/Oppi.app",
   ];
 
   for (const cmd of askCmds) {
