@@ -11,7 +11,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 import type { RiskLevel } from "./policy.js";
 
 // ─── Types ───
@@ -62,7 +62,7 @@ export class RuleStore {
   add(input: Omit<LearnedRule, "id" | "createdAt">): LearnedRule {
     const rule: LearnedRule = {
       ...input,
-      id: nanoid(12),
+      id: generateId(12),
       createdAt: Date.now(),
     };
 

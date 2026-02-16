@@ -8,7 +8,7 @@
  * 4. Default action
  */
 
-import { minimatch } from "minimatch";
+import { globMatch } from "./glob.js";
 import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname as pathDirname, resolve as pathResolve } from "node:path";
@@ -2326,8 +2326,8 @@ export class PolicyEngine {
     if (rule.pattern) {
       const target = this.getMatchTarget(tool, input);
 
-      // For file-path tools (read, write, edit), minimatch is appropriate.
-      if (!minimatch(target, rule.pattern, { dot: true })) {
+      // For file-path tools (read, write, edit), glob match against path.
+      if (!globMatch(target, rule.pattern)) {
         return false;
       }
     }

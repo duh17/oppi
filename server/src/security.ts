@@ -11,7 +11,7 @@ import {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 import type { SecurityProfile, ServerIdentityConfig } from "./types.js";
 
 export interface InviteV2Payload {
@@ -173,7 +173,7 @@ export function createSignedInviteV2(
     kid: identity.keyId,
     iat,
     exp,
-    nonce: nanoid(16),
+    nonce: generateId(16),
     publicKey: identity.publicKeyRaw,
     payload,
   };

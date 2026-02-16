@@ -10,7 +10,7 @@
 
 import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 import type { RiskLevel } from "./policy.js";
 
 // ─── Types ───
@@ -66,7 +66,7 @@ export class AuditLog {
   record(entry: Omit<AuditEntry, "id" | "timestamp">): AuditEntry {
     const full: AuditEntry = {
       ...entry,
-      id: nanoid(12),
+      id: generateId(12),
       timestamp: Date.now(),
     };
 

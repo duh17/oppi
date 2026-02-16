@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 import type {
   Session,
   SessionMessage,
@@ -702,7 +702,7 @@ export class Storage {
   // ─── Pairing ───
 
   private static generateToken(): string {
-    return `sk_${nanoid(24)}`;
+    return `sk_${generateId(24)}`;
   }
 
   /** Whether the server has been paired (has a bearer token). */
@@ -794,7 +794,7 @@ export class Storage {
   }
 
   createSession(name?: string, model?: string): Session {
-    const id = nanoid(8);
+    const id = generateId(8);
 
     const session: Session = {
       id,
@@ -906,7 +906,7 @@ export class Storage {
 
     const fullMessage: SessionMessage = {
       ...message,
-      id: nanoid(8),
+      id: generateId(8),
       sessionId,
     };
 
@@ -948,7 +948,7 @@ export class Storage {
   }
 
   createWorkspace(req: CreateWorkspaceRequest): Workspace {
-    const id = nanoid(8);
+    const id = generateId(8);
     const now = Date.now();
 
     const policyPreset = req.policyPreset || "container";

@@ -20,7 +20,7 @@
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { nanoid } from "nanoid";
+import { generateId } from "./id.js";
 import type { PolicyEngine, RiskLevel } from "./policy.js";
 import {
   addDomainToAllowlist,
@@ -511,7 +511,7 @@ export class GateServer extends EventEmitter {
     }
 
     // action === "ask" → create pending decision, wait for phone
-    const requestId = nanoid(12);
+    const requestId = generateId(12);
     const resolutionOptions = policy.getResolutionOptions(req, decision);
 
     const response = await new Promise<GateResponse>((resolve) => {
