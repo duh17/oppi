@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let log = Logger(subsystem: "dev.chenda.Oppi", category: "ChatSession")
+private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "ChatSession")
 
 /// Owns connection lifecycle, history loading, and state reconciliation for a chat session.
 ///
@@ -172,6 +172,11 @@ final class ChatSessionManager {
     /// Opens the WebSocket stream, loads cached history immediately for
     /// instant UI, then refreshes from server in background. Processes
     /// live events until the stream ends or the task is cancelled.
+    ///
+    /// **Stopped sessions**: If the session is stopped, loads cached + fresh
+    /// history but does NOT open a WebSocket (which would auto-resume the
+    /// pi process on the server). The user must explicitly resume via the
+    /// "Resume" button in the footer.
     func connect(
         connection: ServerConnection,
         reducer: TimelineReducer,
@@ -228,6 +233,23 @@ final class ChatSessionManager {
                 needsInitialScroll = wasNearBottom
             }
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+        }
+
+        // Stopped sessions: load fresh history but do NOT open a WebSocket.
+        // Opening the WS would auto-resume the pi process on the server.
+        // The user must explicitly tap "Resume" to restart the session.
+        let sessionStatus = sessionStore.sessions.first(where: { $0.id == sessionId })?.status
+        if sessionStatus == .stopped {
+            log.info("Session \(self.sessionId) is stopped — loading history only (no WS)")
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: latestTraceSignature
+            )
+            // Wait for history to finish, then mark sync done
+            return
         }
 
         guard let stream = openSessionStream(connection: connection, sessionStore: sessionStore) else {

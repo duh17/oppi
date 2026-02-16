@@ -249,7 +249,19 @@ struct ChatView: View {
     @ViewBuilder
     private var footerArea: some View {
         if isStopped {
-            SessionEndedFooter(session: session)
+            SessionEndedFooter(
+                session: session,
+                isResuming: actionHandler.isResuming,
+                onResume: {
+                    actionHandler.resumeSession(
+                        connection: connection,
+                        reducer: reducer,
+                        sessionStore: sessionStore,
+                        sessionManager: sessionManager,
+                        sessionId: sessionId
+                    )
+                }
+            )
         } else {
             VStack(spacing: 8) {
                 ChatInputBar(

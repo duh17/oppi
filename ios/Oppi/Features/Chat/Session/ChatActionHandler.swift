@@ -2,7 +2,7 @@ import FoundationModels
 import os.log
 import SwiftUI
 
-private let log = Logger(subsystem: "dev.chenda.Oppi", category: "Action")
+private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "Action")
 
 /// Handles user actions in the chat: sending prompts, stopping the agent,
 /// model/thinking changes, and session management.
@@ -38,7 +38,7 @@ final class ChatActionHandler {
     private static let autoTitleSourceLimit = 600
     private static let autoTitleMaxLength = 48
     private static let autoTitleMaxWords = 6
-    static let autoTitleEnabledDefaultsKey = "dev.chenda.Oppi.session.autoTitle.enabled"
+    static let autoTitleEnabledDefaultsKey = "\(AppIdentifiers.subsystem).session.autoTitle.enabled"
     private static var isAutoTitleEnabled: Bool {
         UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? true
     }
@@ -188,6 +188,53 @@ final class ChatActionHandler {
                 try await connection.runBash(command)
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Bash failed: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    // MARK: - Resume
+
+    private(set) var isResuming = false
+
+    /// Resume a stopped session via the REST endpoint, then reconnect the WS stream.
+    func resumeSession(
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionStore: SessionStore,
+        sessionManager: ChatSessionManager,
+        sessionId: String
+    ) {
+        guard !isResuming else { return }
+        isResuming = true
+
+        Task { @MainActor in
+            defer { isResuming = false }
+
+            guard let api = connection.apiClient else {
+                reducer.process(.error(sessionId: sessionId, message: "No connection available"))
+                return
+            }
+
+            guard let workspaceId = sessionStore.workspaceId(for: sessionId),
+                  !workspaceId.isEmpty else {
+                reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
+                return
+            }
+
+            do {
+                let updated = try await api.resumeWorkspaceSession(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId
+                )
+                sessionStore.upsert(updated)
+
+                // Trigger reconnect which will now open the WS since session is no longer stopped
+                sessionManager.reconnect()
+            } catch {
+                reducer.process(.error(
+                    sessionId: sessionId,
+                    message: "Resume failed: \(error.localizedDescription)"
+                ))
             }
         }
     }

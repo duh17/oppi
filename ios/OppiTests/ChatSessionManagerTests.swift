@@ -109,12 +109,19 @@ struct ChatSessionManagerTests {
     }
 
     @MainActor
-    @Test func stoppedSessionExitDoesNotScheduleReconnect() async {
+    @Test func stoppedSessionDoesNotOpenWebSocket() async {
         let sessionId = "stopped-session"
         let manager = ChatSessionManager(sessionId: sessionId)
-        let streams = ScriptedStreamFactory()
-        manager._streamSessionForTesting = { _ in streams.makeStream() }
-        manager._loadHistoryForTesting = { _, _ in nil }
+        var streamCreated = false
+        manager._streamSessionForTesting = { _ in
+            streamCreated = true
+            return AsyncStream { $0.finish() }
+        }
+        var historyLoaded = false
+        manager._loadHistoryForTesting = { _, _ in
+            historyLoaded = true
+            return nil
+        }
 
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeCredentials())
@@ -127,11 +134,12 @@ struct ChatSessionManagerTests {
             await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
         }
 
-        #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .stopped)))
-        streams.finish(index: 0)
         await connectTask.value
 
+        // Stopped session should NOT open a WebSocket stream
+        #expect(!streamCreated, "Stopped session should not open a WebSocket stream")
+        // But should still load history
+        #expect(historyLoaded, "Stopped session should still load history")
         #expect(manager.connectionGeneration == 0)
 
         manager.cleanup()
@@ -748,7 +756,6 @@ struct ChatSessionManagerTests {
         let now = Date()
         return Session(
             id: id,
-            userId: "u1",
             workspaceId: nil,
             workspaceName: nil,
             name: "Session",

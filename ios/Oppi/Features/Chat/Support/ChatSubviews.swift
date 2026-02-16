@@ -69,6 +69,8 @@ struct JumpToBottomHintButton: View {
 
 struct SessionEndedFooter: View {
     let session: Session?
+    var isResuming: Bool = false
+    var onResume: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 6) {
@@ -103,6 +105,33 @@ struct SessionEndedFooter: View {
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
+
+            if let onResume {
+                Button {
+                    onResume()
+                } label: {
+                    HStack(spacing: 6) {
+                        if isResuming {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.tokyoBg)
+                        } else {
+                            Image(systemName: "play.fill")
+                                .font(.subheadline)
+                        }
+                        Text(isResuming ? "Resuming…" : "Resume Session")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.tokyoGreen)
+                    .foregroundStyle(Color.tokyoBg)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .disabled(isResuming)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
         }
     }
 }
