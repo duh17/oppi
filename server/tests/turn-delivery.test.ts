@@ -461,4 +461,61 @@ describe("turn delivery idempotency", () => {
     expect(stateEvent?.session.model).toBe("anthropic/claude-sonnet-4-0");
     expect(stateEvent?.session.thinkingLevel).toBe("minimal");
   });
+
+  it("prefixes provider on nested model IDs from get_state (e.g. openrouter/z.ai/glm-5)", async () => {
+    const { manager, session, events } = makeManagerHarness("ready");
+
+    // Simulate pi reporting a nested-provider model via get_state.
+    // The model id contains a slash (z.ai/glm-5) but the provider is "openrouter".
+    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+      if (command.type === "set_model") {
+        return { provider: "openrouter", id: "z.ai/glm-5" };
+      }
+      if (command.type === "get_state") {
+        return {
+          model: { provider: "openrouter", id: "z.ai/glm-5" },
+        };
+      }
+      return {};
+    });
+
+    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+
+    await manager.forwardRpcCommand("s1",
+      { type: "set_model", provider: "openrouter", modelId: "z.ai/glm-5" },
+      "req-nested-1",
+    );
+
+    // The session model must include the provider prefix, not just "z.ai/glm-5"
+    expect(session.model).toBe("openrouter/z.ai/glm-5");
+
+    const stateEvent = asStateEvents(events).at(-1);
+    expect(stateEvent?.session.model).toBe("openrouter/z.ai/glm-5");
+  });
+
+  it("does not double-prefix when model id already starts with provider", async () => {
+    const { manager, session, events } = makeManagerHarness("ready");
+
+    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+      if (command.type === "set_model") {
+        return { provider: "anthropic", id: "claude-sonnet-4-0" };
+      }
+      if (command.type === "get_state") {
+        return {
+          model: { provider: "anthropic", id: "claude-sonnet-4-0" },
+        };
+      }
+      return {};
+    });
+
+    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+
+    await manager.forwardRpcCommand("s1",
+      { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
+      "req-simple-1",
+    );
+
+    // Must be "anthropic/claude-sonnet-4-0", not "anthropic/anthropic/claude-sonnet-4-0"
+    expect(session.model).toBe("anthropic/claude-sonnet-4-0");
+  });
 });

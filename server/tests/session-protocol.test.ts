@@ -7,6 +7,7 @@ import {
   applyMessageEndToSession,
   type TranslationContext,
 } from "../src/session-protocol.js";
+import { composeModelId } from "../src/sessions.js";
 
 function makeSession(): Session {
   const now = Date.now();
@@ -310,5 +311,23 @@ describe("session-protocol state mutation helpers", () => {
 
     expect(addMessage).not.toHaveBeenCalled();
     expect(session.messageCount).toBe(0);
+  });
+});
+
+describe("composeModelId", () => {
+  it("prefixes simple model with provider", () => {
+    expect(composeModelId("anthropic", "claude-sonnet-4-0")).toBe("anthropic/claude-sonnet-4-0");
+  });
+
+  it("prefixes nested model with provider (openrouter/z.ai/glm-5)", () => {
+    expect(composeModelId("openrouter", "z.ai/glm-5")).toBe("openrouter/z.ai/glm-5");
+  });
+
+  it("does not double-prefix when model already starts with provider", () => {
+    expect(composeModelId("anthropic", "anthropic/claude-sonnet-4-0")).toBe("anthropic/claude-sonnet-4-0");
+  });
+
+  it("handles lmstudio local models", () => {
+    expect(composeModelId("lmstudio", "glm-4.7-flash-mlx")).toBe("lmstudio/glm-4.7-flash-mlx");
   });
 });
