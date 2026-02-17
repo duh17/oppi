@@ -1,0 +1,69 @@
+# Pi Remote — sandboxed coding agent container.
+#
+# Full-capability image: coding tools + web research + content extraction.
+# Supports: search, fetch, web-browser skills out of the box.
+#
+# Build: container build -t oppi-server:local -f Containerfile .
+
+FROM node:22-alpine
+
+# ─── Core dev tools ───
+RUN apk add --no-cache \
+    bash \
+    coreutils \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    grep \
+    ripgrep \
+    fd \
+    jq \
+    openssh-client \
+    make \
+    python3 \
+    py3-pip \
+    tree \
+    sqlite
+
+# ─── Headless Chromium (for web-browser skill) ───
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    font-noto-emoji
+ENV CHROME_BIN=/usr/bin/chromium-browser
+ENV CHROME_PATH=/usr/lib/chromium/
+
+# ─── Content extraction (for fetch skill) ───
+RUN npm install -g readability-cli
+
+# ─── Python research tools ───
+RUN pip install --no-cache-dir --break-system-packages \
+    beautifulsoup4 \
+    markdownify \
+    trafilatura \
+    httpx
+
+# ─── uv — fast Python package manager ───
+RUN wget -qO- https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
+    && mv /root/.local/bin/uv /usr/local/bin/ \
+    && mv /root/.local/bin/uvx /usr/local/bin/
+
+# ─── Node.js global tools ───
+RUN npm install -g \
+    @mariozechner/pi-coding-agent \
+    typescript \
+    tsx
+
+# ─── User setup ───
+RUN adduser -D -u 1001 -s /bin/bash pi
+USER pi
+ENV HOME=/home/pi
+ENV PATH="/home/pi/.pi/bin:${PATH}"
+ENV UV_CACHE_DIR="/uv-cache"
+WORKDIR /work
+
+ENTRYPOINT ["pi"]
