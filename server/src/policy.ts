@@ -1863,8 +1863,18 @@ export class PolicyEngine {
       };
     }
 
-    // Regular bash with recognizable executable
+    // Regular bash with recognizable executable.
+    // High-impact external actions stay session-scoped to avoid over-broad
+    // learned rules like "allow all git" from a single git push approval.
     if (req.tool === "bash" && parsed.executable) {
+      if (this.requiresCommandScopedApproval(parsed.command || "", parsed.executable)) {
+        return {
+          allowSession: true,
+          allowAlways: false,
+          denyAlways: true,
+        };
+      }
+
       return {
         allowSession: true,
         allowAlways: true,
@@ -1898,7 +1908,7 @@ export class PolicyEngine {
    * Generate a learned rule from a user's approval.
    *
    * Generalizes the specific request into a reusable rule:
-   *   git push origin main → { executable: "git" }
+   *   git push origin main → { executable: "git", commandPattern: "git push*" }
    *   nav.js github.com/x  → { domain: "github.com" }
    *   write /workspace/x   → { pathPattern: "/workspace/**" }
    *
@@ -1934,15 +1944,19 @@ export class PolicyEngine {
 
     // Bash with recognizable executable
     if (req.tool === "bash" && parsed.executable) {
+      const match = this.suggestBashMatch(parsed.command || "", parsed.executable);
+      const commandScoped = Boolean(match.commandPattern);
       return {
         effect: "allow",
         tool: "bash",
-        match: { executable: parsed.executable },
+        match,
         scope,
         ...(scope === "session" ? { sessionId: context.sessionId } : {}),
         ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
         source: "learned",
-        description: `Allow ${parsed.executable} operations`,
+        description: commandScoped
+          ? `Allow ${parsed.executable} command pattern ${match.commandPattern}`
+          : `Allow ${parsed.executable} operations`,
         risk: context.risk,
         createdBy: "server",
       };
@@ -2025,6 +2039,7 @@ export class PolicyEngine {
     domain?: string;
     browserScript?: string;
     path?: string;
+    command?: string;
   } {
     const { tool, input } = req;
 
@@ -2036,6 +2051,7 @@ export class PolicyEngine {
           browserScript: browser.script,
           domain: browser.domain,
           executable: browser.script,
+          command,
         };
       }
 
@@ -2048,7 +2064,7 @@ export class PolicyEngine {
         parsedSegments.find((parsed) => !CHAIN_HELPER_EXECUTABLES.has(parsed.executable)) ||
         parsedSegments[0];
 
-      return { executable: primary?.executable };
+      return { executable: primary?.executable, command };
     }
 
     if (["read", "write", "edit", "find", "ls"].includes(tool)) {
@@ -2056,6 +2072,91 @@ export class PolicyEngine {
     }
 
     return {};
+  }
+
+  private parseGitIntent(command: string): { subcommand?: string; remoteAction?: string } {
+    const tokens = command.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0 || tokens[0].toLowerCase() !== "git") return {};
+
+    let i = 1;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (!token.startsWith("-")) break;
+
+      // Git global options that consume a value.
+      if (["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"].includes(token)) {
+        i += 2;
+        continue;
+      }
+
+      i += 1;
+    }
+
+    const subcommand = tokens[i]?.toLowerCase();
+    const remoteAction = subcommand === "remote" ? tokens[i + 1]?.toLowerCase() : undefined;
+    return { subcommand, remoteAction };
+  }
+
+  private suggestBashMatch(command: string, executable: string): { executable: string; commandPattern?: string } {
+    const normalized = command.trim().toLowerCase();
+    const exec = executable.toLowerCase();
+
+    if (exec === "git") {
+      const intent = this.parseGitIntent(command);
+      if (intent.subcommand === "push") {
+        return { executable, commandPattern: "git push*" };
+      }
+      if (intent.subcommand === "remote" && ["add", "set-url"].includes(intent.remoteAction || "")) {
+        return { executable, commandPattern: "git remote *" };
+      }
+    }
+
+    if (exec === "npm" && normalized.startsWith("npm publish")) {
+      return { executable, commandPattern: "npm publish*" };
+    }
+    if (exec === "yarn" && normalized.startsWith("yarn publish")) {
+      return { executable, commandPattern: "yarn publish*" };
+    }
+    if (exec === "twine" && normalized.startsWith("twine upload")) {
+      return { executable, commandPattern: "twine upload*" };
+    }
+
+    // Default: executable-level allow for non-sensitive command families.
+    return { executable };
+  }
+
+  private requiresCommandScopedApproval(command: string, executable?: string): boolean {
+    if (!executable) return false;
+    const normalized = command.trim().toLowerCase();
+    const exec = executable.toLowerCase();
+
+    if (exec === "git") {
+      const intent = this.parseGitIntent(command);
+      if (intent.subcommand === "push") return true;
+      if (intent.subcommand === "remote" && ["add", "set-url"].includes(intent.remoteAction || "")) {
+        return true;
+      }
+    }
+
+    if ((exec === "npm" && normalized.startsWith("npm publish")) ||
+        (exec === "yarn" && normalized.startsWith("yarn publish")) ||
+        (exec === "twine" && normalized.startsWith("twine upload"))) {
+      return true;
+    }
+
+    if (["ssh", "scp", "sftp", "rsync", "nc", "ncat", "socat", "telnet"].includes(exec)) {
+      return true;
+    }
+
+    if (normalized.includes("ios/scripts/build-install.sh") ||
+        normalized.includes("scripts/ios-dev-up.sh") ||
+        normalized.startsWith("xcrun devicectl device install app") ||
+        normalized.startsWith("npx tsx src/cli.ts serve") ||
+        normalized.startsWith("tsx src/cli.ts serve")) {
+      return true;
+    }
+
+    return false;
   }
 
   private evaluateStructuralHardDeny(

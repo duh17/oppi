@@ -86,14 +86,21 @@ const engine = new PolicyEngine("host");
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe("suggestRule", () => {
-  it("git push -> executable-level rule for git", () => {
+  it("git push -> command-scoped rule for git push", () => {
     const rule = engine.suggestRule(bash("git push origin main"), "global", ruleCtx);
     expect(rule).not.toBeNull();
     expect(rule!.tool).toBe("bash");
     expect(rule!.match?.executable).toBe("git");
-    expect(rule!.match?.commandPattern).toBeUndefined();
+    expect(rule!.match?.commandPattern).toBe("git push*");
     expect(rule!.effect).toBe("allow");
-    expect(rule!.description).toContain("git");
+    expect(rule!.description).toContain("git push*");
+  });
+
+  it("git -C ... push -> command-scoped rule for git push", () => {
+    const rule = engine.suggestRule(bash("git -C /Users/chenda/workspace/oppi push origin main"), "global", ruleCtx);
+    expect(rule).not.toBeNull();
+    expect(rule!.match?.executable).toBe("git");
+    expect(rule!.match?.commandPattern).toBe("git push*");
   });
 
   it("npm install -> executable-level rule for npm", () => {
@@ -389,15 +396,33 @@ describe("resolution options", () => {
     expect(opts.allowAlways).toBe(false);
   });
 
-  it("regular bash (git): all options available", () => {
+  it("high-impact bash (git push): session-only allow", () => {
     const req = bash("git push origin main");
+    const opts = engine.getResolutionOptions(req, {
+      action: "ask", reason: "test", risk: "medium", layer: "rule",
+    });
+    expect(opts.allowSession).toBe(true);
+    expect(opts.allowAlways).toBe(false);
+    expect(opts.alwaysDescription).toBeUndefined();
+    expect(opts.denyAlways).toBe(true);
+  });
+
+  it("git -C ... push: still session-only allow", () => {
+    const req = bash("git -C /Users/chenda/workspace/oppi push origin main");
+    const opts = engine.getResolutionOptions(req, {
+      action: "ask", reason: "test", risk: "medium", layer: "rule",
+    });
+    expect(opts.allowAlways).toBe(false);
+  });
+
+  it("low-impact bash (git status): allows always", () => {
+    const req = bash("git status");
     const opts = engine.getResolutionOptions(req, {
       action: "ask", reason: "test", risk: "medium", layer: "rule",
     });
     expect(opts.allowSession).toBe(true);
     expect(opts.allowAlways).toBe(true);
     expect(opts.alwaysDescription).toContain("git");
-    expect(opts.denyAlways).toBe(true);
   });
 });
 
