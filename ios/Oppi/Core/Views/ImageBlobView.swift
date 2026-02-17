@@ -26,7 +26,7 @@ struct ImageBlobView: View {
                             UIPasteboard.general.image = decoded
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {
-                            UIImageWriteToSavedPhotosAlbum(decoded, nil, nil, nil)
+                            PhotoLibrarySaver.save(decoded)
                         }
                         ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
                     }
@@ -114,7 +114,7 @@ struct ZoomableImageView: View {
                     )
                     Spacer()
                     Button {
-                        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                        PhotoLibrarySaver.save(image)
                         withAnimation { savedToPhotos = true }
                         Task {
                             try? await Task.sleep(for: .seconds(2))

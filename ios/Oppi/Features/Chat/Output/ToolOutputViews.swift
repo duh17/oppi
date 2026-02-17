@@ -309,7 +309,7 @@ struct AsyncImageBlob: View {
                             UIPasteboard.general.image = decoded
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {
-                            UIImageWriteToSavedPhotosAlbum(decoded, nil, nil, nil)
+                            PhotoLibrarySaver.save(decoded)
                         }
                         ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
                     }
