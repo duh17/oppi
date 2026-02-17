@@ -457,11 +457,18 @@ final class NativeCodeBlockView: UIView {
         let l = UILabel()
         l.numberOfLines = 0
         l.translatesAutoresizingMaskIntoConstraints = false
+        // Prevent Auto Layout from compressing the label to the scroll frame width.
+        l.setContentCompressionResistancePriority(.required, for: .horizontal)
         return l
     }()
 
     private let headerBackground = UIView()
     private var currentCode: String = ""
+
+    /// Explicit width constraint for the label, updated in `apply()` to the
+    /// measured content width so UIScrollView knows the content is wider than
+    /// the frame and enables horizontal scrolling.
+    private var codeLabelWidthConstraint: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -491,6 +498,9 @@ final class NativeCodeBlockView: UIView {
 
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
 
+        let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
+        codeLabelWidthConstraint = widthConstraint
+
         NSLayoutConstraint.activate([
             headerBackground.topAnchor.constraint(equalTo: topAnchor),
             headerBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -509,11 +519,16 @@ final class NativeCodeBlockView: UIView {
             // Pin content to contentLayoutGuide (determines scrollable area).
             codeLabel.topAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.topAnchor, constant: 12),
             codeLabel.leadingAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.leadingAnchor, constant: 12),
+            codeLabel.trailingAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.trailingAnchor, constant: -12),
             codeLabel.bottomAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.bottomAnchor, constant: -12),
 
             // Height: lock content height to frame height so the scroll view
             // self-sizes vertically based on code text (horizontal-only scroll).
             codeLabel.heightAnchor.constraint(equalTo: codeScrollView.frameLayoutGuide.heightAnchor, constant: -24),
+
+            // Width: set explicitly from measured content so scroll view
+            // knows content extends beyond its frame.
+            widthConstraint,
         ])
     }
 
@@ -533,6 +548,12 @@ final class NativeCodeBlockView: UIView {
         codeLabel.font = font
         codeLabel.textColor = UIColor(palette.fg)
         codeLabel.text = code
+
+        // Measure content width so the scroll view can scroll horizontally.
+        let attrText = NSAttributedString(string: code, attributes: [.font: font])
+        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
+        codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
     }
 
     func applyHighlightedCode(_ highlighted: AttributedString) {
@@ -541,6 +562,11 @@ final class NativeCodeBlockView: UIView {
         let fullRange = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.font, value: font, range: fullRange)
         codeLabel.attributedText = mutable
+
+        // Re-measure content width after highlighting (font attributes may differ).
+        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        let boundingRect = mutable.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
+        codeLabelWidthConstraint?.constant = ceil(boundingRect.width)
     }
 
     @objc private func copyTapped() {

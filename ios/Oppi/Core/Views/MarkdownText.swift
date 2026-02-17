@@ -759,10 +759,12 @@ struct CodeBlockView: View {
             if let highlighted {
                 Text(highlighted)
                     .font(.system(.caption, design: .monospaced))
+                    .fixedSize(horizontal: true, vertical: false)
             } else {
                 Text(code)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tokyoFg)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
         .fullScreenCover(isPresented: $showFullScreen) {
@@ -795,6 +797,7 @@ private struct StreamingCodeBlockView: View {
             Text(code)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.tokyoFg)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 }
