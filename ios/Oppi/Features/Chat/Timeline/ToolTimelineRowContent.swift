@@ -8,27 +8,10 @@ import UIKit
 struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let title: String
     let preview: String?
-    let expandedText: String?
-    let expandedTextUsesMarkdown: Bool
-    let expandedDiffLines: [DiffLine]?
-    let expandedDiffPath: String?
-    let expandedCommandText: String?
-    let expandedOutputText: String?
-    let expandedOutputLanguage: SyntaxLanguage?
-    /// When set, the expanded text renders as a code viewer with line numbers
-    /// and horizontal scrolling (used for read tool output).
-    let expandedCodeStartLine: Int?
-    let expandedCodeFilePath: String?
-    /// Render expanded read output through the SwiftUI media-aware renderer.
-    /// Used for media files so data URIs produce inline previews instead of
-    /// monospaced text truncation.
-    let expandedUsesReadMediaRenderer: Bool
-    /// Render expanded todo output through the rich SwiftUI card renderer.
-    let expandedUsesTodoRenderer: Bool
-    /// When true, expanded separated output uses terminal-like no-wrap
-    /// rendering with horizontal scrolling.
-    let prefersUnwrappedOutput: Bool
-    let showSeparatedCommandAndOutput: Bool
+    /// Single discriminated union for expanded content rendering.
+    /// Replaces the previous 13 boolean/optional fields, making it
+    /// impossible to set conflicting rendering modes.
+    let expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     let copyCommandText: String?
     let copyOutputText: String?
     let languageBadge: String?
@@ -38,67 +21,12 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let toolNameColor: UIColor
     let editAdded: Int?
     let editRemoved: Int?
+    /// Base64-encoded image data for collapsed inline thumbnail (read tool, image files).
+    let collapsedImageBase64: String?
+    let collapsedImageMimeType: String?
     let isExpanded: Bool
     let isDone: Bool
     let isError: Bool
-
-    init(
-        title: String,
-        preview: String?,
-        expandedText: String?,
-        expandedTextUsesMarkdown: Bool = false,
-        expandedDiffLines: [DiffLine]?,
-        expandedDiffPath: String?,
-        expandedCommandText: String?,
-        expandedOutputText: String?,
-        expandedOutputLanguage: SyntaxLanguage?,
-        expandedCodeStartLine: Int? = nil,
-        expandedCodeFilePath: String? = nil,
-        expandedUsesReadMediaRenderer: Bool = false,
-        expandedUsesTodoRenderer: Bool = false,
-        prefersUnwrappedOutput: Bool = false,
-        showSeparatedCommandAndOutput: Bool,
-        copyCommandText: String?,
-        copyOutputText: String?,
-        languageBadge: String?,
-        trailing: String?,
-        titleLineBreakMode: NSLineBreakMode,
-        toolNamePrefix: String?,
-        toolNameColor: UIColor,
-        editAdded: Int?,
-        editRemoved: Int?,
-        isExpanded: Bool,
-        isDone: Bool,
-        isError: Bool
-    ) {
-        self.title = title
-        self.preview = preview
-        self.expandedText = expandedText
-        self.expandedTextUsesMarkdown = expandedTextUsesMarkdown
-        self.expandedDiffLines = expandedDiffLines
-        self.expandedDiffPath = expandedDiffPath
-        self.expandedCommandText = expandedCommandText
-        self.expandedOutputText = expandedOutputText
-        self.expandedOutputLanguage = expandedOutputLanguage
-        self.expandedCodeStartLine = expandedCodeStartLine
-        self.expandedCodeFilePath = expandedCodeFilePath
-        self.expandedUsesReadMediaRenderer = expandedUsesReadMediaRenderer
-        self.expandedUsesTodoRenderer = expandedUsesTodoRenderer
-        self.prefersUnwrappedOutput = prefersUnwrappedOutput
-        self.showSeparatedCommandAndOutput = showSeparatedCommandAndOutput
-        self.copyCommandText = copyCommandText
-        self.copyOutputText = copyOutputText
-        self.languageBadge = languageBadge
-        self.trailing = trailing
-        self.titleLineBreakMode = titleLineBreakMode
-        self.toolNamePrefix = toolNamePrefix
-        self.toolNameColor = toolNameColor
-        self.editAdded = editAdded
-        self.editRemoved = editRemoved
-        self.isExpanded = isExpanded
-        self.isDone = isDone
-        self.isError = isError
-    }
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -183,6 +111,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let expandedLabel = UILabel()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
+    private let imagePreviewContainer = UIView()
+    private let imagePreviewImageView = UIImageView()
     private let borderView = UIView()
 
     private var currentConfiguration: ToolTimelineRowConfiguration
@@ -206,6 +136,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedUsesMarkdownLayout = false
     private var expandedUsesReadMediaLayout = false
     private var expandedReadMediaContentView: (any UIView & UIContentView)?
+    /// Tracks which base64 image is currently being decoded / displayed.
+    private var imagePreviewDecodedKey: String?
+    private var imagePreviewDecodeTask: Task<Void, Never>?
     private var expandedViewportMode: ExpandedViewportMode = .none
     private var expandedRenderedText: String?
     private var expandedPinchDidTriggerFullScreen = false
@@ -517,6 +450,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ])
 
         expandedReadMediaContentView = hosted
+
+        // UIHostingConfiguration deferred sizing — see installExpandedTodoView.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.setNeedsLayout()
+            self.layoutIfNeeded()
+            self.invalidateEnclosingCollectionViewLayout()
+        }
     }
 
     private func installExpandedTodoView(output: String) {
@@ -552,9 +493,110 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
+    // MARK: - Collapsed Image Preview
+
+    private func applyImagePreview(configuration: ToolTimelineRowConfiguration) {
+        // Show only when collapsed and base64 data is available.
+        guard !configuration.isExpanded,
+              let base64 = configuration.collapsedImageBase64,
+              !base64.isEmpty else {
+            imagePreviewContainer.isHidden = true
+            return
+        }
+
+        imagePreviewContainer.isHidden = false
+
+        // Stable key: compare by prefix+length to avoid full string equality on large blobs.
+        let key = "\(base64.count):\(base64.prefix(32))"
+        guard key != imagePreviewDecodedKey else { return }
+        imagePreviewDecodedKey = key
+
+        // Cancel previous decode task if still running.
+        imagePreviewDecodeTask?.cancel()
+        imagePreviewImageView.image = nil
+
+        let currentKey = key
+        imagePreviewDecodeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+                  let image = UIImage(data: data) else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.imagePreviewDecodedKey == currentKey else { return }
+                self.imagePreviewImageView.image = image
+                self.invalidateEnclosingCollectionViewLayout()
+            }
+        }
+    }
+
     private func clearExpandedReadMediaView() {
         expandedReadMediaContentView?.removeFromSuperview()
         expandedReadMediaContentView = nil
+    }
+
+    // MARK: - Expanded Content Helpers
+
+    /// Prepare for label-based expanded content (diff, code, plain text).
+    private func showExpandedLabel() {
+        expandedMarkdownView.isHidden = true
+        expandedLabel.isHidden = false
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+    }
+
+    /// Prepare for markdown expanded content.
+    private func showExpandedMarkdown() {
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = false
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = true
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+    }
+
+    /// Prepare for hosted SwiftUI expanded content (todo cards, read media).
+    private func showExpandedHostedView() {
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.isHidden = true
+        expandedMarkdownView.isHidden = true
+        expandedReadMediaContainer.isHidden = false
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = true
+        updateExpandedLabelWidthIfNeeded()
+        updateExpandedReadMediaWidthIfNeeded()
+        setExpandedContainerGestureInterceptionEnabled(false)
+    }
+
+    /// Activate the expanded viewport height constraint.
+    private func showExpandedViewport() {
+        expandedViewportHeightConstraint?.isActive = true
+        expandedUsesViewport = true
+    }
+
+    /// Reset expanded container to hidden/default state.
+    private func hideExpandedContainer(outputColor: UIColor) {
+        expandedLabel.attributedText = nil
+        expandedLabel.text = nil
+        expandedLabel.textColor = outputColor
+        expandedLabel.lineBreakMode = .byCharWrapping
+        expandedLabel.isHidden = false
+        expandedMarkdownView.isHidden = true
+        expandedReadMediaContainer.isHidden = true
+        expandedUsesMarkdownLayout = false
+        expandedUsesReadMediaLayout = false
+        clearExpandedReadMediaView()
+        expandedScrollView.alwaysBounceHorizontal = false
+        expandedScrollView.showsHorizontalScrollIndicator = false
+        expandedViewportMode = .none
+        expandedRenderedText = nil
+        updateExpandedLabelWidthIfNeeded()
+        expandedViewportHeightConstraint?.isActive = false
+        expandedUsesViewport = false
+        expandedShouldAutoFollow = true
+        resetScrollPosition(expandedScrollView)
     }
 
     private func setupViews() {
@@ -671,6 +713,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContainer.backgroundColor = .clear
         expandedReadMediaContainer.isHidden = true
 
+        imagePreviewContainer.translatesAutoresizingMaskIntoConstraints = false
+        imagePreviewContainer.backgroundColor = UIColor(Color.tokyoBgDark)
+        imagePreviewContainer.layer.cornerRadius = 6
+        imagePreviewContainer.layer.masksToBounds = true
+        imagePreviewContainer.isHidden = true
+
+        imagePreviewImageView.translatesAutoresizingMaskIntoConstraints = false
+        imagePreviewImageView.contentMode = .scaleAspectFit
+        imagePreviewImageView.clipsToBounds = true
+        imagePreviewContainer.addSubview(imagePreviewImageView)
+
         expandFloatingButton.translatesAutoresizingMaskIntoConstraints = false
         let expandBtnSymbolConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
         expandFloatingButton.setImage(
@@ -710,6 +763,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.addSubview(expandedReadMediaContainer)
         expandedContainer.addSubview(expandFloatingButton)
         bodyStack.addArrangedSubview(previewLabel)
+        bodyStack.addArrangedSubview(imagePreviewContainer)
         bodyStack.addArrangedSubview(commandContainer)
         bodyStack.addArrangedSubview(outputContainer)
         bodyStack.addArrangedSubview(expandedContainer)
@@ -839,6 +893,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedReadMediaContainer.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
             expandedReadMediaWidthConstraint,
 
+            imagePreviewImageView.leadingAnchor.constraint(equalTo: imagePreviewContainer.leadingAnchor, constant: 6),
+            imagePreviewImageView.trailingAnchor.constraint(equalTo: imagePreviewContainer.trailingAnchor, constant: -6),
+            imagePreviewImageView.topAnchor.constraint(equalTo: imagePreviewContainer.topAnchor, constant: 6),
+            imagePreviewImageView.bottomAnchor.constraint(equalTo: imagePreviewContainer.bottomAnchor, constant: -6),
+            imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
+
             expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -10),
             expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -10),
             expandFloatingButton.widthAnchor.constraint(equalToConstant: 36),
@@ -910,134 +970,101 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         previewLabel.text = preview
         previewLabel.isHidden = !showPreview
 
-        let expandedText = configuration.expandedText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let diffLines = configuration.expandedDiffLines
-        let showDiff = configuration.isExpanded && diffLines != nil
-        let showLegacyExpanded = configuration.isExpanded
-            && !configuration.showSeparatedCommandAndOutput
-            && !showDiff
-            && !(expandedText?.isEmpty ?? true)
+        // Collapsed image thumbnail for read tool image files
+        applyImagePreview(configuration: configuration)
+
         let outputColor = configuration.isError ? UIColor(Color.tokyoRed) : UIColor(Color.tokyoFg)
-        let wasLegacyExpandedVisible = !expandedContainer.isHidden
+        let wasExpandedVisible = !expandedContainer.isHidden
+        let wasCommandVisible = !commandContainer.isHidden
+        let wasOutputVisible = !outputContainer.isHidden
+        let previousRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+
+        // Reset gesture interception (specific cases disable it below)
         setExpandedContainerGestureInterceptionEnabled(true)
-        if showDiff, let diffLines {
-            let diffText = ToolRowTextRenderer.makeDiffAttributedText(
-                lines: diffLines,
-                filePath: configuration.expandedDiffPath
-            )
-            let previousRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
-            let textChanged = previousRendered != diffText.string
 
-            expandedMarkdownView.isHidden = true
-            expandedLabel.isHidden = false
-            expandedReadMediaContainer.isHidden = true
-            expandedUsesMarkdownLayout = false
-            expandedUsesReadMediaLayout = false
-            clearExpandedReadMediaView()
+        var showExpandedContainer = false
+        var showCommandContainer = false
+        var showOutputContainer = false
 
-            expandedLabel.text = nil
-            expandedLabel.attributedText = diffText
-            expandedLabel.lineBreakMode = .byClipping
-            expandedScrollView.alwaysBounceHorizontal = true
-            expandedScrollView.showsHorizontalScrollIndicator = true
-            expandedViewportMode = .diff
-            expandedRenderedText = diffText.string
-            updateExpandedLabelWidthIfNeeded()
-
-            expandedViewportHeightConstraint?.isActive = true
-            expandedContainer.isHidden = false
-            expandedUsesViewport = true
-            expandedShouldAutoFollow = false
-            if textChanged {
-                resetScrollPosition(expandedScrollView)
-            }
-        } else if let expandedText, showLegacyExpanded {
-            let shouldUseReadMediaRenderer = configuration.expandedUsesReadMediaRenderer
-                && !configuration.isError
-            let displayExpandedText = shouldUseReadMediaRenderer
-                ? expandedText
-                : Self.displayOutputText(expandedText)
-            let previousRendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
-
-            if shouldUseReadMediaRenderer {
-                let previousMediaRendered = expandedRenderedText ?? previousRendered
-                let textChanged = previousMediaRendered != expandedText
-
-                expandedLabel.attributedText = nil
-                expandedLabel.text = nil
-                expandedLabel.isHidden = true
-                expandedMarkdownView.isHidden = true
-                expandedReadMediaContainer.isHidden = false
-                expandedUsesMarkdownLayout = false
-                expandedUsesReadMediaLayout = true
-                expandedRenderedText = expandedText
-                updateExpandedLabelWidthIfNeeded()
-                updateExpandedReadMediaWidthIfNeeded()
-                setExpandedContainerGestureInterceptionEnabled(false)
-
-                installExpandedReadMediaView(
-                    output: expandedText,
-                    isError: configuration.isError,
-                    filePath: configuration.expandedCodeFilePath,
-                    startLine: configuration.expandedCodeStartLine ?? 1
-                )
-
-                expandedScrollView.alwaysBounceHorizontal = false
-                expandedScrollView.showsHorizontalScrollIndicator = false
-                expandedViewportMode = .text
-
-                expandedViewportHeightConstraint?.isActive = true
-                expandedContainer.isHidden = false
-                expandedUsesViewport = true
-                expandedShouldAutoFollow = false
-                if textChanged {
-                    resetScrollPosition(expandedScrollView)
+        if configuration.isExpanded, let expandedContent = configuration.expandedContent {
+            switch expandedContent {
+            case .bash(let command, let output, let unwrapped):
+                // --- Command block ---
+                if let command, !command.isEmpty {
+                    let displayCmd = Self.displayCommandText(command)
+                    if displayCmd.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
+                        commandLabel.attributedText = ToolRowTextRenderer.shellHighlighted(displayCmd)
+                    } else {
+                        commandLabel.attributedText = nil
+                        commandLabel.text = displayCmd
+                        commandLabel.textColor = UIColor(Color.tokyoFg)
+                    }
+                    showCommandContainer = true
                 }
-            } else if configuration.expandedUsesTodoRenderer,
-                      !configuration.isError {
-                let previousTodoRendered = expandedRenderedText ?? previousRendered
-                let textChanged = previousTodoRendered != expandedText
 
-                expandedLabel.attributedText = nil
-                expandedLabel.text = nil
-                expandedLabel.isHidden = true
-                expandedMarkdownView.isHidden = true
-                expandedReadMediaContainer.isHidden = false
-                expandedUsesMarkdownLayout = false
-                expandedUsesReadMediaLayout = true
-                expandedRenderedText = expandedText
-                updateExpandedLabelWidthIfNeeded()
-                updateExpandedReadMediaWidthIfNeeded()
-                setExpandedContainerGestureInterceptionEnabled(false)
+                // --- Output viewport ---
+                if let output, !output.isEmpty {
+                    let displayOutput = Self.displayOutputText(output)
+                    let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
+                        displayOutput, isError: configuration.isError
+                    )
+                    let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
+                    let prevOutputRendered = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
+                    let textChanged = prevOutputRendered != nextRendered
 
-                installExpandedTodoView(output: expandedText)
-
-                expandedScrollView.alwaysBounceHorizontal = false
-                expandedScrollView.showsHorizontalScrollIndicator = false
-                expandedViewportMode = .text
-
-                expandedViewportHeightConstraint?.isActive = true
-                expandedContainer.isHidden = false
-                expandedUsesViewport = true
-                expandedShouldAutoFollow = false
-                if textChanged {
-                    resetScrollPosition(expandedScrollView)
+                    ToolRowTextRenderer.applyANSIOutputPresentation(
+                        presentation, to: outputLabel, plainTextColor: outputColor
+                    )
+                    if unwrapped {
+                        outputLabel.lineBreakMode = .byClipping
+                        outputScrollView.alwaysBounceHorizontal = true
+                        outputScrollView.showsHorizontalScrollIndicator = true
+                        outputUsesUnwrappedLayout = true
+                        outputRenderedText = nextRendered
+                    } else {
+                        outputLabel.lineBreakMode = .byCharWrapping
+                        outputScrollView.alwaysBounceHorizontal = false
+                        outputScrollView.showsHorizontalScrollIndicator = false
+                        outputUsesUnwrappedLayout = false
+                        outputRenderedText = nil
+                    }
+                    updateOutputLabelWidthIfNeeded()
+                    outputViewportHeightConstraint?.isActive = true
+                    showOutputContainer = true
+                    outputUsesViewport = true
+                    if !wasOutputVisible { outputShouldAutoFollow = true }
+                    if textChanged { scheduleOutputAutoScrollToBottomIfNeeded() }
                 }
-            } else if let codeStartLine = configuration.expandedCodeStartLine {
+
+                // Hide expanded container for bash (uses command+output instead)
+                hideExpandedContainer(outputColor: outputColor)
+
+            case .diff(let lines, let path):
+                let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
+                let textChanged = previousRendered != diffText.string
+
+                showExpandedLabel()
+                expandedLabel.text = nil
+                expandedLabel.attributedText = diffText
+                expandedLabel.lineBreakMode = .byClipping
+                expandedScrollView.alwaysBounceHorizontal = true
+                expandedScrollView.showsHorizontalScrollIndicator = true
+                expandedViewportMode = .diff
+                expandedRenderedText = diffText.string
+                updateExpandedLabelWidthIfNeeded()
+                showExpandedViewport()
+                showExpandedContainer = true
+                expandedShouldAutoFollow = false
+                if textChanged { resetScrollPosition(expandedScrollView) }
+
+            case .code(let text, let language, let startLine, _):
+                let displayText = Self.displayOutputText(text)
                 let codeText = ToolRowTextRenderer.makeCodeAttributedText(
-                    text: displayExpandedText,
-                    language: configuration.expandedOutputLanguage,
-                    startLine: codeStartLine
+                    text: displayText, language: language, startLine: startLine ?? 1
                 )
                 let textChanged = previousRendered != codeText.string
 
-                expandedMarkdownView.isHidden = true
-                expandedLabel.isHidden = false
-                expandedReadMediaContainer.isHidden = true
-                expandedUsesMarkdownLayout = false
-                expandedUsesReadMediaLayout = false
-                clearExpandedReadMediaView()
-
+                showExpandedLabel()
                 expandedLabel.text = nil
                 expandedLabel.attributedText = codeText
                 expandedLabel.lineBreakMode = .byClipping
@@ -1046,82 +1073,81 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedViewportMode = .code
                 expandedRenderedText = codeText.string
                 updateExpandedLabelWidthIfNeeded()
-
-                expandedViewportHeightConstraint?.isActive = true
-                expandedContainer.isHidden = false
-                expandedUsesViewport = true
+                showExpandedViewport()
+                showExpandedContainer = true
                 expandedShouldAutoFollow = false
-                if textChanged {
-                    resetScrollPosition(expandedScrollView)
-                }
-            } else if configuration.expandedTextUsesMarkdown,
-                      !configuration.isError {
-                // Preserve markdown source verbatim so tables/headings/fences
-                // render correctly. Generic output truncation can cut through
-                // markdown structure and degrade rendering quality.
-                let markdownExpandedText = expandedText
+                if textChanged { resetScrollPosition(expandedScrollView) }
+
+            case .markdown(let text):
                 let previousMarkdownRendered = expandedRenderedText ?? previousRendered
-                let textChanged = previousMarkdownRendered != markdownExpandedText
+                let textChanged = previousMarkdownRendered != text
 
-                expandedLabel.attributedText = nil
-                expandedLabel.text = nil
-                expandedLabel.isHidden = true
-                expandedMarkdownView.isHidden = false
-                expandedReadMediaContainer.isHidden = true
-                expandedUsesMarkdownLayout = true
-                expandedUsesReadMediaLayout = false
-                clearExpandedReadMediaView()
-                expandedRenderedText = markdownExpandedText
+                showExpandedMarkdown()
+                expandedRenderedText = text
                 updateExpandedLabelWidthIfNeeded()
-
                 expandedMarkdownView.apply(configuration: .init(
-                    content: markdownExpandedText,
-                    isStreaming: false,
+                    content: text, isStreaming: false,
                     themeID: ThemeRuntimeState.currentThemeID()
                 ))
-
                 expandedScrollView.alwaysBounceHorizontal = false
                 expandedScrollView.showsHorizontalScrollIndicator = false
                 expandedViewportMode = .text
+                showExpandedViewport()
+                showExpandedContainer = true
+                if !wasExpandedVisible { expandedShouldAutoFollow = true }
+                if textChanged { scheduleExpandedAutoScrollToBottomIfNeeded() }
 
-                expandedViewportHeightConstraint?.isActive = true
-                expandedContainer.isHidden = false
-                expandedUsesViewport = true
-                if !wasLegacyExpandedVisible {
-                    expandedShouldAutoFollow = true
-                }
-                if textChanged {
-                    scheduleExpandedAutoScrollToBottomIfNeeded()
-                }
-            } else {
+            case .todoCard(let output):
+                let previousTodoRendered = expandedRenderedText ?? previousRendered
+                let textChanged = previousTodoRendered != output
+
+                showExpandedHostedView()
+                expandedRenderedText = output
+                installExpandedTodoView(output: output)
+                expandedScrollView.alwaysBounceHorizontal = false
+                expandedScrollView.showsHorizontalScrollIndicator = false
+                expandedViewportMode = .text
+                showExpandedViewport()
+                showExpandedContainer = true
+                expandedShouldAutoFollow = false
+                if textChanged { resetScrollPosition(expandedScrollView) }
+
+            case .readMedia(let output, let filePath, let startLine):
+                let previousMediaRendered = expandedRenderedText ?? previousRendered
+                let textChanged = previousMediaRendered != output
+
+                showExpandedHostedView()
+                expandedRenderedText = output
+                installExpandedReadMediaView(
+                    output: output, isError: configuration.isError,
+                    filePath: filePath, startLine: startLine
+                )
+                expandedScrollView.alwaysBounceHorizontal = false
+                expandedScrollView.showsHorizontalScrollIndicator = false
+                expandedViewportMode = .text
+                showExpandedViewport()
+                showExpandedContainer = true
+                expandedShouldAutoFollow = false
+                if textChanged { resetScrollPosition(expandedScrollView) }
+
+            case .text(let text, let language):
+                let displayText = Self.displayOutputText(text)
                 let presentation: ToolRowTextRenderer.ANSIOutputPresentation
-                if let language = configuration.expandedOutputLanguage,
-                   !configuration.isError {
+                if let language, !configuration.isError {
                     presentation = ToolRowTextRenderer.makeSyntaxOutputPresentation(
-                        displayExpandedText,
-                        language: language
+                        displayText, language: language
                     )
                 } else {
                     presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                        displayExpandedText,
-                        isError: configuration.isError
+                        displayText, isError: configuration.isError
                     )
                 }
-
                 let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
                 let textChanged = previousRendered != nextRendered
 
-                expandedMarkdownView.isHidden = true
-                expandedLabel.isHidden = false
-                expandedReadMediaContainer.isHidden = true
-                expandedUsesMarkdownLayout = false
-                expandedUsesReadMediaLayout = false
-                clearExpandedReadMediaView()
-
+                showExpandedLabel()
                 ToolRowTextRenderer.applyANSIOutputPresentation(
-                    presentation,
-                    to: expandedLabel,
-                    plainTextColor: outputColor
+                    presentation, to: expandedLabel, plainTextColor: outputColor
                 )
                 expandedLabel.lineBreakMode = .byCharWrapping
                 expandedScrollView.alwaysBounceHorizontal = false
@@ -1129,72 +1155,34 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedViewportMode = .text
                 expandedRenderedText = nil
                 updateExpandedLabelWidthIfNeeded()
-
-                expandedViewportHeightConstraint?.isActive = true
-                expandedContainer.isHidden = false
-                expandedUsesViewport = true
-                if !wasLegacyExpandedVisible {
-                    expandedShouldAutoFollow = true
-                }
-                if textChanged {
-                    scheduleExpandedAutoScrollToBottomIfNeeded()
-                }
+                showExpandedViewport()
+                showExpandedContainer = true
+                if !wasExpandedVisible { expandedShouldAutoFollow = true }
+                if textChanged { scheduleExpandedAutoScrollToBottomIfNeeded() }
             }
-        } else {
-            expandedLabel.attributedText = nil
-            expandedLabel.text = nil
-            expandedLabel.textColor = outputColor
-            expandedLabel.lineBreakMode = .byCharWrapping
-            expandedLabel.isHidden = false
-            expandedMarkdownView.isHidden = true
-            expandedReadMediaContainer.isHidden = true
-            expandedUsesMarkdownLayout = false
-            expandedUsesReadMediaLayout = false
-            clearExpandedReadMediaView()
-            expandedScrollView.alwaysBounceHorizontal = false
-            expandedScrollView.showsHorizontalScrollIndicator = false
-            expandedViewportMode = .none
-            expandedRenderedText = nil
-            updateExpandedLabelWidthIfNeeded()
-            expandedViewportHeightConstraint?.isActive = false
-            expandedContainer.isHidden = true
-            expandedUsesViewport = false
-            expandedShouldAutoFollow = true
-            resetScrollPosition(expandedScrollView)
         }
 
-        if !expandedContainer.isHidden {
+        // Hide containers that aren't needed by the active content
+        if !showExpandedContainer {
+            hideExpandedContainer(outputColor: outputColor)
+        }
+        expandedContainer.isHidden = !showExpandedContainer
+        if showExpandedContainer {
             animateInPlaceReveal(
                 expandedContainer,
-                shouldAnimate: isExpandingTransition && !wasLegacyExpandedVisible
+                shouldAnimate: isExpandingTransition && !wasExpandedVisible
             )
         } else {
             resetRevealAppearance(expandedContainer)
         }
 
-        let commandText = configuration.expandedCommandText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let showCommand = configuration.isExpanded
-            && configuration.showSeparatedCommandAndOutput
-            && !(commandText?.isEmpty ?? true)
-        let wasCommandVisible = !commandContainer.isHidden
-        if let commandText, showCommand {
-            let displayCommandText = Self.displayCommandText(commandText)
-            if displayCommandText.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
-                commandLabel.attributedText = ToolRowTextRenderer.shellHighlighted(displayCommandText)
-                // NB: Do NOT set commandLabel.textColor here — UILabel overrides
-                // ALL per-character foreground colors in the attributed string.
-            } else {
-                commandLabel.attributedText = nil
-                commandLabel.text = displayCommandText
-                commandLabel.textColor = UIColor(Color.tokyoFg)
-            }
-        } else {
+        if !showCommandContainer {
             commandLabel.attributedText = nil
             commandLabel.text = nil
             commandLabel.textColor = UIColor(Color.tokyoFg)
         }
-        commandContainer.isHidden = !showCommand
-        if showCommand {
+        commandContainer.isHidden = !showCommandContainer
+        if showCommandContainer {
             animateInPlaceReveal(
                 commandContainer,
                 shouldAnimate: isExpandingTransition && !wasCommandVisible
@@ -1203,53 +1191,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             resetRevealAppearance(commandContainer)
         }
 
-        let outputText = configuration.expandedOutputText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let showOutput = configuration.isExpanded
-            && configuration.showSeparatedCommandAndOutput
-            && !(outputText?.isEmpty ?? true)
-        let wasOutputVisible = !outputContainer.isHidden
-        if let outputText, showOutput {
-            let displayOutputText = Self.displayOutputText(outputText)
-            let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                displayOutputText,
-                isError: configuration.isError
-            )
-            let previousRendered = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
-            let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
-            let textChanged = previousRendered != nextRendered
-
-            ToolRowTextRenderer.applyANSIOutputPresentation(
-                presentation,
-                to: outputLabel,
-                plainTextColor: outputColor
-            )
-
-            if configuration.prefersUnwrappedOutput {
-                outputLabel.lineBreakMode = .byClipping
-                outputScrollView.alwaysBounceHorizontal = true
-                outputScrollView.showsHorizontalScrollIndicator = true
-                outputUsesUnwrappedLayout = true
-                outputRenderedText = nextRendered
-                updateOutputLabelWidthIfNeeded()
-            } else {
-                outputLabel.lineBreakMode = .byCharWrapping
-                outputScrollView.alwaysBounceHorizontal = false
-                outputScrollView.showsHorizontalScrollIndicator = false
-                outputUsesUnwrappedLayout = false
-                outputRenderedText = nil
-                updateOutputLabelWidthIfNeeded()
-            }
-
-            outputViewportHeightConstraint?.isActive = true
-            outputContainer.isHidden = false
-            outputUsesViewport = true
-            if !wasOutputVisible {
-                outputShouldAutoFollow = true
-            }
-            if textChanged {
-                scheduleOutputAutoScrollToBottomIfNeeded()
-            }
-        } else {
+        if !showOutputContainer {
             outputLabel.attributedText = nil
             outputLabel.text = nil
             outputLabel.textColor = outputColor
@@ -1260,13 +1202,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputRenderedText = nil
             updateOutputLabelWidthIfNeeded()
             outputViewportHeightConstraint?.isActive = false
-            outputContainer.isHidden = true
             outputUsesViewport = false
             outputShouldAutoFollow = true
             resetScrollPosition(outputScrollView)
         }
-
-        if showOutput {
+        outputContainer.isHidden = !showOutputContainer
+        if showOutputContainer {
             animateInPlaceReveal(
                 outputContainer,
                 shouldAnimate: isExpandingTransition && !wasOutputVisible
@@ -1275,7 +1216,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             resetRevealAppearance(outputContainer)
         }
 
-        let showBody = showPreview || showDiff || showLegacyExpanded || showCommand || showOutput
+        let showImagePreview = !imagePreviewContainer.isHidden
+        let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         expandFloatingButton.isHidden = expandedContainer.isHidden || fullScreenContent == nil
@@ -1399,12 +1341,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if let explicit, !explicit.isEmpty {
             return explicit
         }
-
-        let fallback = currentConfiguration.expandedCommandText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let fallback, !fallback.isEmpty {
-            return fallback
-        }
-
         return nil
     }
 
@@ -1413,17 +1349,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
            !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return explicit
         }
-
-        if let separated = currentConfiguration.expandedOutputText,
-           !separated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return separated
-        }
-
-        if let legacy = currentConfiguration.expandedText,
-           !legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return legacy
-        }
-
         return nil
     }
 
@@ -1439,40 +1364,38 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var fullScreenContent: FullScreenCodeContent? {
         guard currentConfiguration.isExpanded,
               supportsFullScreenPreview,
-              !currentConfiguration.expandedUsesReadMediaRenderer else {
+              let content = currentConfiguration.expandedContent else {
             return nil
         }
 
-        if let diffLines = currentConfiguration.expandedDiffLines {
-            let newText = outputCopyText ?? DiffEngine.formatUnified(diffLines)
+        switch content {
+        case .diff(let lines, let path):
+            let newText = outputCopyText ?? DiffEngine.formatUnified(lines)
             return .diff(
                 oldText: "",
                 newText: newText,
-                filePath: currentConfiguration.expandedDiffPath,
-                precomputedLines: diffLines
+                filePath: path,
+                precomputedLines: lines
             )
-        }
 
-        if currentConfiguration.expandedTextUsesMarkdown,
-           let markdown = currentConfiguration.expandedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !markdown.isEmpty {
-            return .markdown(
-                content: markdown,
-                filePath: currentConfiguration.expandedCodeFilePath
+        case .markdown(let text):
+            guard !text.isEmpty else { return nil }
+            // Extract filePath from code case context — markdown doesn't carry filePath
+            return .markdown(content: text, filePath: nil)
+
+        case .code(let text, let language, let startLine, let filePath):
+            let copyText = outputCopyText ?? text
+            guard !copyText.isEmpty else { return nil }
+            return .code(
+                content: copyText,
+                language: language?.displayName,
+                filePath: filePath,
+                startLine: startLine ?? 1
             )
-        }
 
-        guard let text = outputCopyText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else {
+        case .readMedia, .todoCard, .bash, .text:
             return nil
         }
-
-        return .code(
-            content: text,
-            language: currentConfiguration.expandedOutputLanguage?.displayName,
-            filePath: currentConfiguration.expandedCodeFilePath ?? currentConfiguration.expandedDiffPath,
-            startLine: currentConfiguration.expandedCodeStartLine ?? 1
-        )
     }
 
     private var canShowFullScreenContent: Bool {

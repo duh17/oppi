@@ -53,10 +53,13 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.isExpanded)
-        #expect(config.showSeparatedCommandAndOutput)
-        #expect(config.expandedCommandText == "echo hello")
-        #expect(config.expandedOutputText == "hello\nworld")
-        #expect(config.prefersUnwrappedOutput)
+        guard case .bash(let command, let output, let unwrapped) = config.expandedContent else {
+            Issue.record("Expected .bash content")
+            return
+        }
+        #expect(command == "echo hello")
+        #expect(output == "hello\nworld")
+        #expect(unwrapped)
         #expect(config.title == "bash") // expanded bash shows just "bash"
     }
 
@@ -92,9 +95,13 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.isExpanded)
-        #expect(config.expandedText == "full content here")
-        #expect(config.expandedCodeStartLine == 42)
-        #expect(config.expandedCodeFilePath == "server.ts")
+        guard case .code(let text, _, let startLine, let filePath) = config.expandedContent else {
+            Issue.record("Expected .code content")
+            return
+        }
+        #expect(text == "full content here")
+        #expect(startLine == 42)
+        #expect(filePath == "server.ts")
     }
 
     @Test("read loading shows loading message")
@@ -111,7 +118,11 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.expandedText == "Loading read output…")
+        guard case .text(let text, _) = config.expandedContent else {
+            Issue.record("Expected .text content for loading state")
+            return
+        }
+        #expect(text == "Loading read output…")
     }
 
     // MARK: - Edit
@@ -131,7 +142,6 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.toolNamePrefix == "edit")
-        // editAdded/editRemoved are computed from diff
         #expect(config.editAdded != nil)
         #expect(config.editRemoved != nil)
     }
@@ -154,8 +164,11 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.isExpanded)
-        #expect(config.expandedDiffLines != nil)
-        #expect(!config.expandedDiffLines!.isEmpty)
+        guard case .diff(let lines, _) = config.expandedContent else {
+            Issue.record("Expected .diff content")
+            return
+        }
+        #expect(!lines.isEmpty)
     }
 
     // MARK: - Write
@@ -208,10 +221,14 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.expandedText == content)
-        #expect(config.expandedOutputLanguage == .typescript)
-        #expect(config.expandedCodeStartLine == 1)
-        #expect(config.expandedCodeFilePath == "src/index.ts")
+        guard case .code(let text, let language, let startLine, let filePath) = config.expandedContent else {
+            Issue.record("Expected .code content")
+            return
+        }
+        #expect(text == content)
+        #expect(language == .typescript)
+        #expect(startLine == 1)
+        #expect(filePath == "src/index.ts")
         #expect(config.copyOutputText == content)
     }
 
@@ -233,12 +250,14 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.expandedText == content)
-        #expect(config.expandedTextUsesMarkdown == true)
-        #expect(config.expandedOutputLanguage == nil)
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content")
+            return
+        }
+        #expect(text == content)
     }
 
-    @Test("write expanded falls back to output when content missing")
+    @Test("write expanded falls back to code viewer when content missing")
     func writeExpandedFallback() {
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "write",
@@ -252,8 +271,12 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.expandedText == "Successfully wrote 10 bytes to file.txt")
-        #expect(config.expandedTextUsesMarkdown == false)
+        guard case .code(let text, _, _, let filePath) = config.expandedContent else {
+            Issue.record("Expected .code content for write fallback")
+            return
+        }
+        #expect(text == "Successfully wrote 10 bytes to file.txt")
+        #expect(filePath == "file.txt")
     }
 
     // MARK: - Todo
@@ -271,8 +294,108 @@ struct ToolPresentationBuilderTests {
             ])
         )
 
-        #expect(config.title == "todo create Add tests")
+        #expect(config.title == "create Add tests")
         #expect(config.toolNamePrefix == "todo")
+    }
+
+    // MARK: - Remember
+
+    @Test("remember collapsed shows first line of text")
+    func rememberCollapsed() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "remember",
+            argsSummary: "text: Some important discovery",
+            outputPreview: "Saved to journal: 2026-02-16-mac-studio.md",
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "text": .string("Some important discovery\nMore details here"),
+                "tags": .array([.string("oppi"), .string("ios")]),
+            ])
+        )
+
+        #expect(config.title == "Some important discovery")
+        #expect(config.toolNamePrefix == "remember")
+        #expect(config.trailing == "oppi, ios")
+    }
+
+    @Test("remember expanded shows full text and tags")
+    func rememberExpanded() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "remember",
+            argsSummary: "",
+            outputPreview: "Saved to journal",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "text": .string("Full discovery text"),
+                    "tags": .array([.string("tag1")]),
+                ],
+                expanded: ["t1"]
+            )
+        )
+
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content for remember")
+            return
+        }
+        #expect(text == "Full discovery text\n\nTags: tag1")
+    }
+
+    // MARK: - Recall
+
+    @Test("recall collapsed shows query")
+    func recallCollapsed() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "recall",
+            argsSummary: "query: architecture decisions",
+            outputPreview: "[2/2] journal/2026-02-16:45  ## App design\n  path: /path\n",
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "query": .string("architecture decisions"),
+                "scope": .string("journal"),
+                "days": .number(7),
+            ])
+        )
+
+        #expect(config.title == "\"architecture decisions\" journal 7d")
+        #expect(config.toolNamePrefix == "recall")
+        #expect(config.trailing == "1 match")
+    }
+
+    @Test("recall trailing shows match count")
+    func recallTrailing() {
+        let output = """
+        [2/3] journal/2026-02-16:45  ## First result
+          path: /path/a
+        [1/3] journal/2026-02-15:10  ## Second result
+          path: /path/b
+        """
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "recall",
+            argsSummary: "query: test",
+            outputPreview: output,
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "query": .string("test"),
+            ])
+        )
+
+        #expect(config.trailing == "2 matches")
+    }
+
+    @Test("recall trailing shows zero for no matches")
+    func recallTrailingNoMatches() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "recall",
+            argsSummary: "query: nonexistent",
+            outputPreview: "No matches for \"nonexistent\" in all (last 30 days).",
+            isError: false, isDone: true,
+            context: emptyContext(args: [
+                "query": .string("nonexistent"),
+            ])
+        )
+
+        #expect(config.trailing == "0 matches")
     }
 
     // MARK: - Unknown Tool
@@ -301,7 +424,11 @@ struct ToolPresentationBuilderTests {
             context: emptyContext(expanded: ["t1"], fullOutput: "full tool output")
         )
 
-        #expect(config.expandedText == "full tool output")
+        guard case .text(let text, _) = config.expandedContent else {
+            Issue.record("Expected .text content for unknown tool")
+            return
+        }
+        #expect(text == "full tool output")
     }
 
     // MARK: - Title Truncation
@@ -401,5 +528,99 @@ struct ToolPresentationBuilderTests {
             argsSummary: ""
         )
         #expect(lang == nil)
+    }
+
+    // MARK: - Collapsed Image Preview
+
+    @Test("read image file provides collapsed image preview")
+    func readImageCollapsedPreview() {
+        let fakeBase64 = "iVBORw0KGgo="
+        let output = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: icon.png",
+            outputPreview: output,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("icon.png")],
+                fullOutput: output
+            )
+        )
+
+        #expect(config.collapsedImageBase64 == fakeBase64)
+        #expect(config.collapsedImageMimeType == "image/png")
+    }
+
+    @Test("read non-image file has no collapsed image preview")
+    func readTextFileNoImagePreview() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: server.ts",
+            outputPreview: "const x = 1;",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("server.ts")],
+                fullOutput: "const x = 1;"
+            )
+        )
+
+        #expect(config.collapsedImageBase64 == nil)
+        #expect(config.collapsedImageMimeType == nil)
+    }
+
+    @Test("read image with no data URI yet has no preview")
+    func readImageNoDataURIYet() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: icon.png",
+            outputPreview: "Read image file [image/png]",
+            isError: false, isDone: false,
+            context: emptyContext(
+                args: ["path": .string("icon.png")],
+                fullOutput: "Read image file [image/png]"
+            )
+        )
+
+        #expect(config.collapsedImageBase64 == nil)
+    }
+
+    @Test("expanded image read uses readMedia content")
+    func readImageExpandedUsesReadMedia() {
+        let fakeBase64 = "iVBORw0KGgo="
+        let output = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: icon.png",
+            outputPreview: output,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("icon.png")],
+                expanded: ["t1"],
+                fullOutput: output
+            )
+        )
+
+        #expect(config.isExpanded)
+        guard case .readMedia = config.expandedContent else {
+            Issue.record("Expected .readMedia content for image read")
+            return
+        }
+        // Builder still provides preview data, cell decides visibility
+        #expect(config.collapsedImageBase64 == fakeBase64)
+    }
+
+    @Test("non-read tool has no collapsed image preview")
+    func bashNoImagePreview() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: cat icon.png",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string("cat icon.png")])
+        )
+
+        #expect(config.collapsedImageBase64 == nil)
     }
 }

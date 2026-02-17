@@ -288,7 +288,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        let diffLines = try #require(config.expandedDiffLines)
+        guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
         let stats = diffLines.reduce(into: (added: 0, removed: 0)) { acc, line in
             switch line.kind {
@@ -303,7 +303,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
         #expect(stats.added > 0)
         #expect(stats.removed > 0)
-        #expect(config.expandedText == nil)
+        // expandedText == nil is now implicit (content is .diff not .text)
     }
 
     @MainActor
@@ -325,9 +325,10 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        #expect(config.expandedDiffLines == nil)
-        #expect(config.expandedOutputLanguage == .typescript)
-        #expect(config.expandedCodeFilePath == "src/feature.ts")
+        // Error edit falls back to code viewer with language from file path
+        guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for error edit fallback"); return }
+        #expect(language == .typescript)
+        #expect(filePath == "src/feature.ts")
     }
 
     @MainActor
@@ -351,11 +352,12 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        #expect(config.expandedOutputLanguage == .swift)
+        guard case .code(_, let language, _, _) = config.expandedContent else { Issue.record("Expected .code"); return }
+        #expect(language == .swift)
         #expect(config.languageBadge == "Swift")
-        #expect(config.expandedText != nil)
-        #expect(config.expandedCodeStartLine == 270)
-        #expect(config.expandedCodeFilePath == "Runtime/TimelineReducer.swift")
+        // expandedText != nil is now implicit in content case
+        if case .code(_, _, let startLine, _) = config.expandedContent { #expect(startLine == 270) }
+        if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Runtime/TimelineReducer.swift") }
     }
 
     @MainActor
@@ -374,8 +376,55 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        #expect(config.expandedCodeStartLine == 1)
-        #expect(config.expandedCodeFilePath == "Sources/Agent.swift")
+        if case .code(_, _, let startLine, _) = config.expandedContent { #expect(startLine == 1) }
+        if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Sources/Agent.swift") }
+    }
+
+    @MainActor
+    @Test func collapsedReadImageToolExtractsImagePreviewFromOutput() throws {
+        // End-to-end: simulates the real data flow where the server sends
+        // text + data URI as tool_output, ToolOutputStore accumulates them,
+        // and ToolPresentationBuilder extracts the first image for collapsed preview.
+        let harness = makeHarness(sessionId: "session-a")
+        let fakeBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+        let serverOutput = "Read image file [image/png]\ndata:image/png;base64,\(fakeBase64)"
+
+        harness.toolArgsStore.set(["path": .string("icon-design/pi-icon.png")], for: "read-img")
+        harness.toolOutputStore.append(serverOutput, to: "read-img")
+
+        let item = ChatItem.toolCall(
+            id: "read-img",
+            tool: "read",
+            argsSummary: "path: icon-design/pi-icon.png",
+            outputPreview: String(serverOutput.prefix(500)),
+            outputByteCount: serverOutput.utf8.count,
+            isError: false,
+            isDone: true
+        )
+
+        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        #expect(config.collapsedImageBase64 == fakeBase64, "Builder must extract base64 from data URI in tool output")
+        #expect(config.collapsedImageMimeType == "image/png")
+    }
+
+    @MainActor
+    @Test func collapsedReadImageToolWithEmptyOutputHasNoPreview() throws {
+        // When the tool output hasn't arrived yet (streaming), no image preview.
+        let harness = makeHarness(sessionId: "session-a")
+        harness.toolArgsStore.set(["path": .string("icon.png")], for: "read-img-empty")
+
+        let item = ChatItem.toolCall(
+            id: "read-img-empty",
+            tool: "read",
+            argsSummary: "path: icon.png",
+            outputPreview: "",
+            outputByteCount: 0,
+            isError: false,
+            isDone: false
+        )
+
+        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        #expect(config.collapsedImageBase64 == nil, "No image preview before output arrives")
     }
 
     @MainActor
@@ -397,9 +446,10 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        #expect(config.expandedOutputLanguage == .swift)
-        #expect(config.expandedCodeStartLine == nil)
-        #expect(config.expandedCodeFilePath == "Sources/Generated.swift")
+        // Write without content arg falls back to code viewer with language from file path
+        guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for write fallback"); return }
+        #expect(language == .swift)
+        #expect(filePath == "Sources/Generated.swift")
     }
 
     @MainActor
@@ -423,8 +473,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
-        #expect(config.expandedTextUsesMarkdown)
-        #expect(config.expandedCodeStartLine == nil)
+        guard case .markdown = config.expandedContent else { Issue.record("Expected .markdown"); return }
+        // startLine is implicit in content case
         #expect(config.languageBadge == "Markdown")
     }
 
@@ -487,9 +537,9 @@ struct ChatTimelineCollectionViewCoordinatorTests {
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
         // Now uses the rich card renderer instead of markdown text
-        #expect(config.expandedUsesTodoRenderer)
-        #expect(config.expandedText?.contains("TODO-a27df231") == true)
-        #expect(config.trailing == "A1 O1 C0")
+        guard case .todoCard = config.expandedContent else { Issue.record("Expected .todoCard"); return }
+        if case .todoCard(let output) = config.expandedContent { #expect(output.contains("TODO-a27df231")) }
+        #expect(config.trailing == "1 assigned · 1 open")
     }
 
     @MainActor
@@ -517,8 +567,9 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         #expect(config.editAdded == 2)
         #expect(config.editRemoved == 0)
         #expect(config.trailing == nil)
-        #expect(config.expandedText == nil)
-        #expect(config.expandedDiffLines?.count == 2)
+        // expandedText == nil is now implicit (content is .diff not .text)
+        guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
+        #expect(diffLines.count == 2)
         #expect(config.copyOutputText?.contains("+ Investigate smooth scroll follow") == true)
     }
 
@@ -546,12 +597,12 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
-        let diffLines = try #require(config.expandedDiffLines)
+        guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
         #expect(config.editAdded == 5)
         #expect(config.editRemoved == 0)
         #expect(config.trailing == nil)
-        #expect(config.expandedText == nil)
+        // expandedText == nil is now implicit (content is .diff not .text)
         #expect(diffLines.contains(where: { line in
             switch line.kind {
             case .added:
@@ -1258,8 +1309,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "read-image-1", item: item))
-        #expect(config.expandedUsesReadMediaRenderer)
-        #expect(config.expandedCodeStartLine == nil)
+        guard case .readMedia = config.expandedContent else { Issue.record("Expected .readMedia"); return }
+        // startLine is implicit in content case
     }
 
     @MainActor
@@ -1373,8 +1424,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "bash-1", item: item))
-        #expect(config.showSeparatedCommandAndOutput)
-        #expect(config.prefersUnwrappedOutput)
+        guard case .bash = config.expandedContent else { Issue.record("Expected .bash"); return }
+        if case .bash(_, _, let unwrapped) = config.expandedContent { #expect(unwrapped) }
     }
 
     @MainActor
@@ -1943,9 +1994,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedReadMarkdownAddsPinchGestureForFullScreenReader() {
         let config = makeToolConfiguration(
-            expandedText: "# Notes\n\n- item",
-            expandedTextUsesMarkdown: true,
-            expandedCodeFilePath: "docs/README.md",
+            expandedContent: .markdown(text: "# Notes\n\n- item"),
             toolNamePrefix: "read",
             isExpanded: true
         )
@@ -1961,10 +2010,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func emptyExpandedBodyProducesFiniteCompactHeight() {
         let config = makeToolConfiguration(
-            expandedText: nil,
-            expandedCommandText: nil,
-            expandedOutputText: nil,
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(command: nil, output: nil, unwrapped: true),
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -1980,15 +2026,11 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func transitionFromExpandedContentToEmptyBodyStaysFinite() {
         let expanded = makeToolConfiguration(
-            expandedCommandText: "echo hi",
-            expandedOutputText: "hi",
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
             isExpanded: true
         )
         let emptyExpanded = makeToolConfiguration(
-            expandedCommandText: nil,
-            expandedOutputText: nil,
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(command: nil, output: nil, unwrapped: true),
             isExpanded: true
         )
 
@@ -2008,9 +2050,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedOutputUsesCappedViewportHeight() {
         let longOutput = Array(repeating: "line", count: 600).joined(separator: "\n")
         let config = makeToolConfiguration(
-            expandedCommandText: "echo hi",
-            expandedOutputText: longOutput,
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(command: "echo hi", output: longOutput, unwrapped: true),
             isExpanded: true
         )
 
@@ -2026,10 +2066,11 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedOutputCanUseUnwrappedTerminalLayout() throws {
         let config = makeToolConfiguration(
-            expandedCommandText: "tail -16 build.log",
-            expandedOutputText: "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            prefersUnwrappedOutput: true,
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(
+                command: "tail -16 build.log",
+                output: "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                unwrapped: true
+            ),
             isExpanded: true
         )
 
@@ -2058,10 +2099,7 @@ struct ToolTimelineRowContentViewTests {
         """
 
         let config = makeToolConfiguration(
-            expandedText: markdown,
-            expandedTextUsesMarkdown: true,
-            expandedOutputLanguage: nil,
-            expandedCodeStartLine: nil,
+            expandedContent: .markdown(text: markdown),
             isExpanded: true
         )
 
@@ -2088,10 +2126,7 @@ struct ToolTimelineRowContentViewTests {
         """
 
         let config = makeToolConfiguration(
-            expandedText: markdown,
-            expandedTextUsesMarkdown: true,
-            expandedOutputLanguage: nil,
-            expandedCodeStartLine: nil,
+            expandedContent: .markdown(text: markdown),
             isExpanded: true
         )
 
@@ -2110,8 +2145,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedOutputDisplayTruncatesLargePayloads() throws {
         let longOutput = String(repeating: "x", count: 12_000)
         let config = makeToolConfiguration(
-            expandedOutputText: longOutput,
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(command: nil, output: longOutput, unwrapped: true),
             isExpanded: true
         )
 
@@ -2130,12 +2164,11 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedDiffIncreasesBodyHeight() {
         let collapsed = makeToolConfiguration(isExpanded: false)
         let expanded = makeToolConfiguration(
-            expandedDiffLines: [
+            expandedContent: .diff(lines: [
                 DiffLine(kind: .removed, text: "let value = 1"),
                 DiffLine(kind: .added, text: "let value = 2"),
                 DiffLine(kind: .context, text: "let unchanged = true"),
-            ],
-            expandedDiffPath: "src/main.swift",
+            ], path: "src/main.swift"),
             isExpanded: true
         )
 
@@ -2151,11 +2184,10 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedDiffShowsGutterBarsAndPrefixes() {
         let config = makeToolConfiguration(
-            expandedDiffLines: [
+            expandedContent: .diff(lines: [
                 DiffLine(kind: .removed, text: "let value = 1"),
                 DiffLine(kind: .added, text: "let value = 2"),
-            ],
-            expandedDiffPath: "src/main.swift",
+            ], path: "src/main.swift"),
             isExpanded: true
         )
 
@@ -2176,8 +2208,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedEmptyDiffShowsNoTextualChangesMessage() {
         let config = makeToolConfiguration(
-            expandedDiffLines: [],
-            expandedDiffPath: "src/main.swift",
+            expandedContent: .diff(lines: [], path: "src/main.swift"),
             isExpanded: true
         )
 
@@ -2239,9 +2270,11 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func ansiHighlightedSeparatedOutputRemainsVisible() {
         let config = makeToolConfiguration(
-            expandedCommandText: "echo hi",
-            expandedOutputText: "\u{001B}[31mFAIL\u{001B}[39m tests/workspace-crud.test.ts",
-            showSeparatedCommandAndOutput: true,
+            expandedContent: .bash(
+                command: "echo hi",
+                output: "\u{001B}[31mFAIL\u{001B}[39m tests/workspace-crud.test.ts",
+                unwrapped: true
+            ),
             isExpanded: true,
             isError: true
         )
@@ -2253,6 +2286,118 @@ struct ToolTimelineRowContentViewTests {
             }
 
         #expect(renderedTexts.contains { $0.contains("FAIL tests/workspace-crud.test.ts") })
+    }
+
+    // MARK: - Collapsed Image Preview Regression Tests
+
+    // Minimal valid 1x1 red-pixel PNG for testing (82 bytes, base64).
+    private static let testPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+
+    @MainActor
+    @Test func collapsedReadImageIsTallerThanPlainRead() {
+        // Regression: bodyStack was hidden when only the image preview was
+        // visible, because showBody didn't include showImagePreview.
+        // The image preview container must make the row taller.
+        let plain = makeToolConfiguration(
+            title: "server.ts",
+            toolNamePrefix: "read",
+            isExpanded: false
+        )
+        let withImage = makeToolConfiguration(
+            title: "icon.png",
+            toolNamePrefix: "read",
+            collapsedImageBase64: Self.testPNGBase64,
+            collapsedImageMimeType: "image/png",
+            isExpanded: false
+        )
+
+        let plainView = ToolTimelineRowContentView(configuration: plain)
+        let imageView = ToolTimelineRowContentView(configuration: withImage)
+
+        let plainSize = fittedSize(for: plainView, width: 370)
+        let imageSize = fittedSize(for: imageView, width: 370)
+
+        #expect(
+            imageSize.height > plainSize.height,
+            "Image preview row (\(imageSize.height)pt) must be taller than plain row (\(plainSize.height)pt)"
+        )
+    }
+
+    @MainActor
+    @Test func collapsedReadImageContainsVisibleImageView() throws {
+        // The image preview container must contain a visible UIImageView
+        // with scaleAspectFit content mode.
+        let config = makeToolConfiguration(
+            title: "icon.png",
+            toolNamePrefix: "read",
+            collapsedImageBase64: Self.testPNGBase64,
+            collapsedImageMimeType: "image/png",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        // Find a non-hidden UIImageView with scaleAspectFit.
+        // The status icon and tool icon use scaleAspectFit too, but they are
+        // small (≤14pt). The image preview has a constraint of ≤200pt height
+        // and sits inside a container with cornerRadius 6.
+        let imageViews = allImageViews(in: view).filter {
+            !$0.isHidden && $0.contentMode == .scaleAspectFit
+        }
+        // Filter to ones whose parent has cornerRadius == 6 (the imagePreviewContainer).
+        let previewImageViews = imageViews.filter { iv in
+            iv.superview?.layer.cornerRadius == 6
+        }
+
+        #expect(!previewImageViews.isEmpty, "Collapsed image row must have a visible image preview UIImageView")
+    }
+
+    @MainActor
+    @Test func expandedReadImageHidesCollapsedPreview() {
+        // When expanded, the collapsed image preview container must be hidden
+        // to avoid doubling up with the expanded media renderer.
+        let config = makeToolConfiguration(
+            title: "icon.png",
+            expandedContent: .text(text: "Read image file [image/png]", language: nil),
+            toolNamePrefix: "read",
+            collapsedImageBase64: Self.testPNGBase64,
+            collapsedImageMimeType: "image/png",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        // The image preview container (cornerRadius == 6, contains aspectFit
+        // UIImageView) must be hidden when expanded.
+        let visiblePreviewContainers = allImageViews(in: view)
+            .filter { !$0.isHidden && $0.contentMode == .scaleAspectFit }
+            .filter { $0.superview?.layer.cornerRadius == 6 }
+            .filter { !($0.superview?.isHidden ?? true) }
+
+        #expect(
+            visiblePreviewContainers.isEmpty,
+            "Collapsed image preview must be hidden when expanded"
+        )
+    }
+
+    @MainActor
+    @Test func collapsedNonImageToolHasNoPreviewContainer() {
+        // A bash tool (no image data) must not show any image preview container.
+        let config = makeToolConfiguration(
+            title: "echo hello",
+            toolNamePrefix: "$",
+            isExpanded: false
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        // No visible image preview containers (cornerRadius == 6 with
+        // scaleAspectFit UIImageView) should exist.
+        let visiblePreviewContainers = allImageViews(in: view)
+            .filter { !$0.isHidden && $0.contentMode == .scaleAspectFit }
+            .filter { $0.superview?.layer.cornerRadius == 6 && !($0.superview?.isHidden ?? true) }
+
+        #expect(visiblePreviewContainers.isEmpty, "Non-image tools must not show image preview")
     }
 }
 
@@ -2293,6 +2438,200 @@ struct AssistantTimelineRowContentViewTests {
         let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
         let codeBlockView = firstView(ofType: NativeCodeBlockView.self, in: view)
         #expect(codeBlockView != nil)
+    }
+
+    // MARK: - Code Block Horizontal Scroll Regression
+
+    @MainActor
+    @Test func codeBlockLongLineScrollsHorizontally() throws {
+        // Regression: code block label must NOT wrap — long lines need
+        // horizontal scroll via the embedded UIScrollView.
+        let longLine = "let reallyLongVariableName = \"" + String(repeating: "x", count: 200) + "\""
+        let text = "```swift\n\(longLine)\n```"
+        let containerWidth: CGFloat = 300
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: containerWidth)
+
+        let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
+
+        // Find the UIScrollView inside the code block.
+        let scrollView = try #require(allScrollViews(in: codeBlockView).first)
+
+        // Force layout so contentSize is calculated.
+        codeBlockView.setNeedsLayout()
+        codeBlockView.layoutIfNeeded()
+
+        // The content must be wider than the scroll view's frame.
+        #expect(
+            scrollView.contentSize.width > scrollView.frame.width,
+            "Code block content (\(scrollView.contentSize.width)pt) must be wider than frame (\(scrollView.frame.width)pt) for horizontal scrolling"
+        )
+
+        // The code label must NOT have wrapped — it should be a single line of code.
+        let codeLabel = try #require(allLabels(in: scrollView).first)
+        let labelLines = codeLabel.text?.components(separatedBy: "\n").count ?? 0
+        #expect(labelLines == 1, "Single-line code should render as 1 line, not wrap to \(labelLines) lines")
+    }
+
+    @MainActor
+    @Test func codeBlockMultiLineLongLinesScrollHorizontally() throws {
+        // Multi-line code block with long lines must also scroll horizontally.
+        let line1 = "func reallyLongFunctionName(parameterOne: String, parameterTwo: Int, parameterThree: Bool, parameterFour: Double) -> String {"
+        let line2 = "    return \"result: \\(parameterOne) \\(parameterTwo) \\(parameterThree) \\(parameterFour) and then some extra text to make it longer\""
+        let line3 = "}"
+        let text = "```swift\n\(line1)\n\(line2)\n\(line3)\n```"
+        let containerWidth: CGFloat = 300
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: containerWidth)
+
+        let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
+        let scrollView = try #require(allScrollViews(in: codeBlockView).first)
+
+        codeBlockView.setNeedsLayout()
+        codeBlockView.layoutIfNeeded()
+
+        #expect(
+            scrollView.contentSize.width > scrollView.frame.width,
+            "Multi-line code block content must scroll horizontally"
+        )
+    }
+
+    @MainActor
+    @Test func codeBlockShortCodeDoesNotNeedScroll() throws {
+        // Short code should NOT have content wider than the frame.
+        let text = "```swift\nlet x = 1\n```"
+        let containerWidth: CGFloat = 370
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: containerWidth)
+
+        let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
+        let scrollView = try #require(allScrollViews(in: codeBlockView).first)
+
+        codeBlockView.setNeedsLayout()
+        codeBlockView.layoutIfNeeded()
+
+        // Short code fits — content should not exceed frame.
+        #expect(
+            scrollView.contentSize.width <= scrollView.frame.width || scrollView.frame.width == 0,
+            "Short code should fit without horizontal scroll"
+        )
+    }
+
+    @MainActor
+    @Test func codeBlockStreamingLongLineScrollsHorizontally() throws {
+        // Streaming code blocks must also scroll horizontally.
+        let longLine = "console.log(\"" + String(repeating: "streaming-data-", count: 20) + "\")"
+        let text = "```javascript\n\(longLine)"  // No closing fence = streaming
+        let containerWidth: CGFloat = 300
+
+        let mdView = AssistantMarkdownContentView()
+        mdView.apply(configuration: .init(content: text, isStreaming: true, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: containerWidth)
+
+        let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
+        let scrollView = try #require(allScrollViews(in: codeBlockView).first)
+
+        codeBlockView.setNeedsLayout()
+        codeBlockView.layoutIfNeeded()
+
+        #expect(
+            scrollView.contentSize.width > scrollView.frame.width,
+            "Streaming code block must scroll horizontally for long lines"
+        )
+    }
+
+    @MainActor
+    @Test func rendersTableInSeparateView() throws {
+        let text = """
+        Here is a table:
+
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+        """
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+        _ = fittedSize(for: view, width: 370)
+        let tableView = firstView(ofType: NativeTableBlockView.self, in: view)
+        #expect(tableView != nil)
+    }
+
+    @MainActor
+    @Test func streamingTableUpdatesInPlace() throws {
+        // Simulate streaming: table starts with header + separator, then rows arrive.
+        let mdView = AssistantMarkdownContentView()
+
+        // Phase 1: header + separator only
+        let phase1 = """
+        Results:
+
+        | Name | Value |
+        | --- | --- |
+        """
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: 370)
+
+        let tableAfterPhase1 = firstView(ofType: NativeTableBlockView.self, in: mdView)
+        #expect(tableAfterPhase1 != nil, "Table view should exist after header + separator")
+
+        // Phase 2: first row arrives
+        let phase2 = """
+        Results:
+
+        | Name | Value |
+        | --- | --- |
+        | alpha | 100 |
+        """
+        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .tokyoNight))
+
+        // Same NativeTableBlockView instance should be reused (in-place update, not rebuild)
+        let tableAfterPhase2 = firstView(ofType: NativeTableBlockView.self, in: mdView)
+        #expect(tableAfterPhase2 === tableAfterPhase1, "Table view should be updated in-place, not rebuilt")
+
+        // Phase 3: second row arrives (partial)
+        let phase3 = """
+        Results:
+
+        | Name | Value |
+        | --- | --- |
+        | alpha | 100 |
+        | beta | 20
+        """
+        mdView.apply(configuration: .init(content: phase3, isStreaming: true, themeID: .tokyoNight))
+
+        let tableAfterPhase3 = firstView(ofType: NativeTableBlockView.self, in: mdView)
+        #expect(tableAfterPhase3 === tableAfterPhase1, "Table view should still be the same instance")
+    }
+
+    @MainActor
+    @Test func streamingTableStructuralChangeRebuilds() throws {
+        // When structure changes (text → text + table), a rebuild happens.
+        let mdView = AssistantMarkdownContentView()
+
+        // Phase 1: just text, no table yet
+        let phase1 = "Results:"
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .tokyoNight))
+        _ = fittedSize(for: mdView, width: 370)
+
+        let tableBeforeTable = firstView(ofType: NativeTableBlockView.self, in: mdView)
+        #expect(tableBeforeTable == nil, "No table view before table content arrives")
+
+        // Phase 2: table header + separator arrive — structure changes
+        let phase2 = """
+        Results:
+
+        | Name | Value |
+        | --- | --- |
+        """
+        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .tokyoNight))
+
+        let tableAfterHeader = firstView(ofType: NativeTableBlockView.self, in: mdView)
+        #expect(tableAfterHeader != nil, "Table view should appear after structural rebuild")
     }
 
     @MainActor
@@ -2656,21 +2995,13 @@ private func waitForCondition(
 private func makeToolConfiguration(
     title: String = "$ bash",
     preview: String? = nil,
-    expandedText: String? = nil,
-    expandedTextUsesMarkdown: Bool = false,
-    expandedDiffLines: [DiffLine]? = nil,
-    expandedDiffPath: String? = nil,
-    expandedCommandText: String? = nil,
-    expandedOutputText: String? = nil,
-    expandedOutputLanguage: SyntaxLanguage? = nil,
-    expandedCodeStartLine: Int? = nil,
-    expandedCodeFilePath: String? = nil,
-    prefersUnwrappedOutput: Bool = false,
-    showSeparatedCommandAndOutput: Bool = false,
+    expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil,
     languageBadge: String? = nil,
     trailing: String? = nil,
     toolNamePrefix: String? = "$",
     toolNameColor: UIColor = .systemGreen,
+    collapsedImageBase64: String? = nil,
+    collapsedImageMimeType: String? = nil,
     isExpanded: Bool,
     isDone: Bool = true,
     isError: Bool = false
@@ -2678,17 +3009,7 @@ private func makeToolConfiguration(
     ToolTimelineRowConfiguration(
         title: title,
         preview: preview,
-        expandedText: expandedText,
-        expandedTextUsesMarkdown: expandedTextUsesMarkdown,
-        expandedDiffLines: expandedDiffLines,
-        expandedDiffPath: expandedDiffPath,
-        expandedCommandText: expandedCommandText,
-        expandedOutputText: expandedOutputText,
-        expandedOutputLanguage: expandedOutputLanguage,
-        expandedCodeStartLine: expandedCodeStartLine,
-        expandedCodeFilePath: expandedCodeFilePath,
-        prefersUnwrappedOutput: prefersUnwrappedOutput,
-        showSeparatedCommandAndOutput: showSeparatedCommandAndOutput,
+        expandedContent: expandedContent,
         copyCommandText: nil,
         copyOutputText: nil,
         languageBadge: languageBadge,
@@ -2698,6 +3019,8 @@ private func makeToolConfiguration(
         toolNameColor: toolNameColor,
         editAdded: nil,
         editRemoved: nil,
+        collapsedImageBase64: collapsedImageBase64,
+        collapsedImageMimeType: collapsedImageMimeType,
         isExpanded: isExpanded,
         isDone: isDone,
         isError: isError

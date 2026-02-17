@@ -59,8 +59,9 @@ enum ToolPresentationBuilder {
         )
 
         // Expanded presentation
-        let expanded = isExpanded
-            ? buildExpanded(
+        let expanded: ExpandedPresentation
+        if isExpanded {
+            expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 args: args,
                 argsSummary: argsSummary,
@@ -72,7 +73,9 @@ enum ToolPresentationBuilder {
                 todoMutationDiff: todoMutationDiff,
                 todoPresentation: todoPresentation
             )
-            : ExpandedPresentation()
+        } else {
+            expanded = ExpandedPresentation()
+        }
 
         // Trailing
         let trailing: String?
@@ -83,6 +86,10 @@ enum ToolPresentationBuilder {
                   let todoTrailing = todoPresentation?.trailing,
                   !todoTrailing.isEmpty {
             trailing = todoTrailing
+        } else if normalizedTool == "remember" {
+            trailing = ToolCallFormatting.rememberTrailing(args: args)
+        } else if normalizedTool == "recall" {
+            trailing = ToolCallFormatting.recallTrailing(output: outputForFormatting)
         } else {
             trailing = nil
         }
@@ -102,22 +109,18 @@ enum ToolPresentationBuilder {
             title = String(title.prefix(239)) + "…"
         }
 
+        // Extract first image for collapsed thumbnail (read tool, image files)
+        let imagePreview = Self.collapsedImagePreview(
+            normalizedTool: normalizedTool,
+            args: args,
+            argsSummary: argsSummary,
+            output: outputForFormatting
+        )
+
         return ToolTimelineRowConfiguration(
             title: title,
             preview: nil, // collapsed tool rows single-line
-            expandedText: expanded.text,
-            expandedTextUsesMarkdown: expanded.textUsesMarkdown,
-            expandedDiffLines: expanded.diffLines,
-            expandedDiffPath: expanded.diffPath,
-            expandedCommandText: expanded.commandText,
-            expandedOutputText: expanded.outputText,
-            expandedOutputLanguage: expanded.outputLanguage,
-            expandedCodeStartLine: expanded.codeStartLine,
-            expandedCodeFilePath: expanded.codeFilePath,
-            expandedUsesReadMediaRenderer: expanded.usesReadMediaRenderer,
-            expandedUsesTodoRenderer: expanded.usesTodoRenderer,
-            prefersUnwrappedOutput: expanded.prefersUnwrappedOutput,
-            showSeparatedCommandAndOutput: expanded.showSeparatedCommandAndOutput,
+            expandedContent: expanded.content,
             copyCommandText: expanded.copyCommandText,
             copyOutputText: expanded.copyOutputText,
             languageBadge: languageBadge,
@@ -127,6 +130,8 @@ enum ToolPresentationBuilder {
             toolNameColor: collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
+            collapsedImageBase64: imagePreview?.base64,
+            collapsedImageMimeType: imagePreview?.mimeType,
             isExpanded: isExpanded,
             isDone: isDone,
             isError: isError
@@ -202,13 +207,25 @@ enum ToolPresentationBuilder {
 
         case "todo":
             let summary = ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
-            result.title = summary.isEmpty ? "todo" : "todo \(summary)"
+            result.title = summary.isEmpty ? "todo" : summary
             result.toolNamePrefix = "todo"
             result.toolNameColor = UIColor(Color.tokyoPurple)
             if let todoMutationDiff {
                 result.editAdded = todoMutationDiff.addedLineCount
                 result.editRemoved = todoMutationDiff.removedLineCount
             }
+
+        case "remember":
+            let summary = ToolCallFormatting.rememberSummary(args: args, argsSummary: argsSummary)
+            result.title = summary
+            result.toolNamePrefix = "remember"
+            result.toolNameColor = UIColor(Color.tokyoYellow)
+
+        case "recall":
+            let summary = ToolCallFormatting.recallSummary(args: args, argsSummary: argsSummary)
+            result.title = summary
+            result.toolNamePrefix = "recall"
+            result.toolNameColor = UIColor(Color.tokyoYellow)
 
         default:
             result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
@@ -219,22 +236,31 @@ enum ToolPresentationBuilder {
         return result
     }
 
-    // MARK: - Expanded Presentation
+    // MARK: - Expanded Content
+
+    /// Discriminated union for expanded tool content.
+    /// Each case carries exactly the data its renderer needs.
+    /// Replaces the previous flat struct of 13 boolean/optional fields,
+    /// making it impossible to set conflicting rendering modes.
+    enum ToolExpandedContent {
+        /// Bash: separated command block + scrollable output viewport
+        case bash(command: String?, output: String?, unwrapped: Bool)
+        /// Unified diff (edit, todo append/update)
+        case diff(lines: [DiffLine], path: String?)
+        /// Code viewer with line numbers, syntax highlighting, horizontal scroll
+        case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
+        /// Rendered markdown (read .md, remember)
+        case markdown(text: String)
+        /// Rich todo card via UIHostingConfiguration
+        case todoCard(output: String)
+        /// Media renderer via UIHostingConfiguration (images, etc.)
+        case readMedia(output: String, filePath: String?, startLine: Int)
+        /// Plain/ANSI text with optional syntax highlighting
+        case text(text: String, language: SyntaxLanguage?)
+    }
 
     struct ExpandedPresentation {
-        var text: String?
-        var textUsesMarkdown: Bool = false
-        var diffLines: [DiffLine]?
-        var diffPath: String?
-        var commandText: String?
-        var outputText: String?
-        var outputLanguage: SyntaxLanguage?
-        var codeStartLine: Int?
-        var codeFilePath: String?
-        var usesReadMediaRenderer: Bool = false
-        var usesTodoRenderer: Bool = false
-        var prefersUnwrappedOutput: Bool = false
-        var showSeparatedCommandAndOutput: Bool = false
+        var content: ToolExpandedContent?
         var copyCommandText: String?
         var copyOutputText: String?
     }
@@ -251,98 +277,133 @@ enum ToolPresentationBuilder {
         todoMutationDiff: ToolCallFormatting.TodoMutationDiffPresentation?,
         todoPresentation: ToolCallFormatting.TodoOutputPresentation?
     ) -> ExpandedPresentation {
-        var result = ExpandedPresentation()
         let output = fullOutput.isEmpty ? outputPreview : fullOutput
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        result.copyOutputText = outputTrimmed.isEmpty ? nil : outputTrimmed
+        var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
+        var copyCommand: String?
+        var content: ToolExpandedContent?
 
         switch normalizedTool {
         case "bash":
             let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
-            result.copyCommandText = command.isEmpty ? nil : command
-            result.commandText = command.isEmpty ? nil : command
-            result.outputText = outputTrimmed.isEmpty ? nil : outputTrimmed
-            result.prefersUnwrappedOutput = true
-            result.showSeparatedCommandAndOutput = true
+            copyCommand = command.isEmpty ? nil : command
+            content = .bash(
+                command: command.isEmpty ? nil : command,
+                output: outputTrimmed.isEmpty ? nil : outputTrimmed,
+                unwrapped: true
+            )
 
         case "read":
+            let filePath = ToolCallFormatting.filePath(from: args)
+                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
             if !outputTrimmed.isEmpty {
-                result.text = outputTrimmed
                 let readFileType = readOutputFileType(args: args, argsSummary: argsSummary)
-                result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
+                let language = readOutputLanguage(args: args, argsSummary: argsSummary)
                 if readFileType == .markdown {
-                    result.textUsesMarkdown = true
+                    content = .markdown(text: outputTrimmed)
                 } else if readFileType == .image {
-                    result.usesReadMediaRenderer = true
+                    content = .readMedia(
+                        output: outputTrimmed,
+                        filePath: filePath,
+                        startLine: ToolCallFormatting.readStartLine(from: args)
+                    )
                 } else {
-                    result.codeStartLine = ToolCallFormatting.readStartLine(from: args)
+                    content = .code(
+                        text: outputTrimmed,
+                        language: language,
+                        startLine: ToolCallFormatting.readStartLine(from: args),
+                        filePath: filePath
+                    )
                 }
-                result.codeFilePath = ToolCallFormatting.filePath(from: args)
-                    ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
             } else if isLoadingOutput {
-                result.text = "Loading read output…"
+                content = .text(text: "Loading read output…", language: nil)
             } else if isDone {
-                result.text = "Waiting for output…"
+                content = .text(text: "Waiting for output…", language: nil)
             }
 
         case "write":
             let writeContent = ToolCallFormatting.writeContent(from: args)
+            let filePath = ToolCallFormatting.filePath(from: args)
+                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
             if let writeContent, !writeContent.isEmpty {
-                result.text = writeContent
-                result.copyOutputText = writeContent
+                copyOutput = writeContent
                 let fileType = readOutputFileType(args: args, argsSummary: argsSummary)
-                result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
-                result.codeFilePath = ToolCallFormatting.filePath(from: args)
-                    ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                let language = readOutputLanguage(args: args, argsSummary: argsSummary)
                 if fileType == .markdown {
-                    result.textUsesMarkdown = true
+                    content = .markdown(text: writeContent)
                 } else if fileType == .image {
-                    result.usesReadMediaRenderer = true
+                    content = .readMedia(output: writeContent, filePath: filePath, startLine: 1)
                 } else {
-                    result.codeStartLine = 1
+                    content = .code(
+                        text: writeContent,
+                        language: language,
+                        startLine: 1,
+                        filePath: filePath
+                    )
                 }
             } else if !outputTrimmed.isEmpty {
-                // Fallback: show tool output when content not available
-                result.text = outputTrimmed
-                result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
-                result.codeFilePath = ToolCallFormatting.filePath(from: args)
-                    ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                let language = readOutputLanguage(args: args, argsSummary: argsSummary)
+                content = .code(text: outputTrimmed, language: language, startLine: nil, filePath: filePath)
             }
 
         case "edit":
             if !isError,
                let editText = ToolCallFormatting.editOldAndNewText(from: args) {
                 let lines = DiffEngine.compute(old: editText.oldText, new: editText.newText)
-                result.diffLines = lines
-                result.diffPath = ToolCallFormatting.displayFilePath(
+                let diffPath = ToolCallFormatting.displayFilePath(
                     tool: normalizedTool, args: args, argsSummary: argsSummary
                 )
-                result.copyOutputText = DiffEngine.formatUnified(lines)
+                content = .diff(lines: lines, path: diffPath)
+                copyOutput = DiffEngine.formatUnified(lines)
             } else if !outputTrimmed.isEmpty {
-                result.text = outputTrimmed
-                result.outputLanguage = readOutputLanguage(args: args, argsSummary: argsSummary)
-                result.codeFilePath = ToolCallFormatting.filePath(from: args)
-                    ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
+                let language = readOutputLanguage(args: args, argsSummary: argsSummary)
+                let filePath = ToolCallFormatting.displayFilePath(
+                    tool: normalizedTool, args: args, argsSummary: argsSummary
+                )
+                content = .code(text: outputTrimmed, language: language, startLine: nil, filePath: filePath)
             }
 
         case "todo":
             if let todoMutationDiff {
-                result.diffLines = todoMutationDiff.diffLines
-                result.copyOutputText = todoMutationDiff.unifiedText
+                content = .diff(lines: todoMutationDiff.diffLines, path: nil)
+                copyOutput = todoMutationDiff.unifiedText
             } else if !outputTrimmed.isEmpty {
-                // Use the rich card renderer for todo output (JSON → cards).
-                // Pass raw output so TodoToolOutputView can parse it.
-                result.text = outputTrimmed
-                result.usesTodoRenderer = true
+                content = .todoCard(output: outputTrimmed)
+            }
+
+        case "remember":
+            var parts: [String] = []
+            if let text = args?["text"]?.stringValue {
+                parts.append(text)
+            }
+            if let tagsArray = args?["tags"]?.arrayValue {
+                let tags = tagsArray.compactMap(\.stringValue).filter { !$0.isEmpty }
+                if !tags.isEmpty {
+                    parts.append("Tags: \(tags.joined(separator: ", "))")
+                }
+            }
+            if !parts.isEmpty {
+                content = .markdown(text: parts.joined(separator: "\n\n"))
+            } else if !outputTrimmed.isEmpty {
+                content = .text(text: outputTrimmed, language: nil)
+            }
+
+        case "recall":
+            if !outputTrimmed.isEmpty {
+                content = .text(text: outputTrimmed, language: nil)
             }
 
         default:
             if !outputTrimmed.isEmpty {
-                result.text = outputTrimmed
+                content = .text(text: outputTrimmed, language: nil)
             }
         }
 
-        return result
+        return ExpandedPresentation(
+            content: content,
+            copyCommandText: copyCommand,
+            copyOutputText: copyOutput
+        )
     }
 
     // MARK: - Helpers (moved from Coordinator)
@@ -354,7 +415,7 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let tool = ToolCallFormatting.normalized(normalizedTool)
         switch tool {
-        case "bash", "read", "write", "edit", "todo":
+        case "bash", "read", "write", "edit", "todo", "remember", "recall":
             return false
         default:
             break
@@ -363,6 +424,25 @@ enum ToolPresentationBuilder {
         let outputSample = fullOutput.isEmpty ? outputPreview : fullOutput
         guard !outputSample.isEmpty else { return false }
         return containsInlineMediaDataURI(outputSample)
+    }
+
+    /// Extract the first image data URI for collapsed inline preview.
+    /// Only returns data for "read" tool calls on image file types.
+    private static func collapsedImagePreview(
+        normalizedTool: String,
+        args: [String: JSONValue]?,
+        argsSummary: String,
+        output: String
+    ) -> (base64: String, mimeType: String)? {
+        guard normalizedTool == "read",
+              readOutputFileType(args: args, argsSummary: argsSummary) == .image,
+              !output.isEmpty else {
+            return nil
+        }
+        guard let first = ImageExtractor.extract(from: output).first else {
+            return nil
+        }
+        return (first.base64, first.mimeType ?? "image/png")
     }
 
     private static func containsInlineMediaDataURI(_ text: String) -> Bool {
