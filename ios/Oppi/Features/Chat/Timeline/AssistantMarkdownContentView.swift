@@ -56,6 +56,8 @@ final class AssistantMarkdownContentView: UIView {
     private var textViews: [Int: BaselineSafeTextView] = [:]
     /// References to code block views for in-place updates.
     private var codeBlockViews: [Int: NativeCodeBlockView] = [:]
+    /// References to table views for in-place updates during streaming.
+    private var tableViews: [Int: NativeTableBlockView] = [:]
 
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
 
@@ -145,6 +147,7 @@ final class AssistantMarkdownContentView: UIView {
         }
         textViews.removeAll()
         codeBlockViews.removeAll()
+        tableViews.removeAll()
 
         let palette = config.themeID.palette
 
@@ -173,6 +176,7 @@ final class AssistantMarkdownContentView: UIView {
                 let tableView = NativeTableBlockView()
                 tableView.apply(headers: headers, rows: rows, palette: palette)
                 stackView.addArrangedSubview(tableView)
+                tableViews[index] = tableView
 
             case .thematicBreak:
                 let hr = makeThematicBreak(palette: palette)
@@ -205,8 +209,12 @@ final class AssistantMarkdownContentView: UIView {
                         scheduleHighlight(index: index, language: language, code: code)
                     }
                 }
-            case .table, .thematicBreak:
-                break // Tables/breaks rarely change in-place during streaming.
+            case .table(let headers, let rows):
+                if let tableView = tableViews[index] {
+                    tableView.apply(headers: headers, rows: rows, palette: palette)
+                }
+            case .thematicBreak:
+                break
             }
         }
     }

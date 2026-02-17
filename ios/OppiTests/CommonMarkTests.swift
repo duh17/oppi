@@ -805,3 +805,107 @@ struct FlatSegmentTextTests {
         #expect(String(after.characters).contains("After paragraph."))
     }
 }
+
+// MARK: - Partial Table Streaming Tests
+
+/// Tests how cmark handles tables at various stages of streaming completion.
+/// Verifies that partial/incomplete tables are parseable during streaming
+/// so that `AssistantMarkdownContentView` can render them incrementally.
+@Suite("Partial Table Parsing (Streaming)")
+struct PartialTableParsingTests {
+
+    @Test func incompleteRowIncludedInTable() {
+        // cmark includes partial rows in the table — critical for streaming rendering.
+        let md = """
+        | Col A | Col B |
+        | --- | --- |
+        | val1 | val2 |
+        | val3 | va
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(headers == ["Col A", "Col B"])
+        #expect(rows.count == 2)
+        #expect(rows[0] == ["val1", "val2"])
+        #expect(rows[1] == ["val3", "va"])
+    }
+
+    @Test func headerAndSeparatorOnly() {
+        let md = """
+        | Col A | Col B |
+        | --- | --- |
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(headers == ["Col A", "Col B"])
+        #expect(rows.isEmpty)
+    }
+
+    @Test func headerOnly_noSeparator_isParagraph() {
+        // Without separator, cmark treats the line as a paragraph — expected.
+        let md = "| Col A | Col B |\n"
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .paragraph = blocks[0] else {
+            Issue.record("Expected paragraph (no separator = not a table)")
+            return
+        }
+    }
+
+    @Test func incompleteSeparatorStillParsesTable() {
+        // Even with an incomplete separator, cmark recognizes the table.
+        let md = """
+        | Col A | Col B |
+        | --- | --
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(let headers, _) = blocks[0] else {
+            Issue.record("Expected table even with incomplete separator")
+            return
+        }
+        #expect(headers == ["Col A", "Col B"])
+    }
+
+    @Test func missingClosingPipeStillParsesRow() {
+        let md = """
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+        | 3 | 4
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(_, let rows) = blocks[0] else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(rows.count == 2)
+        #expect(rows[1] == ["3", "4"])
+    }
+
+    @Test func singleCellPartialRowFillsEmptyCells() {
+        let md = """
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+        | 3
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(_, let rows) = blocks[0] else {
+            Issue.record("Expected table")
+            return
+        }
+        #expect(rows.count == 2)
+        #expect(rows[1] == ["3", ""])
+    }
+}
