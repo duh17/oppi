@@ -1,0 +1,167 @@
+# ─── Oppi iOS ───
+# Fork setup: change bundleIdPrefix and DEVELOPMENT_TEAM to your own values.
+# See CONTRIBUTING.md for full setup instructions.
+name: Oppi
+packages:
+  swift-markdown:
+    url: https://github.com/apple/swift-markdown
+    from: "0.7.0"
+  sentry-cocoa:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: "8.0.0"
+options:
+  bundleIdPrefix: dev.chenda
+  deploymentTarget:
+    iOS: "26.0"
+    macOS: "15.0"
+  xcodeVersion: "26.2"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: 1
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    INFOPLIST_KEY_UILaunchScreen_Generation: true
+    ENABLE_USER_SCRIPT_SANDBOXING: true
+    SENTRY_DSN: ""
+targets:
+  Oppi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Oppi
+        type: group
+        excludes:
+          - "Resources/AppIcon.icon"
+      - path: Oppi/Resources/AppIcon.icon
+        type: folder
+        buildPhase: resources
+      - path: Shared
+        type: group
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
+        PRODUCT_NAME: Oppi
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 2
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
+        ENABLE_USER_SCRIPT_SANDBOXING: false
+    entitlements:
+      path: Oppi/Resources/Oppi.entitlements
+    info:
+      path: Oppi/Resources/Info.plist
+      properties:
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleDisplayName: Oppi
+        UILaunchScreen: {}
+        UIBackgroundModes:
+          - remote-notification
+        NSSupportsLiveActivities: true
+        NSCameraUsageDescription: "Oppi uses the camera to take photos for agent conversations."
+        NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
+        NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach images to agent conversations."
+        NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your Mac server."
+        NSMicrophoneUsageDescription: "Oppi uses the microphone for voice dictation in the chat composer."
+        NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SentryDSN: "$(SENTRY_DSN)"
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+    preBuildScripts:
+      - script: |
+          if command -v swiftlint >/dev/null 2>&1; then
+            swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet
+          else
+            echo "warning: SwiftLint not installed — brew install swiftlint"
+          fi
+        name: SwiftLint
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        showEnvVars: false
+    dependencies:
+      - package: swift-markdown
+        product: Markdown
+      - package: sentry-cocoa
+        product: Sentry
+      - target: OppiActivityExtension
+        embed: true
+
+  OppiActivityExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OppiActivityExtension
+        type: group
+      - path: Shared
+        type: group
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 2
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: Oppi
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  OppiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: OppiTests
+        type: group
+    dependencies:
+      - target: Oppi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiTests
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_ALLOWED: "NO"
+
+  OppiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: OppiUITests
+        type: group
+    dependencies:
+      - target: Oppi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiUITests
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_ALLOWED: "NO"
+
+schemes:
+  Oppi:
+    build:
+      targets:
+        Oppi: all
+        OppiActivityExtension: all
+        OppiTests: [test]
+    test:
+      targets:
+        - OppiTests
+
+  OppiUIReliability:
+    build:
+      targets:
+        Oppi: all
+        OppiUITests: [test]
+    test:
+      targets:
+        - OppiUITests

@@ -1,0 +1,29 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.11000,0.07500,0.28000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "835C931E-C63C-48AC-BDD7-E705250EE958",
+          "name": "835C931E-C63C-48AC-BDD7-E705250EE958"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.35
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}

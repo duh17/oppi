@@ -1,0 +1,159 @@
+{
+  "_meta": {
+    "description": "Canonical pi RPC events — the JSON lines pi sends on stdout. Used to test server-side event translation (session-protocol.ts translatePiEvent).",
+    "generated": "2026-02-16T18:00:00Z",
+    "eventCount": 18
+  },
+  "events": [
+    {
+      "_label": "agent_start: pi begins processing a prompt",
+      "type": "agent_start"
+    },
+    {
+      "_label": "message_update text_delta: streaming assistant text",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "delta": "Let me help you with that. "
+      }
+    },
+    {
+      "_label": "message_update thinking_delta: streaming thinking content",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_delta",
+        "delta": "I need to analyze the code structure first..."
+      }
+    },
+    {
+      "_label": "tool_execution_start: pi begins a tool call",
+      "type": "tool_execution_start",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-001",
+      "args": {
+        "command": "npm test"
+      }
+    },
+    {
+      "_label": "tool_execution_update: partial tool output (replace semantics)",
+      "type": "tool_execution_update",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-001",
+      "partialResult": {
+        "content": [{ "type": "text", "text": "Running tests...\n" }]
+      }
+    },
+    {
+      "_label": "tool_execution_update: more partial output",
+      "type": "tool_execution_update",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-001",
+      "partialResult": {
+        "content": [{ "type": "text", "text": "Running tests...\n42 tests passed\n" }]
+      }
+    },
+    {
+      "_label": "tool_execution_end: tool call completes",
+      "type": "tool_execution_end",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-001"
+    },
+    {
+      "_label": "message_end assistant: turn completes with usage stats",
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          { "type": "text", "text": "All 42 tests passed!" }
+        ],
+        "usage": {
+          "input": 1200,
+          "output": 350,
+          "cacheRead": 800,
+          "cacheWrite": 100,
+          "cost": { "total": 0.0045 }
+        }
+      }
+    },
+    {
+      "_label": "agent_end: pi finishes processing",
+      "type": "agent_end"
+    },
+    {
+      "_label": "response success: RPC response with correlation id",
+      "type": "response",
+      "id": "rpc-123",
+      "success": true,
+      "command": "get_state",
+      "data": {
+        "sessionFile": "/tmp/pi-sessions/test.jsonl",
+        "sessionId": "uuid-test-456",
+        "sessionName": "My Session",
+        "model": { "provider": "anthropic", "id": "claude-sonnet-4-0" },
+        "thinkingLevel": "medium"
+      }
+    },
+    {
+      "_label": "response error: failed RPC with correlation id",
+      "type": "response",
+      "id": "rpc-124",
+      "success": false,
+      "command": "set_model",
+      "error": "Unknown model: fake-model"
+    },
+    {
+      "_label": "auto_compaction_start: pi begins auto-compaction",
+      "type": "auto_compaction_start",
+      "reason": "Context window 90% full"
+    },
+    {
+      "_label": "auto_compaction_end: compaction completes",
+      "type": "auto_compaction_end",
+      "aborted": false,
+      "willRetry": false,
+      "summary": "Compacted from 180k to 95k tokens",
+      "tokensBefore": 180000
+    },
+    {
+      "_label": "auto_retry_start: pi begins auto-retry after error",
+      "type": "auto_retry_start",
+      "attempt": 1,
+      "maxAttempts": 3,
+      "delayMs": 5000,
+      "errorMessage": "API overloaded"
+    },
+    {
+      "_label": "auto_retry_end: retry succeeds",
+      "type": "auto_retry_end",
+      "success": true,
+      "attempt": 2
+    },
+    {
+      "_label": "extension_error: extension raised an error",
+      "type": "extension_error",
+      "extensionName": "permission-gate",
+      "error": "Gate connection refused"
+    },
+    {
+      "_label": "extension_ui_request: dialog from extension",
+      "type": "extension_ui_request",
+      "id": "ext-ui-001",
+      "method": "select",
+      "title": "Choose option",
+      "options": [{ "label": "Option A" }, { "label": "Option B" }],
+      "message": "Pick one",
+      "timeout": 30000
+    },
+    {
+      "_label": "tool_execution_start read: file read tool",
+      "type": "tool_execution_start",
+      "toolName": "read",
+      "toolCallId": "tc-replay-002",
+      "args": {
+        "path": "src/main.ts",
+        "offset": 1,
+        "limit": 50
+      }
+    }
+  ]
+}

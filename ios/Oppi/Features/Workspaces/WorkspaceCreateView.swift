@@ -1,0 +1,211 @@
+import SwiftUI
+
+/// Create a new workspace on a specific server.
+struct WorkspaceCreateView: View {
+    /// The server to create the workspace on. Required for multi-server.
+    let server: PairedServer
+
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerConnection.self) private var connection
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var description = ""
+    @State private var icon = ""
+    @State private var selectedSkills: Set<String> = []
+    @State private var runtime = "container"
+    @State private var policyPreset = "container"
+    @State private var isCreating = false
+    @State private var error: String?
+
+    /// Skills from the target server.
+    private var skills: [SkillInfo] {
+        connection.workspaceStore.skillsByServer[server.id] ?? connection.workspaceStore.skills
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Identity") {
+                    TextField("Name", text: $name)
+                        .autocorrectionDisabled()
+                    TextField("Description (optional)", text: $description)
+                    TextField("Icon — SF Symbol or emoji (optional)", text: $icon)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                }
+
+                Section("Skills") {
+                    if skills.isEmpty {
+                        Text("Loading skills…")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(skills) { skill in
+                            Button {
+                                if selectedSkills.contains(skill.name) {
+                                    selectedSkills.remove(skill.name)
+                                } else {
+                                    selectedSkills.insert(skill.name)
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 4) {
+                                            Text(skill.name)
+                                                .font(.body)
+
+                                            if !skill.containerSafe {
+                                                Image(systemName: "exclamationmark.triangle.fill")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.orange)
+                                            }
+                                        }
+
+                                        Text(skill.description)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: selectedSkills.contains(skill.name) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .tokyoBlue : .secondary)
+                                        .imageScale(.large)
+                                }
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                    }
+                }
+
+                Section("Runtime") {
+                    Picker("Runtime", selection: $runtime) {
+                        Text("Container").tag("container")
+                        Text("Host").tag("host")
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(runtime == "container"
+                         ? "Container isolates filesystem/tools (recommended)."
+                         : "Host runs directly on Mac with full host access.")
+                        .font(.caption)
+                        .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
+                }
+
+                Section("Policy") {
+                    Picker("Preset", selection: $policyPreset) {
+                        ForEach(policyOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(policyPresetDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let error {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("New Workspace on \(server.name)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        Task { await create() }
+                    }
+                    .disabled(name.isEmpty || isCreating)
+                }
+            }
+            .task { await loadSkills() }
+            .onChange(of: runtime) { _, newRuntime in
+                normalizePolicyPreset(for: newRuntime)
+            }
+        }
+    }
+
+    private var policyOptions: [(label: String, value: String)] {
+        if runtime == "host" {
+            return [
+                ("Host Dev", "host"),
+                ("Host Standard", "host_standard"),
+                ("Host Locked", "host_locked"),
+            ]
+        }
+        return [("Container", "container")]
+    }
+
+    private var policyPresetDescription: String {
+        switch policyPreset {
+        case "host":
+            return "Developer trust mode: low friction, broad local autonomy."
+        case "host_standard":
+            return "Approval-first host mode for regular users."
+        case "host_locked":
+            return "Strict host mode: unknown actions blocked by default."
+        default:
+            return "Container mode: isolated runtime with standard supervision."
+        }
+    }
+
+    private func normalizePolicyPreset(for runtime: String) {
+        let allowed = Set(policyOptions.map(\.value))
+        guard !allowed.contains(policyPreset) else { return }
+        policyPreset = runtime == "host" ? "host_standard" : "container"
+    }
+
+    private func loadSkills() async {
+        // Load skills from target server if not cached
+        if (connection.workspaceStore.skillsByServer[server.id] ?? []).isEmpty {
+            guard let api = coordinator.apiClient(for: server.id) else { return }
+            do {
+                let skills = try await api.listSkills()
+                connection.workspaceStore.skillsByServer[server.id] = skills
+            } catch {
+                // Fall back to flat skills list
+            }
+        }
+    }
+
+    private func create() async {
+        // Ensure we're talking to the right server
+        coordinator.switchToServer(server)
+
+        guard let api = coordinator.apiClient(for: server.id) ?? connection.apiClient else {
+            error = "Cannot connect to \(server.name)"
+            return
+        }
+        isCreating = true
+        error = nil
+
+        let request = CreateWorkspaceRequest(
+            name: name,
+            description: description.isEmpty ? nil : description,
+            icon: icon.isEmpty ? nil : icon,
+            skills: Array(selectedSkills),
+            runtime: runtime,
+            policyPreset: policyPreset
+        )
+
+        do {
+            let workspace = try await api.createWorkspace(request)
+            connection.workspaceStore.upsert(workspace, serverId: server.id)
+            // Also update flat list for backward compat
+            connection.workspaceStore.upsert(workspace)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            isCreating = false
+        }
+    }
+}

@@ -1,0 +1,29 @@
+# Server
+server/node_modules/
+server/dist/
+
+# iOS
+ios/build/
+ios/*.xcodeproj/
+ios/OppiMac/
+ios/OppiMacTests/
+
+# Agent
+.internal/
+.pi/
+
+# Secrets & credentials (never commit)
+auth.json
+*.p8
+*.pem
+**/identity/private*.json
+**/identity/*.pem
+
+# Runtime data
+session-traces/
+*.log
+
+# General
+*.tsbuildinfo
+.DS_Store
+server/coverage/
