@@ -12,11 +12,9 @@ excluded:
 
 # Disable noisy rules that don't catch real bugs
 disabled_rules:
-  - trailing_comma           # Swift allows trailing commas, consistent style
-  - identifier_name          # Short names (i, c, n) are fine in loops/closures
+  - trailing_comma # Swift allows trailing commas, consistent style
+  - identifier_name # Short names (i, c, n) are fine in loops/closures
   - implicit_optional_initialization
-
-  # NetNewsWire-style relaxations for large, evolving SwiftUI codebases
   - file_length
   - line_length
   - function_body_length
@@ -75,4 +73,3 @@ empty_count:
 enum_case_associated_values_count:
   warning: 7
   error: 10
-
