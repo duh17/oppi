@@ -161,7 +161,6 @@ extension ServerConnection {
     func handleConnected(_ session: Session) {
         sessionStore.upsert(session)
         syncThinkingLevel(from: session)
-        restoreThinkingLevelFromMemory(model: session.model)
         scheduleSlashCommandsRefresh(for: session, force: true)
         syncLiveActivityPermissions()
         prefetchModelsIfNeeded()
@@ -276,10 +275,6 @@ extension ServerConnection {
             // Server didn't return data — cycle locally
             thinkingLevel = thinkingLevel.next
         }
-
-        // Persist the new level so it survives session reconnects.
-        let model = sessionStore.sessions.first(where: { $0.id == activeSessionId })?.model
-        ThinkingLevelMemory.set(thinkingLevel, for: model)
     }
 
     // MARK: - Live Activity Sync
