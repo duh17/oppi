@@ -136,8 +136,12 @@ struct ServerStoreTests {
     // MARK: - Helpers
 
     private func makeCleanStore() -> ServerStore {
-        // Clear any leftover state from previous test runs
+        // Clear any leftover state from previous test runs.
+        // Must purge both UserDefaults index AND Keychain entries,
+        // otherwise the Keychain discovery fallback finds leaked
+        // entries from other test suites (ConnectionCoordinatorTests).
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
+        KeychainService.deleteAllServers()
         return ServerStore()
     }
 

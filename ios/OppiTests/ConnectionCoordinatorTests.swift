@@ -242,8 +242,12 @@ struct ConnectionCoordinatorTests {
     // MARK: - Helpers
 
     private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {
-        // Clear leftover UserDefaults from other test runs
+        // Clear leftover state from other test runs.
+        // Must purge both UserDefaults index AND Keychain entries,
+        // otherwise the Keychain discovery fallback finds leaked
+        // entries from other test suites (ServerStoreTests).
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
+        KeychainService.deleteAllServers()
         let store = ServerStore()
         let coordinator = ConnectionCoordinator(serverStore: store)
         return (coordinator, store)

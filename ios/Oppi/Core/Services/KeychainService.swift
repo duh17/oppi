@@ -134,6 +134,17 @@ enum KeychainService {
         SecItemDelete(query as CFDictionary)
     }
 
+    /// Delete ALL server entries from Keychain.
+    ///
+    /// Used by tests to ensure a clean slate. Not for production use.
+    static func deleteAllServers() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
     private static func serverAccount(for id: String) -> String {
         "\(serverAccountPrefix)\(id)"
     }
