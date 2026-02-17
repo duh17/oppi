@@ -209,6 +209,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedViewportMode: ExpandedViewportMode = .none
     private var expandedRenderedText: String?
     private var expandedPinchDidTriggerFullScreen = false
+    private let expandFloatingButton = UIButton(type: .system)
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCommandDoubleTap))
@@ -537,6 +538,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ])
 
         expandedReadMediaContentView = hosted
+
+        // UIHostingConfiguration views don't report correct sizes via
+        // systemLayoutSizeFitting until after their first SwiftUI layout pass.
+        // Force a deferred layout on the content view (so the viewport height
+        // constraint updates to the correct value) then invalidate the
+        // enclosing collection view's layout so the cell gets re-measured.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.setNeedsLayout()
+            self.layoutIfNeeded()
+            self.invalidateEnclosingCollectionViewLayout()
+        }
     }
 
     private func clearExpandedReadMediaView() {
@@ -658,6 +671,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContainer.backgroundColor = .clear
         expandedReadMediaContainer.isHidden = true
 
+        expandFloatingButton.translatesAutoresizingMaskIntoConstraints = false
+        let expandBtnSymbolConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+        expandFloatingButton.setImage(
+            UIImage(systemName: "arrow.up.left.and.arrow.down.right", withConfiguration: expandBtnSymbolConfig),
+            for: .normal
+        )
+        expandFloatingButton.tintColor = UIColor(Color.tokyoCyan)
+        expandFloatingButton.backgroundColor = UIColor(Color.tokyoBgHighlight)
+        expandFloatingButton.layer.cornerRadius = 18
+        expandFloatingButton.layer.borderWidth = 1
+        expandFloatingButton.layer.borderColor = UIColor(Color.tokyoComment.opacity(0.3)).cgColor
+        expandFloatingButton.isHidden = true
+        expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
+
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
         bodyStack.alignment = .fill
@@ -681,6 +708,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedScrollView.addSubview(expandedLabel)
         expandedScrollView.addSubview(expandedMarkdownView)
         expandedScrollView.addSubview(expandedReadMediaContainer)
+        expandedContainer.addSubview(expandFloatingButton)
         bodyStack.addArrangedSubview(previewLabel)
         bodyStack.addArrangedSubview(commandContainer)
         bodyStack.addArrangedSubview(outputContainer)
@@ -810,6 +838,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedReadMediaContainer.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
             expandedReadMediaContainer.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
             expandedReadMediaWidthConstraint,
+
+            expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -10),
+            expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -10),
+            expandFloatingButton.widthAnchor.constraint(equalToConstant: 36),
+            expandFloatingButton.heightAnchor.constraint(equalToConstant: 36),
         ])
     }
 
@@ -1245,6 +1278,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let showBody = showPreview || showDiff || showLegacyExpanded || showCommand || showOutput
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
+        expandFloatingButton.isHidden = expandedContainer.isHidden || fullScreenContent == nil
         updateViewportHeightsIfNeeded()
 
         let symbolName: String
@@ -1330,6 +1364,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         guard let text = outputCopyText else { return }
         copy(text: text, feedbackView: expandedContainer)
+    }
+
+    @objc private func handleExpandFloatingButtonTap() {
+        showFullScreenContent()
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
@@ -1465,6 +1503,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return nil
     }
 
+    /// Walk up the view hierarchy to find the enclosing UICollectionView and
+    /// invalidate its layout so self-sizing cells get re-measured.
+    /// Used after UIHostingConfiguration views complete their first SwiftUI
+    /// layout pass and report a different intrinsic size.
+    private func invalidateEnclosingCollectionViewLayout() {
+        var view: UIView? = superview
+        while let current = view {
+            if let collectionView = current as? UICollectionView {
+                UIView.performWithoutAnimation {
+                    collectionView.collectionViewLayout.invalidateLayout()
+                    collectionView.layoutIfNeeded()
+                }
+                return
+            }
+            view = current.superview
+        }
+    }
+
     private func copy(text: String, feedbackView: UIView) {
         UIPasteboard.general.string = text
 
@@ -1588,6 +1644,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return "arrow.left.arrow.right"
         case "todo":
             return "checklist"
+        case "remember":
+            return "brain.head.profile"
+        case "recall":
+            return "brain.head.profile"
         default:
             return nil
         }

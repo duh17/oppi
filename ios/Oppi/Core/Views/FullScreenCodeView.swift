@@ -17,6 +17,7 @@ enum FullScreenCodeContent {
 
 struct FullScreenCodeView: View {
     let content: FullScreenCodeContent
+    @State private var showSource = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -35,7 +36,16 @@ struct FullScreenCodeView: View {
                 ToolbarItem(placement: .principal) {
                     titleView
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if case .markdown = content {
+                        Button(showSource ? "Reader" : "Source") {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                showSource.toggle()
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.tokyoBlue)
+                    }
                     copyButton
                 }
             }
@@ -117,8 +127,31 @@ struct FullScreenCodeView: View {
                 precomputedLines: precomputedLines
             )
         case .markdown(let text, _):
-            FullScreenMarkdownBody(content: text)
+            if showSource {
+                FullScreenSourceBody(content: text)
+            } else {
+                FullScreenMarkdownBody(content: text)
+            }
         }
+    }
+}
+
+// MARK: - Full Screen Source Body
+
+private struct FullScreenSourceBody: View {
+    let content: String
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Text(content)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.tokyoFg)
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.tokyoBgDark)
     }
 }
 
