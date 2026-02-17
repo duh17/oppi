@@ -5,48 +5,27 @@ import SwiftUI
 struct TodoToolOutputView: View {
     let output: String
 
-    @State private var parsed: ParsedTodoOutput?
-
-    private var parseKey: String {
-        let prefix = String(output.prefix(64))
-        let suffix = String(output.suffix(64))
-        return "\(output.utf8.count):\(prefix):\(suffix)"
+    /// Parse synchronously — todo JSON is tiny (<1KB typically) and async
+    /// parsing breaks UIKit viewport sizing (the hosting view measures before
+    /// SwiftUI runs `.task`, returning an inflated height).
+    private var parsed: ParsedTodoOutput {
+        TodoToolOutputParser.parse(output)
     }
 
     var body: some View {
-        Group {
-            if let parsed {
-                switch parsed {
-                case .item(let item):
-                    TodoToolItemCard(todo: item)
-                case .list(let list):
-                    TodoToolListCard(list: list)
-                case .text(let text):
-                    Text(String(text.prefix(2000)))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.tokyoBgDark)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Parsing todo result…")
-                        .font(.caption)
-                        .foregroundStyle(.tokyoComment)
-                }
+        switch parsed {
+        case .item(let item):
+            TodoToolItemCard(todo: item)
+        case .list(let list):
+            TodoToolListCard(list: list)
+        case .text(let text):
+            Text(String(text.prefix(2000)))
+                .font(.caption.monospaced())
+                .foregroundStyle(.tokyoFg)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.tokyoBgDark)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .task(id: parseKey) {
-            parsed = await Task.detached(priority: .userInitiated) {
-                TodoToolOutputParser.parse(output)
-            }.value
         }
     }
 }
@@ -207,29 +186,12 @@ private struct TodoToolListCard: View {
     private static let maxRowsPerSection = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "checklist")
-                    .font(.caption)
-                    .foregroundStyle(.tokyoPurple)
-                Text("Todos")
-                    .font(.caption.monospaced().bold())
-                    .foregroundStyle(.tokyoPurple)
-                Spacer()
-                Text("assigned \(list.assignedItems.count)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tokyoComment)
-                Text("open \(list.openItems.count)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tokyoComment)
-                Text("closed \(list.closedItems.count)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tokyoComment)
-            }
-
+        VStack(alignment: .leading, spacing: 8) {
             todoSection(title: "Assigned", items: list.assignedItems)
             todoSection(title: "Open", items: list.openItems)
-            todoSection(title: "Closed", items: list.closedItems)
+            if !list.closedItems.isEmpty {
+                todoSection(title: "Closed", items: list.closedItems)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -250,22 +212,19 @@ private struct TodoToolListCard: View {
                     .foregroundStyle(.tokyoComment)
 
                 ForEach(Array(items.prefix(Self.maxRowsPerSection).enumerated()), id: \.offset) { _, item in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            TodoIDLabel(id: item.canonicalID, fallback: item.displayID)
-                            if let status = item.status, !status.isEmpty {
-                                TodoStatusBadge(status: status)
-                            }
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        TodoIDLabel(id: item.canonicalID, fallback: item.displayID)
+                        if let status = item.status, !status.isEmpty {
+                            TodoStatusBadge(status: status)
                         }
-
                         if let title = item.title, !title.isEmpty {
                             Text(title)
                                 .font(.caption)
                                 .foregroundStyle(.tokyoFg)
-                                .lineLimit(2)
+                                .lineLimit(1)
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 1)
                 }
 
                 if items.count > Self.maxRowsPerSection {

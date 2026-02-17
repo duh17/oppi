@@ -185,7 +185,7 @@ struct ToolCallFormattingTests {
         )
 
         #expect(presentation?.usesMarkdown == true)
-        #expect(presentation?.trailing == "A1 O1 C0")
+        #expect(presentation?.trailing == "1 assigned · 1 open")
         #expect(presentation?.text.contains("### Assigned (1)") == true)
         #expect(presentation?.text.contains("TODO-a1") == true)
         #expect(presentation?.text.contains("### Open (1)") == true)

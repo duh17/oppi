@@ -122,7 +122,7 @@ extension ToolCallFormatting {
            list.hasSections {
             return TodoOutputPresentation(
                 text: formattedTodoListMarkdown(list),
-                trailing: "A\(list.assignedItems.count) O\(list.openItems.count) C\(list.closedItems.count)",
+                trailing: todoListTrailing(list),
                 usesMarkdown: true
             )
         }
@@ -158,6 +158,16 @@ extension ToolCallFormatting {
         guard let rawAction else { return nil }
         let action = rawAction.trimmingCharacters(in: .whitespacesAndNewlines)
         return action.isEmpty ? nil : action
+    }
+
+    /// Build a concise, human-readable trailing badge for a todo list result.
+    /// Shows only non-zero section counts, e.g. "10 open" or "2 assigned · 5 open · 1 closed".
+    private static func todoListTrailing(_ list: TodoListPayload) -> String {
+        var parts: [String] = []
+        if list.assignedItems.count > 0 { parts.append("\(list.assignedItems.count) assigned") }
+        if list.openItems.count > 0 { parts.append("\(list.openItems.count) open") }
+        if list.closedItems.count > 0 { parts.append("\(list.closedItems.count) closed") }
+        return parts.isEmpty ? "empty" : parts.joined(separator: " · ")
     }
 
     private static let todoUpdateBodyPreviewLineLimit = 8
