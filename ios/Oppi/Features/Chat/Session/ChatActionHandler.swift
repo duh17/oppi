@@ -522,7 +522,7 @@ final class ChatActionHandler {
         let model = SystemLanguageModel.default
         let availability = model.availability
         guard case .available = availability else {
-            log.error("Auto title: Foundation model not available — \(String(describing: availability), privacy: .public), fallback=\(fallback ?? "nil", privacy: .public)")
+            log.error("Auto title: Foundation model not available — \(String(describing: availability), privacy: .public), fallbackLen=\(fallback?.count ?? 0, privacy: .public)")
             return fallback
         }
 
@@ -538,10 +538,10 @@ final class ChatActionHandler {
             let response = try await session.respond(to: prompt)
             let raw = response.content
             let normalized = normalizeAutoTitle(raw, sourceMessage: firstMessage)
-            log.error("Auto title: Foundation model produced raw=\(raw, privacy: .public) normalized=\(normalized ?? "nil", privacy: .public)")
+            log.error("Auto title: Foundation model produced rawLen=\(raw.count, privacy: .public) normalized=\(normalized != nil, privacy: .public)")
             return normalized ?? fallback
         } catch {
-            log.error("Auto title: Foundation model error — \(error.localizedDescription, privacy: .public), fallback=\(fallback ?? "nil", privacy: .public)")
+            log.error("Auto title: Foundation model error — \(error.localizedDescription, privacy: .public)")
             return fallback
         }
     }
