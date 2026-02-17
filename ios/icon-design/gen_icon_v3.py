@@ -83,15 +83,15 @@ def render_pi(size: int, font_size: int) -> Image.Image:
 
 
 def glass_fill(mask: Image.Image, size: int) -> Image.Image:
-    """Glass gradient: white top → translucent lavender bottom."""
+    """Glass gradient: white top → translucent blue bottom."""
     mask_arr = np.array(mask).astype(np.float32) / 255.0
     out = np.zeros((size, size, 4), dtype=np.uint8)
 
     for y in range(size):
         t = y / size
-        r = int(255 - t * 75)
-        g = int(255 - t * 85)
-        b = int(255 - t * 40)
+        r = int(255 - t * 105)
+        g = int(255 - t * 75)
+        b = int(255 - t * 20)
         a_factor = 0.93 - t * 0.52
 
         row = mask_arr[y]
@@ -298,10 +298,10 @@ def main():
     # Background
     bg = gradient_bg(SIZE)
 
-    # Glows
-    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.50, 0.46, 0.40, (115, 95, 230), 0.50))
-    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.64, 0.28, 0.20, (95, 65, 215), 0.09))
-    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.36, 0.70, 0.18, (55, 75, 195), 0.06))
+    # Glows — blue-shifted (from tokyoBlue #7AA2F7)
+    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.50, 0.46, 0.40, (70, 110, 230), 0.50))
+    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.64, 0.28, 0.20, (55, 85, 220), 0.09))
+    bg = Image.alpha_composite(bg, radial_glow(SIZE, 0.36, 0.70, 0.18, (40, 75, 200), 0.06))
 
     # Pi glyph mask — big and bold
     pi_mask = render_pi(SIZE, 660)
