@@ -226,14 +226,14 @@ describe("GateServer", () => {
     expect(lastReason).toBe("Git push");
   });
 
-  it("stores workspace rules with TTL from permission responses", async () => {
+  it("stores session rules with TTL from permission responses", async () => {
     gate = createGate("host");
     const activeGate = gate;
     let approvalAt = 0;
 
     activeGate.on("approval_needed", (pending: { id: string }) => {
       approvalAt = Date.now();
-      activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
+      activeGate.resolveDecision(pending.id, "allow", "session", 60_000);
     });
 
     const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
@@ -259,7 +259,14 @@ describe("GateServer", () => {
     const learned = activeGate
       .ruleStore
       .getAll()
-      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
+      .find(
+        (rule) =>
+          rule.scope === "session" &&
+          rule.sessionId === SESSION_ID &&
+          rule.effect === "allow" &&
+          rule.tool === "bash" &&
+          rule.match?.commandPattern === "git push*",
+      );
 
     expect(learned).toBeTruthy();
     expect(typeof learned?.expiresAt).toBe("number");
@@ -269,14 +276,14 @@ describe("GateServer", () => {
     expect(ttlMs).toBeLessThanOrEqual(65_000);
   });
 
-  it("caps learned rule TTL at one year", async () => {
+  it("caps learned session-rule TTL at one year", async () => {
     gate = createGate("host");
     const activeGate = gate;
     let approvalAt = 0;
 
     activeGate.on("approval_needed", (pending: { id: string }) => {
       approvalAt = Date.now();
-      activeGate.resolveDecision(pending.id, "allow", "workspace", 10 * 365 * 24 * 60 * 60 * 1000);
+      activeGate.resolveDecision(pending.id, "allow", "session", 10 * 365 * 24 * 60 * 60 * 1000);
     });
 
     const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
@@ -302,7 +309,14 @@ describe("GateServer", () => {
     const learned = activeGate
       .ruleStore
       .getAll()
-      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
+      .find(
+        (rule) =>
+          rule.scope === "session" &&
+          rule.sessionId === SESSION_ID &&
+          rule.effect === "allow" &&
+          rule.tool === "bash" &&
+          rule.match?.commandPattern === "git push*",
+      );
 
     expect(learned).toBeTruthy();
     expect(typeof learned?.expiresAt).toBe("number");
@@ -311,6 +325,42 @@ describe("GateServer", () => {
     const oneYearMs = 365 * 24 * 60 * 60 * 1000;
     expect(ttlMs).toBeGreaterThanOrEqual(oneYearMs - 5_000);
     expect(ttlMs).toBeLessThanOrEqual(oneYearMs + 5_000);
+  });
+
+  it("downgrades unsupported allow scope to once", async () => {
+    gate = createGate("host");
+    const activeGate = gate;
+
+    activeGate.on("approval_needed", (pending: { id: string }) => {
+      // git push only permits allowSession in resolution options.
+      activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
+    await new Promise((r) => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const result = await sendAndWait(client, {
+      type: "gate_check",
+      tool: "bash",
+      input: { command: "git push origin main" },
+      toolCallId: "tc_scope_downgrade",
+    });
+
+    expect(result.action).toBe("allow");
+
+    const learned = activeGate
+      .ruleStore
+      .getAll()
+      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
+    expect(learned).toBeUndefined();
   });
 
   it("responds to heartbeat", async () => {

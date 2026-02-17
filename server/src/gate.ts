@@ -238,6 +238,14 @@ export class GateServer extends EventEmitter {
     const pending = this.pending.get(requestId);
     if (!pending) return false;
 
+    const requestedScope = scope;
+    const normalizedScope = this.normalizeDecisionScope(action, requestedScope, pending.resolutionOptions);
+    if (normalizedScope !== requestedScope) {
+      console.warn(
+        `[gate] Scope ${requestedScope} is not permitted for ${action}; downgraded to ${normalizedScope} (request=${requestId})`,
+      );
+    }
+
     const policy = this.getPolicy(pending.sessionId);
     const req: GateRequest = {
       tool: pending.tool,
@@ -251,12 +259,12 @@ export class GateServer extends EventEmitter {
         ? Math.min(Math.floor(expiresInMs), MAX_RULE_TTL_MS)
         : undefined;
     const expiresAt =
-      scope !== "once" && normalizedExpiryMs !== undefined
+      normalizedScope !== "once" && normalizedExpiryMs !== undefined
         ? Date.now() + normalizedExpiryMs
         : undefined;
 
     // Create learned rule if scope != "once"
-    if (scope !== "once") {
+    if (normalizedScope !== "once") {
       const context = {
         sessionId: pending.sessionId,
         workspaceId: pending.workspaceId,
@@ -265,8 +273,8 @@ export class GateServer extends EventEmitter {
 
       const suggest =
         action === "allow"
-          ? policy.suggestRule(req, scope, context)
-          : policy.suggestDenyRule(req, scope, context);
+          ? policy.suggestRule(req, normalizedScope, context)
+          : policy.suggestDenyRule(req, normalizedScope, context);
 
       if (suggest) {
         const rule = this.ruleStore.add({
@@ -276,17 +284,17 @@ export class GateServer extends EventEmitter {
         learnedRuleId = rule.id;
         const expiryLabel = expiresAt ? `, expiresAt=${new Date(expiresAt).toISOString()}` : "";
         console.log(
-          `[gate] Learned rule: ${rule.description} (scope=${scope}, id=${rule.id}${expiryLabel})`,
+          `[gate] Learned rule: ${rule.description} (scope=${normalizedScope}, id=${rule.id}${expiryLabel})`,
         );
 
         // Browser domain + global allow → also add to shared allowlist
-        if (action === "allow" && scope === "global" && rule.match?.domain) {
+        if (action === "allow" && normalizedScope === "global" && rule.match?.domain) {
           addDomainToAllowlist(rule.match.domain);
           console.log(`[gate] Added ${rule.match.domain} to fetch domain allowlist`);
         }
 
         // Browser domain + global deny → remove from shared allowlist
-        if (action === "deny" && scope === "global" && rule.match?.domain) {
+        if (action === "deny" && normalizedScope === "global" && rule.match?.domain) {
           removeDomainFromAllowlist(rule.match.domain);
           console.log(`[gate] Removed ${rule.match.domain} from fetch domain allowlist`);
         }
@@ -305,7 +313,7 @@ export class GateServer extends EventEmitter {
       layer: "user_response",
       userChoice: {
         action,
-        scope,
+        scope: normalizedScope,
         learnedRuleId,
         ...(expiresAt !== undefined ? { expiresAt } : {}),
       },
@@ -318,12 +326,32 @@ export class GateServer extends EventEmitter {
       requestId,
       sessionId: pending.sessionId,
       action,
-      scope,
+      scope: normalizedScope,
       expiresAt,
     });
 
-    console.log(`[gate] Decision resolved: ${requestId} → ${action} (scope=${scope})`);
+    console.log(`[gate] Decision resolved: ${requestId} → ${action} (scope=${normalizedScope})`);
     return true;
+  }
+
+  private normalizeDecisionScope(
+    action: "allow" | "deny",
+    requested: "once" | "session" | "workspace" | "global",
+    options: ResolutionOptions,
+  ): "once" | "session" | "workspace" | "global" {
+    if (requested === "once") return "once";
+
+    if (action === "allow") {
+      if (requested === "session") {
+        return options.allowSession ? "session" : "once";
+      }
+      // workspace/global share the same UI capability today.
+      return options.allowAlways ? requested : "once";
+    }
+
+    // action === "deny"
+    if (requested === "session") return "once";
+    return options.denyAlways ? requested : "once";
   }
 
   /**

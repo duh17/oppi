@@ -71,6 +71,7 @@ targets:
         NSMicrophoneUsageDescription: "Oppi uses the microphone for voice dictation in the chat composer."
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         SentryDSN: "$(SENTRY_DSN)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
