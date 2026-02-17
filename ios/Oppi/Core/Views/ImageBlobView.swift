@@ -25,6 +25,9 @@ struct ImageBlobView: View {
                         Button("Copy Image", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = decoded
                         }
+                        Button("Save to Photos", systemImage: "square.and.arrow.down") {
+                            UIImageWriteToSavedPhotosAlbum(decoded, nil, nil, nil)
+                        }
                         ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
                     }
                     .fullScreenCover(isPresented: $showFullScreen) {
@@ -74,11 +77,12 @@ struct ImageBlobView: View {
     }
 }
 
-/// Full-screen zoomable image viewer.
+/// Full-screen zoomable image viewer with save/share options.
 struct ZoomableImageView: View {
     let image: UIImage
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1.0
+    @State private var savedToPhotos = false
 
     var body: some View {
         NavigationStack {
@@ -102,6 +106,26 @@ struct ZoomableImageView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    ShareLink(
+                        item: Image(uiImage: image),
+                        preview: SharePreview("Image")
+                    )
+                    Spacer()
+                    Button {
+                        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                        withAnimation { savedToPhotos = true }
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            withAnimation { savedToPhotos = false }
+                        }
+                    } label: {
+                        Label(
+                            savedToPhotos ? "Saved!" : "Save to Photos",
+                            systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down"
+                        )
+                    }
                 }
             }
         }

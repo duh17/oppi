@@ -43,6 +43,8 @@
 	<string>Oppi needs local network access to connect to your Mac server.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Oppi uses the microphone for voice dictation in the chat composer.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Oppi saves images from agent conversations to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Oppi accesses your photo library to attach images to agent conversations.</string>
 	<key>NSSupportsLiveActivities</key>

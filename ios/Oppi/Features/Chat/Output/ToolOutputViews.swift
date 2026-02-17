@@ -308,6 +308,10 @@ struct AsyncImageBlob: View {
                         Button("Copy Image", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = decoded
                         }
+                        Button("Save to Photos", systemImage: "square.and.arrow.down") {
+                            UIImageWriteToSavedPhotosAlbum(decoded, nil, nil, nil)
+                        }
+                        ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
                     }
                     .fullScreenCover(isPresented: $showFullScreen) {
                         ZoomableImageView(image: decoded)

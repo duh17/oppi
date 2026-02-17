@@ -66,6 +66,7 @@ targets:
           - remote-notification
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: "Oppi uses the camera to take photos for agent conversations."
+        NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
         NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach images to agent conversations."
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your Mac server."
         NSMicrophoneUsageDescription: "Oppi uses the microphone for voice dictation in the chat composer."
