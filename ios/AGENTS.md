@@ -9,11 +9,11 @@ xcodegen generate    # Required after adding/removing files
 
 # Build
 xcodebuild -project Oppi.xcodeproj -scheme Oppi \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build
+  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
 
 # Test
 xcodebuild -project Oppi.xcodeproj -scheme Oppi \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test
+  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
 ```
 
 The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Change `project.yml` and run `xcodegen generate`.

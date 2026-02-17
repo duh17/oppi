@@ -46,6 +46,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
     private static let autoFollowBottomThreshold: CGFloat = 18
+    private static let collapsedImagePreviewHeight: CGFloat = 136
     private static let genericLanguageBadgeSymbolName = "chevron.left.forwardslash.chevron.right"
 
     @MainActor
@@ -123,6 +124,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
     private var expandedMarkdownWidthConstraint: NSLayoutConstraint?
     private var expandedReadMediaWidthConstraint: NSLayoutConstraint?
+    private var imagePreviewHeightConstraint: NSLayoutConstraint?
     private var toolLeadingConstraint: NSLayoutConstraint?
     private var toolWidthConstraint: NSLayoutConstraint?
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
@@ -500,16 +502,23 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard !configuration.isExpanded,
               let base64 = configuration.collapsedImageBase64,
               !base64.isEmpty else {
+            imagePreviewDecodeTask?.cancel()
+            imagePreviewDecodeTask = nil
+            imagePreviewDecodedKey = nil
+            imagePreviewImageView.image = nil
             imagePreviewContainer.isHidden = true
             return
         }
 
         imagePreviewContainer.isHidden = false
 
-        // Stable key: compare by prefix+length to avoid full string equality on large blobs.
-        let key = "\(base64.count):\(base64.prefix(32))"
+        // Stable key uses both prefix and suffix to avoid collisions.
+        let key = ImageDecodeCache.decodeKey(for: base64, maxPixelSize: 720)
         guard key != imagePreviewDecodedKey else { return }
         imagePreviewDecodedKey = key
+
+        // Fixed container height prevents secondary cell-size jumps when image decode finishes.
+        imagePreviewHeightConstraint?.constant = Self.collapsedImagePreviewHeight
 
         // Cancel previous decode task if still running.
         imagePreviewDecodeTask?.cancel()
@@ -517,12 +526,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         let currentKey = key
         imagePreviewDecodeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-                  let image = UIImage(data: data) else { return }
+            let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: 720)
             await MainActor.run { [weak self] in
                 guard let self, self.imagePreviewDecodedKey == currentKey else { return }
                 self.imagePreviewImageView.image = image
-                self.invalidateEnclosingCollectionViewLayout()
             }
         }
     }
@@ -814,6 +821,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
             constant: -12
         )
+        imagePreviewHeightConstraint = imagePreviewContainer.heightAnchor.constraint(
+            equalToConstant: Self.collapsedImagePreviewHeight
+        )
 
         guard let toolLeadingConstraint,
               let toolWidthConstraint,
@@ -821,7 +831,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
               let outputLabelWidthConstraint,
               let expandedLabelWidthConstraint,
               let expandedMarkdownWidthConstraint,
-              let expandedReadMediaWidthConstraint else {
+              let expandedReadMediaWidthConstraint,
+              let imagePreviewHeightConstraint else {
             assertionFailure("Expected tool-row constraints to be initialized")
             return
         }
@@ -897,6 +908,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             imagePreviewImageView.trailingAnchor.constraint(equalTo: imagePreviewContainer.trailingAnchor, constant: -6),
             imagePreviewImageView.topAnchor.constraint(equalTo: imagePreviewContainer.topAnchor, constant: 6),
             imagePreviewImageView.bottomAnchor.constraint(equalTo: imagePreviewContainer.bottomAnchor, constant: -6),
+            imagePreviewHeightConstraint,
             imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
 
             expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -10),

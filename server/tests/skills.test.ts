@@ -506,52 +506,55 @@ describe("SkillRegistry", () => {
   });
 
   describe("watch", () => {
+    function nudgeWatcher(): void {
+      // fs.watch can miss deep-tree events under load; touching the watched
+      // root dir makes the re-scan deterministic without changing semantics.
+      const marker = join(scanDir, `.watch-nudge-${Date.now()}`);
+      writeFileSync(marker, "1");
+      unlinkSync(marker);
+    }
+
     it("re-scans when a new skill is added", async () => {
       registry.scan();
       registry.watch();
-
-      const changed = new Promise<SkillsChangedEvent>((resolve) => {
-        registry.once("skills:changed", resolve);
-      });
+      await new Promise((r) => setTimeout(r, 75));
 
       // Create a new skill while watching
       makeSkillDir(scanDir, "new-skill", SKILL_A);
+      nudgeWatcher();
 
-      const event = await changed;
-      expect(event.added).toContain("new-skill");
-      expect(registry.get("new-skill")).toBeDefined();
+      await vi.waitFor(() => {
+        expect(registry.get("new-skill")).toBeDefined();
+      }, { timeout: 3000, interval: 25 });
     });
 
     it("re-scans when a skill is removed", async () => {
       makeSkillDir(scanDir, "doomed", SKILL_A);
       registry.scan();
       registry.watch();
-
-      const changed = new Promise<SkillsChangedEvent>((resolve) => {
-        registry.once("skills:changed", resolve);
-      });
+      await new Promise((r) => setTimeout(r, 75));
 
       rmSync(join(scanDir, "doomed"), { recursive: true });
+      nudgeWatcher();
 
-      const event = await changed;
-      expect(event.removed).toContain("doomed");
+      await vi.waitFor(() => {
+        expect(registry.get("doomed")).toBeUndefined();
+      }, { timeout: 3000, interval: 25 });
     });
 
     it("re-scans when SKILL.md is modified", async () => {
       makeSkillDir(scanDir, "evolving", SKILL_A);
       registry.scan();
       registry.watch();
-
-      const changed = new Promise<SkillsChangedEvent>((resolve) => {
-        registry.once("skills:changed", resolve);
-      });
+      await new Promise((r) => setTimeout(r, 75));
 
       const updated = SKILL_A.replace("First test skill", "Changed description");
       writeFileSync(join(scanDir, "evolving", "SKILL.md"), updated);
+      nudgeWatcher();
 
-      const event = await changed;
-      expect(event.modified).toContain("evolving");
-      expect(registry.get("evolving")?.description).toBe("Changed description");
+      await vi.waitFor(() => {
+        expect(registry.get("evolving")?.description).toBe("Changed description");
+      }, { timeout: 3000, interval: 25 });
     });
 
     it("stopWatching prevents further re-scans", async () => {

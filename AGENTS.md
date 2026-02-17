@@ -30,8 +30,8 @@ No partial protocol updates.
 ```bash
 # iOS
 cd ios && xcodegen generate
-cd ios && xcodebuild -scheme Oppi build
-cd ios && xcodebuild -scheme Oppi test
+cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
+cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
 ios/scripts/build-install.sh --launch --device 00000000-0000-0000-0000-000000000000
 
 # Server

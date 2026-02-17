@@ -62,13 +62,10 @@ struct ImageBlobView: View {
                     }
             }
         }
-        .task(id: base64.prefix(32)) {
+        .task(id: ImageDecodeCache.decodeKey(for: base64, maxPixelSize: 1600)) {
             decodeFailed = false
             decoded = await Task.detached(priority: .userInitiated) {
-                guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
-                    return nil as UIImage?
-                }
-                return UIImage(data: data)
+                ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600)
             }.value
             if decoded == nil {
                 decodeFailed = true
