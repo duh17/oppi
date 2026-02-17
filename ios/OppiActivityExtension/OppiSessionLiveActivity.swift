@@ -47,8 +47,8 @@ struct PiSessionLiveActivity: Widget {
                         HStack(spacing: 4) {
                             Image(systemName: iconForTool(tool))
                                 .foregroundStyle(.secondary)
-                            Text(tool)
-                                .font(.caption.monospaced())
+                            Text("Running \(tool)")
+                                .font(.caption)
                                 .lineLimit(1)
                         }
                     } else if let event = context.state.lastEvent {
@@ -79,12 +79,12 @@ struct PiSessionLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                // Compact leading — small icon
-                Image(systemName: "terminal")
+                // Compact leading — small icon with motion hint while working.
+                Image(systemName: compactLeadingSymbol(context.state))
                     .font(.caption2)
                     .foregroundStyle(statusColor(context.state.status))
+                    .symbolEffect(.pulse, options: .repeating, isActive: isWorking(context.state.status))
             } compactTrailing: {
-                // Compact trailing — pending count or status
                 if context.state.pendingPermissions > 0 {
                     HStack(spacing: 2) {
                         Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
@@ -93,20 +93,26 @@ struct PiSessionLiveActivity: Widget {
                             .font(.caption2.bold())
                     }
                     .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                } else if context.state.status == "busy" || context.state.status == "stopping" {
+                    Text(elapsedCompactString(context.state.elapsedSeconds))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 } else {
                     StatusDot(status: context.state.status)
                 }
             } minimal: {
-                // Minimal (when sharing with another Live Activity)
-                ZStack {
+                if context.state.pendingPermissions > 0 {
+                    Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
+                        .font(.caption2)
+                        .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                } else if context.state.status == "error" {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                } else {
                     Image(systemName: "terminal")
                         .font(.caption2)
-                    if context.state.pendingPermissions > 0 {
-                        Circle()
-                            .fill(permissionRiskColor(context.state.pendingPermissionRisk))
-                            .frame(width: 6, height: 6)
-                            .offset(x: 6, y: -6)
-                    }
+                        .foregroundStyle(statusColor(context.state.status))
                 }
             }
         }
@@ -146,8 +152,8 @@ private struct LockScreenView: View {
                             .lineLimit(1)
                     }
                 } else if let tool = context.state.activeTool {
-                    Text(tool)
-                        .font(.caption.monospaced())
+                    Text("Running \(tool)")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else if let event = context.state.lastEvent {
@@ -230,6 +236,7 @@ private struct StatusDot: View {
         Circle()
             .fill(statusColor(status))
             .frame(width: 8, height: 8)
+            .symbolEffect(.pulse, options: .repeating, isActive: isWorking(status))
     }
 }
 
@@ -244,6 +251,23 @@ private func statusColor(_ status: String) -> Color {
     case "error": return .red
     default: return .secondary
     }
+}
+
+private func isWorking(_ status: String) -> Bool {
+    status == "busy" || status == "stopping"
+}
+
+private func compactLeadingSymbol(_ state: PiSessionAttributes.ContentState) -> String {
+    if state.pendingPermissions > 0 {
+        return permissionRiskIcon(state.pendingPermissionRisk)
+    }
+    if state.status == "error" {
+        return "exclamationmark.triangle.fill"
+    }
+    if isWorking(state.status) {
+        return "waveform.path.ecg"
+    }
+    return "terminal"
 }
 
 private func permissionRiskColor(_ risk: String?) -> Color {
@@ -268,9 +292,9 @@ private func permissionRiskIcon(_ risk: String?) -> String {
 
 private func permissionHeadline(_ state: PiSessionAttributes.ContentState) -> String {
     if state.pendingPermissions <= 1 {
-        return "1 pending"
+        return "Approval needed"
     }
-    return "\(state.pendingPermissions) pending"
+    return "\(state.pendingPermissions) approvals"
 }
 
 private func iconForTool(_ tool: String) -> String {
@@ -288,4 +312,14 @@ private func elapsedString(_ seconds: Int) -> String {
     let m = seconds / 60
     let s = seconds % 60
     return String(format: "%d:%02d", m, s)
+}
+
+private func elapsedCompactString(_ seconds: Int) -> String {
+    if seconds >= 3600 {
+        return "\(seconds / 3600)h"
+    }
+    if seconds >= 60 {
+        return "\(seconds / 60)m"
+    }
+    return "\(max(1, seconds))s"
 }

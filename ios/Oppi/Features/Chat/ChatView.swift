@@ -243,6 +243,7 @@ struct ChatView: View {
                 || connection.wsClient?.connectedSessionId == nil {
                 connection.disconnectSession()
             }
+            LiveActivityManager.shared.endIfNeeded()
         }
     }
 

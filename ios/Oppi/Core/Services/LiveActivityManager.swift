@@ -6,8 +6,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 
 /// Manages Live Activity lifecycle for pi sessions.
 ///
-/// Start an activity when connecting to a session, update it with coarse
-/// state changes, and end it when the session ends or the user disconnects.
+/// Foreground v1 policy: only show while the session needs attention
+/// (working, approvals, error). Idle/ready states auto-dismiss.
 ///
 /// Only one Live Activity at a time (matches v1 one-session-at-a-time policy).
 ///
@@ -21,6 +21,10 @@ final class LiveActivityManager {
     private(set) var activeActivity: Activity<PiSessionAttributes>?
     private var startTime: Date?
     private var elapsedTimer: Task<Void, Never>?
+
+    private var sessionId: String?
+    private var sessionName: String?
+    private var idleDismissTask: Task<Void, Never>?
 
     /// Current state snapshot (for the active activity).
     private var currentState = PiSessionAttributes.ContentState(
@@ -45,61 +49,41 @@ final class LiveActivityManager {
     private var pushThrottleTask: Task<Void, Never>?
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
     private let pushThrottleInterval: Duration = .seconds(1)
+    /// End the activity shortly after returning to idle, so brief gaps don't flicker.
+    private let idleDismissDelay: Duration = .seconds(60)
+    /// Mark state stale if we fail to update for this long.
+    private let staleIntervalSeconds: TimeInterval = 90
 
     private init() {}
 
     // MARK: - Lifecycle
 
-    /// Start a Live Activity for a session.
-    /// Call when WebSocket connects to a session.
+    /// Set active session context.
+    ///
+    /// Does not always start a Live Activity immediately.
+    /// The activity appears only for actionable states (working/approval/error).
     func start(sessionId: String, sessionName: String) {
-        // End any existing activity first
-        endIfNeeded()
+        let switchedSession = self.sessionId != nil && self.sessionId != sessionId
+        self.sessionId = sessionId
+        self.sessionName = sessionName
 
-        let authInfo = ActivityAuthorizationInfo()
-        guard authInfo.areActivitiesEnabled else {
-            logger.error("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → Oppi → Live Activities")
-            return
-        }
-
-        let attributes = PiSessionAttributes(
-            sessionId: sessionId,
-            sessionName: sessionName
-        )
-
-        currentState = PiSessionAttributes.ContentState(
-            status: "ready",
-            activeTool: nil,
-            pendingPermissions: 0,
-            pendingPermissionSession: nil,
-            pendingPermissionTool: nil,
-            pendingPermissionSummary: nil,
-            pendingPermissionReason: nil,
-            pendingPermissionRisk: nil,
-            lastEvent: "Connected",
-            elapsedSeconds: 0
-        )
-        lastPushedPermissionCount = 0
-
-        do {
-            let content = ActivityContent(state: currentState, staleDate: nil)
-            let activity = try Activity.request(
-                attributes: attributes,
-                content: content,
-                pushType: nil  // Local-only: no APNs push updates
+        if switchedSession {
+            endIfNeeded()
+            currentState = PiSessionAttributes.ContentState(
+                status: "ready",
+                activeTool: nil,
+                pendingPermissions: 0,
+                pendingPermissionSession: nil,
+                pendingPermissionTool: nil,
+                pendingPermissionSummary: nil,
+                pendingPermissionReason: nil,
+                pendingPermissionRisk: nil,
+                lastEvent: nil,
+                elapsedSeconds: 0
             )
-
-            self.activeActivity = activity
-            self.startTime = Date()
-            startElapsedTimer()
-
-            logger.error("Live Activity started for session \(sessionId, privacy: .public)")
-        } catch {
-            // Non-fatal: Live Activity is optional. Common failures:
-            // - ActivityAuthorizationError.visibility: user disabled in Settings
-            // - PermissionsError: missing entitlement or provisioning
-            logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
         }
+
+        refreshLifecycle()
     }
 
     /// End the current Live Activity.
@@ -110,6 +94,8 @@ final class LiveActivityManager {
         elapsedTimer = nil
         pushThrottleTask?.cancel()
         pushThrottleTask = nil
+        idleDismissTask?.cancel()
+        idleDismissTask = nil
         hasPendingPush = false
         lastPushedPermissionCount = 0
         startTime = nil
@@ -142,28 +128,27 @@ final class LiveActivityManager {
 
     /// Update from agent events. Coalesces updates to avoid excessive refreshes.
     func updateFromEvent(_ event: AgentEvent) {
-        guard activeActivity != nil else { return }
-
         switch event {
         case .agentStart:
             currentState.status = "busy"
-            currentState.lastEvent = "Agent started"
+            currentState.lastEvent = "Working"
 
         case .agentEnd:
             currentState.status = "ready"
             currentState.activeTool = nil
-            currentState.lastEvent = "Agent finished"
+            currentState.lastEvent = "Ready"
 
         case .toolStart(_, _, let tool, _):
+            currentState.status = "busy"
             currentState.activeTool = tool
-            currentState.lastEvent = tool
+            currentState.lastEvent = "Running \(displayToolName(tool))"
 
         case .toolEnd:
             currentState.activeTool = nil
 
         case .permissionRequest:
             currentState.pendingPermissions += 1
-            currentState.lastEvent = "Permission required"
+            currentState.lastEvent = "Approval required"
 
         case .permissionExpired:
             currentState.pendingPermissions = max(0, currentState.pendingPermissions - 1)
@@ -182,14 +167,14 @@ final class LiveActivityManager {
         case .error(_, let message):
             if !message.hasPrefix("Retrying (") {
                 currentState.status = "error"
-                currentState.lastEvent = "Error"
+                currentState.lastEvent = "Attention needed"
             }
 
         default:
             return // text/thinking deltas don't update Live Activity
         }
 
-        pushUpdate()
+        refreshLifecycle()
     }
 
     /// Sync pending permissions from the canonical store.
@@ -201,23 +186,21 @@ final class LiveActivityManager {
         sessions: [Session],
         activeSessionId: String?
     ) {
-        guard activeActivity != nil else { return }
-
         currentState.pendingPermissions = pending.count
 
         if let top = pending.sorted(by: shouldPrioritizePermission).first {
             currentState.pendingPermissionSession = sessionLabel(for: top.sessionId, sessions: sessions)
             currentState.pendingPermissionTool = top.tool
-            currentState.pendingPermissionSummary = top.displaySummary
+            currentState.pendingPermissionSummary = permissionSummaryForLiveActivity(top)
             currentState.pendingPermissionReason = top.reason
             currentState.pendingPermissionRisk = top.risk.rawValue
 
             if top.sessionId == activeSessionId {
-                currentState.lastEvent = "Permission required"
+                currentState.lastEvent = "Approval required"
             } else if let session = currentState.pendingPermissionSession {
-                currentState.lastEvent = "Permission required in \(session)"
+                currentState.lastEvent = "Approval required in \(session)"
             } else {
-                currentState.lastEvent = "Permission required"
+                currentState.lastEvent = "Approval required"
             }
         } else {
             currentState.pendingPermissionSession = nil
@@ -227,10 +210,75 @@ final class LiveActivityManager {
             currentState.pendingPermissionRisk = nil
         }
 
-        pushUpdate()
+        refreshLifecycle()
     }
 
     // MARK: - Private
+
+    private func refreshLifecycle() {
+        let shouldShow = shouldShowLiveActivity(state: currentState)
+        if shouldShow {
+            idleDismissTask?.cancel()
+            idleDismissTask = nil
+            ensureActivityStartedIfNeeded()
+            pushUpdate()
+            return
+        }
+
+        guard activeActivity != nil else { return }
+        scheduleIdleDismiss()
+    }
+
+    private func shouldShowLiveActivity(state: PiSessionAttributes.ContentState) -> Bool {
+        if state.pendingPermissions > 0 { return true }
+        switch state.status {
+        case "busy", "stopping", "error":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func ensureActivityStartedIfNeeded() {
+        guard activeActivity == nil else { return }
+
+        let authInfo = ActivityAuthorizationInfo()
+        guard authInfo.areActivitiesEnabled else {
+            logger.error("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → Oppi → Live Activities")
+            return
+        }
+
+        let sid = sessionId ?? "unknown"
+        let sname = sessionName ?? "Session"
+        let attributes = PiSessionAttributes(sessionId: sid, sessionName: sname)
+
+        do {
+            let content = ActivityContent(state: currentState, staleDate: Date().addingTimeInterval(staleIntervalSeconds))
+            let activity = try Activity.request(
+                attributes: attributes,
+                content: content,
+                pushType: nil
+            )
+            activeActivity = activity
+            startTime = Date()
+            startElapsedTimer()
+            logger.error("Live Activity started for session \(sid, privacy: .public)")
+        } catch {
+            logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func scheduleIdleDismiss() {
+        guard idleDismissTask == nil else { return }
+        idleDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.idleDismissDelay ?? .seconds(60))
+            guard !Task.isCancelled, let self else { return }
+            self.idleDismissTask = nil
+            if !self.shouldShowLiveActivity(state: self.currentState) {
+                self.endIfNeeded()
+            }
+        }
+    }
 
     private func shouldPrioritizePermission(_ lhs: PermissionRequest, _ rhs: PermissionRequest) -> Bool {
         if lhs.risk.severity != rhs.risk.severity {
@@ -249,6 +297,29 @@ final class LiveActivityManager {
             return name
         }
         return "Session \(String(sessionId.prefix(8)))"
+    }
+
+    private func permissionSummaryForLiveActivity(_ request: PermissionRequest) -> String {
+        switch request.risk {
+        case .critical, .high:
+            return "Open Oppi to review command"
+        case .medium, .low:
+            let trimmed = request.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return "Approval requested" }
+            return String(trimmed.prefix(80))
+        }
+    }
+
+    private func displayToolName(_ tool: String) -> String {
+        let lowered = tool.lowercased()
+        switch lowered {
+        case "bash": return "Bash"
+        case "read": return "Read"
+        case "write": return "Write"
+        case "edit": return "Edit"
+        default:
+            return tool.isEmpty ? "tool" : tool
+        }
     }
 
     /// Throttled push: coalesces rapid state changes into at most one
@@ -300,7 +371,7 @@ final class LiveActivityManager {
 
         Task {
             await activity.update(
-                .init(state: state, staleDate: nil),
+                .init(state: state, staleDate: Date().addingTimeInterval(staleIntervalSeconds)),
                 alertConfiguration: alertConfiguration
             )
         }
