@@ -82,23 +82,28 @@ struct ZoomableImageView: View {
 
     var body: some View {
         NavigationStack {
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .scaleEffect(scale)
-                .gesture(
-                    MagnifyGesture()
-                        .onChanged { value in scale = value.magnification }
-                        .onEnded { _ in withAnimation { scale = max(1.0, scale) } }
-                )
-                .onTapGesture(count: 2) {
-                    withAnimation { scale = scale > 1.0 ? 1.0 : 2.0 }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+            GeometryReader { geo in
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(scale)
+                    .gesture(
+                        MagnifyGesture()
+                            .onChanged { value in scale = value.magnification }
+                            .onEnded { _ in withAnimation { scale = max(1.0, scale) } }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation { scale = scale > 1.0 ? 1.0 : 2.0 }
                     }
+            }
+            .ignoresSafeArea()
+            .background(Color.black)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
                 }
+            }
         }
     }
 }
