@@ -1,6 +1,12 @@
 # Oppi — Agent Principles
 
-Monorepo for the Oppi mobile-supervised coding agent platform.
+Oppi monorepo — iOS app + server for mobile-supervised pi CLI.
+
+## First Message
+
+If no concrete task given, read this file and the relevant sub-AGENTS.md, then ask what to work on.
+- iOS app: see `ios/AGENTS.md`
+- Server: see `server/AGENTS.md`
 
 ## Structure
 
@@ -10,12 +16,6 @@ server/     Server runtime (Node.js/TypeScript)
 skills/     Agent skills (oppi-dev)
 ```
 
-## Working Model
-
-- iOS app: see `ios/AGENTS.md`
-- Server: see `server/AGENTS.md`
-- If no concrete task given, ask what to work on.
-
 ## Protocol Discipline
 
 When changing client/server message contracts:
@@ -24,19 +24,6 @@ When changing client/server message contracts:
 3. Update protocol tests on both sides
 
 No partial protocol updates.
-
-## Change Discipline
-
-- Do not remove intentional behavior without confirming.
-- Prefer backward-compatible changes.
-- Keep changes scoped; avoid opportunistic refactors unless requested.
-- Surface risks, trade-offs, and verification steps clearly.
-
-## Testing Expectations
-
-- For user-reported bugs, prefer adding a regression test with the fix.
-- If a regression test is trivial and low-risk, include it in the same change.
-- If not practical, document why and provide manual verification steps.
 
 ## Commands
 
@@ -52,11 +39,9 @@ cd server && npm test
 cd server && npm start
 ```
 
-## Git / Commit Rules
+## Git
 
-- Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`
-- Keep subject under 72 chars
 - Never `git add .` / `git add -A`
-- Never destructive reset/clean/stash shortcuts
+- Never destructive reset/clean/stash
 - Never commit unless user asks
-- Track files you changed
+- Always ask before removing functionality that appears intentional

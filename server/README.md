@@ -15,7 +15,7 @@ npx oppi serve
 
 ## What It Does
 
-Oppi runs coding agents (Claude, etc.) in sandboxed workspaces on your Mac, controlled from your phone. The server handles:
+Oppi runs [pi](https://github.com/badlogic/pi-mono) sessions on your Mac — in Apple containers or directly on the host — controlled from your phone. The server handles:
 
 - **Session management** — create, fork, resume coding sessions
 - **Workspace isolation** — each workspace gets its own container or host sandbox

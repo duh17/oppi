@@ -1,6 +1,6 @@
-# Oppi Server — Agent Principles
+# Oppi Server
 
-Node.js/TypeScript server runtime for the Oppi coding agent platform.
+Node.js/TypeScript server that manages pi CLI sessions, policy, and iOS push.
 
 ## Commands
 
@@ -22,23 +22,3 @@ sandbox/        Container sandbox config
 docs/           Server design docs
 scripts/        Server ops scripts
 ```
-
-## Key Files
-
-- `src/index.ts` — CLI entrypoint
-- `src/server.ts` — HTTP/WebSocket server + model catalog
-- `src/types.ts` — Protocol types (shared with iOS client)
-- `src/sessions.ts` — Session lifecycle + RPC bridge
-- `src/policy.ts` — Layered policy engine
-- `src/gate.ts` — Permission gate (TCP per-session)
-- `src/sandbox.ts` — Apple container orchestration
-- `src/auth-proxy.ts` — Credential-isolating reverse proxy
-- `src/push.ts` — APNs push notification client
-- `src/storage.ts` — Persistent config + session + workspace storage
-- `src/stream.ts` — Multiplexed WebSocket streams
-- `src/skills.ts` — Skill registry with file watcher
-- `src/extension-loader.ts` — Host extension discovery + resolution
-
-## Testing
-
-Comprehensive vitest suite. Run with `npm test`.
