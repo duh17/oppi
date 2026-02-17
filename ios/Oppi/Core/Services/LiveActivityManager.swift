@@ -10,6 +10,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 /// state changes, and end it when the session ends or the user disconnects.
 ///
 /// Only one Live Activity at a time (matches v1 one-session-at-a-time policy).
+///
+/// **v1: Local-only updates.** The activity is updated via ActivityKit when the
+/// app is in foreground/recent memory. Push-based updates (for when the app is
+/// killed) require APNs infrastructure and will be added later.
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -17,7 +21,6 @@ final class LiveActivityManager {
     private(set) var activeActivity: Activity<PiSessionAttributes>?
     private var startTime: Date?
     private var elapsedTimer: Task<Void, Never>?
-    private var pushTokenTask: Task<Void, Never>?
 
     /// Current state snapshot (for the active activity).
     private var currentState = PiSessionAttributes.ContentState(
@@ -55,12 +58,9 @@ final class LiveActivityManager {
 
         let authInfo = ActivityAuthorizationInfo()
         guard authInfo.areActivitiesEnabled else {
-            logger.info("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → Oppi → Live Activities")
+            logger.error("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → Oppi → Live Activities")
             return
         }
-
-        // Check frequent push permission too
-        logger.info("Live Activities enabled, frequentPushesEnabled=\(authInfo.frequentPushesEnabled)")
 
         let attributes = PiSessionAttributes(
             sessionId: sessionId,
@@ -86,20 +86,19 @@ final class LiveActivityManager {
             let activity = try Activity.request(
                 attributes: attributes,
                 content: content,
-                pushType: .token
+                pushType: nil  // Local-only: no APNs push updates
             )
 
             self.activeActivity = activity
             self.startTime = Date()
             startElapsedTimer()
-            observePushTokenUpdates(activity)
 
-            logger.info("Live Activity started for session \(sessionId)")
+            logger.error("Live Activity started for session \(sessionId, privacy: .public)")
         } catch {
             // Non-fatal: Live Activity is optional. Common failures:
             // - ActivityAuthorizationError.visibility: user disabled in Settings
             // - PermissionsError: missing entitlement or provisioning
-            logger.info("Live Activity unavailable: \(error.localizedDescription)")
+            logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -109,8 +108,6 @@ final class LiveActivityManager {
 
         elapsedTimer?.cancel()
         elapsedTimer = nil
-        pushTokenTask?.cancel()
-        pushTokenTask = nil
         pushThrottleTask?.cancel()
         pushThrottleTask = nil
         hasPendingPush = false
@@ -138,7 +135,7 @@ final class LiveActivityManager {
         }
 
         activeActivity = nil
-        logger.info("Live Activity ended")
+        logger.error("Live Activity ended")
     }
 
     // MARK: - State Updates
@@ -307,26 +304,6 @@ final class LiveActivityManager {
                 alertConfiguration: alertConfiguration
             )
         }
-    }
-
-    private func observePushTokenUpdates(_ activity: Activity<PiSessionAttributes>) {
-        pushTokenTask?.cancel()
-        pushTokenTask = Task { [weak self] in
-            if let initialToken = activity.pushToken {
-                await self?.registerLiveActivityToken(initialToken)
-            }
-
-            for await tokenData in activity.pushTokenUpdates {
-                guard !Task.isCancelled else { return }
-                await self?.registerLiveActivityToken(tokenData)
-            }
-        }
-    }
-
-    private func registerLiveActivityToken(_ tokenData: Data) async {
-        let token = tokenData.map { String(format: "%02x", $0) }.joined()
-        logger.info("Live Activity push token updated (chars: \(token.count))")
-        await PushRegistration.shared.sendTokenToServer(token, tokenType: "liveactivity")
     }
 
     private func startElapsedTimer() {
