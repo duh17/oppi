@@ -1,0 +1,545 @@
+/**
+ * Pi RPC event translation and session state helpers.
+ *
+ * Pure/stateless functions that convert pi's JSON-lines RPC protocol
+ * into the simplified ServerMessage format consumed by the iOS app.
+ * Also handles session state mutation (change stats, usage, messages).
+ *
+ * Extracted from sessions.ts to keep the SessionManager focused on
+ * lifecycle orchestration and wiring.
+ */
+
+import type { ServerMessage, Session, SessionMessage } from "./types.js";
+
+/** Compact HH:MM:SS.mmm timestamp for log lines. */
+function ts(): string {
+  const d = new Date();
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
+}
+
+// ─── Text Helpers ───
+
+/**
+ * Compute the missing assistant text tail from streamed deltas and finalized text.
+ *
+ * Pi normally streams assistant text via `message_update.text_delta`, but some
+ * turns only include text in `message_end`. This helper bridges that gap.
+ */
+export function computeAssistantTextTailDelta(
+  streamedText: string,
+  finalizedText: string,
+): string {
+  if (finalizedText.length === 0) return "";
+  if (streamedText.length === 0) return finalizedText;
+  if (finalizedText === streamedText) return "";
+
+  if (finalizedText.startsWith(streamedText)) {
+    return finalizedText.slice(streamedText.length);
+  }
+
+  // Fallback for unexpected divergence: append from common prefix forward.
+  // We cannot retract already-streamed text, but this avoids dropping content.
+  let commonPrefix = 0;
+  const max = Math.min(streamedText.length, finalizedText.length);
+  while (commonPrefix < max && streamedText[commonPrefix] === finalizedText[commonPrefix]) {
+    commonPrefix += 1;
+  }
+
+  return finalizedText.slice(commonPrefix);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
+export function extractAssistantText(message: any): string {
+  const content = message?.content;
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    const isTextPart = part?.type === "text" || part?.type === "output_text";
+    if (isTextPart && typeof part.text === "string") {
+      textParts.push(part.text);
+    }
+  }
+
+  return textParts.join("");
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
+export function extractUsage(message: any): {
+  input: number;
+  output: number;
+  cost: number;
+  cacheRead: number;
+  cacheWrite: number;
+} | null {
+  const usage = message?.usage;
+  if (!usage) {
+    return null;
+  }
+
+  return {
+    input: usage.input || 0,
+    output: usage.output || 0,
+    cost: usage.cost?.total || 0,
+    cacheRead: usage.cacheRead || 0,
+    cacheWrite: usage.cacheWrite || 0,
+  };
+}
+
+/**
+ * Normalize noisy/low-level RPC errors into user-facing text.
+ */
+export function normalizeRpcError(command: string, error: string): string {
+  const trimmed = error.trim();
+  const parsePrefix = "Failed to parse command:";
+
+  let normalized = trimmed;
+  if (trimmed.startsWith(parsePrefix)) {
+    const remainder = trimmed.slice(parsePrefix.length).trim();
+    if (remainder.length > 0) {
+      normalized = remainder;
+    }
+  }
+
+  if (command === "compact" && /already compacted/i.test(normalized)) {
+    return "Already compacted";
+  }
+
+  return normalized;
+}
+
+// ─── Event Translation ───
+
+/**
+ * Mutable context threaded through translatePiEvent.
+ *
+ * Holds per-turn streaming state that persists across events within a
+ * single pi turn. SessionManager owns the actual state and passes it in.
+ */
+export interface TranslationContext {
+  /** Session ID — used for logging only. */
+  sessionId: string;
+  /** Accumulated partial-result text per toolCallId (replace → delta conversion). */
+  partialResults: Map<string, string>;
+  /** Assistant text already streamed via text_delta for the current turn. */
+  streamedAssistantText: string;
+}
+
+/**
+ * Extract image/audio content blocks as data URI tool_output messages.
+ *
+ * Pi sends media as { type: "image"|"audio", data: "base64...", mimeType: "..." }.
+ * We encode as data URIs so iOS extractors can detect and render them.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi content blocks are untyped
+export function extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
+  const out: ServerMessage[] = [];
+  for (const block of contents) {
+    if ((block.type === "image" || block.type === "audio") && block.data) {
+      const defaultMime = block.type === "image" ? "image/png" : "audio/wav";
+      const dataUri = `data:${block.mimeType || defaultMime};base64,${block.data}`;
+      out.push({ type: "tool_output", output: dataUri, toolCallId });
+    }
+  }
+  return out;
+}
+
+/**
+ * Translate a single pi RPC event into zero or more ServerMessages.
+ *
+ * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
+ * side effect (streaming state for the current turn).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
+export function translatePiEvent(event: any, ctx: TranslationContext): ServerMessage[] {
+  const resolveToolCallId = (): string | undefined => {
+    if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+      return event.toolCallId;
+    }
+
+    // Some pi tool events omit toolCallId but still include a stable event id.
+    // Use it so stream-time IDs match trace lookup IDs.
+    if (typeof event.id === "string" && event.id.length > 0) {
+      return event.id;
+    }
+
+    return undefined;
+  };
+
+  const computeToolDelta = (lastText: string, fullText: string): string => {
+    if (fullText.length === 0) return "";
+    if (lastText.length === 0) return fullText;
+    if (fullText === lastText) return "";
+    if (fullText.startsWith(lastText)) {
+      return fullText.slice(lastText.length);
+    }
+    // Unexpected divergence: prefer emitting full text over dropping output.
+    return fullText;
+  };
+
+  switch (event.type) {
+    case "agent_start":
+      ctx.streamedAssistantText = "";
+      return [{ type: "agent_start" }];
+
+    case "agent_end":
+      ctx.streamedAssistantText = "";
+      return [{ type: "agent_end" }];
+
+    case "message_update": {
+      const evt = event.assistantMessageEvent;
+      if (evt?.type === "text_delta" && typeof evt.delta === "string") {
+        ctx.streamedAssistantText += evt.delta;
+        return [{ type: "text_delta", delta: evt.delta }];
+      }
+      if (evt?.type === "thinking_delta") {
+        return [{ type: "thinking_delta", delta: evt.delta }];
+      }
+      return [];
+    }
+
+    case "tool_execution_start": {
+      const toolCallId = resolveToolCallId();
+      return [
+        {
+          type: "tool_start",
+          tool: event.toolName,
+          args: event.args || {},
+          toolCallId,
+        },
+      ];
+    }
+
+    case "tool_execution_update": {
+      const contents = event.partialResult?.content;
+      if (!Array.isArray(contents) || contents.length === 0) return [];
+
+      const toolCallId = resolveToolCallId();
+      const messages: ServerMessage[] = [];
+
+      for (const block of contents) {
+        const isText = block.type === "text" || block.type === "output_text";
+        if (isText && typeof block.text === "string") {
+          const fullText: string = block.text;
+
+          // Compute delta from last partialResult to avoid duplication.
+          // partialResult is accumulated (replace semantics) — we convert
+          // to delta so the client can append without duplicating output.
+          const key = toolCallId ?? "";
+          const lastText = ctx.partialResults.get(key) ?? "";
+          ctx.partialResults.set(key, fullText);
+          const delta = computeToolDelta(lastText, fullText);
+
+          if (delta) {
+            messages.push({ type: "tool_output", output: delta, toolCallId });
+          }
+        }
+      }
+
+      messages.push(...extractMediaOutputs(contents, toolCallId));
+      return messages;
+    }
+
+    case "tool_execution_end": {
+      const toolCallId = resolveToolCallId();
+      const key = toolCallId ?? "";
+      const lastText = ctx.partialResults.get(key) ?? "";
+
+      // Extract final text/media from result — some tools only include output
+      // at end (no partial updates), so emit missing delta here.
+      const resultContents = event.result?.content;
+      const messages: ServerMessage[] = [];
+
+      if (Array.isArray(resultContents) && resultContents.length > 0) {
+        const finalText = resultContents
+          .map((block: Record<string, unknown>) => {
+            const type = block.type;
+            const isText = type === "text" || type === "output_text";
+            return isText && typeof block.text === "string" ? (block.text as string) : "";
+          })
+          .join("");
+
+        const delta = computeToolDelta(lastText, finalText);
+        if (delta.length > 0) {
+          messages.push({ type: "tool_output", output: delta, toolCallId });
+        }
+
+        messages.push(...extractMediaOutputs(resultContents, toolCallId));
+      }
+
+      ctx.partialResults.delete(key);
+
+      messages.push({
+        type: "tool_end",
+        tool: event.toolName,
+        toolCallId,
+      });
+
+      return messages;
+    }
+
+    case "auto_compaction_start":
+      return [{ type: "compaction_start", reason: event.reason ?? "threshold" }];
+
+    case "auto_compaction_end":
+      return [
+        {
+          type: "compaction_end",
+          aborted: event.aborted ?? false,
+          willRetry: event.willRetry ?? false,
+          summary: event.result?.summary,
+          tokensBefore: event.result?.tokensBefore,
+        },
+      ];
+
+    case "auto_retry_start":
+      return [
+        {
+          type: "retry_start",
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          delayMs: event.delayMs,
+          errorMessage: event.errorMessage,
+        },
+      ];
+
+    case "auto_retry_end":
+      return [
+        {
+          type: "retry_end",
+          success: event.success,
+          attempt: event.attempt,
+          finalError: event.finalError,
+        },
+      ];
+
+    case "extension_error":
+      console.error(
+        `${ts()} [pi:${ctx.sessionId}] extension error: ${event.extensionPath}: ${event.error}`,
+      );
+      return [];
+
+    case "response":
+      // Uncorrelated responses (no id) — ignore unless error
+      if (!event.success) {
+        return [{ type: "error", error: `${event.command}: ${event.error}` }];
+      }
+      return [];
+
+    // Pi can deliver final assistant text/thinking only in message_end.
+    // Recover any missing text tail and emit thinking blocks for iOS.
+    case "message_end": {
+      const message = event.message;
+      if (message?.role !== "assistant") {
+        ctx.streamedAssistantText = "";
+        return [];
+      }
+
+      const out: ServerMessage[] = [];
+      const finalizedText = extractAssistantText(message);
+      const tailDelta = computeAssistantTextTailDelta(ctx.streamedAssistantText, finalizedText);
+      if (tailDelta.length > 0) {
+        out.push({ type: "text_delta", delta: tailDelta });
+      }
+
+      const content = message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            block?.type === "thinking" &&
+            typeof block.thinking === "string" &&
+            block.thinking.length > 0
+          ) {
+            out.push({ type: "thinking_delta", delta: block.thinking });
+          }
+        }
+      }
+
+      ctx.streamedAssistantText = "";
+      return out;
+    }
+
+    default:
+      return [];
+  }
+}
+
+// ─── Change Stats ───
+
+export function updateSessionChangeStats(
+  session: Session,
+  rawToolName: unknown,
+  rawArgs: unknown,
+): void {
+  const toolName = typeof rawToolName === "string" ? rawToolName.toLowerCase() : "";
+  if (toolName !== "edit" && toolName !== "write") {
+    return;
+  }
+
+  const existing = session.changeStats;
+  const stats = {
+    mutatingToolCalls: existing?.mutatingToolCalls ?? 0,
+    filesChanged: existing?.filesChanged ?? 0,
+    changedFiles: Array.isArray(existing?.changedFiles)
+      ? existing.changedFiles.filter((f) => typeof f === "string" && f.length > 0)
+      : [],
+    addedLines: existing?.addedLines ?? 0,
+    removedLines: existing?.removedLines ?? 0,
+  };
+  stats.filesChanged = Math.max(stats.filesChanged, stats.changedFiles.length);
+
+  stats.mutatingToolCalls += 1;
+
+  const path = extractChangedFilePath(rawArgs);
+  if (path && !stats.changedFiles.includes(path)) {
+    stats.changedFiles.push(path);
+    stats.filesChanged = stats.changedFiles.length;
+  }
+
+  const { added, removed } = estimateLineDelta(toolName, rawArgs);
+  stats.addedLines += added;
+  stats.removedLines += removed;
+
+  session.changeStats = stats;
+}
+
+export function extractChangedFilePath(rawArgs: unknown): string | null {
+  if (!rawArgs || typeof rawArgs !== "object") {
+    return null;
+  }
+
+  const args = rawArgs as Record<string, unknown>;
+  const candidate = args.path ?? args.file_path;
+  if (typeof candidate !== "string") {
+    return null;
+  }
+
+  const normalized = candidate.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function estimateLineDelta(
+  toolName: string,
+  rawArgs: unknown,
+): { added: number; removed: number } {
+  if (!rawArgs || typeof rawArgs !== "object") {
+    return { added: 0, removed: 0 };
+  }
+
+  const args = rawArgs as Record<string, unknown>;
+
+  if (toolName === "write") {
+    const content = typeof args.content === "string" ? args.content : "";
+    if (content.length === 0) {
+      return { added: 0, removed: 0 };
+    }
+    return { added: countLines(content), removed: 0 };
+  }
+
+  const oldText = typeof args.oldText === "string" ? args.oldText : "";
+  const newText = typeof args.newText === "string" ? args.newText : "";
+  if (oldText.length === 0 && newText.length === 0) {
+    return { added: 0, removed: 0 };
+  }
+
+  const oldLines = countLines(oldText);
+  const newLines = countLines(newText);
+
+  return {
+    added: Math.max(0, newLines - oldLines),
+    removed: Math.max(0, oldLines - newLines),
+  };
+}
+
+export function countLines(text: string): number {
+  if (text.length === 0) {
+    return 0;
+  }
+  return text.split("\n").length;
+}
+
+// ─── Message Persistence ───
+
+/**
+ * Append a message to session storage and update in-memory session stats.
+ *
+ * Takes an `addMessage` callback so this module doesn't depend on Storage directly.
+ */
+export function appendSessionMessage(
+  session: Session,
+  message: Omit<SessionMessage, "id" | "sessionId">,
+  addMessage: (sessionId: string, message: Omit<SessionMessage, "id" | "sessionId">) => void,
+): void {
+  addMessage(session.id, message);
+
+  // Keep the active in-memory session aligned with persisted stats.
+  session.messageCount += 1;
+  session.lastMessage = message.content.slice(0, 100);
+  session.lastActivity = message.timestamp;
+
+  if (message.tokens) {
+    session.tokens.input += message.tokens.input;
+    session.tokens.output += message.tokens.output;
+  }
+
+  if (message.cost) {
+    session.cost += message.cost;
+  }
+}
+
+/**
+ * Apply a pi `message_end` event to session state.
+ *
+ * Extracts usage/tokens, persists assistant messages, and updates context token count.
+ */
+export function applyMessageEndToSession(
+  session: Session,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
+  message: any,
+  addMessage: (sessionId: string, msg: Omit<SessionMessage, "id" | "sessionId">) => void,
+): void {
+  const role = message?.role;
+
+  // Only persist assistant messages — user messages are already stored on prompt receipt
+  if (role === "user") return;
+
+  const usage = extractUsage(message);
+  const assistantText = extractAssistantText(message);
+
+  if (assistantText) {
+    const tokens = usage ? { input: usage.input, output: usage.output } : undefined;
+
+    appendSessionMessage(
+      session,
+      {
+        role: "assistant",
+        content: assistantText,
+        timestamp: Date.now(),
+        model: session.model,
+        tokens,
+        cost: usage?.cost,
+      },
+      addMessage,
+    );
+  } else if (usage) {
+    session.tokens.input += usage.input;
+    session.tokens.output += usage.output;
+    session.cost += usage.cost;
+  }
+
+  // Track context usage for status display (matches pi TUI calculation)
+  if (usage) {
+    session.contextTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  }
+}

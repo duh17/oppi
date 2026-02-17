@@ -1,0 +1,10 @@
+title = "Oppi gitleaks config"
+
+# Suppress false positives from test fixtures with dummy tokens
+[allowlist]
+description = "Test fixture dummy tokens"
+paths = [
+  '''tests/.*\.test\.ts$''',
+  '''test-send\.ts$''',
+  '''push-relay/.*\.test\.ts$''',
+]

@@ -1,0 +1,68 @@
+{
+  "name": "oppi-server",
+  "version": "0.1.0",
+  "description": "Self-hosted server for the Oppi mobile coding agent",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "oppi": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "server"
+  },
+  "homepage": "https://github.com/duh17/oppi/tree/main/server#readme",
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "license": "MIT",
+  "author": "Da Chen",
+  "keywords": [
+    "coding-agent",
+    "mobile",
+    "cli",
+    "llm",
+    "anthropic",
+    "claude"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js serve",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "dead-code": "knip",
+    "check": "tsc --noEmit && eslint src/ && prettier --check src/"
+  },
+  "dependencies": {
+    "diff-match-patch": "^1.0.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/diff-match-patch": "^1.0.36",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "knip": "^5.83.1",
+    "prettier": "^3.8.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
+  }
+}
