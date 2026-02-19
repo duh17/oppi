@@ -160,12 +160,6 @@ enum ThemeID: Hashable, Codable, Sendable {
         switch rawValue {
         case "dark": self = .dark
         case "light": self = .light
-        // Legacy: old IDs from before rename
-        case "apple-dark": self = .dark
-        case "apple-light": self = .light
-        case "tokyo-night": self = .custom("Tokyo Night")
-        case "tokyo-night-storm": self = .custom("Tokyo Night Storm")
-        case "tokyo-night-day": self = .custom("Tokyo Night Day")
         default:
             if rawValue.hasPrefix("custom:") {
                 self = .custom(String(rawValue.dropFirst("custom:".count)))
