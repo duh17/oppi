@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import type { PolicyPermission, Workspace } from "../src/types.js";
 
@@ -34,7 +34,6 @@ function makeWorkspace(): Workspace {
   return {
     id: "w1",
     name: "Workspace",
-    runtime: "host",
     skills: [],
     policy: { permissions: [] },
     createdAt: now,
@@ -42,7 +41,16 @@ function makeWorkspace(): Workspace {
   };
 }
 
-function makeRoutes(workspace: Workspace): RouteHandler {
+interface SessionStub {
+  id: string;
+  workspaceId: string;
+  active: boolean;
+}
+
+function makeRoutes(
+  workspace: Workspace,
+  sessionStubs: SessionStub[] = [],
+): { routes: RouteHandler; setSessionPolicy: ReturnType<typeof vi.fn> } {
   const globalPolicy = {
     schemaVersion: 1 as const,
     fallback: "ask" as const,
@@ -63,8 +71,22 @@ function makeRoutes(workspace: Workspace): RouteHandler {
     ],
   };
 
+  const now = Date.now();
+  const sessions = sessionStubs.map((stub, index) => ({
+    id: stub.id,
+    workspaceId: stub.workspaceId,
+    status: stub.active ? "ready" : "stopped",
+    createdAt: now - index,
+    lastActivity: now - index,
+    messageCount: 0,
+    tokens: { input: 0, output: 0 },
+    cost: 0,
+  }));
+  const activeIds = new Set(sessionStubs.filter((stub) => stub.active).map((stub) => stub.id));
+
   const storage = {
     getConfig: () => ({ policy: globalPolicy }),
+    listSessions: () => sessions,
     getWorkspace: (id: string) => (id === workspace.id ? workspace : undefined),
     setWorkspacePolicyPermissions: (
       id: string,
@@ -87,8 +109,21 @@ function makeRoutes(workspace: Workspace): RouteHandler {
     },
   };
 
-  const ctx = { storage } as unknown as RouteContext;
-  return new RouteHandler(ctx);
+  const setSessionPolicy = vi.fn();
+  const sessionsApi = {
+    isActive: (sessionId: string) => activeIds.has(sessionId),
+  };
+  const gate = {
+    setSessionPolicy,
+  };
+
+  const ctx = {
+    storage,
+    sessions: sessionsApi,
+    gate,
+  } as unknown as RouteContext;
+
+  return { routes: new RouteHandler(ctx), setSessionPolicy };
 }
 
 describe("workspace policy API", () => {
@@ -104,7 +139,7 @@ describe("workspace policy API", () => {
       ],
     };
 
-    const routes = makeRoutes(workspace);
+    const { routes } = makeRoutes(workspace);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -128,7 +163,7 @@ describe("workspace policy API", () => {
 
   it("PATCH updates workspace fallback override", async () => {
     const workspace = makeWorkspace();
-    const routes = makeRoutes(workspace);
+    const { routes } = makeRoutes(workspace);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -159,7 +194,7 @@ describe("workspace policy API", () => {
 
   it("PATCH toggles fallback ask ⇄ allow repeatedly", async () => {
     const workspace = makeWorkspace();
-    const routes = makeRoutes(workspace);
+    const { routes } = makeRoutes(workspace);
 
     const patchFallback = async (fallback: "allow" | "ask") => {
       const res = makeResponse();
@@ -198,9 +233,31 @@ describe("workspace policy API", () => {
     expect(effective.effectivePolicy.fallback).toBe("allow");
   });
 
+  it("PATCH refreshes active session policies for the workspace", async () => {
+    const workspace = makeWorkspace();
+    const { routes, setSessionPolicy } = makeRoutes(workspace, [
+      { id: "s-active", workspaceId: "w1", active: true },
+      { id: "s-idle", workspaceId: "w1", active: false },
+      { id: "s-other", workspaceId: "w2", active: true },
+    ]);
+
+    const res = makeResponse();
+    await routes.dispatch(
+      "PATCH",
+      "/workspaces/w1/policy",
+      new URL("http://localhost/workspaces/w1/policy"),
+      makeRequest({ fallback: "allow" }) as never,
+      res as never,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(setSessionPolicy).toHaveBeenCalledTimes(1);
+    expect(setSessionPolicy.mock.calls[0]?.[0]).toBe("s-active");
+  });
+
   it("PATCH rejects workspace permission that weakens matching global rule", async () => {
     const workspace = makeWorkspace();
-    const routes = makeRoutes(workspace);
+    const { routes } = makeRoutes(workspace);
     const res = makeResponse();
 
     await routes.dispatch(
@@ -225,7 +282,7 @@ describe("workspace policy API", () => {
 
   it("PATCH + DELETE lifecycle updates workspace permissions", async () => {
     const workspace = makeWorkspace();
-    const routes = makeRoutes(workspace);
+    const { routes } = makeRoutes(workspace);
 
     const patchRes = makeResponse();
     await routes.dispatch(

@@ -336,6 +336,103 @@ describe("policy API", () => {
     expect(body.error).toBe("Rule not found");
   });
 
+  it("PATCH workspace fallback hot-reloads active gate session behavior", async () => {
+    const wsRes = await post("/workspaces", { name: "policy-hot-reload", skills: [] });
+    expect(wsRes.status).toBe(201);
+    const wsBody = await wsRes.json();
+    const workspace = wsBody.workspace as { id: string };
+
+    const session = storage.createSession("policy-hot-reload-session");
+    session.workspaceId = workspace.id;
+    storage.saveSession(session);
+
+    const internals = server as unknown as {
+      gate: {
+        createSessionSocket: (sessionId: string, workspaceId?: string) => Promise<number>;
+        setSessionPolicy: (sessionId: string, policy: unknown) => void;
+        resolveDecision: (
+          requestId: string,
+          action: "allow" | "deny",
+          scope?: "once" | "session" | "workspace" | "global",
+          expiresInMs?: number,
+        ) => boolean;
+        destroySessionSocket: (sessionId: string) => void;
+        on: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
+        off: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
+      };
+      sessions: {
+        isActive: (sessionId: string) => boolean;
+      };
+    };
+
+    const gate = internals.gate;
+    const sessionsManager = internals.sessions;
+    const originalIsActive = sessionsManager.isActive.bind(sessionsManager);
+    sessionsManager.isActive = (sessionId: string) =>
+      sessionId === session.id || originalIsActive(sessionId);
+
+    const gatePort = await gate.createSessionSocket(session.id, workspace.id);
+    const gateSocket = await connectGate(gatePort);
+
+    let approvals = 0;
+    const approvalListener = (pending: { id: string }) => {
+      approvals += 1;
+      setTimeout(() => {
+        gate.resolveDecision(pending.id, "allow");
+      }, 10);
+    };
+
+    try {
+      const ack = await sendGateMessage(gateSocket, {
+        type: "guard_ready",
+        sessionId: session.id,
+        extensionVersion: "1.0.0",
+      });
+      expect(ack.type).toBe("guard_ack");
+
+      gate.on("approval_needed", approvalListener);
+
+      const askRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "ask" });
+      expect(askRes.status).toBe(200);
+
+      const firstDecision = await sendGateMessage(gateSocket, {
+        type: "gate_check",
+        tool: "edit",
+        input: {
+          path: "server/tests/legacy-stream-compat.test.ts",
+          oldText: "placeholder-old",
+          newText: "placeholder-new",
+        },
+        toolCallId: "tc-hot-reload-1",
+      });
+      expect(firstDecision.action).toBe("allow");
+      expect(approvals).toBe(1);
+
+      const allowRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "allow" });
+      expect(allowRes.status).toBe(200);
+
+      const secondDecision = await sendGateMessage(gateSocket, {
+        type: "gate_check",
+        tool: "edit",
+        input: {
+          path: "server/tests/legacy-stream-compat.test.ts",
+          oldText: "placeholder-old",
+          newText: "placeholder-new",
+        },
+        toolCallId: "tc-hot-reload-2",
+      });
+      expect(secondDecision.action).toBe("allow");
+      expect(approvals).toBe(1);
+    } finally {
+      gate.off("approval_needed", approvalListener);
+      if (!gateSocket.destroyed) {
+        gateSocket.destroy();
+      }
+      gate.destroySessionSocket(session.id);
+      sessionsManager.isActive = originalIsActive;
+    }
+  });
+
   it("GET /policy/audit returns audit entries", async () => {
     const res = await get("/policy/audit");
     expect(res.status).toBe(200);
