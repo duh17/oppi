@@ -35,6 +35,15 @@ enum UIHangHarnessConfig {
         false
 #endif
     }
+
+    static var includeVisualFixtures: Bool {
+#if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        return !uiTestMode || environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
+#else
+        false
+#endif
+    }
 }
 
 // MARK: - Harness View
@@ -102,7 +111,7 @@ struct UIHangHarnessView: View {
                 ))
             }
 
-            if !UIHangHarnessConfig.uiTestMode {
+            if UIHangHarnessConfig.includeVisualFixtures {
                 let visualBaseOffset = Double((sessionIndex * 10_000) + turnsPerSession + 500)
                 let visualTS = baseDate.addingTimeInterval(visualBaseOffset)
                 let sessionPrefix = session.rawValue
@@ -193,11 +202,21 @@ struct UIHangHarnessView: View {
                 ))
 
                 items.append(.toolCall(
-                    id: "\(sessionPrefix)-visual-tool-media",
+                    id: "\(sessionPrefix)-visual-tool-read-image",
+                    tool: "read",
+                    argsSummary: "path: fixtures/harness-image.png",
+                    outputPreview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5YpU8AAAAASUVORK5CYII=",
+                    outputByteCount: 144,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-unknown",
                     tool: "grep",
-                    argsSummary: "pattern: data:image/",
-                    outputPreview: "found data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
-                    outputByteCount: 180,
+                    argsSummary: "pattern: TODO",
+                    outputPreview: "docs/notes.md:12: TODO: tighten regression harness",
+                    outputByteCount: 96,
                     isError: false,
                     isDone: true
                 ))
@@ -313,11 +332,9 @@ struct UIHangHarnessView: View {
 
     private var themeOrdinal: Int {
         switch themeID {
-        case .tokyoNight: return 0
-        case .tokyoNightStorm: return 1
-        case .tokyoNightDay: return 2
-        case .appleDark: return 3
-        case .custom: return 4
+        case .dark: return 0
+        case .light: return 1
+        case .custom: return 2
         }
     }
 
@@ -329,6 +346,15 @@ struct UIHangHarnessView: View {
     private var nativeUserMode: Int { 1 }
     private var nativeThinkingMode: Int { 1 }
     private var nativeToolMode: Int { 1 }
+
+    private var visualToolCount: Int {
+        currentItems.reduce(into: 0) { partialResult, item in
+            if case .toolCall(let id, _, _, _, _, _, _) = item,
+               id.contains("-visual-tool-") {
+                partialResult += 1
+            }
+        }
+    }
 
     private var bottomItemID: String? {
         visibleItems.last?.id
@@ -361,6 +387,7 @@ struct UIHangHarnessView: View {
                     reducer: connection.reducer,
                     toolOutputStore: connection.reducer.toolOutputStore,
                     toolArgsStore: connection.reducer.toolArgsStore,
+                    toolSegmentStore: connection.reducer.toolSegmentStore,
                     connection: connection,
                     audioPlayer: connection.audioPlayer,
                     theme: themeID.appTheme,
@@ -368,7 +395,7 @@ struct UIHangHarnessView: View {
                 )
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
 
             TextField("Harness input", text: $inputText)
                 .textFieldStyle(.roundedBorder)
@@ -377,7 +404,7 @@ struct UIHangHarnessView: View {
             diagnosticsBar
         }
         .padding()
-        .background(Color.tokyoBg.ignoresSafeArea())
+        .background(Color.themeBg.ignoresSafeArea())
         .onAppear {
             originalThemeID = ThemeRuntimeState.currentThemeID()
             ThemeRuntimeState.setThemeID(themeID)
@@ -443,6 +470,18 @@ struct UIHangHarnessView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.expand.all")
 
+                Button("ToolSet") {
+                    expandVisualToolSet()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.tools.render")
+
+                Button("Visual Image") {
+                    scrollToVisualUserImage(animated: false)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.visual.image")
+
                 Button(streamEnabled ? "Pause Stream" : "Resume Stream") {
                     streamEnabled.toggle()
                 }
@@ -474,6 +513,7 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.nativeUserMode", value: nativeUserMode)
             diagnosticValue(id: "diag.nativeThinkingMode", value: nativeThinkingMode)
             diagnosticValue(id: "diag.nativeToolMode", value: nativeToolMode)
+            diagnosticValue(id: "diag.visualTools", value: visualToolCount)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
             diagnosticValue(id: "diag.cellMs", value: perf.cellConfigureLastMs)
@@ -599,16 +639,47 @@ struct UIHangHarnessView: View {
         "harness-stream-\(session.rawValue)"
     }
 
+    private func visualToolIDs(for session: HarnessSession) -> [String] {
+        let prefix = session.rawValue
+        return [
+            "\(prefix)-visual-tool-bash",
+            "\(prefix)-visual-tool-read",
+            "\(prefix)-visual-tool-write",
+            "\(prefix)-visual-tool-edit",
+            "\(prefix)-visual-tool-todo",
+            "\(prefix)-visual-tool-read-image",
+            "\(prefix)-visual-tool-unknown",
+        ]
+    }
+
+    private func visualUserImageItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-user-image"
+    }
+
+    private func expandVisualToolSet() {
+        let ids = visualToolIDs(for: selectedSession)
+        guard !ids.isEmpty else { return }
+
+        for id in ids {
+            connection.reducer.expandedItemIDs.insert(id)
+        }
+
+        heartbeat &+= 1
+        scrollToBottom(animated: false)
+    }
+
+    private func scrollToVisualUserImage(animated: Bool) {
+        let itemID = visualUserImageItemID(for: selectedSession)
+        guard currentItems.contains(where: { $0.id == itemID }) else { return }
+        issueScrollCommand(id: itemID, anchor: .top, animated: animated)
+    }
+
     private func toggleTheme() {
         switch themeID {
-        case .tokyoNight:
-            themeID = .tokyoNightStorm
-        case .tokyoNightStorm:
-            themeID = .tokyoNightDay
-        case .tokyoNightDay:
-            themeID = .appleDark
-        case .appleDark, .custom:
-            themeID = .tokyoNight
+        case .dark:
+            themeID = .light
+        case .light, .custom:
+            themeID = .dark
         }
     }
 

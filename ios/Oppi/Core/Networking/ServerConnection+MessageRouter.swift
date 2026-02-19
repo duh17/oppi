@@ -94,17 +94,17 @@ extension ServerConnection {
             lastEventTime = .now
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
 
-        case .toolStart(let tool, let args, let toolCallId):
+        case .toolStart(let tool, let args, let toolCallId, let callSegments):
             lastEventTime = .now
-            coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId))
+            coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
 
         case .toolOutput(let output, let isError, let toolCallId):
             lastEventTime = .now
             coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
 
-        case .toolEnd(_, let toolCallId):
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             lastEventTime = .now
-            coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId))
+            coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
 
         case .sessionEnded(let reason):
             stopSilenceWatchdog()

@@ -119,7 +119,7 @@ struct ChatView: View {
 
             footerArea
         }
-        .background(Color.tokyoBg.ignoresSafeArea())
+        .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -160,7 +160,7 @@ struct ChatView: View {
                     Button { showSkillPanel = true } label: {
                         RuntimeStatusBadge(
                             runtime: session?.runtime,
-                            statusColor: session?.status.color ?? .tokyoComment,
+                            statusColor: session?.status.color ?? .themeComment,
                             syncState: runtimeSyncState
                         )
                     }
@@ -295,7 +295,7 @@ struct ChatView: View {
                     appliesOuterPadding: true,
                     thinkingBorderColor: coloredThinkingBorderEnabled
                         ? theme.thinking.color(for: connection.thinkingLevel)
-                        : .tokyoComment
+                        : .themeComment
                 ) {
                     SessionToolbar(
                         session: session,
@@ -322,18 +322,18 @@ struct ChatView: View {
         HStack(spacing: 6) {
             Text(sessionDisplayName)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .lineLimit(1)
 
             if let cost = session?.cost, cost > 0 {
                 Text(String(format: "$%.2f", cost))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
-                .foregroundStyle(copiedSessionID ? .tokyoGreen : .tokyoComment)
+                .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
         }
     }
 

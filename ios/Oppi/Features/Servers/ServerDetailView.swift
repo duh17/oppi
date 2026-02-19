@@ -46,11 +46,6 @@ struct ServerDetailView: View {
                     LabeledContent("Skills", value: String(info.stats.skillCount))
                 }
 
-                if let profile = server.securityProfile {
-                    Section("Security") {
-                        LabeledContent("Profile", value: profile)
-                    }
-                }
             }
 
             Section("Connection") {

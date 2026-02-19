@@ -197,68 +197,6 @@ enum ToolCallFormatting {
     static func isRememberTool(_ name: String) -> Bool { normalized(name) == "remember" }
     static func isRecallTool(_ name: String) -> Bool { normalized(name) == "recall" }
 
-    // MARK: - Remember / Recall Formatting
-
-    /// Format remember tool summary for header display.
-    /// Shows first line of text, truncated.
-    static func rememberSummary(args: [String: JSONValue]?, argsSummary: String) -> String {
-        let text = args?["text"]?.stringValue
-            ?? parseArgValue("text", from: argsSummary)
-            ?? argsSummary
-        let firstLine = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines)
-            .first ?? ""
-        let truncated = String(firstLine.prefix(80))
-        return truncated.isEmpty ? "remember" : truncated
-    }
-
-    /// Format remember trailing badge from tags.
-    static func rememberTrailing(args: [String: JSONValue]?) -> String? {
-        guard let tagsArray = args?["tags"]?.arrayValue else { return nil }
-        let tags = tagsArray.compactMap(\.stringValue).filter { !$0.isEmpty }
-        guard !tags.isEmpty else { return nil }
-        return tags.prefix(3).joined(separator: ", ")
-    }
-
-    /// Format recall tool summary for header display.
-    static func recallSummary(args: [String: JSONValue]?, argsSummary: String) -> String {
-        let query = args?["query"]?.stringValue
-            ?? parseArgValue("query", from: argsSummary)
-            ?? argsSummary
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "recall" }
-
-        var parts = ["\"\(String(trimmed.prefix(60)))\""]
-        if let scope = args?["scope"]?.stringValue, scope != "all" {
-            parts.append(scope)
-        }
-        if let days = args?["days"]?.numberValue {
-            parts.append("\(Int(days))d")
-        }
-        return parts.joined(separator: " ")
-    }
-
-    /// Extract match count from recall output for trailing badge.
-    static func recallTrailing(output: String) -> String? {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        // "No matches for ..." → "0 matches"
-        if trimmed.hasPrefix("No matches") { return "0 matches" }
-        if trimmed == "No memory files found to search." { return "0 matches" }
-        if trimmed == "Empty query." { return nil }
-
-        // Count lines that start with "[score/total]" pattern
-        let resultLines = trimmed.split(separator: "\n").filter { line in
-            line.trimmingCharacters(in: .whitespaces).hasPrefix("[")
-        }
-        let count = resultLines.count
-        if count > 0 { return "\(count) match\(count == 1 ? "" : "es")" }
-
-        return nil
-    }
-
     // MARK: - Edit Diff Stats
 
     /// Compute +added/-removed line counts from edit args.

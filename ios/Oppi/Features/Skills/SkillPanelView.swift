@@ -97,13 +97,13 @@ private struct SkillRow: View {
                 if skill.hasScripts {
                     Image(systemName: "terminal")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                 }
 
                 if !skill.containerSafe {
                     Image(systemName: "desktopcomputer")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoOrange)
+                        .foregroundStyle(.themeOrange)
                 }
             }
 

@@ -67,11 +67,11 @@ struct SessionRow: View {
 
                         Text("+\(stats.addedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoGreen)
+                            .foregroundStyle(.themeGreen)
 
                         Text("-\(stats.removedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoRed)
+                            .foregroundStyle(.themeRed)
                     }
                     .font(.caption2)
                     .lineLimit(1)
@@ -133,12 +133,12 @@ struct SessionRow: View {
 
     private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
         if stats.filesChanged >= 25 || stats.mutatingToolCalls >= 80 {
-            return .tokyoRed
+            return .themeRed
         }
         if stats.filesChanged >= 10 || stats.mutatingToolCalls >= 30 {
-            return .tokyoOrange
+            return .themeOrange
         }
-        return .tokyoGreen
+        return .themeGreen
     }
 }
 

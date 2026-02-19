@@ -138,7 +138,7 @@ final class LiveActivityManager {
             currentState.activeTool = nil
             currentState.lastEvent = "Ready"
 
-        case .toolStart(_, _, let tool, _):
+        case .toolStart(_, _, let tool, _, _):
             currentState.status = "busy"
             currentState.activeTool = tool
             currentState.lastEvent = "Running \(displayToolName(tool))"

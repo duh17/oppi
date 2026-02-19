@@ -113,7 +113,7 @@ struct FileContentView: View {
     private var errorView: some View {
         Text(content.prefix(2000))
             .font(.caption.monospaced())
-            .foregroundStyle(.tokyoRed)
+            .foregroundStyle(.themeRed)
             .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,7 +122,7 @@ struct FileContentView: View {
     private var emptyView: some View {
         Text("Empty file")
             .font(.caption)
-            .foregroundStyle(.tokyoComment)
+            .foregroundStyle(.themeComment)
             .italic()
             .padding(8)
     }
@@ -206,13 +206,13 @@ private struct MarkdownFileView: View {
             HStack(spacing: 6) {
                 Image(systemName: "doc.richtext")
                     .font(.caption)
-                    .foregroundStyle(.tokyoCyan)
+                    .foregroundStyle(.themeCyan)
                 Text("Markdown")
                     .font(.caption2.bold())
-                    .foregroundStyle(.tokyoFgDim)
+                    .foregroundStyle(.themeFgDim)
                 Text("\(lineCount) lines")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
 
                 Spacer()
 
@@ -221,7 +221,7 @@ private struct MarkdownFileView: View {
                 } label: {
                     Text(showRaw ? "Reader" : "Source")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                 }
                 .buttonStyle(.plain)
 
@@ -230,7 +230,7 @@ private struct MarkdownFileView: View {
                 } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoFgDim)
+                        .foregroundStyle(.themeFgDim)
                 }
                 .buttonStyle(.plain)
 
@@ -238,7 +238,7 @@ private struct MarkdownFileView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.tokyoBgHighlight)
+            .background(Color.themeBgHighlight)
 
             // Content
             ScrollView(.vertical) {
@@ -246,7 +246,7 @@ private struct MarkdownFileView: View {
                     if showRaw {
                         Text(content)
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.tokyoFg)
+                            .foregroundStyle(.themeFg)
                     } else {
                         MarkdownText(content)
                     }
@@ -295,7 +295,7 @@ private struct FullScreenMarkdownView: View {
                     if showSource {
                         Text(content)
                             .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.tokyoFg)
+                            .foregroundStyle(.themeFg)
                     } else {
                         MarkdownText(content)
                     }
@@ -305,23 +305,23 @@ private struct FullScreenMarkdownView: View {
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(.tokyoCyan)
+                        .foregroundStyle(.themeCyan)
                 }
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 1) {
                         if let path = filePath {
                             Text(path.shortenedPath)
                                 .font(.caption.monospaced())
-                                .foregroundStyle(.tokyoFg)
+                                .foregroundStyle(.themeFg)
                                 .lineLimit(1)
                         }
                         Text("Markdown")
                             .font(.caption2)
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                     }
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -331,18 +331,18 @@ private struct FullScreenMarkdownView: View {
                         }
                     }
                     .font(.caption)
-                    .foregroundStyle(.tokyoBlue)
+                    .foregroundStyle(.themeBlue)
 
                     Button {
                         UIPasteboard.general.string = content
                     } label: {
                         Image(systemName: "doc.on.doc")
-                            .foregroundStyle(.tokyoFgDim)
+                            .foregroundStyle(.themeFgDim)
                     }
                 }
             }
             .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
+            .toolbarBackground(Color.themeBgHighlight, for: .navigationBar)
         }
     }
 }
@@ -498,7 +498,7 @@ private struct ImageOutputView: View {
             if images.isEmpty {
                 Text("Image file (binary content not displayable)")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .italic()
                     .padding(8)
             } else {
@@ -536,7 +536,7 @@ private struct AudioOutputView: View {
             if clips.isEmpty {
                 Text("Audio file (binary content not displayable)")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .italic()
                     .padding(8)
             } else {
@@ -579,13 +579,13 @@ private struct FileHeader: View {
         HStack(spacing: 6) {
             Image(systemName: "doc.text")
                 .font(.caption)
-                .foregroundStyle(.tokyoCyan)
+                .foregroundStyle(.themeCyan)
             Text(label)
                 .font(.caption2.bold())
-                .foregroundStyle(.tokyoFgDim)
+                .foregroundStyle(.themeFgDim)
             Text("\(lineCount) lines")
                 .font(.caption2)
-                .foregroundStyle(.tokyoComment)
+                .foregroundStyle(.themeComment)
 
             Spacer()
 
@@ -595,7 +595,7 @@ private struct FileHeader: View {
                         .font(.caption2)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tokyoFgDim)
+                .foregroundStyle(.themeFgDim)
             }
 
             if showCopy {
@@ -604,7 +604,7 @@ private struct FileHeader: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.tokyoBgHighlight)
+        .background(Color.themeBgHighlight)
     }
 }
 
@@ -629,7 +629,7 @@ private struct CopyButton: View {
             .font(.caption2)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.tokyoFgDim)
+        .foregroundStyle(.themeFgDim)
     }
 }
 
@@ -641,10 +641,10 @@ private struct TruncationNotice: View {
     var body: some View {
         Text("Showing \(showing) of \(total) lines")
             .font(.caption2)
-            .foregroundStyle(.tokyoComment)
+            .foregroundStyle(.themeComment)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
-            .background(Color.tokyoBgHighlight.opacity(0.5))
+            .background(Color.themeBgHighlight.opacity(0.5))
     }
 }
 
@@ -665,7 +665,7 @@ private struct CodeArea: View {
                 // Gutter
                 Text(lineNumbers)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .multilineTextAlignment(.trailing)
                     .frame(width: gutterWidth, alignment: .trailing)
                     .padding(.horizontal, 6)
@@ -673,7 +673,7 @@ private struct CodeArea: View {
 
                 // Separator
                 Rectangle()
-                    .fill(Color.tokyoComment.opacity(0.2))
+                    .fill(Color.themeComment.opacity(0.2))
                     .frame(width: 1)
 
                 // Code
@@ -722,7 +722,7 @@ private func codeArea(
         codeContent: AnyView(
             Text(text)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
         )
@@ -745,12 +745,12 @@ private extension View {
     /// Border is optional for cleaner reader-style presentation.
     func codeBlockChrome(showBorder: Bool = true) -> some View {
         self
-            .background(Color.tokyoBgDark)
+            .background(Color.themeBgDark)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
                 if showBorder {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+                        .stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
                 }
             }
     }

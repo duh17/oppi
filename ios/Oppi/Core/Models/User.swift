@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Authenticated user info returned by `GET /me`.
@@ -9,50 +8,34 @@ struct User: Codable, Sendable, Equatable {
 
 /// Connection credentials from QR code scan.
 ///
-/// Signed v2 payload is an envelope decoded by `decodeInvitePayload(_:)`.
-///
-/// Historical note: legacy unsigned v1 payloads are no longer accepted.
+/// Invite payload is decoded by `decodeInvitePayload(_:)`.
+/// Supported invite format: unsigned v3 payloads.
 struct ServerCredentials: Codable, Sendable, Equatable {
     let host: String
     let port: Int
     let token: String
     let name: String
 
-    // Optional v2 trust metadata
-    let serverFingerprint: String?
-    let securityProfile: String?
-    let inviteVersion: Int?
-    let inviteKeyId: String?
+    // One-time pairing bootstrap token (preferred over token when present)
+    let pairingToken: String?
 
-    // Server-authored transport + trust policy (from /security/profile)
-    let requireTlsOutsideTailnet: Bool?
-    let allowInsecureHttpInTailnet: Bool?
-    let requirePinnedServerIdentity: Bool?
+    // Stable server identity metadata
+    let serverFingerprint: String?
 
     init(
         host: String,
         port: Int,
         token: String,
         name: String,
-        serverFingerprint: String? = nil,
-        securityProfile: String? = nil,
-        inviteVersion: Int? = nil,
-        inviteKeyId: String? = nil,
-        requireTlsOutsideTailnet: Bool? = nil,
-        allowInsecureHttpInTailnet: Bool? = nil,
-        requirePinnedServerIdentity: Bool? = nil
+        pairingToken: String? = nil,
+        serverFingerprint: String? = nil
     ) {
         self.host = host
         self.port = port
         self.token = token
         self.name = name
+        self.pairingToken = pairingToken
         self.serverFingerprint = serverFingerprint
-        self.securityProfile = securityProfile
-        self.inviteVersion = inviteVersion
-        self.inviteKeyId = inviteKeyId
-        self.requireTlsOutsideTailnet = requireTlsOutsideTailnet
-        self.allowInsecureHttpInTailnet = allowInsecureHttpInTailnet
-        self.requirePinnedServerIdentity = requirePinnedServerIdentity
     }
 
     /// Base URL for REST and WebSocket connections.
@@ -68,37 +51,31 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         URL(string: "ws://\(host):\(port)/workspaces/\(workspaceId)/sessions/\(sessionId)/stream")
     }
 
-    /// Decode signed v2 invite envelope JSON.
+    /// Decode invite payload JSON.
+    ///
+    /// Supported format:
+    /// - unsigned v3 payload (current)
     static func decodeInvitePayload(_ payload: String) -> ServerCredentials? {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
 
-        // v2 signed envelope path
-        guard let env = try? decoder.decode(InviteEnvelopeV2.self, from: data) else {
+        guard let v3 = try? decoder.decode(InvitePayloadV3.self, from: data), v3.v == 3 else {
             return nil
         }
-        guard env.v == 2, env.alg == "Ed25519" else { return nil }
 
-        let now = Int(Date().timeIntervalSince1970)
-        // Allow modest clock skew on issue time, enforce expiry.
-        guard env.exp >= now, env.iat <= now + 300 else { return nil }
-
-        guard verifyV2Signature(env) else { return nil }
-
-        let p = env.payload
-        guard !p.host.isEmpty, (1...65_535).contains(p.port), !p.token.isEmpty else {
+        let hasDirectToken = !v3.token.isEmpty
+        let hasPairingToken = !(v3.pairingToken?.isEmpty ?? true)
+        guard !v3.host.isEmpty, (1...65_535).contains(v3.port), hasDirectToken || hasPairingToken else {
             return nil
         }
 
         return ServerCredentials(
-            host: p.host,
-            port: p.port,
-            token: p.token,
-            name: p.name,
-            serverFingerprint: p.fingerprint,
-            securityProfile: p.securityProfile,
-            inviteVersion: 2,
-            inviteKeyId: env.kid
+            host: v3.host,
+            port: v3.port,
+            token: v3.token,
+            name: v3.name,
+            pairingToken: v3.pairingToken,
+            serverFingerprint: v3.fingerprint
         )
     }
 
@@ -134,7 +111,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
 
         if let version = queryValue(named: "v", in: queryItems),
            !version.isEmpty,
-           version != "2" {
+           version != "3" {
             return nil
         }
 
@@ -163,55 +140,15 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    func applyingSecurityProfile(_ profile: ServerSecurityProfile) -> ServerCredentials {
-        let profileFingerprint = profile.identity.normalizedFingerprint
-        return ServerCredentials(
+    func withAuthToken(_ newToken: String) -> ServerCredentials {
+        ServerCredentials(
             host: host,
             port: port,
-            token: token,
+            token: newToken,
             name: name,
-            serverFingerprint: profileFingerprint ?? normalizedServerFingerprint,
-            securityProfile: profile.profile,
-            inviteVersion: inviteVersion,
-            inviteKeyId: inviteKeyId ?? profile.identity.keyId,
-            requireTlsOutsideTailnet: profile.requireTlsOutsideTailnet,
-            allowInsecureHttpInTailnet: profile.allowInsecureHttpInTailnet,
-            requirePinnedServerIdentity: profile.requirePinnedServerIdentity
+            pairingToken: nil,
+            serverFingerprint: serverFingerprint
         )
-    }
-
-    private static func verifyV2Signature(_ env: InviteEnvelopeV2) -> Bool {
-        guard let publicKeyData = decodeBase64URL(env.publicKey),
-              let signatureData = decodeBase64URL(env.sig) else {
-            return false
-        }
-
-        do {
-            let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
-            let input = buildInviteSigningInput(env)
-            return publicKey.isValidSignature(signatureData, for: Data(input.utf8))
-        } catch {
-            return false
-        }
-    }
-
-    private static func buildInviteSigningInput(_ env: InviteEnvelopeV2) -> String {
-        let p = env.payload
-        return [
-            "v=\(env.v)",
-            "alg=\(env.alg)",
-            "kid=\(env.kid)",
-            "iat=\(env.iat)",
-            "exp=\(env.exp)",
-            "nonce=\(env.nonce)",
-            "publicKey=\(env.publicKey)",
-            "host=\(p.host)",
-            "port=\(p.port)",
-            "token=\(p.token)",
-            "name=\(p.name)",
-            "fingerprint=\(p.fingerprint)",
-            "securityProfile=\(p.securityProfile)",
-        ].joined(separator: "\n")
     }
 
     private static func queryValue(named name: String, in queryItems: [URLQueryItem]) -> String? {
@@ -232,51 +169,12 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     }
 }
 
-private struct InviteEnvelopeV2: Decodable {
+private struct InvitePayloadV3: Decodable {
     let v: Int
-    let alg: String
-    let kid: String
-    let iat: Int
-    let exp: Int
-    let nonce: String
-    let publicKey: String
-    let payload: InvitePayloadV2
-    let sig: String
-}
-
-private struct InvitePayloadV2: Decodable {
     let host: String
     let port: Int
     let token: String
+    let pairingToken: String?
     let name: String
-    let fingerprint: String
-    let securityProfile: String
-}
-
-/// Server-authored security posture returned by `GET /security/profile`.
-struct ServerSecurityProfile: Codable, Sendable, Equatable {
-    struct Identity: Codable, Sendable, Equatable {
-        let enabled: Bool?
-        let algorithm: String
-        let keyId: String
-        let fingerprint: String
-
-        var normalizedFingerprint: String? {
-            let trimmed = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-    }
-
-    struct Invite: Codable, Sendable, Equatable {
-        let format: String
-        let maxAgeSeconds: Int
-    }
-
-    let configVersion: Int
-    let profile: String
-    let requireTlsOutsideTailnet: Bool?
-    let allowInsecureHttpInTailnet: Bool?
-    let requirePinnedServerIdentity: Bool?
-    let identity: Identity
-    let invite: Invite
+    let fingerprint: String?
 }

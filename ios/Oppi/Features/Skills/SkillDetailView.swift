@@ -79,11 +79,11 @@ struct SkillDetailView: View {
                 badge(
                     skill.containerSafe ? "Container Safe" : "Host Only",
                     icon: skill.containerSafe ? "checkmark.shield" : "desktopcomputer",
-                    color: skill.containerSafe ? .tokyoGreen : .tokyoOrange
+                    color: skill.containerSafe ? .themeGreen : .themeOrange
                 )
 
                 if skill.hasScripts {
-                    badge("Scripts", icon: "terminal", color: .tokyoBlue)
+                    badge("Scripts", icon: "terminal", color: .themeBlue)
                 }
 
                 if let detail, detail.files.count > 1 {

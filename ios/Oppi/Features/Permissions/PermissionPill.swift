@@ -93,7 +93,7 @@ struct PermissionPill: View {
             if canSwipeDeny && dragOffset < -hintThreshold {
                 Text("Deny")
                     .font(.caption.bold())
-                    .foregroundStyle(.tokyoRed)
+                    .foregroundStyle(.themeRed)
                     .transition(.opacity)
             }
 
@@ -106,13 +106,13 @@ struct PermissionPill: View {
             if isBrowserCommand {
                 Image(systemName: browserIcon)
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Command summary
             Text(request.displaySummary)
                 .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .lineLimit(1)
 
             Spacer(minLength: 4)
@@ -121,21 +121,21 @@ struct PermissionPill: View {
             if request.hasExpiry {
                 Text(request.timeoutAt, style: .timer)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             } else {
                 Label("No expiry", systemImage: "infinity")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Multi-pending badge
             if totalCount > 1 {
                 Text("+\(totalCount - 1)")
                     .font(.caption2.bold())
-                    .foregroundStyle(.tokyoFg)
+                    .foregroundStyle(.themeFg)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.tokyoComment.opacity(0.3))
+                    .background(.themeComment.opacity(0.3))
                     .clipShape(Capsule())
             }
 
@@ -143,14 +143,14 @@ struct PermissionPill: View {
             if BiometricService.shared.requiresBiometric(for: request.risk) && isSinglePending {
                 Image(systemName: biometricPillIcon)
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Allow hint
             if canSwipeAllow && dragOffset > hintThreshold {
                 Text("Allow")
                     .font(.caption.bold())
-                    .foregroundStyle(.tokyoGreen)
+                    .foregroundStyle(.themeGreen)
                     .transition(.opacity)
             }
         }
@@ -166,16 +166,16 @@ struct PermissionPill: View {
 
         RoundedRectangle(cornerRadius: 26)
             .fill(
-                Color.tokyoBgHighlight
+                Color.themeBgHighlight
                     .opacity(1 - greenBlend * 0.3 - redBlend * 0.3)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 26)
-                    .fill(Color.tokyoGreen.opacity(greenBlend * 0.25))
+                    .fill(Color.themeGreen.opacity(greenBlend * 0.25))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 26)
-                    .fill(Color.tokyoRed.opacity(redBlend * 0.25))
+                    .fill(Color.themeRed.opacity(redBlend * 0.25))
             )
             .overlay(
                 Capsule(style: .continuous)
@@ -203,9 +203,9 @@ struct PermissionPill: View {
                 guard !reduceMotion else { return }
                 let dx = value.translation.width
                 if dx > swipeThreshold && canSwipeAllow {
-                    resolveWithFlash(.tokyoGreen, slideRight: true, action: onAllow)
+                    resolveWithFlash(.themeGreen, slideRight: true, action: onAllow)
                 } else if dx < -swipeThreshold && canSwipeDeny {
-                    resolveWithFlash(.tokyoRed, slideRight: false, action: onDeny)
+                    resolveWithFlash(.themeRed, slideRight: false, action: onDeny)
                 }
             }
     }
