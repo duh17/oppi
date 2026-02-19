@@ -539,7 +539,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         // Now uses the rich card renderer instead of markdown text
         guard case .todoCard = config.expandedContent else { Issue.record("Expected .todoCard"); return }
         if case .todoCard(let output) = config.expandedContent { #expect(output.contains("TODO-a27df231")) }
-        #expect(config.trailing == "1 assigned · 1 open")
+        // Trailing now comes from server resultSegments, not hardcoded. Without segments, it's nil.
+        #expect(config.trailing == nil)
     }
 
     @MainActor
@@ -564,8 +565,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         )
 
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
-        #expect(config.editAdded == 2)
-        #expect(config.editRemoved == 0)
+        // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
         #expect(config.trailing == nil)
         // expandedText == nil is now implicit (content is .diff not .text)
         guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
@@ -599,8 +599,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
         guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
-        #expect(config.editAdded == 5)
-        #expect(config.editRemoved == 0)
+        // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
         #expect(config.trailing == nil)
         // expandedText == nil is now implicit (content is .diff not .text)
         #expect(diffLines.contains(where: { line in
@@ -1034,7 +1033,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             outcome: .allowed,
             tool: "bash",
             summary: "command: rm -rf /tmp/demo",
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = PermissionTimelineRowContentView(configuration: config)
@@ -1058,7 +1057,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
                 tokensBefore: 98_765
             ),
             isExpanded: false,
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -1078,7 +1077,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
                 tokensBefore: 98_765
             ),
             isExpanded: false,
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -1100,7 +1099,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
                 tokensBefore: 98_765
             ),
             isExpanded: true,
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = CompactionTimelineRowContentView(configuration: config)
@@ -1137,7 +1136,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             isStreaming: false,
             canFork: false,
             onFork: nil,
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = AssistantTimelineRowContentView(configuration: config)
@@ -1155,7 +1154,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             title: "Harness Clip",
             fileURL: URL(fileURLWithPath: "/tmp/harness-audio.wav"),
             audioPlayer: AudioPlayerService(),
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = AudioClipTimelineRowContentView(configuration: config)
@@ -1173,7 +1172,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 500),
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1191,7 +1190,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 900),
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1208,14 +1207,14 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             isExpanded: true,
             previewText: "preview",
             fullText: "short thought",
-            themeID: .tokyoNight
+            themeID: .dark
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: true,
             isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 900),
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let shortView = ThinkingTimelineRowContentView(configuration: short)
@@ -1234,7 +1233,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             isExpanded: true,
             previewText: "**Reviewing checklist for updates**",
             fullText: nil,
-            themeID: .tokyoNight
+            themeID: .dark
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -2047,6 +2046,99 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func reapplyingSameExpandedDiffReusesAttributedTextInstance() throws {
+        let config = makeToolConfiguration(
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: "let value = 1"),
+                DiffLine(kind: .added, text: "let value = 2"),
+                DiffLine(kind: .context, text: "let unchanged = true"),
+            ], path: "src/main.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        let initialLabel = try #require(allLabels(in: view).first {
+            renderedText(of: $0).contains("let value = 2")
+        })
+        let initialAttributed = try #require(initialLabel.attributedText)
+
+        view.configuration = config
+        _ = fittedSize(for: view, width: 370)
+
+        let updatedLabel = try #require(allLabels(in: view).first {
+            renderedText(of: $0).contains("let value = 2")
+        })
+        let updatedAttributed = try #require(updatedLabel.attributedText)
+
+        #expect(initialAttributed === updatedAttributed)
+    }
+
+    @MainActor
+    @Test func reapplyingSameExpandedTodoCardReusesHostedView() throws {
+        let output = """
+        {
+          "id": "TODO-a27df231",
+          "title": "Control tower Live Activity",
+          "status": "in_progress",
+          "body": "- Capture stall\n- Validate fix"
+        }
+        """
+
+        let config = makeToolConfiguration(
+            expandedContent: .todoCard(output: output),
+            toolNamePrefix: "todo",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        let initialHosted = try #require(allViews(in: view).first {
+            String(describing: type(of: $0)).contains("UIHosting")
+        })
+
+        view.configuration = config
+        _ = fittedSize(for: view, width: 370)
+
+        let updatedHosted = try #require(allViews(in: view).first {
+            String(describing: type(of: $0)).contains("UIHosting")
+        })
+
+        #expect(initialHosted === updatedHosted)
+    }
+
+    @MainActor
+    @Test func repeatedExpandedTodoReconfigureStaysWithinBudget() {
+        let output = """
+        {
+          "id": "TODO-a27df231",
+          "title": "Control tower Live Activity",
+          "status": "in_progress",
+          "body": "- Capture stall\n- Validate fix"
+        }
+        """
+
+        let config = makeToolConfiguration(
+            expandedContent: .todoCard(output: output),
+            toolNamePrefix: "todo",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        let start = ContinuousClock.now
+        for _ in 0..<120 {
+            view.configuration = config
+        }
+        let elapsed = ContinuousClock.now - start
+
+        #expect(elapsed < .milliseconds(600), "120 identical todo reconfigures took \(elapsed)")
+    }
+
+    @MainActor
     @Test func expandedOutputUsesCappedViewportHeight() {
         let longOutput = Array(repeating: "line", count: 600).joined(separator: "\n")
         let config = makeToolConfiguration(
@@ -2451,7 +2543,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -2485,7 +2577,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -2507,7 +2599,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 370
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: text, isStreaming: false, themeID: .dark))
         _ = fittedSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -2531,7 +2623,7 @@ struct AssistantTimelineRowContentViewTests {
         let containerWidth: CGFloat = 300
 
         let mdView = AssistantMarkdownContentView()
-        mdView.apply(configuration: .init(content: text, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: text, isStreaming: true, themeID: .dark))
         _ = fittedSize(for: mdView, width: containerWidth)
 
         let codeBlockView = try #require(firstView(ofType: NativeCodeBlockView.self, in: mdView))
@@ -2573,7 +2665,7 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
-        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .dark))
         _ = fittedSize(for: mdView, width: 370)
 
         let tableAfterPhase1 = firstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -2587,7 +2679,7 @@ struct AssistantTimelineRowContentViewTests {
         | --- | --- |
         | alpha | 100 |
         """
-        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .dark))
 
         // Same NativeTableBlockView instance should be reused (in-place update, not rebuild)
         let tableAfterPhase2 = firstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -2602,7 +2694,7 @@ struct AssistantTimelineRowContentViewTests {
         | alpha | 100 |
         | beta | 20
         """
-        mdView.apply(configuration: .init(content: phase3, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: phase3, isStreaming: true, themeID: .dark))
 
         let tableAfterPhase3 = firstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterPhase3 === tableAfterPhase1, "Table view should still be the same instance")
@@ -2615,7 +2707,7 @@ struct AssistantTimelineRowContentViewTests {
 
         // Phase 1: just text, no table yet
         let phase1 = "Results:"
-        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: phase1, isStreaming: true, themeID: .dark))
         _ = fittedSize(for: mdView, width: 370)
 
         let tableBeforeTable = firstView(ofType: NativeTableBlockView.self, in: mdView)
@@ -2628,7 +2720,7 @@ struct AssistantTimelineRowContentViewTests {
         | Name | Value |
         | --- | --- |
         """
-        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .tokyoNight))
+        mdView.apply(configuration: .init(content: phase2, isStreaming: true, themeID: .dark))
 
         let tableAfterHeader = firstView(ofType: NativeTableBlockView.self, in: mdView)
         #expect(tableAfterHeader != nil, "Table view should appear after structural rebuild")
@@ -2637,7 +2729,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func trimsTrailingEncodedBacktickBeforeRoutingInviteLink() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "oppi://connect?v=2&invite=test-payload%60"))
+        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload%60"))
 
         final class URLCapture: @unchecked Sendable {
             var value: URL?
@@ -2657,13 +2749,13 @@ struct AssistantTimelineRowContentViewTests {
 
         #expect(!shouldOpenExternally)
         let routedURL = try #require(observed.value)
-        #expect(routedURL.absoluteString == "oppi://connect?v=2&invite=test-payload")
+        #expect(routedURL.absoluteString == "oppi://connect?v=3&invite=test-payload")
     }
 
     @MainActor
     @Test func interceptsInviteLinksAndRoutesInternally() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "oppi://connect?v=2&invite=test-payload"))
+        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
 
         final class URLCapture: @unchecked Sendable {
             var value: URL?
@@ -2718,7 +2810,7 @@ struct AssistantTimelineRowContentViewTests {
         mdView.apply(configuration: .init(
             content: "Test content",
             isStreaming: false,
-            themeID: .tokyoNight
+            themeID: .dark
         ))
         return mdView
     }
@@ -2736,6 +2828,15 @@ private func allLabels(in root: UIView) -> [UILabel] {
     }
 
     return labels
+}
+
+@MainActor
+private func allViews(in root: UIView) -> [UIView] {
+    var views: [UIView] = [root]
+    for child in root.subviews {
+        views.append(contentsOf: allViews(in: child))
+    }
+    return views
 }
 
 @MainActor
@@ -2872,6 +2973,7 @@ private struct TimelineHarness {
     let reducer: TimelineReducer
     let toolOutputStore: ToolOutputStore
     let toolArgsStore: ToolArgsStore
+    let toolSegmentStore: ToolSegmentStore
     let connection: ServerConnection
     let scrollController: ChatScrollController
     let audioPlayer: AudioPlayerService
@@ -2898,6 +3000,7 @@ private func makeHarness(sessionId: String) -> TimelineHarness {
         reducer: reducer,
         toolOutputStore: toolOutputStore,
         toolArgsStore: toolArgsStore,
+        toolSegmentStore: ToolSegmentStore(),
         connection: connection,
         scrollController: scrollController,
         audioPlayer: audioPlayer
@@ -2910,6 +3013,7 @@ private func makeHarness(sessionId: String) -> TimelineHarness {
         reducer: reducer,
         toolOutputStore: toolOutputStore,
         toolArgsStore: toolArgsStore,
+        toolSegmentStore: ToolSegmentStore(),
         connection: connection,
         scrollController: scrollController,
         audioPlayer: audioPlayer
@@ -2938,6 +3042,7 @@ private func makeConfiguration(
     reducer: TimelineReducer,
     toolOutputStore: ToolOutputStore,
     toolArgsStore: ToolArgsStore,
+    toolSegmentStore: ToolSegmentStore = ToolSegmentStore(),
     connection: ServerConnection,
     scrollController: ChatScrollController,
     audioPlayer: AudioPlayerService
@@ -2958,10 +3063,11 @@ private func makeConfiguration(
         reducer: reducer,
         toolOutputStore: toolOutputStore,
         toolArgsStore: toolArgsStore,
+        toolSegmentStore: ToolSegmentStore(),
         connection: connection,
         audioPlayer: audioPlayer,
-        theme: .tokyoNight,
-        themeID: .tokyoNight
+        theme: .dark,
+        themeID: .dark
     )
 }
 
@@ -3023,7 +3129,9 @@ private func makeToolConfiguration(
         collapsedImageMimeType: collapsedImageMimeType,
         isExpanded: isExpanded,
         isDone: isDone,
-        isError: isError
+        isError: isError,
+        segmentAttributedTitle: nil,
+        segmentAttributedTrailing: nil
     )
 }
 
@@ -3035,7 +3143,7 @@ private func makeAssistantConfiguration(
         isStreaming: false,
         canFork: false,
         onFork: nil,
-        themeID: .tokyoNight
+        themeID: .dark
     )
 }
 
