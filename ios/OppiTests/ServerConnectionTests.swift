@@ -353,11 +353,11 @@ struct ServerConnectionTests {
         let conn = makeConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1"), sessionId: "s1")
+        conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
         conn.flushAndSuspend()
         conn.handleServerMessage(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1"), sessionId: "s1")
         conn.flushAndSuspend()
-        conn.handleServerMessage(.toolEnd(tool: "bash", toolCallId: "tc-1"), sessionId: "s1")
+        conn.handleServerMessage(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil), sessionId: "s1")
         conn.flushAndSuspend()
         conn.handleServerMessage(.agentEnd, sessionId: "s1")
         conn.flushAndSuspend()
@@ -1245,7 +1245,6 @@ struct ForegroundRecoveryTests {
             icon: nil,
             runtime: "container",
             skills: [],
-            policyPreset: "container",
             systemPrompt: nil,
             hostMount: nil,
             memoryEnabled: nil,
