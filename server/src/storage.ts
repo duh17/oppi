@@ -78,7 +78,6 @@ function defaultPolicyConfig(): NonNullable<ServerConfig["policy"]> {
       {
         id: "block-secret-files",
         decision: "block",
-        risk: "critical",
         label: "Block secret credential files",
         reason: "Never allow direct reads of private key material",
         immutable: true,
@@ -90,7 +89,6 @@ function defaultPolicyConfig(): NonNullable<ServerConfig["policy"]> {
       {
         id: "block-host-root-rm",
         decision: "block",
-        risk: "critical",
         label: "Block destructive root delete",
         reason: "Prevents catastrophic filesystem deletion",
         immutable: true,
@@ -105,7 +103,6 @@ function defaultPolicyConfig(): NonNullable<ServerConfig["policy"]> {
       {
         id: "ask-git-push",
         decision: "ask",
-        risk: "high",
         label: "Push code to remote",
         match: {
           tool: "bash",
@@ -116,7 +113,6 @@ function defaultPolicyConfig(): NonNullable<ServerConfig["policy"]> {
       {
         id: "allow-safe-read-workspace",
         decision: "allow",
-        risk: "low",
         label: "Allow read-only workspace inspection",
         match: {
           tool: "read",
@@ -235,20 +231,6 @@ function normalizeConfig(
     const value = obj[key];
     if (typeof value !== "string" || value.trim().length === 0) {
       errors.push(`config.${key}: expected non-empty string`);
-      changed = true;
-      return undefined;
-    }
-    return value;
-  };
-
-  const readBoolean = (key: string): boolean | undefined => {
-    if (!(key in obj)) {
-      changed = true;
-      return undefined;
-    }
-    const value = obj[key];
-    if (typeof value !== "boolean") {
-      errors.push(`config.${key}: expected boolean`);
       changed = true;
       return undefined;
     }
@@ -461,7 +443,6 @@ function normalizeConfig(
     ): {
       id: string;
       decision: "allow" | "ask" | "block";
-      risk?: "low" | "medium" | "high" | "critical";
       label?: string;
       reason?: string;
       immutable?: boolean;
@@ -507,16 +488,7 @@ function normalizeConfig(
       const decision = parseDecision(raw.decision, `${permPath}.decision`);
       if (!decision) return null;
 
-      let risk: "low" | "medium" | "high" | "critical" | undefined;
-      if ("risk" in raw) {
-        if (raw.risk === "low" || raw.risk === "medium" || raw.risk === "high" || raw.risk === "critical") {
-          risk = raw.risk;
-        } else {
-          errors.push(`${permPath}.risk: expected one of low|medium|high|critical`);
-          changed = true;
-        }
-      }
-
+      // "risk" is accepted for backwards compatibility but ignored
       let label: string | undefined;
       if ("label" in raw) {
         if (typeof raw.label === "string" && raw.label.trim().length > 0) {
@@ -553,7 +525,6 @@ function normalizeConfig(
       return {
         id: raw.id,
         decision,
-        risk,
         label,
         reason,
         immutable,
@@ -1214,7 +1185,7 @@ export class Storage {
     const id = generateId(8);
     const now = Date.now();
 
-    const runtime = req.runtime || (req.hostMount ? "host" : "container");
+    const runtime = "host" as const;
     const extensions = normalizeExtensionList(req.extensions);
 
     const workspace: Workspace = {
@@ -1251,11 +1222,10 @@ export class Storage {
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
-  private validateWorkspaceRuntime(workspace: Pick<Workspace, "id" | "runtime">): "host" | "container" {
-    if (workspace.runtime === "host" || workspace.runtime === "container") {
-      return workspace.runtime;
-    }
-    throw new Error(`workspace ${workspace.id} missing runtime`);
+  private validateWorkspaceRuntime(_workspace: Pick<Workspace, "id" | "runtime">): "host" {
+    // Host-only runtime model (v1 release hardening).
+    // Legacy "container" records are coerced to host on read.
+    return "host";
   }
 
   private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
@@ -1274,12 +1244,24 @@ export class Storage {
       skills: Array.isArray(raw.skills)
         ? raw.skills.filter((skill): skill is string => typeof skill === "string")
         : [],
-      policy:
-        raw.policy &&
-        typeof raw.policy === "object" &&
-        Array.isArray((raw.policy as NonNullable<Workspace["policy"]>).permissions)
-          ? (raw.policy as NonNullable<Workspace["policy"]>)
-          : { permissions: [] },
+      policy: (() => {
+        if (!raw.policy || typeof raw.policy !== "object") {
+          return { permissions: [] };
+        }
+
+        const policyRaw = raw.policy as Record<string, unknown>;
+        const permissions = Array.isArray(policyRaw.permissions)
+          ? (policyRaw.permissions as NonNullable<Workspace["policy"]>["permissions"])
+          : [];
+
+        const fallbackRaw = policyRaw.fallback;
+        const fallback =
+          fallbackRaw === "allow" || fallbackRaw === "ask" || fallbackRaw === "block"
+            ? fallbackRaw
+            : undefined;
+
+        return fallback ? { permissions, fallback } : { permissions };
+      })(),
       allowedPaths: Array.isArray(raw.allowedPaths)
         ? (raw.allowedPaths as Workspace["allowedPaths"])
         : undefined,
@@ -1348,7 +1330,12 @@ export class Storage {
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined) workspace.description = updates.description;
     if (updates.icon !== undefined) workspace.icon = updates.icon;
-    if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
+    if (updates.runtime !== undefined) {
+      workspace.runtime = this.validateWorkspaceRuntime({
+        id: workspace.id,
+        runtime: updates.runtime,
+      });
+    }
     if (updates.skills !== undefined) workspace.skills = updates.skills;
     if (updates.policy !== undefined) workspace.policy = updates.policy;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
@@ -1388,11 +1375,13 @@ export class Storage {
   setWorkspacePolicyPermissions(
     workspaceId: string,
     permissions: NonNullable<Workspace["policy"]>["permissions"],
+    fallback?: NonNullable<Workspace["policy"]>["fallback"],
   ): Workspace | undefined {
     const workspace = this.getWorkspace(workspaceId);
     if (!workspace) return undefined;
 
-    workspace.policy = { permissions };
+    const nextFallback = fallback ?? workspace.policy?.fallback;
+    workspace.policy = nextFallback ? { permissions, fallback: nextFallback } : { permissions };
     workspace.updatedAt = Date.now();
     this.saveWorkspace(workspace);
     return workspace;
@@ -1404,7 +1393,7 @@ export class Storage {
 
     const policy = workspace.policy || { permissions: [] };
     const next = policy.permissions.filter((p) => p.id !== permissionId);
-    workspace.policy = { permissions: next };
+    workspace.policy = policy.fallback ? { permissions: next, fallback: policy.fallback } : { permissions: next };
     workspace.updatedAt = Date.now();
     this.saveWorkspace(workspace);
     return workspace;

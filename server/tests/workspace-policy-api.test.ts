@@ -66,9 +66,14 @@ function makeRoutes(workspace: Workspace): RouteHandler {
   const storage = {
     getConfig: () => ({ policy: globalPolicy }),
     getWorkspace: (id: string) => (id === workspace.id ? workspace : undefined),
-    setWorkspacePolicyPermissions: (id: string, permissions: PolicyPermission[]) => {
+    setWorkspacePolicyPermissions: (
+      id: string,
+      permissions: PolicyPermission[],
+      fallback?: "allow" | "ask" | "block",
+    ) => {
       if (id !== workspace.id) return undefined;
-      workspace.policy = { permissions };
+      const nextFallback = fallback ?? workspace.policy?.fallback;
+      workspace.policy = nextFallback ? { permissions, fallback: nextFallback } : { permissions };
       workspace.updatedAt = Date.now();
       return workspace;
     },
@@ -119,6 +124,78 @@ describe("workspace policy API", () => {
       "ask-git-push",
       "allow-npm-test",
     ]);
+  });
+
+  it("PATCH updates workspace fallback override", async () => {
+    const workspace = makeWorkspace();
+    const routes = makeRoutes(workspace);
+    const res = makeResponse();
+
+    await routes.dispatch(
+      "PATCH",
+      "/workspaces/w1/policy",
+      new URL("http://localhost/workspaces/w1/policy"),
+      makeRequest({ fallback: "allow" }) as never,
+      res as never,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(workspace.policy?.fallback).toBe("allow");
+
+    const getRes = makeResponse();
+    await routes.dispatch(
+      "GET",
+      "/workspaces/w1/policy",
+      new URL("http://localhost/workspaces/w1/policy"),
+      makeRequest() as never,
+      getRes as never,
+    );
+
+    const payload = JSON.parse(getRes.body) as {
+      effectivePolicy: { fallback: string };
+    };
+    expect(payload.effectivePolicy.fallback).toBe("allow");
+  });
+
+  it("PATCH toggles fallback ask ⇄ allow repeatedly", async () => {
+    const workspace = makeWorkspace();
+    const routes = makeRoutes(workspace);
+
+    const patchFallback = async (fallback: "allow" | "ask") => {
+      const res = makeResponse();
+      await routes.dispatch(
+        "PATCH",
+        "/workspaces/w1/policy",
+        new URL("http://localhost/workspaces/w1/policy"),
+        makeRequest({ fallback }) as never,
+        res as never,
+      );
+      expect(res.statusCode).toBe(200);
+
+      const payload = JSON.parse(res.body) as {
+        policy: { fallback?: string };
+      };
+      expect(payload.policy.fallback).toBe(fallback);
+    };
+
+    await patchFallback("ask");
+    await patchFallback("allow");
+    await patchFallback("ask");
+    await patchFallback("allow");
+
+    const getRes = makeResponse();
+    await routes.dispatch(
+      "GET",
+      "/workspaces/w1/policy",
+      new URL("http://localhost/workspaces/w1/policy"),
+      makeRequest() as never,
+      getRes as never,
+    );
+
+    const effective = JSON.parse(getRes.body) as {
+      effectivePolicy: { fallback: string };
+    };
+    expect(effective.effectivePolicy.fallback).toBe("allow");
   });
 
   it("PATCH rejects workspace permission that weakens matching global rule", async () => {

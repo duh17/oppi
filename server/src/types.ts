@@ -7,6 +7,8 @@ import type { StyledSegment } from "./mobile-renderer.js";
 // ─── Workspaces ───
 
 export interface WorkspacePolicyConfig {
+  /** Optional workspace fallback override. If omitted, global fallback is used. */
+  fallback?: PolicyDecision;
   permissions: PolicyPermission[];
 }
 
@@ -17,7 +19,7 @@ export interface Workspace {
   icon?: string; // SF Symbol name or emoji
 
   // Runtime — where pi runs
-  runtime: "host" | "container"; // "host" = directly on Mac, "container" = Apple container
+  runtime: "host" | "container";
 
   // Skills — which skills to sync into the session
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
@@ -114,7 +116,6 @@ export interface SessionMessage {
 // ─── Server Config ───
 
 export type PolicyDecision = "allow" | "ask" | "block";
-export type PolicyRisk = "low" | "medium" | "high" | "critical";
 
 export interface PolicyMatch {
   tool?: string;
@@ -128,7 +129,7 @@ export interface PolicyMatch {
 export interface PolicyPermission {
   id: string;
   decision: PolicyDecision;
-  risk?: PolicyRisk;
+
   label?: string;
   reason?: string;
   immutable?: boolean;
@@ -500,7 +501,6 @@ export type ServerMessage = // ── Connection ──
       tool: string;
       input: Record<string, unknown>;
       displaySummary: string;
-      risk: "low" | "medium" | "high" | "critical";
       reason: string;
       timeoutAt: number;
       expires?: boolean;
