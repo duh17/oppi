@@ -75,7 +75,9 @@ struct WorkspacePickerView: View {
                 }
             }
             .sheet(item: $editingWorkspace) { workspace in
-                WorkspaceEditView(workspace: workspace)
+                NavigationStack {
+                    WorkspaceEditView(workspace: workspace)
+                }
             }
             .task { await loadWorkspaces() }
             .overlay {
