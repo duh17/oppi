@@ -202,7 +202,7 @@ Settings → Import Theme → ThemeImportView
 ### ThemeID persistence
 - Selected theme stored in `UserDefaults` as raw string (`"dark"`, `"light"`, `"custom:Tokyo Night"`)
 - On app launch: `ThemeID.loadPersisted()` reads and resolves
-- Legacy migration: `"apple-dark"` → `.dark`, `"apple-light"` → `.light`, `"tokyo-night"` → `.custom("Tokyo Night")`
+- Unknown values fall back to `.dark`
 
 ## Theme JSON Schema
 
