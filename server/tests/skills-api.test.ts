@@ -11,13 +11,12 @@ import {
   mkdirSync,
   writeFileSync,
   rmSync,
-  existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
 import { SkillRegistry, UserSkillStore } from "../src/skills.js";
-import type { Workspace, Session } from "../src/types.js";
+import type { Workspace } from "../src/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 // ─── Helpers ───
@@ -251,107 +250,34 @@ describe("GET /me/skills", () => {
   });
 });
 
+describe("POST /me/skills", () => {
+  it("returns 403 when skill mutation is disabled", async () => {
+    const res = await callRoute("POST", "/me/skills", {
+      name: "new-skill",
+      sessionId: "session-123",
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
+  });
+});
+
 describe("PUT /me/skills/:name", () => {
-  it("creates a user skill with inline content", async () => {
-    const res = await callRoute("PUT", "/me/skills/my-tool", {
-      content: '---\nname: my-tool\ndescription: "Custom tool"\n---\n# My Tool\nDoes things.',
-    });
-    const data = res.json() as any;
-
-    expect(res.statusCode).toBe(200);
-    expect(data.skill.name).toBe("my-tool");
-    expect(data.skill.description).toBe("Custom tool");
-
-    // Verify it's in the registry now
-    expect(registry.get("my-tool")).toBeDefined();
-  });
-
-  it("creates a skill with extra files", async () => {
-    const res = await callRoute("PUT", "/me/skills/scripted", {
-      content: '---\nname: scripted\ndescription: "Has scripts"\n---\n# Scripted',
-      files: {
-        "scripts/run.sh": "#!/bin/bash\necho hello",
-        "data/config.json": '{"key": "value"}',
-      },
-    });
-    const data = res.json() as any;
-
-    expect(res.statusCode).toBe(200);
-    expect(data.skill.name).toBe("scripted");
-
-    // Verify files were written
-    const content = userStore.readFile("scripted", "scripts/run.sh");
-    expect(content).toContain("echo hello");
-  });
-
-  it("updates an existing user skill", async () => {
-    // Create first
-    await callRoute("PUT", "/me/skills/evolving", {
-      content: '---\nname: evolving\ndescription: "Version 1"\n---\n# V1',
-    });
-
-    // Update
-    const res = await callRoute("PUT", "/me/skills/evolving", {
-      content: '---\nname: evolving\ndescription: "Version 2"\n---\n# V2',
-    });
-    const data = res.json() as any;
-
-    expect(data.skill.description).toBe("Version 2");
-  });
-
-  it("edits a built-in skill in-place", async () => {
+  it("returns 403 when skill mutation is disabled", async () => {
     const res = await callRoute("PUT", "/me/skills/search", {
       content: '---\nname: search\ndescription: "Updated search"\n---\n# Updated',
     });
 
-    expect(res.statusCode).toBe(200);
-    const data = res.json() as any;
-    expect(data.skill.name).toBe("search");
-  });
-
-  it("rejects missing content", async () => {
-    const res = await callRoute("PUT", "/me/skills/bad", {});
-    expect(res.statusCode).toBe(400);
-  });
-
-  it("rejects path traversal in files", async () => {
-    const res = await callRoute("PUT", "/me/skills/sneaky", {
-      content: '---\nname: sneaky\ndescription: "Sneaky"\n---\n# Sneaky',
-      files: { "../../../etc/evil": "gotcha" },
-    });
-    expect(res.statusCode).toBe(400);
-  });
-
-  it("rejects SKILL.md without description", async () => {
-    const res = await callRoute("PUT", "/me/skills/no-desc", {
-      content: "---\nname: no-desc\n---\n# No desc",
-    });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
   });
 });
 
 describe("DELETE /me/skills/:name", () => {
-  it("deletes a user skill", async () => {
-    // Create first
-    await callRoute("PUT", "/me/skills/doomed", {
-      content: '---\nname: doomed\ndescription: "Will die"\n---\n# Doomed',
-    });
-    expect(registry.get("doomed")).toBeDefined();
-
-    const res = await callRoute("DELETE", "/me/skills/doomed");
-    expect(res.statusCode).toBe(204);
-
-    // Verify removed
-    expect(userStore.getSkill("doomed")).toBeNull();
-  });
-
-  it("rejects deleting a built-in skill", async () => {
+  it("returns 403 when skill mutation is disabled", async () => {
     const res = await callRoute("DELETE", "/me/skills/search");
-    expect(res.statusCode).toBe(403);
-  });
 
-  it("returns 404 for nonexistent skill", async () => {
-    const res = await callRoute("DELETE", "/me/skills/nope");
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: "Skill editing is disabled on remote clients" });
   });
 });
