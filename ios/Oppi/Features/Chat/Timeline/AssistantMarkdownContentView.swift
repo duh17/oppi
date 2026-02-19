@@ -506,6 +506,9 @@ final class NativeCodeBlockView: UIView {
 
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
 
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
+        codeScrollView.addGestureRecognizer(longPress)
+
         let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
         codeLabelWidthConstraint = widthConstraint
 
@@ -578,16 +581,30 @@ final class NativeCodeBlockView: UIView {
     }
 
     @objc private func copyTapped() {
+        copyCodeAndShowFeedback()
+    }
+
+    @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        copyCodeAndShowFeedback()
+        showCopiedFlash()
+    }
+
+    private func copyCodeAndShowFeedback() {
         UIPasteboard.general.string = currentCode
         let feedback = UIImpactFeedbackGenerator(style: .light)
         feedback.impactOccurred(intensity: 0.7)
 
-        // Brief "Copied" feedback.
+        // Brief "Copied" feedback on the copy button.
         copyButton.configuration?.image = UIImage(systemName: "checkmark")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             self.copyButton.configuration?.image = UIImage(systemName: "doc.on.doc")
         }
+    }
+
+    private func showCopiedFlash() {
+        showCopiedOverlay(on: self)
     }
 }
 
@@ -620,6 +637,10 @@ final class NativeTableBlockView: UIView {
     /// the frame and enables horizontal scrolling.
     private var tableLabelWidthConstraint: NSLayoutConstraint?
 
+    /// Stored for long-press copy — rebuilt as markdown table text.
+    private var currentHeaders: [String] = []
+    private var currentRows: [[String]] = []
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
@@ -635,6 +656,9 @@ final class NativeTableBlockView: UIView {
 
         addSubview(scrollView)
         scrollView.addSubview(tableLabel)
+
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
+        scrollView.addGestureRecognizer(longPress)
 
         let widthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
         tableLabelWidthConstraint = widthConstraint
@@ -660,6 +684,9 @@ final class NativeTableBlockView: UIView {
     }
 
     func apply(headers: [String], rows: [[String]], palette: ThemePalette) {
+        currentHeaders = headers
+        currentRows = rows
+
         backgroundColor = UIColor(palette.bgDark)
         layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
         let attrText = Self.makeTableAttributedText(
@@ -745,7 +772,7 @@ final class NativeTableBlockView: UIView {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byClipping
-        paragraph.lineSpacing = 0
+        paragraph.lineSpacing = 3
 
         let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
         let cellFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -753,7 +780,7 @@ final class NativeTableBlockView: UIView {
         let cellColor = UIColor(palette.fg)
         let dimColor = UIColor(palette.comment).withAlphaComponent(0.4)
         let headerBgColor = UIColor(palette.bgHighlight)
-        let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.3)
+        let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.45)
 
         // Header row.
         let headerStart = result.length
@@ -808,4 +835,119 @@ final class NativeTableBlockView: UIView {
 
         return result
     }
+
+    // MARK: - Long press to copy
+
+    @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+
+        UIPasteboard.general.string = markdownTableText()
+
+        let feedback = UIImpactFeedbackGenerator(style: .light)
+        feedback.impactOccurred(intensity: 0.7)
+
+        showCopiedFlash()
+    }
+
+    /// Reconstruct a markdown-formatted table for clipboard.
+    private func markdownTableText() -> String {
+        var lines: [String] = []
+
+        let headerLine = "| " + currentHeaders.joined(separator: " | ") + " |"
+        lines.append(headerLine)
+
+        let separatorLine = "| " + currentHeaders.map { _ in "---" }.joined(separator: " | ") + " |"
+        lines.append(separatorLine)
+
+        for row in currentRows {
+            let rowLine = "| " + row.joined(separator: " | ") + " |"
+            lines.append(rowLine)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func showCopiedFlash() {
+        showCopiedOverlay(on: self)
+    }
+}
+
+// MARK: - Shared Copied Feedback
+
+/// Show a flash overlay + floating "Copied" pill centered on the given view.
+///
+/// Used by `NativeCodeBlockView` and `NativeTableBlockView` for long-press copy.
+private func showCopiedOverlay(on view: UIView) {
+    let overlay = UIView()
+    overlay.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+    overlay.frame = view.bounds
+    overlay.layer.cornerRadius = view.layer.cornerRadius
+    overlay.isUserInteractionEnabled = false
+    view.addSubview(overlay)
+
+    let pill = CopiedPillView()
+    pill.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(pill)
+    NSLayoutConstraint.activate([
+        pill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        pill.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+    ])
+    pill.alpha = 0
+    pill.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+
+    UIView.animate(withDuration: 0.15) {
+        pill.alpha = 1
+        pill.transform = .identity
+    }
+
+    UIView.animate(withDuration: 0.3, delay: 0.8, options: .curveEaseOut) {
+        pill.alpha = 0
+        pill.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+        overlay.alpha = 0
+    } completion: { _ in
+        pill.removeFromSuperview()
+        overlay.removeFromSuperview()
+    }
+}
+
+/// Small floating "Copied" badge for long-press feedback.
+private final class CopiedPillView: UIView {
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        let icon = UIImageView(image: UIImage(systemName: "checkmark"))
+        icon.tintColor = .white
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            pointSize: 11, weight: .semibold
+        )
+
+        let label = UILabel()
+        label.text = "Copied"
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = UIStackView(arrangedSubviews: [icon, label])
+        stack.axis = .horizontal
+        stack.spacing = 5
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        backgroundColor = UIColor.black.withAlphaComponent(0.75)
+        layer.cornerRadius = 16
+        isUserInteractionEnabled = false
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 }

@@ -35,26 +35,26 @@ struct ImageBlobView: View {
                     }
             } else if decodeFailed {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         VStack(spacing: 4) {
                             Image(systemName: "photo.badge.exclamationmark")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             Text("Image preview unavailable")
                                 .font(.caption2)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             if let mimeType {
                                 Text(mimeType)
                                     .font(.caption2.monospaced())
-                                    .foregroundStyle(.tokyoComment.opacity(0.7))
+                                    .foregroundStyle(.themeComment.opacity(0.7))
                             }
                         }
                     }
             } else {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         ProgressView()

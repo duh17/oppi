@@ -151,14 +151,14 @@ private struct WorkspaceCard: View {
     }
     private var backgroundFill: Color {
         workspace.isContainerRuntime
-            ? Color.tokyoGreen.opacity(0.12)
-            : Color.tokyoOrange.opacity(0.14)
+            ? Color.themeGreen.opacity(0.12)
+            : Color.themeOrange.opacity(0.14)
     }
 
     private var borderColor: Color {
         workspace.isContainerRuntime
-            ? Color.tokyoGreen.opacity(0.55)
-            : Color.tokyoOrange.opacity(0.65)
+            ? Color.themeGreen.opacity(0.55)
+            : Color.themeOrange.opacity(0.65)
     }
 }
 
@@ -183,7 +183,7 @@ struct WorkspaceIcon: View {
             if isSFSymbol {
                 Image(systemName: icon)
                     .font(.system(size: size))
-                    .foregroundStyle(.tokyoBlue)
+                    .foregroundStyle(.themeBlue)
             } else {
                 Text(icon)
                     .font(.system(size: size))
@@ -191,7 +191,7 @@ struct WorkspaceIcon: View {
         } else {
             Image(systemName: "square.grid.2x2")
                 .font(.system(size: size))
-                .foregroundStyle(.tokyoBlue)
+                .foregroundStyle(.themeBlue)
         }
     }
 }
@@ -232,25 +232,25 @@ struct RuntimeBadge: View {
 
     private var fg: Color {
         switch normalizedRuntime {
-        case "container": return .tokyoGreen
-        case "host": return .tokyoOrange
-        default: return .tokyoComment
+        case "container": return .themeGreen
+        case "host": return .themeOrange
+        default: return .themeComment
         }
     }
 
     private var bg: Color {
         switch normalizedRuntime {
-        case "container": return .tokyoGreen.opacity(0.18)
-        case "host": return .tokyoOrange.opacity(0.22)
-        default: return .tokyoComment.opacity(0.18)
+        case "container": return .themeGreen.opacity(0.18)
+        case "host": return .themeOrange.opacity(0.22)
+        default: return .themeComment.opacity(0.18)
         }
     }
 
     private var border: Color {
         switch normalizedRuntime {
-        case "container": return .tokyoGreen.opacity(0.72)
-        case "host": return .tokyoOrange.opacity(0.78)
-        default: return .tokyoComment.opacity(0.5)
+        case "container": return .themeGreen.opacity(0.72)
+        case "host": return .themeOrange.opacity(0.78)
+        default: return .themeComment.opacity(0.5)
         }
     }
 
@@ -272,7 +272,7 @@ struct RuntimeBadge: View {
 
             if normalizedRuntime == "container" {
                 Circle()
-                    .stroke(Color.tokyoGreen.opacity(0.35), lineWidth: 1)
+                    .stroke(Color.themeGreen.opacity(0.35), lineWidth: 1)
                     .padding(2)
             }
 
@@ -283,7 +283,7 @@ struct RuntimeBadge: View {
         }
         .frame(width: badgeSize, height: badgeSize)
         .shadow(
-            color: normalizedRuntime == "container" ? Color.tokyoGreen.opacity(0.35) : .clear,
+            color: normalizedRuntime == "container" ? Color.themeGreen.opacity(0.35) : .clear,
             radius: normalizedRuntime == "container" ? 4 : 0
         )
         .accessibilityLabel(accessibilityLabel)
@@ -314,15 +314,15 @@ struct RuntimeStatusBadge: View {
     var syncState: SyncState = .live
 
     private var dotFillColor: Color {
-        syncState == .offline ? .tokyoComment : statusColor
+        syncState == .offline ? .themeComment : statusColor
     }
 
     private var dotRingColor: Color {
         switch syncState {
-        case .live: return .tokyoBg
-        case .syncing: return .tokyoBlue
-        case .offline: return .tokyoRed
-        case .stale: return .tokyoOrange
+        case .live: return .themeBg
+        case .syncing: return .themeBlue
+        case .offline: return .themeRed
+        case .stale: return .themeOrange
         }
     }
 

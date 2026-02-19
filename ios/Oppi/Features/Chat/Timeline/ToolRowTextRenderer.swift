@@ -35,7 +35,7 @@ enum ToolRowTextRenderer {
             return ANSIOutputPresentation(
                 attributedText: ansiHighlighted(
                     text,
-                    baseForeground: isError ? .tokyoRed : .tokyoFg
+                    baseForeground: isError ? .themeRed : .themeFg
                 ),
                 plainText: nil
             )
@@ -104,7 +104,7 @@ enum ToolRowTextRenderer {
         paragraph.lineBreakMode = .byWordWrapping
 
         rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
-        rendered.addAttribute(.foregroundColor, value: UIColor(Color.tokyoFg), range: fullRange)
+        rendered.addAttribute(.foregroundColor, value: UIColor(Color.themeFg), range: fullRange)
         rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
             if value == nil {
                 rendered.addAttribute(
@@ -134,9 +134,9 @@ enum ToolRowTextRenderer {
         paragraph.lineBreakMode = .byClipping
         paragraph.lineSpacing = 1
 
-        let lineNumberColor = UIColor(Color.tokyoComment.opacity(0.55))
-        let separatorColor = UIColor(Color.tokyoComment.opacity(0.35))
-        let foregroundColor = UIColor(Color.tokyoFg)
+        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
+        let separatorColor = UIColor(Color.themeComment.opacity(0.35))
+        let foregroundColor = UIColor(Color.themeFg)
         let codeFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
         let lineNumberFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
 
@@ -228,7 +228,7 @@ enum ToolRowTextRenderer {
                     string: "No textual changes",
                     attributes: [
                         .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                        .foregroundColor: UIColor(Color.tokyoComment),
+                        .foregroundColor: UIColor(Color.themeComment),
                         .paragraphStyle: paragraph,
                     ]
                 )
@@ -241,14 +241,14 @@ enum ToolRowTextRenderer {
         let numFont = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         let prefixFont = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
 
-        let addedBg = UIColor(Color.tokyoGreen.opacity(0.20))
-        let removedBg = UIColor(Color.tokyoRed.opacity(0.18))
-        let addedAccent = UIColor(Color.tokyoGreen)
-        let removedAccent = UIColor(Color.tokyoRed)
-        let contextDim = UIColor(Color.tokyoComment.opacity(0.45))
-        let lineNumColor = UIColor(Color.tokyoComment.opacity(0.5))
-        let fgColor = UIColor(Color.tokyoFg)
-        let fgDimColor = UIColor(Color.tokyoFgDim)
+        let addedBg = UIColor(Color.themeDiffAdded.opacity(0.20))
+        let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.18))
+        let addedAccent = UIColor(Color.themeDiffAdded)
+        let removedAccent = UIColor(Color.themeDiffRemoved)
+        let contextDim = UIColor(Color.themeDiffContext.opacity(0.45))
+        let lineNumColor = UIColor(Color.themeComment.opacity(0.5))
+        let fgColor = UIColor(Color.themeFg)
+        let fgDimColor = UIColor(Color.themeFgDim)
 
         let gutterAddedAttrs: [NSAttributedString.Key: Any] = [
             .font: prefixFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph,
@@ -372,7 +372,7 @@ enum ToolRowTextRenderer {
                 string: "\n… diff truncated for display",
                 attributes: [
                     .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-                    .foregroundColor: UIColor(Color.tokyoComment),
+                    .foregroundColor: UIColor(Color.themeComment),
                     .paragraphStyle: paragraph,
                 ]
             ))
@@ -449,7 +449,7 @@ enum ToolRowTextRenderer {
 
     static func ansiHighlighted(
         _ text: String,
-        baseForeground: Color = .tokyoFg
+        baseForeground: Color = .themeFg
     ) -> NSAttributedString {
         let highlighted = ANSIParser.attributedString(from: text, baseForeground: baseForeground)
         return NSAttributedString(highlighted)
@@ -466,7 +466,7 @@ enum ToolRowTextRenderer {
             string: title,
             attributes: [
                 .font: UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: UIColor(Color.tokyoFg),
+                .foregroundColor: UIColor(Color.themeFg),
             ]
         )
 

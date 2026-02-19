@@ -83,7 +83,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
-        iconLabel.textColor = UIColor(ThemeID.tokyoNight.palette.purple)
+        iconLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().purple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconLabel.setContentHuggingPriority(.required, for: .horizontal)

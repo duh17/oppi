@@ -21,9 +21,9 @@ enum ServerMessage: Sendable, Equatable {
     case thinkingDelta(delta: String)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
     case toolOutput(output: String, isError: Bool, toolCallId: String?)
-    case toolEnd(tool: String, toolCallId: String?)
+    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
     // Turn delivery acknowledgements
     case turnAck(command: String, clientTurnId: String, stage: TurnAckStage, requestId: String?, duplicate: Bool)
@@ -101,7 +101,7 @@ extension ServerMessage: Decodable {
         // message_end / text_delta / thinking_delta
         case role, content, delta
         // tool_start / tool_end
-        case tool, args, toolCallId
+        case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
         case output, isError
         // turn_ack
@@ -177,7 +177,8 @@ extension ServerMessage: Decodable {
             let tool = try c.decode(String.self, forKey: .tool)
             let args = try c.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
-            self = .toolStart(tool: tool, args: args, toolCallId: tcId)
+            let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
+            self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs)
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
@@ -188,7 +189,10 @@ extension ServerMessage: Decodable {
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
-            self = .toolEnd(tool: tool, toolCallId: tcId)
+            let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
+            let isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+            let resultSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .resultSegments)
+            self = .toolEnd(tool: tool, toolCallId: tcId, details: details, isError: isError, resultSegments: resultSegs)
 
         case "turn_ack":
             let command = try c.decode(String.self, forKey: .command)

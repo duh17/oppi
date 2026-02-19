@@ -173,7 +173,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         let borderColor = UIColor(palette.comment).withAlphaComponent(0.3).cgColor
 
-        for attachment in images {
+        for (index, attachment) in images.enumerated() {
             let container = UIView()
             container.translatesAutoresizingMaskIntoConstraints = false
             container.layer.cornerRadius = Self.thumbnailCornerRadius
@@ -181,6 +181,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             container.layer.borderColor = borderColor
             container.clipsToBounds = true
             container.backgroundColor = UIColor(palette.bgHighlight)
+            container.isAccessibilityElement = true
+            container.accessibilityIdentifier = "chat.user.thumbnail.\(index)"
+            container.accessibilityLabel = "Attached image \(index + 1)"
 
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -327,10 +330,16 @@ final class NativeZoomableImageViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
+            // Pin all edges so contentLayoutGuide gets a deterministic content size
+            // (equal to the viewport at zoomScale = 1). Center-only constraints can
+            // leave content geometry underconstrained, causing the image to render
+            // offset (top-left clipped) on first presentation.
+            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-            imageView.centerXAnchor.constraint(equalTo: scrollView.contentLayoutGuide.centerXAnchor),
-            imageView.centerYAnchor.constraint(equalTo: scrollView.contentLayoutGuide.centerYAnchor),
         ])
 
         // Double-tap to toggle zoom.
