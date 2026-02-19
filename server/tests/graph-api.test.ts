@@ -45,7 +45,6 @@ function makeWorkspace(): Workspace {
     name: "Workspace",
     runtime: "host",
     skills: [],
-    policyPreset: "host",
     createdAt: now,
     updatedAt: now,
   };

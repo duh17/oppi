@@ -14,6 +14,7 @@ describe("auth log redaction", () => {
     expect(line).toContain("auth: present");
     expect(line).not.toContain("Bearer ");
     expect(line).not.toContain("sk_live_super_secret_token");
+    expect(line).not.toContain("tok=");
   });
 
   it("handles websocket unauthorized logs without leaking auth header", () => {
@@ -27,6 +28,7 @@ describe("auth log redaction", () => {
     expect(line).toContain("auth: present");
     expect(line).not.toContain("Bearer ");
     expect(line).not.toContain("sk_live_super_secret_token");
+    expect(line).not.toContain("tok=");
   });
 });
 

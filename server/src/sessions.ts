@@ -54,6 +54,7 @@ import {
   spawnPiContainer,
   type SpawnDeps,
 } from "./session-spawn.js";
+import { MobileRendererRegistry } from "./mobile-renderer.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -209,6 +210,7 @@ export class SessionManager extends EventEmitter {
   private workspaceIdleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
   private readonly piExecutable: string;
+  private readonly mobileRenderers = new MobileRendererRegistry();
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -227,6 +229,16 @@ export class SessionManager extends EventEmitter {
     this.authProxy = authProxy ?? null;
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
     this.piExecutable = resolvePiExecutable();
+
+    // Load extension sidecar mobile renderers (async, fire-and-forget at startup).
+    this.mobileRenderers.loadAllSidecars().then(({ loaded, errors }) => {
+      if (loaded.length > 0) {
+        console.log(`${ts()} [mobile-renderer] loaded sidecars: ${loaded.join(", ")}`);
+      }
+      for (const err of errors) {
+        console.error(`${ts()} [mobile-renderer] ${err}`);
+      }
+    });
   }
 
   // ─── Session Lifecycle ───
@@ -442,6 +454,7 @@ export class SessionManager extends EventEmitter {
       sandbox: this.sandbox,
       authProxy: this.authProxy,
       piExecutable: this.piExecutable,
+      globalPolicy: this.storage.getConfig().policy,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
     };
@@ -1466,6 +1479,7 @@ export class SessionManager extends EventEmitter {
       sessionId: active.session.id,
       partialResults: active.partialResults,
       streamedAssistantText: active.streamedAssistantText,
+      mobileRenderers: this.mobileRenderers,
     };
   }
 
