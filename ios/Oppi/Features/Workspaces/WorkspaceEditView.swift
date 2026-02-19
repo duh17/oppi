@@ -24,9 +24,32 @@ struct WorkspaceEditView: View {
     @State private var isSaving = false
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
+    @State private var selectedSkillDetail: SkillDetailDestination?
+
+    private var activeServerId: String? {
+        connection.currentServerId
+    }
 
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skills
+        if let activeServerId,
+           let scoped = connection.workspaceStore.skillsByServer[activeServerId] {
+            return scoped
+        }
+        return connection.workspaceStore.skills
+    }
+
+    private var workspaceForEditing: Workspace {
+        if let activeServerId,
+           let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
+            .first(where: { $0.id == workspace.id }) {
+            return scoped
+        }
+
+        if let cached = connection.workspaceStore.workspaces.first(where: { $0.id == workspace.id }) {
+            return cached
+        }
+
+        return workspace
     }
 
     var body: some View {
@@ -55,6 +78,9 @@ struct WorkspaceEditView: View {
                                 } else {
                                     selectedSkills.remove(skill.name)
                                 }
+                            },
+                            onShowDetail: {
+                                selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
                             }
                         )
                     }
@@ -220,7 +246,7 @@ struct WorkspaceEditView: View {
                 .disabled(name.isEmpty || isSaving)
             }
         }
-        .navigationDestination(for: SkillDetailDestination.self) { dest in
+        .navigationDestination(item: $selectedSkillDetail) { dest in
             SkillDetailView(skillName: dest.skillName)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
@@ -277,17 +303,18 @@ struct WorkspaceEditView: View {
     }
 
     private func loadFromWorkspace() {
-        name = workspace.name
-        description = workspace.description ?? ""
-        icon = workspace.icon ?? ""
-        selectedSkills = Set(workspace.skills)
-        runtime = workspace.runtime
-        hostMount = workspace.hostMount ?? ""
-        systemPrompt = workspace.systemPrompt ?? ""
-        memoryEnabled = workspace.memoryEnabled ?? false
-        memoryNamespace = workspace.memoryNamespace ?? ""
-        extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
-        defaultModel = workspace.defaultModel ?? ""
+        let source = workspaceForEditing
+        name = source.name
+        description = source.description ?? ""
+        icon = source.icon ?? ""
+        selectedSkills = Set(source.skills)
+        runtime = source.runtime
+        hostMount = source.hostMount ?? ""
+        systemPrompt = source.systemPrompt ?? ""
+        memoryEnabled = source.memoryEnabled ?? false
+        memoryNamespace = source.memoryNamespace ?? ""
+        extensionNames = (source.extensions ?? []).joined(separator: ", ")
+        defaultModel = source.defaultModel ?? ""
     }
 
     private func loadModels() async {
@@ -334,6 +361,9 @@ struct WorkspaceEditView: View {
 
         do {
             let updated = try await api.updateWorkspace(id: workspace.id, request)
+            if let activeServerId {
+                connection.workspaceStore.upsert(updated, serverId: activeServerId)
+            }
             connection.workspaceStore.upsert(updated)
             dismiss()
         } catch {
@@ -349,6 +379,7 @@ private struct SkillToggleRow: View {
     let skill: SkillInfo
     let isSelected: Bool
     let onToggle: (Bool) -> Void
+    let onShowDetail: () -> Void
 
     var body: some View {
         HStack {
@@ -383,7 +414,7 @@ private struct SkillToggleRow: View {
             }
             .foregroundStyle(.primary)
 
-            NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
+            Button(action: onShowDetail) {
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.themeComment)
