@@ -448,7 +448,7 @@ export class RouteHandler {
     this.json(res, { content });
   }
 
-  // ─── User Skills CRUD ───
+  // ─── User Skills (read-only; mutation disabled) ───
 
   private handleListUserSkills(res: ServerResponse): void {
     // Build enabledIn map: skill name → workspace IDs
@@ -496,165 +496,27 @@ export class RouteHandler {
   }
 
   private async handleSaveUserSkill(
-    req: IncomingMessage,
+    _req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const body = await this.parseBody<{ name: string; sessionId: string; path?: string }>(req);
-
-    if (!body.name) {
-      this.error(res, 400, "name required");
-      return;
-    }
-    if (!body.sessionId) {
-      this.error(res, 400, "sessionId required");
-      return;
-    }
-
-    const session = this.ctx.storage.getSession(body.sessionId);
-    if (!session) {
-      this.error(res, 404, "Session not found");
-      return;
-    }
-
-    const workRoot = this.resolveWorkRoot(session);
-    if (!workRoot) {
-      this.error(res, 404, "No workspace root for session");
-      return;
-    }
-
-    const relPath = body.path ?? body.name;
-    const sourceDir = resolve(workRoot, relPath);
-
-    let resolvedSource: string;
-    try {
-      resolvedSource = realpathSync(sourceDir);
-    } catch {
-      this.error(res, 404, "Source directory not found");
-      return;
-    }
-
-    const realWorkRoot = realpathSync(workRoot);
-    if (!resolvedSource.startsWith(realWorkRoot + "/") && resolvedSource !== realWorkRoot) {
-      this.error(res, 403, "Path outside workspace");
-      return;
-    }
-
-    try {
-      const skill = this.ctx.userSkillStore.saveSkill(body.name, resolvedSource);
-      // scan() first (re-reads disk), then register user skill on top
-      this.ctx.skillRegistry.scan();
-      this.ctx.skillRegistry.registerUserSkills([skill]);
-      this.json(res, { skill }, 201);
-    } catch (err) {
-      if (err instanceof SkillValidationError) {
-        this.error(res, 400, err.message);
-        return;
-      }
-      throw err;
-    }
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
   /**
-   * PUT /me/skills/:name — create or update a user skill with inline content.
+   * PUT /me/skills/:name
    *
-   * Body: { content: string, files?: Record<string, string> }
-   *   content: SKILL.md content (required)
-   *   files: optional extra files as { "scripts/run.sh": "#!/bin/bash\n..." }
+   * Skill mutation is intentionally disabled for remote clients.
    */
   private async handlePutUserSkill(
-    name: string,
-    req: IncomingMessage,
+    _name: string,
+    _req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const body = await this.parseBody<{
-      content: string;
-      files?: Record<string, string>;
-    }>(req);
-
-    if (!body.content) {
-      this.error(res, 400, "content (SKILL.md) required");
-      return;
-    }
-
-    // Check if this is an existing skill (built-in or user) — write in-place.
-    const existing = this.ctx.skillRegistry.get(name);
-    if (existing) {
-      // Write directly to the skill's on-disk location
-      try {
-        writeFileSync(join(existing.path, "SKILL.md"), body.content);
-        if (body.files) {
-          for (const [relPath, fileContent] of Object.entries(body.files)) {
-            if (relPath.includes("..") || relPath.startsWith("/")) {
-              this.error(res, 400, `Invalid file path: ${relPath}`);
-              return;
-            }
-            const dir = dirname(join(existing.path, relPath));
-            mkdirSync(dir, { recursive: true });
-            writeFileSync(join(existing.path, relPath), fileContent);
-          }
-        }
-        // Re-scan picks up changes; re-register user skills after (scan clears map)
-        this.ctx.skillRegistry.scan();
-        const userSkills = this.ctx.userSkillStore.listSkills();
-        this.ctx.skillRegistry.registerUserSkills(userSkills);
-        const updated = this.ctx.skillRegistry.get(name);
-        this.json(res, { skill: updated ?? existing });
-        return;
-      } catch (err) {
-        this.error(res, 500, `Failed to write skill: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-    }
-
-    // New user skill — write via UserSkillStore
-    const tmpDir = join(tmpdir(), `oppi-skill-${name}-${Date.now()}`);
-    try {
-      mkdirSync(tmpDir, { recursive: true });
-      writeFileSync(join(tmpDir, "SKILL.md"), body.content);
-
-      if (body.files) {
-        for (const [relPath, fileContent] of Object.entries(body.files)) {
-          if (relPath.includes("..") || relPath.startsWith("/")) {
-            this.error(res, 400, `Invalid file path: ${relPath}`);
-            return;
-          }
-          const dir = dirname(join(tmpDir, relPath));
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(join(tmpDir, relPath), fileContent);
-        }
-      }
-
-      const skill = this.ctx.userSkillStore.saveSkill(name, tmpDir);
-      this.ctx.skillRegistry.scan();
-      this.ctx.skillRegistry.registerUserSkills([skill]);
-      this.json(res, { skill });
-    } catch (err) {
-      if (err instanceof SkillValidationError) {
-        this.error(res, 400, err.message);
-        return;
-      }
-      throw err;
-    } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
-  private handleDeleteUserSkill(name: string, res: ServerResponse): void {
-    const builtIn = this.ctx.skillRegistry.get(name);
-    const userSkill = this.ctx.userSkillStore.getSkill(name);
-
-    if (!userSkill) {
-      if (builtIn) {
-        this.error(res, 403, "Cannot delete built-in skill");
-        return;
-      }
-      this.error(res, 404, "Skill not found");
-      return;
-    }
-
-    this.ctx.userSkillStore.deleteSkill(name);
-    this.ctx.skillRegistry.scan(); // refresh catalog
-    res.writeHead(204).end();
+  private handleDeleteUserSkill(_name: string, res: ServerResponse): void {
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
   private handleGetUserSkillFile(name: string, url: URL, res: ServerResponse): void {

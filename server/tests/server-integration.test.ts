@@ -8,8 +8,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { WebSocket } from "ws";
@@ -46,10 +48,41 @@ function put(path: string, body: unknown, auth = true): Promise<Response> {
   });
 }
 
+function patch(path: string, body: unknown, auth = true): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (auth) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`${baseUrl}${path}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
 function del(path: string, auth = true): Promise<Response> {
   const headers: Record<string, string> = {};
   if (auth) headers["Authorization"] = `Bearer ${token}`;
   return fetch(`${baseUrl}${path}`, { method: "DELETE", headers });
+}
+
+function connectGate(port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ port, host: "127.0.0.1" }, () => resolve(socket));
+    socket.on("error", reject);
+  });
+}
+
+function sendGateMessage(
+  socket: Socket,
+  msg: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: socket });
+    rl.once("line", (line) => {
+      rl.close();
+      resolve(JSON.parse(line));
+    });
+    socket.write(JSON.stringify(msg) + "\n");
+  });
 }
 
 beforeAll(async () => {
@@ -425,6 +458,35 @@ describe("user skills API", () => {
     const body = await res.json();
     expect(body.skills).toBeInstanceOf(Array);
   });
+
+  it("POST /me/skills is disabled", async () => {
+    const res = await post("/me/skills", {
+      name: "new-skill",
+      sessionId: "session-123",
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
+
+  it("PUT /me/skills/:name is disabled", async () => {
+    const res = await put("/me/skills/search", {
+      content: '---\nname: search\ndescription: "Updated"\n---\n# Updated',
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
+
+  it("DELETE /me/skills/:name is disabled", async () => {
+    const res = await del("/me/skills/search");
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
 });
 
 // ── Device token ──
@@ -498,6 +560,33 @@ describe("workspace lifecycle", () => {
     // 404 after delete
     const afterRes = await get(`/workspaces/${id}`);
     expect(afterRes.status).toBe(404);
+  });
+
+  it("still allows skill enable/disable through workspace updates", async () => {
+    const skillsRes = await get("/skills");
+    expect(skillsRes.status).toBe(200);
+    const skillsBody = await skillsRes.json();
+    const skillName = skillsBody.skills?.[0]?.name as string | undefined;
+    expect(skillName).toBeTruthy();
+
+    const createRes = await post("/workspaces", {
+      name: "skill-toggle-workspace",
+      skills: skillName ? [skillName] : [],
+    });
+    expect(createRes.status).toBe(201);
+    const { workspace } = await createRes.json();
+
+    const disableRes = await put(`/workspaces/${workspace.id}`, { skills: [] });
+    expect(disableRes.status).toBe(200);
+    const disableBody = await disableRes.json();
+    expect(disableBody.workspace.skills).toEqual([]);
+
+    const enableRes = await put(`/workspaces/${workspace.id}`, {
+      skills: skillName ? [skillName] : [],
+    });
+    expect(enableRes.status).toBe(200);
+    const enableBody = await enableRes.json();
+    expect(enableBody.workspace.skills).toEqual(skillName ? [skillName] : []);
   });
 });
 
