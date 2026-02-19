@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping
+
 // MARK: - PairedServer Model
 
 @Suite("PairedServer")
@@ -134,6 +136,31 @@ struct PairedServerTests {
         #expect(decoded.sortOrder == original.sortOrder)
         // Date precision: within 1 second is fine
         #expect(abs(decoded.addedAt.timeIntervalSince(original.addedAt)) < 1)
+    }
+
+    @Test("Decodes legacy payload without badge customization")
+    func decodesLegacyPayloadWithoutBadgeFields() throws {
+        let json = """
+        {
+          "id": "sha256:legacy",
+          "name": "legacy-server",
+          "host": "legacy.local",
+          "port": 7749,
+          "token": "sk_legacy",
+          "fingerprint": "sha256:legacy",
+          "addedAt": "2026-02-01T00:00:00Z",
+          "sortOrder": 0
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PairedServer.self, from: Data(json.utf8))
+
+        #expect(decoded.badgeIcon == nil)
+        #expect(decoded.badgeColor == nil)
+        #expect(decoded.resolvedBadgeIcon == .defaultValue)
+        #expect(decoded.resolvedBadgeColor == .defaultValue)
     }
 
     @Test("Equatable compares all fields, not just ID")

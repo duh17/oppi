@@ -2,6 +2,8 @@ import Testing
 import UIKit
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping
+
 @Suite("ToolPresentationBuilder — Segment Integration")
 @MainActor
 struct ToolPresentationSegmentTests {

@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── Debug Pi Remote Session ─────────────────────────────────────
+# ─── Debug Oppi Session ──────────────────────────────────────────
 #
 # Quick diagnostic for a mobile session. Shows session metadata,
 # recent trace events, pi process state, and gate status.
 #
 # Usage:
-#   ios/scripts/debug-session.sh <session-id>
-#   ios/scripts/debug-session.sh latest
-#   ios/scripts/debug-session.sh          # interactive: pick from recent
+#   debug-session.sh <session-id>
+#   debug-session.sh latest
+#   debug-session.sh            # interactive: pick from recent
 # ──────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_URL="${PI_REMOTE_URL:-http://localhost:7749}"
-USERS_FILE="$HOME/.config/oppi-server/users.json"
-SESSIONS_DIR="$HOME/.config/oppi-server/sessions"
+USERS_FILE="$HOME/.config/oppi/users.json"
+SESSIONS_DIR="$HOME/.config/oppi/sessions"
 
 usage() {
   cat <<'EOF'
-Quick diagnostic for a oppi-server session.
+Quick diagnostic for an Oppi session.
 
 Usage:
   debug-session.sh <session-id>
@@ -107,7 +107,7 @@ PYEOF
     fi
   else
     err "Server not reachable at $SERVER_URL"
-    python3 "$HOME/.claude/skills/oppi-server-session/scripts/session-lookup.py" list --limit 5
+    python3 "$SCRIPT_DIR/session-lookup.py" list --limit 5
     echo ""
     read -rp "Session ID: " SESSION_ID
     [[ -z "$SESSION_ID" ]] && exit 0
@@ -292,7 +292,7 @@ heading "Server log (recent)"
 
 SERVER_PANE=""
 for win in $(tmux list-windows -t main -F '#{window_name}' 2>/dev/null || true); do
-  if [[ "$win" == *"oppi-server"* || "$win" == *"server"* ]]; then
+  if [[ "$win" == *"oppi"* || "$win" == *"server"* ]]; then
     SERVER_PANE="main:$win"
     break
   fi
@@ -308,7 +308,7 @@ if [[ -n "$SERVER_PANE" ]]; then
     dim "  (no log lines for $SESSION_ID in tmux)"
   fi
 else
-  dim "  (no oppi-server tmux window found)"
+  dim "  (no oppi tmux window found)"
 fi
 
 echo ""

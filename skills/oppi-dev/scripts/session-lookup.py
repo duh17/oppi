@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Look up pi-remote sessions from filesystem or REST API.
+"""Look up Oppi sessions from filesystem or REST API.
 
 Usage:
     session-lookup.py list [--limit N]       List recent sessions
@@ -17,7 +17,7 @@ import glob
 import datetime
 from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".config" / "pi-remote"
+CONFIG_DIR = Path.home() / ".config" / "oppi"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
 USERS_FILE = CONFIG_DIR / "users.json"
 

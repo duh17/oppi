@@ -40,13 +40,11 @@ describe("permission log redaction", () => {
       requestId: "perm-1",
       sessionId: "sess-1",
       tool: "bash",
-      risk: "critical",
       displaySummary: summary,
     });
 
     expect(line).toContain("[gate] Permission request perm-1 (session=sess-1");
     expect(line).toContain("tool=bash");
-    expect(line).toContain("risk=critical");
     expect(line).toContain(`summaryChars=${summary.length}`);
     expect(line).not.toContain(summary);
     expect(line).not.toContain("auth.json");

@@ -33,6 +33,13 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
 
+    private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }()
+
     init(configuration: UserTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
@@ -84,6 +91,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = 10
         bubbleContainer.clipsToBounds = true
+        bubbleContainer.addGestureRecognizer(bubbleDoubleTapGesture)
 
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
@@ -246,6 +254,54 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
         return nil
     }
+
+    @objc private func handleBubbleDoubleTapCopy() {
+        let text = currentConfiguration.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        TimelineCopyFeedback.copy(
+            text,
+            feedbackView: bubbleContainer,
+            trimWhitespaceAndNewlines: true
+        )
+    }
+
+    func contextMenu() -> UIMenu? {
+        let text = currentConfiguration.text
+        let images = currentConfiguration.images
+        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
+
+        guard hasCopyText || hasForkAction || !images.isEmpty else {
+            return nil
+        }
+
+        var actions: [UIMenuElement] = []
+
+        if hasCopyText {
+            actions.append(
+                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                    self?.copyToPasteboard(text)
+                }
+            )
+        }
+
+        if hasForkAction, let onFork = currentConfiguration.onFork {
+            actions.append(
+                UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
+                    onFork()
+                }
+            )
+        }
+
+        return UIMenu(title: "", children: actions)
+    }
 }
 
 // MARK: - Context Menu
@@ -255,35 +311,12 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let text = currentConfiguration.text
-        let images = currentConfiguration.images
-        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
-
-        guard hasCopyText || hasForkAction || !images.isEmpty else { return nil }
+        guard contextMenu() != nil else {
+            return nil
+        }
 
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self else { return nil }
-
-            var actions: [UIMenuElement] = []
-
-            if hasCopyText {
-                actions.append(
-                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
-                        UIPasteboard.general.string = text
-                    }
-                )
-            }
-
-            if hasForkAction, let onFork = self.currentConfiguration.onFork {
-                actions.append(
-                    UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
-                        onFork()
-                    }
-                )
-            }
-
-            return UIMenu(title: "", children: actions)
+            self?.contextMenu()
         }
     }
 }

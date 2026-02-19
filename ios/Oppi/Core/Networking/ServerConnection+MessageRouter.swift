@@ -45,10 +45,12 @@ extension ServerConnection {
             permissionStore.add(perm)
             // Feed coalescer for Live Activity badge count, but NOT the reducer timeline.
             coalescer.receive(.permissionRequest(perm))
-            PermissionNotificationService.shared.notifyIfNeeded(
-                perm,
-                activeSessionId: sessionStore.activeSessionId
-            )
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.notifyIfNeeded(
+                    perm,
+                    activeSessionId: sessionStore.activeSessionId
+                )
+            }
             syncLiveActivityPermissions()
 
         case .permissionExpired(let id, _):
@@ -59,7 +61,9 @@ extension ServerConnection {
                 )
             }
             coalescer.receive(.permissionExpired(id: id))
-            PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            }
             syncLiveActivityPermissions()
 
         case .permissionCancelled(let id):
@@ -69,7 +73,9 @@ extension ServerConnection {
                     tool: request.tool, summary: request.displaySummary
                 )
             }
-            PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            }
             syncLiveActivityPermissions()
 
         // Agent events → pipeline
@@ -280,6 +286,10 @@ extension ServerConnection {
     // MARK: - Live Activity Sync
 
     func syncLiveActivityPermissions() {
+        guard ReleaseFeatures.liveActivitiesEnabled else {
+            return
+        }
+
         LiveActivityManager.shared.syncPermissions(
             permissionStore.pending,
             sessions: sessionStore.sessions,

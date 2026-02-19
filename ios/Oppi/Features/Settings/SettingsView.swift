@@ -8,13 +8,9 @@ struct SettingsView: View {
     @Environment(ThemeStore.self) private var themeStore
 
     @State private var biometricEnabled = BiometricService.shared.isEnabled
-    @State private var biometricThreshold = BiometricService.shared.threshold
     @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
         forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
     ) as? Bool ?? true
-    @State private var coloredThinkingBorder = UserDefaults.standard.bool(
-        forKey: coloredThinkingBorderDefaultsKey
-    )
     @State private var showAddServer = false
     @State private var renameServerId: String?
     @State private var renameServerText = ""
@@ -26,16 +22,18 @@ struct SettingsView: View {
                 ForEach(serverStore.servers) { server in
                     NavigationLink(value: server) {
                         HStack(spacing: 10) {
-                            Image(systemName: "server.rack")
-                                .font(.caption)
-                                .foregroundStyle(server.id == connection.currentServerId ? .green : .secondary)
+                            RuntimeBadge(
+                                compact: true,
+                                icon: server.resolvedBadgeIcon,
+                                badgeColor: server.resolvedBadgeColor
+                            )
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(server.name)
                                     .font(.subheadline.weight(.medium))
                                 Text("\(server.host):\(server.port)")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.themeComment)
                             }
 
                             Spacer()
@@ -43,7 +41,7 @@ struct SettingsView: View {
                             if server.id == connection.currentServerId {
                                 Text("Active")
                                     .font(.caption2)
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(.themeGreen)
                             }
                         }
                     }
@@ -71,20 +69,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Connection") {
-                HStack {
-                    Circle()
-                        .fill(connection.isConnected ? .green : .red)
-                        .frame(width: 8, height: 8)
-                    Text(connection.isConnected ? "Connected" : "Disconnected")
-                        .font(.subheadline)
-                }
-
-                Label("Security posture managed on server", systemImage: "shield.lefthalf.filled")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Appearance") {
                 Picker("Theme", selection: Binding(
                     get: { themeStore.selectedThemeID },
@@ -103,26 +87,10 @@ struct SettingsView: View {
 
                 Text(themeStore.selectedThemeID.detail)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
 
                 NavigationLink("Import from Server") {
                     ThemeImportView()
-                }
-
-                Toggle("Colored thinking border", isOn: $coloredThinkingBorder)
-                    .onChange(of: coloredThinkingBorder) { _, newValue in
-                        UserDefaults.standard.set(
-                            newValue,
-                            forKey: coloredThinkingBorderDefaultsKey
-                        )
-                    }
-            }
-
-            Section("Workspaces") {
-                NavigationLink {
-                    WorkspaceListView()
-                } label: {
-                    Label("Manage Workspaces", systemImage: "square.grid.2x2")
                 }
             }
 
@@ -145,16 +113,18 @@ struct SettingsView: View {
 
             biometricSection
 
-            Section {
-                NavigationLink {
-                    DictationSettingsView()
-                } label: {
-                    Label("Dictation", systemImage: "mic")
+            if ReleaseFeatures.composerDictationEnabled {
+                Section {
+                    NavigationLink {
+                        DictationSettingsView()
+                    } label: {
+                        Label("Dictation", systemImage: "mic")
+                    }
+                } header: {
+                    Text("Voice Input")
+                } footer: {
+                    Text("Configure speech-to-text for voice dictation in the composer.")
                 }
-            } header: {
-                Text("Voice Input")
-            } footer: {
-                Text("Configure speech-to-text for voice dictation in the composer.")
             }
 
             Section("Cache") {
@@ -225,22 +195,11 @@ struct SettingsView: View {
             .onChange(of: biometricEnabled) { _, newValue in
                 bio.isEnabled = newValue
             }
-
-            if biometricEnabled {
-                Picker("Minimum Risk Level", selection: $biometricThreshold) {
-                    Text("High + Critical").tag(RiskLevel.high)
-                    Text("Critical Only").tag(RiskLevel.critical)
-                    Text("All Permissions").tag(RiskLevel.low)
-                }
-                .onChange(of: biometricThreshold) { _, newValue in
-                    bio.threshold = newValue
-                }
-            }
         } header: {
             Text("Biometric Approval")
         } footer: {
             if biometricEnabled {
-                Text("Permissions at or above \(biometricThreshold.label.lowercased()) risk require \(bio.biometricName) to approve. Deny is always one tap.")
+                Text("All permission approvals require \(bio.biometricName). Deny is always one tap.")
             } else {
                 Text("All permissions can be approved with a simple tap.")
             }
@@ -266,4 +225,3 @@ struct SettingsView: View {
         }
     }
 }
-

@@ -2,31 +2,36 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd -- "$IOS_DIR/.." && pwd)"
 
 PORT=7749
 WAIT_SECONDS=20
-RESTART_SERVER=1
+RESTART_SERVER=0
 NO_LAUNCH=0
 DEBUG=0
 FORWARD_ARGS=()
-LAUNCHD_LABEL="com.oppi.oppi-server"
-LOG_PATH="$HOME/.local/var/log/oppi-server.log"
+LAUNCHD_LABEL="${OPPI_LAUNCHD_LABEL:-dev.chenda.oppi}"
+LOG_PATH="${OPPI_SERVER_LOG_PATH:-$HOME/.local/var/log/oppi.log}"
+SERVER_ACTION="unknown"
 
 usage() {
   cat <<'EOF'
 Repeatable local iOS dev flow:
-1) Ensure oppi-server server is running (launchd)
+1) Ensure Oppi server is running (launchd)
 2) Build + install Oppi to iPhone
 
 Usage:
-  scripts/ios-dev-up.sh [options] [-- <build-install args>]
+  ios/scripts/ios-dev-up.sh [options] [-- <build-install args>]
 
 Options:
       --port <n>               server port readiness check (default: 7749)
       --wait <seconds>         wait timeout for server port (default: 20)
-      --no-restart-server      skip server restart if already running
+      --restart-server         force launchd restart even if already running
+      --no-restart-server      keep server if already running (default)
       --no-launch              do not force --launch for iOS app
+      --release                build/install Release configuration
+      --debug-build            build/install Debug configuration
       --debug                  shell debug mode (`set -x`)
   -h, --help                   show help
 
@@ -34,9 +39,9 @@ Any args after `--` are forwarded to ios/scripts/build-install.sh.
 If no launch arg is provided, this script adds --launch by default.
 
 Examples:
-  scripts/ios-dev-up.sh
-  scripts/ios-dev-up.sh -- --device 00008140-00161DAC26E3001C
-  scripts/ios-dev-up.sh --no-launch -- --skip-generate
+  ios/scripts/ios-dev-up.sh
+  ios/scripts/ios-dev-up.sh --restart-server --release -- --device 00008140-00161DAC26E3001C
+  ios/scripts/ios-dev-up.sh --no-launch -- --skip-generate
 EOF
 }
 
@@ -68,7 +73,9 @@ restart_launchd_server() {
       launchctl load "$plist"
     else
       echo "error: launchd plist not found at $plist" >&2
-      echo "  Run: ~/.config/dotfiles/scripts/oppi-server.sh" >&2
+      echo "  Expected service label: $LAUNCHD_LABEL" >&2
+      echo "  Create/load the service first (example):" >&2
+      echo "    launchctl load ~/Library/LaunchAgents/dev.chenda.oppi.plist" >&2
       exit 1
     fi
   fi
@@ -78,10 +85,15 @@ ensure_server_running() {
   if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     if [[ $RESTART_SERVER -eq 1 ]]; then
       restart_launchd_server
+      SERVER_ACTION="restarted"
+    else
+      SERVER_ACTION="kept-running"
     fi
     return
   fi
+
   restart_launchd_server
+  SERVER_ACTION="started"
 }
 
 wait_for_server() {
@@ -101,8 +113,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --port)       PORT="${2:-}"; shift 2 ;;
     --wait)       WAIT_SECONDS="${2:-}"; shift 2 ;;
+    --restart-server) RESTART_SERVER=1; shift ;;
     --no-restart-server) RESTART_SERVER=0; shift ;;
     --no-launch)  NO_LAUNCH=1; shift ;;
+    --release)    FORWARD_ARGS+=("--release"); shift ;;
+    --debug-build) FORWARD_ARGS+=("--debug-build"); shift ;;
     --debug)      DEBUG=1; shift ;;
     -h|--help)    usage; exit 0 ;;
     --)           shift; FORWARD_ARGS+=("$@"); break ;;
@@ -116,11 +131,20 @@ require_cmd lsof
 
 ensure_server_running
 
-if [[ $RESTART_SERVER -eq 1 ]]; then
-  echo "==> Server restarted (launchd: $LAUNCHD_LABEL)"
-else
-  echo "==> Server already running"
-fi
+case "$SERVER_ACTION" in
+  restarted)
+    echo "==> Server restarted (launchd: $LAUNCHD_LABEL)"
+    ;;
+  started)
+    echo "==> Server started (launchd: $LAUNCHD_LABEL)"
+    ;;
+  kept-running)
+    echo "==> Server already running (no restart)"
+    ;;
+  *)
+    echo "==> Server status checked"
+    ;;
+esac
 
 if ! wait_for_server "$WAIT_SECONDS"; then
   echo "error: server did not start listening on port $PORT within ${WAIT_SECONDS}s" >&2
@@ -139,7 +163,7 @@ if [[ $NO_LAUNCH -eq 0 ]]; then
 fi
 
 echo "==> Deploying iOS app"
-"$ROOT_DIR/ios/scripts/build-install.sh" "${BUILD_ARGS[@]}"
+"$IOS_DIR/scripts/build-install.sh" "${BUILD_ARGS[@]}"
 
 echo "==> Done"
 echo "==> Server logs: tail -f $LOG_PATH"

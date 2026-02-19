@@ -4,6 +4,8 @@ Oppi renders agent conversations as a scrollable timeline of typed rows — assi
 
 This document covers the full rendering pipeline from server events to pixels.
 
+Related design plan: `docs/design/chat-interaction-unification-plan.md` (UIKit-first hot-path unification for copy/expand/full-screen behavior).
+
 ## Architecture Overview
 
 ```

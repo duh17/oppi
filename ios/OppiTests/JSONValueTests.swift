@@ -9,7 +9,7 @@ struct JSONValueTests {
         let json = """
         {"name":"test","count":42,"nested":{"flag":true,"items":[1,2,3]},"empty":null}
         """
-        let data = json.data(using: .utf8)!
+        let data = Data(json.utf8)
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
 
         guard case .object(let obj) = value else {

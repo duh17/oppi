@@ -121,9 +121,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         renderVersion &+= 1
     }
 
-    /// Drop non-essential in-memory state on iOS memory warning.
-    /// Keeps visible timeline rows intact, but clears expandable payloads
-    /// and strips heavy data (base64 images) from retained items.
+    // Drop non-essential in-memory state on iOS memory warning.
+    // Keeps visible timeline rows intact, but clears expandable payloads
+    // and strips heavy data (base64 images) from retained items.
+    // swiftlint:disable:next large_tuple
     func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int, imagesStripped: Int) {
         cancelMarkdownPrewarm()
 

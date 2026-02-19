@@ -11,7 +11,6 @@ struct WorkspaceEditView: View {
     @State private var description: String = ""
     @State private var icon: String = ""
     @State private var selectedSkills: Set<String> = []
-    @State private var runtime: String = "container"
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var memoryEnabled: Bool = false
@@ -66,7 +65,7 @@ struct WorkspaceEditView: View {
             Section("Skills") {
                 if skills.isEmpty {
                     Text("Loading skills…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 } else {
                     ForEach(skills) { skill in
                         SkillToggleRow(
@@ -87,32 +86,16 @@ struct WorkspaceEditView: View {
                 }
             }
 
-            Section("Runtime") {
-                Picker("Runtime", selection: $runtime) {
-                    Text("Container").tag("container")
-                    Text("Host").tag("host")
-                }
-                .pickerStyle(.segmented)
-
-                Text(runtime == "container"
-                     ? "Container runtime: isolated environment."
-                     : "Host runtime: direct process on macOS host.")
-                    .font(.caption)
-                    .foregroundStyle(runtime == "container" ? .themeGreen : .themeOrange)
-            }
-
-            Section(runtime == "container" ? "Workspace Mount" : "Host Working Directory") {
+            Section("Host Working Directory") {
                 TextField("~/workspace/project", text: $hostMount)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
 
                 if !hostMount.isEmpty {
-                    Text(runtime == "container"
-                         ? "Host directory mounted as /work in container"
-                         : "Host process current directory")
+                    Text("Host process current directory")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
@@ -126,21 +109,21 @@ struct WorkspaceEditView: View {
 
                     Text("Same namespace across workspaces shares memory")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
             Section("Extensions") {
                 Text("Named extensions from ~/.pi/agent/extensions.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
 
                 if isLoadingExtensions && availableExtensions.isEmpty {
                         Text("Loading available extensions…")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else if availableExtensions.isEmpty {
                         Text("No discoverable extensions found.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else {
                         ForEach(availableExtensions) { ext in
                             Button {
@@ -152,24 +135,24 @@ struct WorkspaceEditView: View {
                                             .font(.body)
                                         Text(ext.kind)
                                             .font(.caption2.monospaced())
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.themeComment)
                                     }
 
                                     Spacer()
 
                                     Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .secondary)
+                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
                                         .imageScale(.large)
                                 }
                             }
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
                         }
                     }
 
                     if !manualExtensionNames.isEmpty {
                         Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
 
                     TextField("Selected names (comma separated)", text: $extensionNames)
@@ -202,7 +185,7 @@ struct WorkspaceEditView: View {
                             }
                         }
                     }
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.themeFg)
                 }
             }
 
@@ -225,13 +208,13 @@ struct WorkspaceEditView: View {
 
                 Text("Appended to the base agent prompt")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
             }
 
             if let error {
                 Section {
                     Text(error)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.themeRed)
                         .font(.caption)
                 }
             }
@@ -308,7 +291,6 @@ struct WorkspaceEditView: View {
         description = source.description ?? ""
         icon = source.icon ?? ""
         selectedSkills = Set(source.skills)
-        runtime = source.runtime
         hostMount = source.hostMount ?? ""
         systemPrompt = source.systemPrompt ?? ""
         memoryEnabled = source.memoryEnabled ?? false
@@ -350,7 +332,6 @@ struct WorkspaceEditView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
-            runtime: runtime,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,
             memoryEnabled: memoryEnabled,
@@ -382,37 +363,32 @@ private struct SkillToggleRow: View {
     let onShowDetail: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Button {
                 onToggle(!isSelected)
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text(skill.name)
-                                .font(.body)
-
-                            if !skill.containerSafe {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
-                        }
+                        Text(skill.name)
+                            .font(.body)
 
                         Text(skill.description)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .lineLimit(2)
                     }
 
                     Spacer()
 
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? .themeBlue : .secondary)
+                        .foregroundStyle(isSelected ? .themeBlue : .themeComment)
                         .imageScale(.large)
                 }
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.primary)
+            .buttonStyle(.plain)
+            .foregroundStyle(.themeFg)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: onShowDetail) {
                 Image(systemName: "chevron.right")

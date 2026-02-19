@@ -243,10 +243,8 @@ final class WorkspaceStore {
         serverOrder = servers.map(\.id)
 
         // Initialize freshness for new servers
-        for server in servers {
-            if serverFreshness[server.id] == nil {
-                serverFreshness[server.id] = ServerSyncState()
-            }
+        for server in servers where serverFreshness[server.id] == nil {
+            serverFreshness[server.id] = ServerSyncState()
         }
 
         // Show cached data immediately for servers not yet loaded

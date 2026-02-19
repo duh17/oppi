@@ -1,13 +1,7 @@
 /**
  * Session manager — pi agent lifecycle over RPC.
  *
- * Two runtime modes:
- *   host:      pi runs directly on the Mac as a child process.
- *   container: pi runs inside an Apple container via SandboxManager.
- *
- * Both modes use the same RPC protocol (JSON lines on stdin/stdout),
- * permission gate (TCP), and WebSocket bridge. The iOS app sees no
- * difference.
+ * Pi runs as a local child process.
  *
  * Handles:
  * - Session lifecycle (start, stop, idle timeout)
@@ -29,8 +23,6 @@ import type {
 } from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
-import type { SandboxManager } from "./sandbox.js";
-import type { AuthProxy } from "./auth-proxy.js";
 
 import {
   WorkspaceRuntime,
@@ -51,7 +43,6 @@ import {
 import {
   resolvePiExecutable,
   spawnPiHost,
-  spawnPiContainer,
   type SpawnDeps,
 } from "./session-spawn.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -64,6 +55,20 @@ function ts(): string {
   const s = String(d.getSeconds()).padStart(2, "0");
   const ms = String(d.getMilliseconds()).padStart(3, "0");
   return `${h}:${m}:${s}.${ms}`;
+}
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
 }
 
 /**
@@ -113,8 +118,6 @@ interface ActiveSession {
   session: Session;
   process: ChildProcess;
   workspaceId: string;
-  /** Runtime mode — determines how to stop the process. */
-  runtime: "host" | "container";
   subscribers: Set<(msg: ServerMessage) => void>;
   /** Pending RPC response callbacks keyed by request id */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
@@ -202,15 +205,14 @@ export class SessionManager extends EventEmitter {
   private storage: Storage;
   private config: ServerConfig;
   private gate: GateServer;
-  private sandbox: SandboxManager;
-  private authProxy: AuthProxy | null;
   private runtimeManager: WorkspaceRuntime;
   private active: Map<string, ActiveSession> = new Map();
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
-  private workspaceIdleTimers: Map<string, NodeJS.Timeout> = new Map();
   private rpcIdCounter = 0;
   private readonly piExecutable: string;
   private readonly mobileRenderers = new MobileRendererRegistry();
+  private readonly eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
+  private readonly resolveSkillPath?: (name: string) => string | undefined;
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -220,13 +222,16 @@ export class SessionManager extends EventEmitter {
   private saveTimer: NodeJS.Timeout | null = null;
   private readonly saveDebounceMs = 1000;
 
-  constructor(storage: Storage, gate: GateServer, sandbox: SandboxManager, authProxy?: AuthProxy) {
+  constructor(
+    storage: Storage,
+    gate: GateServer,
+    opts?: { resolveSkillPath?: (name: string) => string | undefined },
+  ) {
     super();
     this.storage = storage;
     this.config = storage.getConfig();
     this.gate = gate;
-    this.sandbox = sandbox;
-    this.authProxy = authProxy ?? null;
+    this.resolveSkillPath = opts?.resolveSkillPath;
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
     this.piExecutable = resolvePiExecutable();
 
@@ -247,21 +252,14 @@ export class SessionManager extends EventEmitter {
   private starting: Map<string, Promise<Session>> = new Map();
 
   /**
-   * Single-user runtime key.
+   * Single-user session key.
    */
   private sessionKey(sessionId: string): string {
     return sessionId;
   }
 
   /**
-   * Single-user workspace idle key.
-   */
-  private workspaceIdleKey(workspaceId: string): string {
-    return workspaceId;
-  }
-
-  /**
-   * Start a new session — spawns pi on the host or in a container.
+   * Start a new session — spawns pi as a local process.
    */
   async startSession(
     sessionId: string,
@@ -318,64 +316,13 @@ export class SessionManager extends EventEmitter {
       async () => {
         this.runtimeManager.reserveSessionStart(identity);
 
-        const runtime = workspace?.runtime ?? "host";
-
         try {
-          if (runtime === "container") {
-            this.clearWorkspaceIdleTimer(identity.workspaceId);
-          }
-
-          const proc =
-            runtime === "host"
-              ? await spawnPiHost(session, workspace, this.spawnDeps)
-              : await spawnPiContainer(session, identity.workspaceId, userName, workspace, this.spawnDeps);
-
-          // Validate sandbox (container mode only — host mode has no sandbox to validate)
-          if (runtime === "container") {
-            const { errors, warnings } = this.sandbox.validateSession(sessionId, {
-              memoryEnabled: workspace?.memoryEnabled,
-              workspaceId: identity.workspaceId,
-            });
-
-            if (errors.length > 0) {
-              for (const e of errors)
-                console.error(`${ts()} [session:${sessionId}] bootstrap error: ${e}`);
-              for (const w of warnings)
-                console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
-              session.status = "error";
-              session.warnings = [...errors, ...warnings];
-              this.storage.saveSession(session);
-
-              if (!proc.killed) {
-                proc.kill("SIGTERM");
-              }
-
-              // If this was the only session attempt for the workspace, stop
-              // the workspace container so we don't leave an idle shell around.
-              if (
-                this.runtimeManager.getWorkspaceSessionCount(
-                                    identity.workspaceId,
-                ) <= 1
-              ) {
-                await this.sandbox.stopWorkspaceContainer(identity.workspaceId);
-              }
-
-              this.gate.destroySessionSocket(sessionId);
-              throw new Error(`Session bootstrap failed: ${errors[0]}`);
-            }
-
-            if (warnings.length > 0) {
-              session.warnings = warnings;
-              for (const w of warnings)
-                console.warn(`${ts()} [session:${sessionId}] bootstrap warning: ${w}`);
-            }
-          }
+          const proc = await spawnPiHost(session, workspace, this.spawnDeps);
 
           const activeSession: ActiveSession = {
             session,
             process: proc,
             workspaceId: identity.workspaceId,
-            runtime,
             subscribers: new Set(),
             pendingResponses: new Map(),
             pendingUIRequests: new Map(),
@@ -384,38 +331,28 @@ export class SessionManager extends EventEmitter {
             turnCache: new TurnDedupeCache(),
             pendingTurnStarts: [],
             seq: 0,
-            eventRing: new EventRing(),
+            eventRing: new EventRing(this.eventRingCapacity),
           };
 
           this.active.set(key, activeSession);
           this.runtimeManager.markSessionReady(identity);
 
           session.status = "ready";
-          session.runtime = runtime;
           session.lastActivity = Date.now();
           this.persistSessionNow(key, session);
           this.resetIdleTimer(key);
 
           // Best-effort: capture pi session file/UUID from get_state so trace
-          // loading works for host runtime sessions too.
+          // loading works after reconnects/restarts.
           void this.bootstrapSessionState(key);
 
           return session;
         } catch (err) {
-          // Gate socket may have been created inside spawnPiHost/spawnPiContainer
+          // Gate socket may have been created inside spawnPiHost
           // before the error — always clean up.
           this.gate.destroySessionSocket(sessionId);
-          this.authProxy?.removeSession(sessionId);
 
           this.runtimeManager.releaseSession(identity);
-
-          if (
-            runtime === "container" &&
-            this.runtimeManager.getWorkspaceSessionCount(identity.workspaceId) ===
-              0
-          ) {
-            await this.sandbox.stopWorkspaceContainer(identity.workspaceId);
-          }
 
           throw err;
         }
@@ -451,10 +388,9 @@ export class SessionManager extends EventEmitter {
   private get spawnDeps(): SpawnDeps {
     return {
       gate: this.gate,
-      sandbox: this.sandbox,
-      authProxy: this.authProxy,
       piExecutable: this.piExecutable,
       globalPolicy: this.storage.getConfig().policy,
+      resolveSkillPath: this.resolveSkillPath,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
     };
@@ -927,7 +863,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Best-effort bootstrap of pi session metadata (session file/UUID).
    *
-   * Needed so stopped host sessions can still reconstruct trace history.
+   * Needed so stopped sessions can still reconstruct trace history.
    */
   private async bootstrapSessionState(key: string): Promise<void> {
     const active = this.active.get(key);
@@ -947,7 +883,7 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Refresh live pi state for an active session and return trace metadata.
-   * Used by REST trace endpoint to recover host-session traces.
+   * Used by REST trace endpoint to recover session traces.
    */
   async refreshSessionState(
     sessionId: string,
@@ -1582,9 +1518,8 @@ export class SessionManager extends EventEmitter {
     active.session.status = "stopped";
     this.persistSessionNow(key, active.session);
 
-    // Clean up gate socket and auth proxy registration
+    // Clean up gate socket
     this.gate.destroySessionSocket(active.session.id);
-    this.authProxy?.removeSession(active.session.id);
 
     // Reject pending RPC responses
     for (const [_id, handler] of active.pendingResponses) {
@@ -1614,9 +1549,6 @@ export class SessionManager extends EventEmitter {
       sessionId: active.session.id,
     });
 
-    if (active.runtime === "container" && !this.hasActiveContainerSession(active.workspaceId)) {
-      this.scheduleWorkspaceIdleStop(active.workspaceId);
-    }
   }
 
   // ─── Subscribe / Broadcast ───
@@ -1913,9 +1845,7 @@ export class SessionManager extends EventEmitter {
         // Wait briefly then stop
         await new Promise((r) => setTimeout(r, this.stopSessionGraceMs));
 
-        // Host mode and container mode both stop the session process directly.
-        // In container runtime this is the `container exec` child process;
-        // workspace container lifecycle is managed separately.
+        // Stop the session process directly.
         this.forceTerminateSessionProcess(key, active, "user");
       });
     });
@@ -1932,13 +1862,6 @@ export class SessionManager extends EventEmitter {
         return this.stopSession(active.session.id);
       }),
     );
-
-    for (const timer of this.workspaceIdleTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.workspaceIdleTimers.clear();
-
-    await this.sandbox.stopAll();
   }
 
   // ─── State Queries ───
@@ -2000,46 +1923,5 @@ export class SessionManager extends EventEmitter {
       clearTimeout(timer);
       this.idleTimers.delete(key);
     }
-  }
-
-  private workspaceKey(workspaceId: string): string {
-    return this.workspaceIdleKey(workspaceId);
-  }
-
-  private clearWorkspaceIdleTimer(workspaceId: string): void {
-    const key = this.workspaceKey(workspaceId);
-    const timer = this.workspaceIdleTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      this.workspaceIdleTimers.delete(key);
-    }
-  }
-
-  private hasActiveContainerSession(workspaceId: string): boolean {
-    for (const active of this.active.values()) {
-      if (active.runtime === "container" && active.workspaceId === workspaceId) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private scheduleWorkspaceIdleStop(workspaceId: string): void {
-    this.clearWorkspaceIdleTimer(workspaceId);
-
-    const key = this.workspaceKey(workspaceId);
-    const timeoutMs = this.runtimeManager.getLimits().workspaceIdleTimeoutMs;
-
-    const timer = setTimeout(() => {
-      if (this.hasActiveContainerSession(workspaceId)) {
-        return;
-      }
-
-      console.log(`${ts()} [workspace] idle timeout: ${key}`);
-      void this.sandbox.stopWorkspaceContainer(workspaceId);
-      this.workspaceIdleTimers.delete(key);
-    }, timeoutMs);
-
-    this.workspaceIdleTimers.set(key, timer);
   }
 }

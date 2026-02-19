@@ -40,7 +40,7 @@ struct OnboardingView: View {
 
                 Text("Control your pi agents\nfrom your phone.")
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
                     .multilineTextAlignment(.center)
             }
 
@@ -75,17 +75,17 @@ struct OnboardingView: View {
 
                 case .success:
                     Label("Connected!", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(.themeGreen)
                         .font(.headline)
 
                 case .failed(let error):
                     VStack(spacing: 8) {
                         Label("Connection failed", systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                             .font(.headline)
                         Text(error)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
 
                         Button("Try Again") {
                             if canScan {

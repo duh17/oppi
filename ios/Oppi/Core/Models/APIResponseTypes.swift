@@ -18,7 +18,6 @@ struct CreateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     let skills: [String]
-    var runtime: String?
     var systemPrompt: String?
     var hostMount: String?
     var memoryEnabled: Bool?
@@ -32,7 +31,6 @@ struct UpdateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     var skills: [String]?
-    var runtime: String?
     var systemPrompt: String?
     var hostMount: String?
     var memoryEnabled: Bool?

@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$HOME/workspace/oppi"
 
-STATE_DIR="$HOME/.config/oppi-server/live-debug"
+STATE_DIR="$HOME/.config/oppi/live-debug"
 PID_FILE="$STATE_DIR/idevicesyslog.pid"
 SESSION_FILE="$STATE_DIR/session.json"
 
@@ -25,7 +25,7 @@ LOG_DIR="$HOME/Library/Logs/Oppi/device"
 DEVICE_LOG="$LOG_DIR/live.log"
 
 SERVER_URL="${PI_REMOTE_URL:-http://localhost:7749}"
-USERS_FILE="$HOME/.config/oppi-server/users.json"
+USERS_FILE="$HOME/.config/oppi/users.json"
 
 # Colors
 RED='\033[0;31m'
@@ -60,7 +60,7 @@ auth() { curl -sf -H "Authorization: Bearer $(get_token)" "$@"; }
 
 find_server_pane() {
   for win in $(tmux list-windows -t main -F '#{window_name}' 2>/dev/null || true); do
-    if [[ "$win" == *"oppi-server"* || "$win" == *"server"* ]]; then
+    if [[ "$win" == *"oppi"* || "$win" == *"server"* ]]; then
       echo "main:$win"
       return
     fi
@@ -70,7 +70,7 @@ find_server_pane() {
 resolve_device_udid() {
   local query="${1:-}"
   local device_json
-  device_json="$(mktemp -t piremote-devices)"
+  device_json="$(mktemp -t oppi-devices)"
   trap 'rm -f "$device_json"' RETURN
   xcrun devicectl list devices --json-output "$device_json" >/dev/null 2>&1 || return 1
 
@@ -312,7 +312,7 @@ cmd_check() {
     heading "Session trace (last 10 events)"
     if [[ -n "$session_id" ]]; then
       local session_json tmpfile
-      tmpfile=$(mktemp -t piremote-trace)
+      tmpfile=$(mktemp -t oppi-trace)
       if auth "$SERVER_URL/sessions/$session_id" > "$tmpfile" 2>/dev/null; then
         python3 - "$tmpfile" "$grep_pattern" <<'PYEOF'
 import json, sys

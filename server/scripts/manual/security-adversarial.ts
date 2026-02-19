@@ -4,13 +4,13 @@
  *
  * Usage:
  *   cd server
- *   npx tsx tests/security-adversarial.ts
+ *   npx tsx scripts/manual/security-adversarial.ts
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Storage } from "../src/storage.js";
+import { Storage } from "../../src/storage.js";
 
 let passed = 0;
 let failed = 0;
@@ -45,8 +45,8 @@ async function main(): Promise<void> {
     const replayToken = storage.consumePairingToken(pairingToken);
     check("replay pairing token is rejected", replayToken === null);
 
-    const shortLived = storage.issuePairingToken(1);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const shortLived = storage.issuePairingToken(1_000);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
     const expired = storage.consumePairingToken(shortLived);
     check("expired pairing token is rejected", expired === null);
 

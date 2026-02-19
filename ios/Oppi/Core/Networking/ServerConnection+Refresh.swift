@@ -244,7 +244,9 @@ extension ServerConnection {
                 id: request.id, outcome: .expired,
                 tool: request.tool, summary: request.displaySummary
             )
-            PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
+            }
         }
         if !expiredRequests.isEmpty {
             syncLiveActivityPermissions()

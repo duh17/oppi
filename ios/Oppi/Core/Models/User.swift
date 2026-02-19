@@ -55,7 +55,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     ///
     /// Supported format:
     /// - unsigned v3 payload (current)
-    static func decodeInvitePayload(_ payload: String) -> ServerCredentials? {
+    static func decodeInvitePayload(_ payload: String) -> Self? {
         guard let data = payload.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
 
@@ -69,7 +69,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             return nil
         }
 
-        return ServerCredentials(
+        return Self(
             host: v3.host,
             port: v3.port,
             token: v3.token,
@@ -86,7 +86,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     /// - `pi://pair?...`
     /// - `oppi://connect?...`
     /// - `oppi://pair?...`
-    static func decodeInviteURL(_ url: URL) -> ServerCredentials? {
+    static func decodeInviteURL(_ url: URL) -> Self? {
         guard let scheme = url.scheme?.lowercased(),
               scheme == "pi" || scheme == "oppi" else {
             return nil
@@ -129,7 +129,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     }
 
     /// Decode a deep-link invite from raw text.
-    static func decodeInviteURLString(_ value: String) -> ServerCredentials? {
+    static func decodeInviteURLString(_ value: String) -> Self? {
         guard let url = URL(string: value) else { return nil }
         return decodeInviteURL(url)
     }
@@ -140,8 +140,8 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    func withAuthToken(_ newToken: String) -> ServerCredentials {
-        ServerCredentials(
+    func withAuthToken(_ newToken: String) -> Self {
+        Self(
             host: host,
             port: port,
             token: newToken,

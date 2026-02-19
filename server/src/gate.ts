@@ -1,8 +1,8 @@
 /**
  * Permission gate — TCP server for pi extension communication.
  *
- * Each pi session gets its own TCP port on localhost. The extension
- * inside the container connects to host-gateway (192.168.64.1) on that port.
+ * Each pi session gets its own TCP port on localhost. The permission-gate
+ * extension inside the pi subprocess connects to that port.
  *
  * Protocol: newline-delimited JSON over TCP.
  *
@@ -13,7 +13,7 @@
  *
  * Server → Extension:
  *   { type: "guard_ack", status: "ok" }
- *   { type: "gate_result", action: "allow" | "deny", reason?, risk? }
+ *   { type: "gate_result", action: "allow" | "deny", reason? }
  *   { type: "heartbeat_ack" }
  */
 
@@ -21,7 +21,7 @@ import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { generateId } from "./id.js";
-import type { PolicyEngine, RiskLevel } from "./policy.js";
+import type { PolicyEngine } from "./policy.js";
 import {
   addDomainToAllowlist,
   removeDomainFromAllowlist,
@@ -54,7 +54,6 @@ export interface PendingDecision {
   input: Record<string, unknown>;
   toolCallId: string;
   displaySummary: string;
-  risk: RiskLevel;
   reason: string;
   createdAt: number;
   timeoutAt: number;
@@ -94,7 +93,7 @@ const HEARTBEAT_TIMEOUT_MS = 45_000; // Extension sends every 15s, we expect wit
 const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
-const TCP_HOST = "0.0.0.0"; // Listen on all interfaces (containers connect via host-gateway)
+const TCP_HOST = "0.0.0.0"; // Listen on all interfaces for local extension connectivity
 
 // ─── Gate Server ───
 
@@ -145,7 +144,7 @@ export class GateServer extends EventEmitter {
 
   /**
    * Create a TCP socket for a session. Returns a promise that resolves to the port number.
-   * The extension inside the container connects to host-gateway (192.168.64.1) on this port.
+   * The session's permission-gate extension connects to this port.
    */
   async createSessionSocket(
     sessionId: string,
@@ -268,7 +267,6 @@ export class GateServer extends EventEmitter {
       const context = {
         sessionId: pending.sessionId,
         workspaceId: pending.workspaceId,
-        risk: pending.risk || "medium",
       };
 
       const suggest =
@@ -307,7 +305,6 @@ export class GateServer extends EventEmitter {
       workspaceId: pending.workspaceId,
       tool: pending.tool,
       displaySummary: pending.displaySummary,
-      risk: pending.risk || "medium",
       decision: action,
       resolvedBy: "user",
       layer: "user_response",
@@ -509,7 +506,6 @@ export class GateServer extends EventEmitter {
         workspaceId: guard.workspaceId,
         tool: msg.tool,
         displaySummary,
-        risk: decision.risk,
         decision: "allow",
         resolvedBy: "policy",
         layer: decision.layer,
@@ -527,7 +523,6 @@ export class GateServer extends EventEmitter {
         workspaceId: guard.workspaceId,
         tool: msg.tool,
         displaySummary,
-        risk: decision.risk,
         decision: "deny",
         resolvedBy: "policy",
         layer: decision.layer,
@@ -558,7 +553,6 @@ export class GateServer extends EventEmitter {
         input: msg.input,
         toolCallId: msg.toolCallId,
         displaySummary,
-        risk: decision.risk,
         reason: decision.reason,
         createdAt,
         timeoutAt,
@@ -577,7 +571,6 @@ export class GateServer extends EventEmitter {
               workspaceId: guard.workspaceId,
               tool: msg.tool,
               displaySummary,
-              risk: decision.risk,
               decision: "deny",
               resolvedBy: "timeout",
               layer: "timeout",
@@ -619,7 +612,6 @@ export class GateServer extends EventEmitter {
           workspaceId: pd.workspaceId,
           tool: pd.tool,
           displaySummary: pd.displaySummary,
-          risk: pd.risk || "medium",
           decision: "deny",
           resolvedBy: "extension_lost",
           layer: "extension_lost",

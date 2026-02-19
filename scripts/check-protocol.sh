@@ -44,8 +44,24 @@ echo ""
 echo -e "${BOLD}[3/3] iOS protocol tests...${NC}"
 cd "$REPO_ROOT/ios"
 
-# Find a simulator
-SIM_ID=$(xcrun simctl list devices available -j 2>/dev/null | python3 -c "
+# Find an iPhone simulator destination that xcodebuild accepts.
+# Prefer xcodebuild's own destination list (most reliable for this scheme),
+# then fall back to simctl if needed.
+SIM_ID=$(xcodebuild -scheme Oppi -showdestinations 2>&1 | awk '
+  /platform:iOS Simulator/ && /name:iPhone/ && $0 !~ /placeholder/ {
+    line = $0
+    sub(/^.*id:/, "", line)
+    sub(/,.*/, "", line)
+    gsub(/[[:space:]]/, "", line)
+    if (line != "") {
+      print line
+      exit
+    }
+  }
+')
+
+if [ -z "$SIM_ID" ]; then
+    SIM_ID=$(xcrun simctl list devices available -j 2>/dev/null | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for runtime, devices in data.get('devices', {}).items():
@@ -55,6 +71,7 @@ for runtime, devices in data.get('devices', {}).items():
             print(d['udid'])
             sys.exit(0)
 " 2>/dev/null || echo "")
+fi
 
 if [ -z "$SIM_ID" ]; then
     echo -e "${RED}✗ No iOS simulator found${NC}"

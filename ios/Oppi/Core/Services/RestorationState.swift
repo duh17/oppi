@@ -25,7 +25,7 @@ struct RestorationState: Codable {
 
     @MainActor
     static func save(from connection: ServerConnection, coordinator: ConnectionCoordinator, navigation: AppNavigation) {
-        let state = RestorationState(
+        let state = Self(
             version: schemaVersion,
             activeSessionId: connection.sessionStore.activeSessionId,
             activeServerId: coordinator.activeServerId,
@@ -45,9 +45,9 @@ struct RestorationState: Codable {
 
     /// Load restoration state if fresh enough (< 1 hour old).
     /// Accepts both v1 (no activeServerId) and v2 schemas.
-    static func load() -> RestorationState? {
+    static func load() -> Self? {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let state = try? JSONDecoder().decode(RestorationState.self, from: data),
+              let state = try? JSONDecoder().decode(Self.self, from: data),
               state.version >= 1 && state.version <= schemaVersion,
               Date().timeIntervalSince(state.timestamp) < 3600  // 1 hour freshness
         else {

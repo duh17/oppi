@@ -18,9 +18,6 @@ import UIKit
 /// - `+` and any additional controls (model/thinking pills) sit in a
 ///   dedicated action row below the capsule.
 /// - Expand stays on the trailing side without taking text width.
-/// UserDefaults key for the colored thinking-level border on the composer capsule.
-let coloredThinkingBorderDefaultsKey = "\(AppIdentifiers.subsystem).chat.coloredThinkingBorder"
-
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
@@ -175,7 +172,9 @@ struct ChatInputBar<ActionRow: View>: View {
             // Action row: attach (fixed) + pills/controls (trailing)
             HStack(spacing: 6) {
                 attachButton
-                if let dictationService, isDictationEnabled {
+                if ReleaseFeatures.composerDictationEnabled,
+                   let dictationService,
+                   isDictationEnabled {
                     dictationButton(service: dictationService)
                 }
                 actionRow()

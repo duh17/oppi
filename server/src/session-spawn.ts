@@ -1,5 +1,5 @@
 /**
- * Pi process spawning — host mode.
+ * Pi process spawning.
  *
  * Factory functions that create pi child processes with the correct
  * args, env vars, and extension configuration. Extracted from
@@ -16,7 +16,7 @@ import type { Session, Workspace, PolicyConfig as GlobalPolicyConfig } from "./t
 import { HOST_ENV, HOST_PATH } from "./host-env.js";
 import type { GateServer } from "./gate.js";
 import { resolveWorkspaceExtensions } from "./extension-loader.js";
-import { PolicyEngine, type PathAccess } from "./policy.js";
+import { PolicyEngine, defaultPolicy, type PathAccess } from "./policy.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -49,6 +49,8 @@ export interface SpawnDeps {
   piExecutable: string;
   /** Optional global declarative policy from server config. */
   globalPolicy?: GlobalPolicyConfig;
+  /** Resolve workspace skill name → host path (e.g. ~/.pi/agent/skills/<name>). */
+  resolveSkillPath?: (name: string) => string | undefined;
   /** Callback for each RPC line from pi stdout. */
   onRpcLine: (key: string, line: string) => void;
   /** Callback when pi process exits or errors. */
@@ -58,7 +60,7 @@ export interface SpawnDeps {
 // ─── Pi Executable Resolution ───
 
 /**
- * Resolve the pi executable path for host runtime sessions.
+ * Resolve the pi executable path for local session processes.
  *
  * tmux/systemd launches may have a minimal PATH that does not include npm
  * global bins. Prefer an explicit env override, then common install paths.
@@ -92,13 +94,49 @@ export function resolvePiExecutable(): string {
   return "pi";
 }
 
-// ─── Host Mode ───
+function appendWorkspaceSkills(
+  piArgs: string[],
+  session: Session,
+  workspace: Workspace,
+  resolveSkillPath?: (name: string) => string | undefined,
+): void {
+  // Workspace skill selection is authoritative for remote sessions.
+  // Disable default skill discovery and explicitly load only enabled skills.
+  piArgs.push("--no-skills");
+
+  const seen = new Set<string>();
+
+  for (const rawName of workspace.skills || []) {
+    const name = rawName.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+
+    const path = resolveSkillPath?.(name);
+    if (!path) {
+      console.warn(
+        `${ts()} [session:${session.id}] skill: "${name}" enabled in workspace but not found in registry`,
+      );
+      continue;
+    }
+
+    if (!existsSync(path)) {
+      console.warn(
+        `${ts()} [session:${session.id}] skill: "${name}" path missing on host: ${path}`,
+      );
+      continue;
+    }
+
+    piArgs.push("--skill", path);
+  }
+}
+
+// ─── Local Process Spawn ───
 
 /**
- * Spawn pi directly on the host — no container, no sandbox.
+ * Spawn pi directly as a local process.
  *
- * Pi runs as the current user with full access to the host filesystem.
- * The permission gate is the only security layer.
+ * Pi runs as the current user with full filesystem access.
+ * The permission gate is the primary security layer.
  */
 export async function spawnPiHost(
   session: Session,
@@ -114,7 +152,7 @@ export async function spawnPiHost(
   );
 
   // Configure per-session policy based on global + workspace declarative policy.
-  const defaultPolicyMode = "host";
+
   const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
 
   const allowedPaths: PathAccess[] = [
@@ -144,16 +182,16 @@ export async function spawnPiHost(
       }
     : undefined;
 
-  const policySource: string | GlobalPolicyConfig = mergedGlobalPolicy || defaultPolicyMode;
+  const policySource: string | GlobalPolicyConfig = mergedGlobalPolicy || defaultPolicy();
   const policy = new PolicyEngine(policySource, { allowedPaths, allowedExecutables });
   deps.gate.setSessionPolicy(session.id, policy);
   console.log(
-    `${ts()} [session:${session.id}] policy: mode=${policy.getPolicyMode()}, source=${deps.globalPolicy ? "global-policy" : `default-mode:${defaultPolicyMode}`}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
+    `${ts()} [session:${session.id}] policy: mode=${policy.getPolicyMode()}, source=${deps.globalPolicy ? "global-policy" : "default"}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
   );
 
   // Build pi args.
   //
-  // Host-mode uses --no-extensions to suppress auto-discovery of the user's
+  // We use --no-extensions to suppress auto-discovery of the user's
   // local extensions (which may include a different permission-gate impl).
   // We always load the oppi-server TCP permission gate extension explicitly,
   // then load workspace extensions resolved from workspace.extensions list.
@@ -177,6 +215,11 @@ export async function spawnPiHost(
 
   for (const extension of extensionSelection.extensions) {
     piArgs.push("--extension", extension.path);
+  }
+
+  // 3. Workspace-enabled skills only (disable global/project auto-discovery)
+  if (workspace) {
+    appendWorkspaceSkills(piArgs, session, workspace, deps.resolveSkillPath);
   }
 
   if (session.model) {
@@ -214,11 +257,11 @@ export async function spawnPiHost(
 
   // Working directory — already resolved above for policy config
   if (!existsSync(cwd)) {
-    throw new Error(`Host workspace path not found: ${cwd}`);
+    throw new Error(`Workspace path not found: ${cwd}`);
   }
 
   console.log(
-    `${ts()} [session:${session.id}] spawning pi (host mode) in ${cwd} via ${deps.piExecutable}`,
+    `${ts()} [session:${session.id}] spawning pi in ${cwd} via ${deps.piExecutable}`,
   );
   console.log(`${ts()} [session:${session.id}] pi args: ${piArgs.join(" ")}`);
 

@@ -194,7 +194,7 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
   });
 
-  it("asks for chained git push in host mode", async () => {
+  it("asks for chained git push in local execution", async () => {
     gate = createGate("host");
     const activeGate = gate;
     let approvalCount = 0;

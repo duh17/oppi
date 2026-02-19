@@ -191,17 +191,18 @@ Harness flags:
 
 ```bash
 # Setup/reload plist
-~/.config/dotfiles/scripts/oppi-server.sh
+launchctl unload ~/Library/LaunchAgents/dev.chenda.oppi.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/dev.chenda.oppi.plist
 
 # Restart (KeepAlive auto-restarts after stop)
-launchctl stop com.chenda.oppi-server
+launchctl stop dev.chenda.oppi
 
 # Status
-launchctl list | grep oppi-server
+launchctl list | grep dev.chenda.oppi
 curl -s http://localhost:7749/health
 
 # Logs
-tail -f ~/.local/var/log/oppi-server.log
+tail -f ~/.local/var/log/oppi.log
 ```
 
 ### Manual server start (fallback, no launchd)

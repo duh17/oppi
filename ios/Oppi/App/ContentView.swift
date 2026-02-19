@@ -21,9 +21,6 @@ struct ContentView: View {
                 return request.sessionId != activeSessionId
             }
             .sorted { lhs, rhs in
-                if lhs.risk.severity != rhs.risk.severity {
-                    return lhs.risk.severity > rhs.risk.severity
-                }
                 if lhs.timeoutAt != rhs.timeoutAt {
                     return lhs.timeoutAt < rhs.timeoutAt
                 }
@@ -56,6 +53,7 @@ struct ContentView: View {
                     }
                 }
                 .tabBarMinimizeBehavior(.onScrollDown)
+                .ignoresSafeArea(.container, edges: .bottom)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -125,8 +123,8 @@ struct ContentView: View {
     private func handleCrossSessionPermissionChoice(_ id: String, _ choice: PermissionResponseChoice) {
         Task { @MainActor in
             if choice.action == .allow,
-               let request = permissionStore.pending.first(where: { $0.id == id }),
-               BiometricService.shared.requiresBiometric(for: request.risk) {
+               BiometricService.shared.requiresBiometric,
+               let request = permissionStore.pending.first(where: { $0.id == id }) {
                 let reason = "Approve \(request.tool): \(request.displaySummary)"
                 let authenticated = await BiometricService.shared.authenticate(reason: reason)
                 guard authenticated else {
@@ -157,26 +155,26 @@ private struct CrossSessionPermissionBanner: View {
     var body: some View {
         Button(action: onReview) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: request.risk.systemImage)
+                Image(systemName: "exclamationmark.shield")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.riskColor(request.risk))
+                    .foregroundStyle(.themeOrange)
                     .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Approval needed in \(sessionLabel)")
                         .font(.caption.bold())
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.themeFg)
                         .lineLimit(1)
 
                     Text(request.displaySummary)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(1)
 
                     if !request.reason.isEmpty {
                         Text(request.reason)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .lineLimit(1)
                     }
                 }
@@ -187,16 +185,16 @@ private struct CrossSessionPermissionBanner: View {
                     if totalCount > 1 {
                         Text("+\(totalCount - 1)")
                             .font(.caption2.bold())
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
-                            .background(.secondary.opacity(0.18), in: Capsule())
+                            .background(.themeComment.opacity(0.18), in: Capsule())
                     }
 
                     if request.hasExpiry {
                         Text(request.timeoutAt, style: .timer)
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
                 }
             }
@@ -206,7 +204,7 @@ private struct CrossSessionPermissionBanner: View {
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.riskColor(request.risk).opacity(0.45), lineWidth: 1)
+                    .stroke(Color.themeOrange.opacity(0.45), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

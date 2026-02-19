@@ -14,7 +14,6 @@ function makeSession(id: string): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    runtime: "host",
   };
 }
 

@@ -458,7 +458,7 @@ function getPenaltyScore(modules: boolean[][], size: number): number {
   return result;
 }
 
-function finderPenaltyCountPatterns(runHistory: number[], size: number): number {
+function finderPenaltyCountPatterns(runHistory: number[], _size: number): number {
   const n = runHistory[1];
   const core =
     n > 0 &&

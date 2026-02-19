@@ -92,7 +92,6 @@ function makeWorkspace(
   return {
     id,
     name: `ws-${id}`,
-    runtime: "container",
     skills,
     createdAt: now,
     updatedAt: now,

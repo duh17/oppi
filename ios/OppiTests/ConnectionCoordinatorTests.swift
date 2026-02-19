@@ -258,7 +258,12 @@ struct ConnectionCoordinatorTests {
             host: "localhost", port: 7749, token: "sk_test",
             name: name, serverFingerprint: id
         )
-        return PairedServer(from: creds, sortOrder: 0)!
+
+        guard let server = PairedServer(from: creds, sortOrder: 0) else {
+            preconditionFailure("Failed to create PairedServer for test")
+        }
+
+        return server
     }
 
     private func makeSession(id: String, name: String) -> Session {
@@ -282,7 +287,6 @@ struct ConnectionCoordinatorTests {
             tool: "bash",
             input: [:],
             displaySummary: "test",
-            risk: .low,
             reason: "",
             timeoutAt: Date().addingTimeInterval(60)
         )

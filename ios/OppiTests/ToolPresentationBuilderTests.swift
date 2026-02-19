@@ -61,7 +61,7 @@ struct ToolPresentationBuilderTests {
         #expect(command == "echo hello")
         #expect(output == "hello\nworld")
         #expect(unwrapped)
-        #expect(config.title == "bash") // expanded bash shows just "bash"
+        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     @Test("bash expanded suppresses segment command preview title")
@@ -85,7 +85,7 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.isExpanded)
         #expect(config.segmentAttributedTitle == nil)
-        #expect(config.title == "bash")
+        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         #expect(config.toolNamePrefix == "$")
     }
 
@@ -308,7 +308,7 @@ struct ToolPresentationBuilderTests {
     // MARK: - Todo
 
     @Test("todo collapsed uses segments when available")
-    func todoCollapsedWithSegments() {
+    func todoCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "todo",
             argsSummary: "action: create, title: Add tests",
@@ -324,8 +324,8 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.segmentAttributedTitle != nil)
-        #expect(config.segmentAttributedTitle!.string == "todo create \"Add tests\"")
+        let title = try #require(config.segmentAttributedTitle)
+        #expect(title.string == "todo create \"Add tests\"")
         #expect(config.toolNamePrefix == "todo")
     }
 
@@ -393,7 +393,7 @@ struct ToolPresentationBuilderTests {
     // MARK: - Remember
 
     @Test("remember collapsed uses segments when available")
-    func rememberCollapsedWithSegments() {
+    func rememberCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "remember",
             argsSummary: "text: Some important discovery",
@@ -413,8 +413,10 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.segmentAttributedTitle!.string == "remember \"Some important discovery\" [oppi, ios]")
-        #expect(config.segmentAttributedTrailing!.string == "✓ Saved → journal")
+        let title = try #require(config.segmentAttributedTitle)
+        let trailing = try #require(config.segmentAttributedTrailing)
+        #expect(title.string == "remember \"Some important discovery\" [oppi, ios]")
+        #expect(trailing.string == "✓ Saved → journal")
     }
 
     @Test("remember expanded shows full text and tags")
@@ -443,7 +445,7 @@ struct ToolPresentationBuilderTests {
     // MARK: - Recall
 
     @Test("recall collapsed uses segments when available")
-    func recallCollapsedWithSegments() {
+    func recallCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "recall",
             argsSummary: "query: architecture decisions",
@@ -465,8 +467,10 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        #expect(config.segmentAttributedTitle!.string == "recall \"architecture decisions\" scope:journal 7d")
-        #expect(config.segmentAttributedTrailing!.string == "5 match(es) — top: [0.85] Design doc")
+        let title = try #require(config.segmentAttributedTitle)
+        let trailing = try #require(config.segmentAttributedTrailing)
+        #expect(title.string == "recall \"architecture decisions\" scope:journal 7d")
+        #expect(trailing.string == "5 match(es) — top: [0.85] Design doc")
     }
 
     @Test("recall collapsed falls back to default when no segments")

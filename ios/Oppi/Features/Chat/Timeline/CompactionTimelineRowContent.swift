@@ -5,6 +5,19 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     let presentation: ChatTimelineCollectionView.Coordinator.CompactionPresentation
     let isExpanded: Bool
     let themeID: ThemeID
+    let onToggleExpand: (() -> Void)?
+
+    init(
+        presentation: ChatTimelineCollectionView.Coordinator.CompactionPresentation,
+        isExpanded: Bool,
+        themeID: ThemeID,
+        onToggleExpand: (() -> Void)? = nil
+    ) {
+        self.presentation = presentation
+        self.isExpanded = isExpanded
+        self.themeID = themeID
+        self.onToggleExpand = onToggleExpand
+    }
 
     var canExpand: Bool { presentation.canExpand }
 
@@ -31,12 +44,20 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     private let iconImageView = UIImageView()
     private let titleLabel = UILabel()
     private let tokensLabel = UILabel()
-    private let chevronImageView = UIImageView()
+    private let expandButton = UIButton(type: .system)
     private let detailContainerView = UIView()
     private let detailLabel = UILabel()
     private let detailMarkdownView = AssistantMarkdownContentView()
 
     private var currentConfiguration: CompactionTimelineRowConfiguration
+
+    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleContainerDoubleTapCopy))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        return recognizer
+    }()
 
     init(configuration: CompactionTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -63,6 +84,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer.cornerRadius = 10
+        containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
@@ -86,9 +108,14 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         tokensLabel.numberOfLines = 1
         tokensLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        chevronImageView.translatesAutoresizingMaskIntoConstraints = false
-        chevronImageView.contentMode = .scaleAspectFit
-        chevronImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        expandButton.translatesAutoresizingMaskIntoConstraints = false
+        expandButton.contentHorizontalAlignment = .center
+        expandButton.contentVerticalAlignment = .center
+        expandButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        expandButton.setContentHuggingPriority(.required, for: .horizontal)
+        expandButton.tintColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+        expandButton.accessibilityIdentifier = "compaction.expand-toggle"
+        expandButton.addTarget(self, action: #selector(handleExpandButtonTap), for: .touchUpInside)
 
         detailContainerView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -112,7 +139,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
         headerStackView.addArrangedSubview(titleLabel)
         headerStackView.addArrangedSubview(UIView())
         headerStackView.addArrangedSubview(tokensLabel)
-        headerStackView.addArrangedSubview(chevronImageView)
+        headerStackView.addArrangedSubview(expandButton)
 
         addInteraction(UIContextMenuInteraction(delegate: self))
 
@@ -129,8 +156,8 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
 
             iconImageView.widthAnchor.constraint(equalToConstant: 14),
             iconImageView.heightAnchor.constraint(equalToConstant: 14),
-            chevronImageView.widthAnchor.constraint(equalToConstant: 10),
-            chevronImageView.heightAnchor.constraint(equalToConstant: 10),
+            expandButton.widthAnchor.constraint(equalToConstant: 28),
+            expandButton.heightAnchor.constraint(equalToConstant: 28),
 
             detailLabel.leadingAnchor.constraint(equalTo: detailContainerView.leadingAnchor),
             detailLabel.trailingAnchor.constraint(equalTo: detailContainerView.trailingAnchor),
@@ -204,11 +231,24 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
             detailLabel.numberOfLines = 0
         }
 
-        let canExpand = configuration.canExpand && hasDetail
-        chevronImageView.isHidden = !canExpand
+        let canExpand = configuration.canExpand
+            && hasDetail
+            && configuration.onToggleExpand != nil
+        expandButton.isHidden = !canExpand
+        expandButton.isEnabled = canExpand
+
         if canExpand {
-            chevronImageView.tintColor = UIColor(palette.comment)
-            chevronImageView.image = UIImage(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down")
+            expandButton.tintColor = UIColor(palette.comment)
+            expandButton.setImage(
+                UIImage(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down"),
+                for: .normal
+            )
+            expandButton.accessibilityLabel = configuration.isExpanded
+                ? "Collapse compaction summary"
+                : "Expand compaction summary"
+        } else {
+            expandButton.setImage(nil, for: .normal)
+            expandButton.accessibilityLabel = nil
         }
     }
 
@@ -270,24 +310,54 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
 
         return "\(title): \(detail)"
     }
-}
 
-extension CompactionTimelineRowContentView: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
+    @objc private func handleExpandButtonTap() {
+        currentConfiguration.onToggleExpand?()
+    }
+
+    @objc private func handleContainerDoubleTapCopy() {
+        guard let value = copyValue() else {
+            return
+        }
+
+        TimelineCopyFeedback.copy(value, feedbackView: containerView)
+    }
+
+    func contextMenu() -> UIMenu? {
         guard let value = copyValue() else {
             return nil
         }
 
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            UIMenu(title: "", children: [
-                UIAction(title: "Copy Compaction", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.string = value
-                },
-            ])
-        }
+        return UIMenu(title: "", children: [
+            UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                TimelineCopyFeedback.copy(value, feedbackView: self?.containerView)
+            },
+        ])
     }
 }
 
+extension CompactionTimelineRowContentView: UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard contextMenu() != nil else {
+            return nil
+        }
+
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            self?.contextMenu()
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var current: UIView? = touch.view
+        while let view = current {
+            if view === expandButton {
+                return false
+            }
+            current = view.superview
+        }
+        return true
+    }
+}

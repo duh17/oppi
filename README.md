@@ -1,6 +1,6 @@
 # Oppi — Mobile-Supervised Coding Agent
 
-Control a sandboxed [pi](https://github.com/badlogic/pi-mono) coding agent from your iPhone. Your Mac runs the server, your phone supervises.
+Control a local [pi](https://github.com/badlogic/pi-mono) coding agent from your iPhone. Your Mac runs the server, your phone supervises.
 
 ```
 iPhone (Oppi app)  ←— Local network / VPN —→  Your Mac (oppi server)
@@ -17,10 +17,10 @@ All code stays on your machine. The agent can't run dangerous commands without y
 - **Permission gate** — Every risky tool call (writes, deletes, installs, network access) routes to your phone for approval. Tap Allow or Deny from anywhere.
 - **Policy engine** — Layered rules auto-allow safe operations and block dangerous ones. Learns from your decisions over time.
 - **Workspaces** — Isolated environments with their own skills, policies, and project mounts.
-- **Two runtime modes** — Container (Apple sandbox, full isolation) or Host (direct, full toolchain access).
+- **Local process execution** — Sessions run directly on your Mac for fast startup and full toolchain access.
 - **Push notifications** — Permission requests and session events pushed via APNs. No need to keep the app open.
 - **Multi-server** — Pair your phone with multiple Mac servers. Browse all workspaces from one screen.
-- **Skills** — Curate what your agent can do. Built-in skill registry with container compatibility detection.
+- **Skills** — Curate what your agent can do. Built-in skill registry with compatibility hints.
 - **Session traces** — Full conversation history with tool calls, diffs, and branching rendered as a timeline.
 - **Streaming** — Real-time text, thinking, and tool output streamed over WebSocket.
 
@@ -78,16 +78,12 @@ Scan the QR code in the Oppi app. The pairing uses a signed, time-limited Ed2551
 ### 5. Start coding
 
 1. Tap **+** in the app to create a workspace (pick a project directory)
-2. Choose **Container** (isolated) or **Host** (direct) runtime
-3. Start a session — type a message
-4. Permission requests appear as push notifications — tap to approve or deny
+2. Start a session — type a message
+3. Permission requests appear as push notifications — tap to approve or deny
 
-## Runtime Modes
+## Execution Model
 
-| Mode | Isolation | Startup | Best for |
-|------|-----------|---------|----------|
-| **Container** | Apple container sandbox — agent can't access host outside workspace | ~60s first run, fast after | Untrusted or experimental work |
-| **Host** | None — agent runs as your user | Instant | Trusted projects, full toolchain access |
+Oppi currently runs sessions as local processes on your Mac. Access is controlled by workspace scoping, policy rules, and explicit phone approvals for risky operations.
 
 ## Architecture
 
@@ -100,11 +96,11 @@ Scan the QR code in the Oppi app. The pairing uses a signed, time-limited Ed2551
 │  - Permission UI  │         │  ├── Policy engine (layered rules)    │
 │  - Workspace mgmt │  REST   │  ├── Permission gate (TCP per-session)│
 │  - Push notifs    │◄──────►│  ├── Auth proxy (credential isolation) │
-│  - Multi-server   │         │  ├── Sandbox manager (containers)     │
-│                   │         │  └── Skill registry + push client     │
-└──────────────────┘         │                                       │
-                              │  pi (coding agent, RPC over stdio)    │
-                              │  └── runs in container or on host     │
+│  - Multi-server   │         │  ├── Runtime manager (locks/limits)    │
+│                   │         │  └── Skill registry + push client      │
+└──────────────────┘         │                                        │
+                              │  pi (coding agent, RPC over stdio)     │
+                              │  └── runs as a local process on macOS   │
                               └──────────────────────────────────────┘
 ```
 
@@ -136,16 +132,16 @@ oppi config show                   Show effective config
 oppi config set <key> <value>      Update a config value
 oppi config get <key>              Get a config value
 oppi config validate               Validate config file
-oppi env init                      Capture shell PATH for host sessions
-oppi env show                      Show resolved host PATH
+oppi env init                      Capture shell PATH for local sessions
+oppi env show                      Show resolved local PATH
 ```
 
 ## Security
 
-- **Credential isolation** — API keys never enter containers. The auth proxy on the host injects real credentials into outbound requests.
+- **Credential isolation** — API keys stay on your Mac. The auth proxy injects credentials only into outbound provider requests.
 - **Signed pairing** — Ed25519 signed, time-limited, single-use pairing envelopes. No shared passwords.
 - **Permission gate** — Every tool call evaluated against a layered policy engine. Dangerous operations require explicit phone approval. Fail-closed: if the phone is unreachable, risky operations are denied.
-- **Container sandbox** — Apple container isolation for untrusted work. Agent can only access mounted workspace directories.
+- **Workspace scoping** — Sessions are created inside selected workspace roots and governed by policy + permission gates.
 - **Timing-safe auth** — Bearer token comparison uses `timingSafeEqual` to prevent timing attacks.
 - **Hard denies** — Immutable rules block the most dangerous operations (e.g., `rm -rf /`, modifying system files) regardless of user policy.
 
@@ -162,7 +158,7 @@ oppi/
 │   │   ├── sessions.ts     Pi process lifecycle + RPC bridge
 │   │   ├── policy.ts       Layered policy engine
 │   │   ├── gate.ts         Permission gate (TCP)
-│   │   ├── sandbox.ts      Apple container orchestration
+│   │   ├── workspace-runtime.ts Session/workspace lock + limit manager
 │   │   ├── auth-proxy.ts   Credential-isolating reverse proxy
 │   │   ├── push.ts         APNs push notification client
 │   │   ├── storage.ts      Persistent config + session storage
@@ -221,14 +217,14 @@ xcodebuild test -scheme Oppi -destination 'platform=iOS Simulator,name=iPhone 16
 
 **Can't connect from phone** — Verify both devices are on the same network. Check `curl http://<your-mac>:7749/health`. Check firewall allows port 7749.
 
-**Container startup slow** — First container launch builds the image (~60s). Subsequent launches reuse it.
+**Session start feels slow** — Verify `pi` is installed and authenticated (`pi` then `/login`). You can also run `oppi env init` to capture your shell PATH for spawned sessions.
 
 **Everything needs approval** — Expected! The server defaults to asking. As you approve commands, learned rules accumulate and common operations auto-allow.
 
 ## Current Limitations
 
 - **Single user** — one owner per server instance
-- **macOS only** — server requires macOS for Apple container support (host mode works conceptually on Linux but is untested)
+- **macOS only** — production usage is currently validated on macOS
 
 ## Contributing
 

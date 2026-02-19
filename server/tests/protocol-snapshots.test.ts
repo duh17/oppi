@@ -40,7 +40,6 @@ const TEST_SESSION: Session = {
   contextWindow: 200000,
   lastMessage: "I've updated the README with the new API docs.",
   thinkingLevel: "high",
-  runtime: "host",
   piSessionFile: "/tmp/pi-sessions/abc123.jsonl",
   piSessionFiles: ["/tmp/pi-sessions/abc123.jsonl"],
   piSessionId: "uuid-abc-123",

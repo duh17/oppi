@@ -22,6 +22,7 @@ disabled_rules:
   - cyclomatic_complexity
   - function_parameter_count
   - nesting
+  - blanket_disable_command # Allow file-level suppressions for tests/fixtures
 
 # Opt-in rules worth enabling
 opt_in_rules:

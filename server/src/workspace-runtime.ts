@@ -2,8 +2,8 @@
  * Workspace runtime — concurrency primitives and slot tracking for
  * workspace-scoped session management.
  *
- * This module does NOT own container or process lifecycle. That stays
- * in sessions.ts and sandbox.ts. This module provides:
+ * This module does NOT own process lifecycle. That stays in sessions.ts.
+ * This module provides:
  *
  * 1. **Mutexes** — per-workspace and per-session locks to serialize
  *    lifecycle transitions and prevent concurrent spawn races.
@@ -128,8 +128,8 @@ export class WorkspaceRuntimeError extends Error {
  * Concurrency manager for workspace-scoped sessions.
  *
  * Provides per-workspace and per-session mutexes, session slot
- * tracking, and limit enforcement. Does not own any process or
- * container lifecycle — that remains in sessions.ts and sandbox.ts.
+ * tracking, and limit enforcement. Does not own process lifecycle —
+ * that remains in sessions.ts.
  *
  * Slot lifecycle:
  *   reserveSessionStart() → claim slot (count++)
@@ -179,8 +179,7 @@ export class WorkspaceRuntime {
 
   /**
    * Execute fn under the per-workspace mutex.
-   * Serializes workspace-level operations (container start/stop,
-   * session spawn that needs workspace running).
+   * Serializes workspace-level operations that should not race.
    */
   async withWorkspaceLock<T>(
     workspaceId: string,

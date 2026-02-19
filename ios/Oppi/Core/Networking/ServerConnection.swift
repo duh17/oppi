@@ -116,8 +116,10 @@ final class ServerConnection {
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
             self.reducer.processBatch(events)
-            for event in events {
-                LiveActivityManager.shared.updateFromEvent(event)
+            if ReleaseFeatures.liveActivitiesEnabled {
+                for event in events {
+                    LiveActivityManager.shared.updateFromEvent(event)
+                }
             }
         }
     }
@@ -285,7 +287,9 @@ final class ServerConnection {
         if let request = permissionStore.take(id: id) {
             reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
         }
-        PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        if ReleaseFeatures.pushNotificationsEnabled {
+            PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        }
         syncLiveActivityPermissions()
     }
 
@@ -590,4 +594,3 @@ final class ServerConnection {
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
 }
-

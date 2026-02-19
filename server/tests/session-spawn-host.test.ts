@@ -87,7 +87,7 @@ describe("session-spawn spawnPiHost", () => {
     await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
 
     expect(createSessionSocket).toHaveBeenCalledWith("s1", "w1");
-    const hostPolicy = getSpawnPolicy(setSessionPolicy, "s1", "host");
+    const hostPolicy = getSpawnPolicy(setSessionPolicy, "s1", "default");
     const hostDecision = hostPolicy.evaluate({
       tool: "bash",
       input: { command: "git push origin main" },
@@ -109,6 +109,7 @@ describe("session-spawn spawnPiHost", () => {
       HOST_MEMORY_EXTENSION,
       "--extension",
       HOST_TODOS_EXTENSION,
+      "--no-skills",
       "--provider",
       "openai-codex",
       "--model",
@@ -128,6 +129,52 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.env.OPPI_SESSION).toBe("s1");
         expect(opts.env.OPPI_GATE_HOST).toBe("127.0.0.1");
     expect(opts.env.OPPI_GATE_PORT).toBe("45678");
+  });
+
+  it("loads only workspace-enabled skills via --no-skills + --skill", async () => {
+    const session = makeSession();
+    const workspace = makeWorkspace({
+      skills: ["fetch", "search", "fetch", "missing"],
+      memoryEnabled: false,
+    });
+
+    const createSessionSocket = vi.fn(async () => 45680);
+    const setSessionPolicy = vi.fn();
+    const deps = makeDeps({
+      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      piExecutable: "/opt/homebrew/bin/pi",
+      resolveSkillPath: (name: string) => {
+        if (name === "fetch") return "/Users/chenda/.pi/agent/skills/fetch";
+        if (name === "search") return "/Users/chenda/.pi/agent/skills/search";
+        return undefined;
+      },
+    });
+
+    const expectedCwd = join(homedir(), "workspace", "oppi");
+    const existing = new Set<string>([
+      expectedCwd,
+      OPPI_GATE_EXTENSION,
+      "/Users/chenda/.pi/agent/skills/fetch",
+      "/Users/chenda/.pi/agent/skills/search",
+    ]);
+    mockedExistsSync.mockImplementation((path) =>
+      typeof path === "string" && existing.has(path),
+    );
+
+    const proc = new StubProcess();
+    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+    const [, args] = mockedSpawn.mock.calls[0];
+    expect(args).toContain("--no-skills");
+    expect(args).toContain("--skill");
+    expect(args).toContain("/Users/chenda/.pi/agent/skills/fetch");
+    expect(args).toContain("/Users/chenda/.pi/agent/skills/search");
+    expect(
+      args.filter((arg) => arg === "/Users/chenda/.pi/agent/skills/fetch").length,
+    ).toBe(1);
+    expect(args).not.toContain("missing");
   });
 
   it("applies workspace fallback overrides when toggled ask ⇄ allow", async () => {
@@ -306,7 +353,7 @@ describe("session-spawn spawnPiHost", () => {
     });
 
     await expect(spawnPiHost(session, workspace, deps)).rejects.toThrow(
-      "Host workspace path not found",
+      "Workspace path not found",
     );
     expect(mockedSpawn).not.toHaveBeenCalled();
   });

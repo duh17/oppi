@@ -12,7 +12,7 @@ enum FileType: Equatable {
     case plain
 
     /// Detect from file path extension (or well-known filenames).
-    static func detect(from path: String?) -> FileType {
+    static func detect(from path: String?) -> Self {
         guard let path else { return .plain }
 
         let filename = (path as NSString).lastPathComponent.lowercased()
@@ -259,10 +259,10 @@ private struct MarkdownFileView: View {
         }
         .codeBlockChrome()
         .contextMenu {
-            Button("Open Reader", systemImage: "book") {
+            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                 showFullScreen = true
             }
-            Button("Copy Content", systemImage: "doc.on.doc") {
+            Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
         }
@@ -385,7 +385,7 @@ private struct JSONFileView: View {
         }
         .codeBlockChrome()
         .contextMenu {
-            Button("Copy JSON", systemImage: "doc.on.doc") {
+            Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
         }
@@ -411,15 +411,15 @@ private struct JSONPrepared: Sendable {
     let highlighted: AttributedString?
 
     /// Quick placeholder from raw content (no parsing, no highlighting).
-    static func placeholder(from content: String) -> JSONPrepared {
+    static func placeholder(from content: String) -> Self {
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let text = lines.prefix(lineCount).joined(separator: "\n")
-        return JSONPrepared(displayText: text, displayLineCount: lineCount, totalLines: lines.count, highlighted: nil)
+        return Self(displayText: text, displayLineCount: lineCount, totalLines: lines.count, highlighted: nil)
     }
 
     /// Full preparation: pretty-print + syntax highlight.
-    static func prepare(_ content: String) -> JSONPrepared {
+    static func prepare(_ content: String) -> Self {
         let pretty: String
         if let data = content.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data),
@@ -435,7 +435,7 @@ private struct JSONPrepared: Sendable {
         let displayText = lines.prefix(lineCount).joined(separator: "\n")
         let highlighted = SyntaxHighlighter.highlight(displayText, language: .json)
 
-        return JSONPrepared(displayText: displayText, displayLineCount: lineCount, totalLines: lines.count, highlighted: highlighted)
+        return Self(displayText: displayText, displayLineCount: lineCount, totalLines: lines.count, highlighted: highlighted)
     }
 }
 
@@ -467,10 +467,10 @@ private struct PlainTextView: View {
         }
         .codeBlockChrome()
         .contextMenu {
-            Button("Expand", systemImage: "arrow.up.left.and.arrow.down.right") {
+            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                 showFullScreen = true
             }
-            Button("Copy Content", systemImage: "doc.on.doc") {
+            Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
         }

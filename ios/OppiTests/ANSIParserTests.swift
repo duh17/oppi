@@ -116,7 +116,7 @@ struct ANSIParserTests {
 
     @Test("empty input")
     func emptyInput() {
-        #expect(ANSIParser.strip("") == "")
-        #expect(String(ANSIParser.attributedString(from: "").characters) == "")
+        #expect(ANSIParser.strip("").isEmpty)
+        #expect(String(ANSIParser.attributedString(from: "").characters).isEmpty)
     }
 }

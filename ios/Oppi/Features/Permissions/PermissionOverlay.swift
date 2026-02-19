@@ -48,12 +48,10 @@ struct PermissionOverlay: View {
 
     private func respond(id: String, choice: PermissionResponseChoice) {
         Task { @MainActor in
-            // Biometric gate: require Face ID for high-risk approvals
-            if choice.action == .allow {
-                let request = pending.first { $0.id == id }
-                if let request, BiometricService.shared.requiresBiometric(for: request.risk) {
-                    let toolLabel = request.tool
-                    let reason = "Approve \(toolLabel): \(request.displaySummary)"
+            // Biometric gate: require Face ID for all approvals when enabled
+            if choice.action == .allow, BiometricService.shared.requiresBiometric {
+                if let request = pending.first(where: { $0.id == id }) {
+                    let reason = "Approve \(request.tool): \(request.displaySummary)"
                     let authenticated = await BiometricService.shared.authenticate(reason: reason)
                     guard authenticated else {
                         // Biometric failed or cancelled — don't send allow

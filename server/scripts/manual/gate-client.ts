@@ -6,17 +6,17 @@
  * from the keyboard: y=allow, n=deny.
  *
  * Usage:
- *   npx tsx test-gate-client.ts <host:port> <token> [workspaceId] [sessionId]
+ *   npx tsx scripts/manual/gate-client.ts <host:port> <token> [workspaceId] [sessionId]
  *
  * Examples:
  *   # List all workspace sessions and exit
- *   npx tsx test-gate-client.ts localhost:7749 sk_abc123
+ *   npx tsx scripts/manual/gate-client.ts localhost:7749 sk_abc123
  *
  *   # List sessions in one workspace and exit
- *   npx tsx test-gate-client.ts localhost:7749 sk_abc123 ws_123
+ *   npx tsx scripts/manual/gate-client.ts localhost:7749 sk_abc123 ws_123
  *
  *   # Connect to a specific session
- *   npx tsx test-gate-client.ts localhost:7749 sk_abc123 ws_123 sess_xyz
+ *   npx tsx scripts/manual/gate-client.ts localhost:7749 sk_abc123 ws_123 sess_xyz
  */
 
 import WebSocket from "ws";
@@ -37,7 +37,7 @@ interface SessionSummary {
 const [host, token, argWorkspaceId, argSessionId] = process.argv.slice(2);
 
 if (!host || !token) {
-  console.error("Usage: test-gate-client.ts <host:port> <token> [workspaceId] [sessionId]");
+  console.error("Usage: scripts/manual/gate-client.ts <host:port> <token> [workspaceId] [sessionId]");
   process.exit(1);
 }
 
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
 
-  const pendingRequests: Map<string, { displaySummary: string; risk: string; tool: string }> = new Map();
+  const pendingRequests: Map<string, { displaySummary: string; tool: string }> = new Map();
 
   ws.on("open", () => {
     console.log("✅ Connected\n");
@@ -164,18 +164,11 @@ async function main(): Promise<void> {
       case "permission_request": {
         pendingRequests.set(String(msg.id), {
           displaySummary: String(msg.displaySummary),
-          risk: String(msg.risk),
           tool: String(msg.tool),
         });
 
-        const risk = String(msg.risk);
-        const riskColor = risk === "critical" ? "\x1b[31m" :
-          risk === "high" ? "\x1b[33m" :
-            risk === "medium" ? "\x1b[36m" : "\x1b[32m";
-        const reset = "\x1b[0m";
-
         console.log(`\n🔒 PERMISSION REQUEST [${String(msg.id)}]`);
-        console.log(`   ${riskColor}${risk.toUpperCase()}${reset} — ${String(msg.displaySummary)}`);
+        console.log(`   ${String(msg.displaySummary)}`);
         console.log(`   Reason: ${String(msg.reason)}`);
         console.log(`   Tool: ${String(msg.tool)}`);
         const timeoutAt = Number(msg.timeoutAt);

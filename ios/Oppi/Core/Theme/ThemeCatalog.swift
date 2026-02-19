@@ -143,7 +143,7 @@ enum ThemeID: Hashable, Codable, Sendable {
     case custom(String)
 
     /// Built-in themes (shipped in the app). Custom/imported themes added separately.
-    static let builtins: [ThemeID] = [.dark, .light]
+    static let builtins: [Self] = [.dark, .light]
 
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
@@ -179,10 +179,10 @@ enum ThemeID: Hashable, Codable, Sendable {
         try container.encode(rawValue)
     }
 
-    static func loadPersisted() -> ThemeID {
+    static func loadPersisted() -> Self {
         guard let raw = UserDefaults.standard.string(forKey: storageKey)
         else { return .dark }
-        return ThemeID(rawValue: raw)
+        return Self(rawValue: raw)
     }
 
     var displayName: String {
@@ -256,61 +256,61 @@ enum ThemePalettes {
     /// Matches Tokyo Night (Night) so existing users get a familiar experience.
     static let fallback = ThemePalette(
         // Base 13
-        bg:          c(0x1a1b26),
-        bgDark:      c(0x16161e),
+        bg: c(0x1a1b26),
+        bgDark: c(0x16161e),
         bgHighlight: c(0x292e42),
-        fg:          c(0xc0caf5),
-        fgDim:       c(0xa9b1d6),
-        comment:     c(0x565f89),
-        blue:        c(0x7aa2f7),
-        cyan:        c(0x7dcfff),
-        green:       c(0x9ece6a),
-        orange:      c(0xff9e64),
-        purple:      c(0xbb9af7),
-        red:         c(0xf7768e),
-        yellow:      c(0xe0af68),
-        thinkingText:  c(0xa9b1d6),  // fg_dark
+        fg: c(0xc0caf5),
+        fgDim: c(0xa9b1d6),
+        comment: c(0x565f89),
+        blue: c(0x7aa2f7),
+        cyan: c(0x7dcfff),
+        green: c(0x9ece6a),
+        orange: c(0xff9e64),
+        purple: c(0xbb9af7),
+        red: c(0xf7768e),
+        yellow: c(0xe0af68),
+        thinkingText: c(0xa9b1d6),  // fg_dark
         // User message
-        userMessageBg:   c(0x292e42),  // bgHighlight
+        userMessageBg: c(0x292e42),  // bgHighlight
         userMessageText: c(0xc0caf5),  // fg
         // Tool state
         toolPendingBg: c(0x7aa2f7).opacity(0.12),  // blue 12%
         toolSuccessBg: c(0x9ece6a).opacity(0.08),   // green 8%
-        toolErrorBg:   c(0xf7768e).opacity(0.10),   // red 10%
-        toolTitle:     c(0xc0caf5),   // fg
-        toolOutput:    c(0xa9b1d6),   // fgDim
+        toolErrorBg: c(0xf7768e).opacity(0.10),   // red 10%
+        toolTitle: c(0xc0caf5),   // fg
+        toolOutput: c(0xa9b1d6),   // fgDim
         // Markdown (from folke's treesitter highlights)
-        mdHeading:        c(0x7aa2f7),  // Title = blue
-        mdLink:           c(0x1abc9c),  // @markup.link = teal
-        mdLinkUrl:        c(0x565f89),  // comment
-        mdCode:           c(0x7aa2f7),  // @markup.raw.markdown_inline fg
-        mdCodeBlock:      c(0x9ece6a),  // String = green
+        mdHeading: c(0x7aa2f7),  // Title = blue
+        mdLink: c(0x1abc9c),  // @markup.link = teal
+        mdLinkUrl: c(0x565f89),  // comment
+        mdCode: c(0x7aa2f7),  // @markup.raw.markdown_inline fg
+        mdCodeBlock: c(0x9ece6a),  // String = green
         mdCodeBlockBorder: c(0x565f89), // comment
-        mdQuote:          c(0x565f89),
-        mdQuoteBorder:    c(0x565f89),
-        mdHr:             c(0xe0af68),  // VimwikiHR = yellow
-        mdListBullet:     c(0xff9e64),  // @markup.list.markdown = orange
+        mdQuote: c(0x565f89),
+        mdQuoteBorder: c(0x565f89),
+        mdHr: c(0xe0af68),  // VimwikiHR = yellow
+        mdListBullet: c(0xff9e64),  // @markup.list.markdown = orange
         // Diffs (from DiffAdd/DiffDelete backgrounds as accent colors)
-        toolDiffAdded:   c(0x449dab),  // git.add
+        toolDiffAdded: c(0x449dab),  // git.add
         toolDiffRemoved: c(0x914c54),  // git.delete
-        toolDiffContext:  c(0x545c7e),  // dark3
+        toolDiffContext: c(0x545c7e),  // dark3
         // Syntax (from folke's treesitter highlight groups)
-        syntaxComment:     c(0x565f89),  // Comment
-        syntaxKeyword:     c(0x9d7cd8),  // @keyword = purple (not magenta)
-        syntaxFunction:    c(0x7aa2f7),  // Function = blue
-        syntaxVariable:    c(0xc0caf5),  // @variable = fg
-        syntaxString:      c(0x9ece6a),  // String = green
-        syntaxNumber:      c(0xff9e64),  // Number = orange
-        syntaxType:        c(0x2ac3de),  // Type = blue1
-        syntaxOperator:    c(0x89ddff),  // Operator = blue5
+        syntaxComment: c(0x565f89),  // Comment
+        syntaxKeyword: c(0x9d7cd8),  // @keyword = purple (not magenta)
+        syntaxFunction: c(0x7aa2f7),  // Function = blue
+        syntaxVariable: c(0xc0caf5),  // @variable = fg
+        syntaxString: c(0x9ece6a),  // String = green
+        syntaxNumber: c(0xff9e64),  // Number = orange
+        syntaxType: c(0x2ac3de),  // Type = blue1
+        syntaxOperator: c(0x89ddff),  // Operator = blue5
         syntaxPunctuation: c(0xa9b1d6),  // @punctuation.bracket = fg_dark
         // Thinking (pi TUI dark theme values)
-        thinkingOff:     c(0x505050),
+        thinkingOff: c(0x505050),
         thinkingMinimal: c(0x6e6e6e),
-        thinkingLow:     c(0x5f87af),
-        thinkingMedium:  c(0x81a2be),
-        thinkingHigh:    c(0xb294bb),
-        thinkingXhigh:   c(0xd183e8)
+        thinkingLow: c(0x5f87af),
+        thinkingMedium: c(0x81a2be),
+        thinkingHigh: c(0xb294bb),
+        thinkingXhigh: c(0xd183e8)
     )
 
     /// Dark — native dark with desaturated, frosted accents.
@@ -319,61 +319,61 @@ enum ThemePalettes {
     /// muted — like system colors seen through frosted glass.
     static let dark = ThemePalette(
         // Base 13
-        bg:          Color(uiColor: .systemBackground),
-        bgDark:      Color(uiColor: .secondarySystemBackground),
+        bg: Color(uiColor: .systemBackground),
+        bgDark: Color(uiColor: .secondarySystemBackground),
         bgHighlight: Color(uiColor: .tertiarySystemBackground),
-        fg:          Color(uiColor: .label),
-        fgDim:       Color(uiColor: .secondaryLabel),
-        comment:     Color(uiColor: .tertiaryLabel),
-        blue:   c(0x649BE6),  // soft blue
-        cyan:   c(0x78B9B2),  // muted teal
-        green:  c(0x73B987),  // sage
+        fg: Color(uiColor: .label),
+        fgDim: Color(uiColor: .secondaryLabel),
+        comment: Color(uiColor: .tertiaryLabel),
+        blue: c(0x649BE6),  // soft blue
+        cyan: c(0x78B9B2),  // muted teal
+        green: c(0x73B987),  // sage
         orange: c(0xCDA06E),  // warm amber
         purple: c(0xA091C8),  // dusty lavender
-        red:    c(0xDC6E73),  // rosewood
+        red: c(0xDC6E73),  // rosewood
         yellow: c(0xC8B678),  // warm khaki
-        thinkingText:  Color(uiColor: .secondaryLabel),
+        thinkingText: Color(uiColor: .secondaryLabel),
         // User message
-        userMessageBg:   Color(uiColor: .tertiarySystemBackground),
+        userMessageBg: Color(uiColor: .tertiarySystemBackground),
         userMessageText: Color(uiColor: .label),
         // Tool state
         toolPendingBg: c(0x649BE6).opacity(0.12),
         toolSuccessBg: c(0x73B987).opacity(0.08),
-        toolErrorBg:   c(0xDC6E73).opacity(0.10),
-        toolTitle:     Color(uiColor: .label),
-        toolOutput:    Color(uiColor: .secondaryLabel),
+        toolErrorBg: c(0xDC6E73).opacity(0.10),
+        toolTitle: Color(uiColor: .label),
+        toolOutput: Color(uiColor: .secondaryLabel),
         // Markdown
-        mdHeading:        c(0x649BE6),  // blue
-        mdLink:           c(0x78B9B2),  // teal
-        mdLinkUrl:        Color(uiColor: .tertiaryLabel),
-        mdCode:           c(0x78B9B2),  // teal
-        mdCodeBlock:      c(0x73B987),  // green
+        mdHeading: c(0x649BE6),  // blue
+        mdLink: c(0x78B9B2),  // teal
+        mdLinkUrl: Color(uiColor: .tertiaryLabel),
+        mdCode: c(0x78B9B2),  // teal
+        mdCodeBlock: c(0x73B987),  // green
         mdCodeBlockBorder: c(0x48484A),
-        mdQuote:          Color(uiColor: .secondaryLabel),
-        mdQuoteBorder:    c(0x48484A),
-        mdHr:             c(0x48484A),
-        mdListBullet:     c(0xCDA06E),  // orange
+        mdQuote: Color(uiColor: .secondaryLabel),
+        mdQuoteBorder: c(0x48484A),
+        mdHr: c(0x48484A),
+        mdListBullet: c(0xCDA06E),  // orange
         // Diffs
-        toolDiffAdded:   c(0x5AAA75),  // lighter sage for readability
+        toolDiffAdded: c(0x5AAA75),  // lighter sage for readability
         toolDiffRemoved: c(0xC45A60),  // warmer red
-        toolDiffContext:  Color(uiColor: .tertiaryLabel),
+        toolDiffContext: Color(uiColor: .tertiaryLabel),
         // Syntax (Xcode dark inspired, slightly muted)
-        syntaxComment:     Color(uiColor: .tertiaryLabel),
-        syntaxKeyword:     c(0xA091C8),  // purple
-        syntaxFunction:    c(0x649BE6),  // blue
-        syntaxVariable:    Color(uiColor: .label),
-        syntaxString:      c(0xDC6E73),  // red/rose (Xcode dark uses red for strings)
-        syntaxNumber:      c(0xCDA06E),  // orange
-        syntaxType:        c(0x78B9B2),  // teal
-        syntaxOperator:    Color(uiColor: .label),
+        syntaxComment: Color(uiColor: .tertiaryLabel),
+        syntaxKeyword: c(0xA091C8),  // purple
+        syntaxFunction: c(0x649BE6),  // blue
+        syntaxVariable: Color(uiColor: .label),
+        syntaxString: c(0xDC6E73),  // red/rose (Xcode dark uses red for strings)
+        syntaxNumber: c(0xCDA06E),  // orange
+        syntaxType: c(0x78B9B2),  // teal
+        syntaxOperator: Color(uiColor: .label),
         syntaxPunctuation: Color(uiColor: .secondaryLabel),
         // Thinking (monochromatic gray → subtle tint)
-        thinkingOff:     c(0x48484A),
+        thinkingOff: c(0x48484A),
         thinkingMinimal: c(0x636366),
-        thinkingLow:     c(0x6E87A0),
-        thinkingMedium:  c(0x8296B4),
-        thinkingHigh:    c(0x9B91B9),
-        thinkingXhigh:   c(0xAF96CD)
+        thinkingLow: c(0x6E87A0),
+        thinkingMedium: c(0x8296B4),
+        thinkingHigh: c(0x9B91B9),
+        thinkingXhigh: c(0xAF96CD)
     )
 
     /// Light — native light with clean, understated accents.
@@ -382,61 +382,61 @@ enum ThemePalettes {
     /// Accents are deeper/more saturated to maintain contrast on white.
     static let light = ThemePalette(
         // Base 13
-        bg:          Color(uiColor: .systemBackground),
-        bgDark:      Color(uiColor: .secondarySystemBackground),
+        bg: Color(uiColor: .systemBackground),
+        bgDark: Color(uiColor: .secondarySystemBackground),
         bgHighlight: Color(uiColor: .tertiarySystemBackground),
-        fg:          Color(uiColor: .label),
-        fgDim:       Color(uiColor: .secondaryLabel),
-        comment:     Color(uiColor: .tertiaryLabel),
-        blue:   c(0x3478C6),  // deeper blue
-        cyan:   c(0x2E8A82),  // deeper teal
-        green:  c(0x3A8550),  // deeper sage
+        fg: Color(uiColor: .label),
+        fgDim: Color(uiColor: .secondaryLabel),
+        comment: Color(uiColor: .tertiaryLabel),
+        blue: c(0x3478C6),  // deeper blue
+        cyan: c(0x2E8A82),  // deeper teal
+        green: c(0x3A8550),  // deeper sage
         orange: c(0xA87530),  // deeper amber
         purple: c(0x7662A8),  // deeper lavender
-        red:    c(0xC44E54),  // deeper rosewood
+        red: c(0xC44E54),  // deeper rosewood
         yellow: c(0x9A8540),  // deeper khaki
-        thinkingText:  Color(uiColor: .secondaryLabel),
+        thinkingText: Color(uiColor: .secondaryLabel),
         // User message
-        userMessageBg:   Color(uiColor: .tertiarySystemBackground),
+        userMessageBg: Color(uiColor: .tertiarySystemBackground),
         userMessageText: Color(uiColor: .label),
         // Tool state
         toolPendingBg: c(0x3478C6).opacity(0.10),
         toolSuccessBg: c(0x3A8550).opacity(0.08),
-        toolErrorBg:   c(0xC44E54).opacity(0.10),
-        toolTitle:     Color(uiColor: .label),
-        toolOutput:    Color(uiColor: .secondaryLabel),
+        toolErrorBg: c(0xC44E54).opacity(0.10),
+        toolTitle: Color(uiColor: .label),
+        toolOutput: Color(uiColor: .secondaryLabel),
         // Markdown
-        mdHeading:        c(0x3478C6),  // blue
-        mdLink:           c(0x2E8A82),  // teal
-        mdLinkUrl:        Color(uiColor: .tertiaryLabel),
-        mdCode:           c(0x2E8A82),  // teal
-        mdCodeBlock:      c(0x3A8550),  // green
+        mdHeading: c(0x3478C6),  // blue
+        mdLink: c(0x2E8A82),  // teal
+        mdLinkUrl: Color(uiColor: .tertiaryLabel),
+        mdCode: c(0x2E8A82),  // teal
+        mdCodeBlock: c(0x3A8550),  // green
         mdCodeBlockBorder: c(0xC7C7CC),
-        mdQuote:          Color(uiColor: .secondaryLabel),
-        mdQuoteBorder:    c(0xC7C7CC),
-        mdHr:             c(0xC7C7CC),
-        mdListBullet:     c(0xA87530),  // orange
+        mdQuote: Color(uiColor: .secondaryLabel),
+        mdQuoteBorder: c(0xC7C7CC),
+        mdHr: c(0xC7C7CC),
+        mdListBullet: c(0xA87530),  // orange
         // Diffs
-        toolDiffAdded:   c(0x2D7A42),  // deep green
+        toolDiffAdded: c(0x2D7A42),  // deep green
         toolDiffRemoved: c(0xB03A40),  // deep red
-        toolDiffContext:  Color(uiColor: .tertiaryLabel),
+        toolDiffContext: Color(uiColor: .tertiaryLabel),
         // Syntax (Xcode light inspired, clean)
-        syntaxComment:     Color(uiColor: .tertiaryLabel),
-        syntaxKeyword:     c(0x7662A8),  // purple
-        syntaxFunction:    c(0x3478C6),  // blue
-        syntaxVariable:    Color(uiColor: .label),
-        syntaxString:      c(0xC44E54),  // red/rose
-        syntaxNumber:      c(0xA87530),  // orange
-        syntaxType:        c(0x2E8A82),  // teal
-        syntaxOperator:    Color(uiColor: .label),
+        syntaxComment: Color(uiColor: .tertiaryLabel),
+        syntaxKeyword: c(0x7662A8),  // purple
+        syntaxFunction: c(0x3478C6),  // blue
+        syntaxVariable: Color(uiColor: .label),
+        syntaxString: c(0xC44E54),  // red/rose
+        syntaxNumber: c(0xA87530),  // orange
+        syntaxType: c(0x2E8A82),  // teal
+        syntaxOperator: Color(uiColor: .label),
         syntaxPunctuation: Color(uiColor: .secondaryLabel),
         // Thinking (light grays → subtle color tint)
-        thinkingOff:     c(0xAEAEB2),
+        thinkingOff: c(0xAEAEB2),
         thinkingMinimal: c(0x8E8E93),
-        thinkingLow:     c(0x5A7A90),
-        thinkingMedium:  c(0x4A6D85),
-        thinkingHigh:    c(0x6E5A8A),
-        thinkingXhigh:   c(0x8A4EB0)
+        thinkingLow: c(0x5A7A90),
+        thinkingMedium: c(0x4A6D85),
+        thinkingHigh: c(0x6E5A8A),
+        thinkingXhigh: c(0x8A4EB0)
     )
 }
 // swiftlint:enable function_body_length

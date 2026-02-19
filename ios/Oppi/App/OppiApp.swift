@@ -116,8 +116,14 @@ struct OppiApp: App {
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
             // Add to ServerStore via coordinator (handles fingerprint dedup + store partitions)
+            guard let pairedServer = PairedServer(
+                from: bootstrap.effectiveCredentials,
+                sortOrder: serverStore.servers.count
+            ) else {
+                throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
+            }
             coordinator.addServer(
-                PairedServer(from: bootstrap.effectiveCredentials, sortOrder: serverStore.servers.count)!,
+                pairedServer,
                 switchTo: false  // We configure manually below
             )
             guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
@@ -130,8 +136,10 @@ struct OppiApp: App {
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
-            await PushRegistration.shared.requestAndRegister()
-            await coordinator.registerPushWithAllServers()
+            if ReleaseFeatures.pushNotificationsEnabled {
+                await PushRegistration.shared.requestAndRegister()
+                await coordinator.registerPushWithAllServers()
+            }
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
         } catch {
             connection.sessionStore.markSyncFailed()
@@ -307,6 +315,10 @@ struct OppiApp: App {
 #endif
 
     private func setupNotifications() async {
+        guard ReleaseFeatures.pushNotificationsEnabled else {
+            return
+        }
+
         let notificationService = PermissionNotificationService.shared
         await notificationService.setup()
 
@@ -458,8 +470,10 @@ struct OppiApp: App {
             await coordinator.refreshAllServers()
 
             // 7. Register for push notifications with all paired servers
-            await PushRegistration.shared.requestAndRegister()
-            await coordinator.registerPushWithAllServers()
+            if ReleaseFeatures.pushNotificationsEnabled {
+                await PushRegistration.shared.requestAndRegister()
+                await coordinator.registerPushWithAllServers()
+            }
         } catch {
             connection.sessionStore.markSyncFailed()
             launchOutcome = "offline_cache_only"

@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SCHEME="Oppi"
 CONFIGURATION="Debug"
-BUNDLE_ID="${OPPI_BUNDLE_ID:-dev.chenda.Oppi}"
+BUNDLE_ID_OVERRIDE="${OPPI_BUNDLE_ID:-}"
+BUNDLE_ID=""
 DEVICE_QUERY=""
 LAUNCH=0
 CONSOLE=0
@@ -36,6 +37,8 @@ Usage:
 Options:
   -d, --device <id|name|udid>   Target device (optional; auto-detect first connected iPhone)
   -c, --configuration <name>    Build configuration (default: Debug)
+      --release                 Shortcut for `--configuration Release`
+      --debug-build             Shortcut for `--configuration Debug`
       --launch                  Launch app after install
       --console                 Launch with `devicectl --console` (implies --launch)
       --skip-generate           Skip `xcodegen generate`
@@ -54,9 +57,14 @@ Sentry DSN precedence:
 
 Examples:
   ios/scripts/build-install.sh --device 00008140-00161DAC26E3001C --launch
+  ios/scripts/build-install.sh --release --device B726F6B5-ED68-58A3-A434-1EC27090E2F9 --launch
   ios/scripts/build-install.sh --logs-dir ~/Library/Logs/Oppi --launch
   PI_KEYCHAIN_PASSWORD='***' ios/scripts/build-install.sh --unlock-keychain --launch
   SENTRY_DSN='https://...@o0.ingest.sentry.io/0' ios/scripts/build-install.sh --launch
+
+Launch bundle ID:
+  Auto-detected from build settings (PRODUCT_BUNDLE_IDENTIFIER).
+  Override with OPPI_BUNDLE_ID if needed.
 EOF
 }
 
@@ -121,6 +129,14 @@ while [[ $# -gt 0 ]]; do
       CONFIGURATION="${2:-}"
       shift 2
       ;;
+    --release)
+      CONFIGURATION="Release"
+      shift
+      ;;
+    --debug-build)
+      CONFIGURATION="Debug"
+      shift
+      ;;
     --launch)
       LAUNCH=1
       shift
@@ -172,6 +188,11 @@ done
 
 if [[ $DEBUG -eq 1 ]]; then
   set -x
+fi
+
+if [[ -z "$CONFIGURATION" ]]; then
+  echo "error: configuration cannot be empty" >&2
+  exit 1
 fi
 
 if [[ -n "${SENTRY_DSN:-}" ]]; then
@@ -289,12 +310,27 @@ BUILD_SETTINGS="$(
 
 TARGET_BUILD_DIR="$(printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' '/ TARGET_BUILD_DIR = / { print $2; exit }')"
 WRAPPER_NAME="$(printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' '/ WRAPPER_NAME = / { print $2; exit }')"
+PRODUCT_BUNDLE_ID="$(printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' '/ PRODUCT_BUNDLE_IDENTIFIER = / { print $2; exit }')"
 APP_PATH="$TARGET_BUILD_DIR/$WRAPPER_NAME"
+
+if [[ -n "$BUNDLE_ID_OVERRIDE" ]]; then
+  BUNDLE_ID="$BUNDLE_ID_OVERRIDE"
+else
+  BUNDLE_ID="$PRODUCT_BUNDLE_ID"
+fi
 
 if [[ -z "$TARGET_BUILD_DIR" || -z "$WRAPPER_NAME" ]]; then
   echo "error: failed to resolve app build path from xcodebuild settings." >&2
   exit 1
 fi
+
+if [[ -z "$BUNDLE_ID" ]]; then
+  echo "error: failed to resolve bundle id from build settings (PRODUCT_BUNDLE_IDENTIFIER)." >&2
+  echo "hint: set OPPI_BUNDLE_ID to override." >&2
+  exit 1
+fi
+
+echo "==> Bundle ID: $BUNDLE_ID"
 
 BUILD_LOG="$(new_log_file build)"
 echo "==> Build log: $BUILD_LOG"

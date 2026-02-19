@@ -45,8 +45,6 @@ final class AssistantMarkdownContentView: UIView {
     /// Very large responses fall back to plain text to avoid expensive layout.
     private static let plainTextFallbackThreshold = 20_000
 
-
-
     // MARK: - State
 
     private var currentConfig: Configuration?
@@ -338,7 +336,6 @@ final class AssistantMarkdownContentView: UIView {
             self?.codeBlockViews[index]?.applyHighlightedCode(highlighted)
         }
     }
-
 
 }
 

@@ -22,8 +22,11 @@ struct SegmentRendererTests {
 
         var range = NSRange()
         let font = result.attribute(.font, at: 0, effectiveRange: &range) as? UIFont
-        #expect(font != nil)
-        #expect(font!.fontDescriptor.symbolicTraits.contains(.traitBold))
+        guard let font else {
+            Issue.record("Expected font attribute")
+            return
+        }
+        #expect(font.fontDescriptor.symbolicTraits.contains(.traitBold))
     }
 
     @Test func rendersMultipleSegmentsWithStyles() {
@@ -97,8 +100,11 @@ struct SegmentRendererTests {
             StyledSegment(text: "exit 127", style: .error),
         ]
         let result = SegmentRenderer.trailingAttributedString(from: segments)
-        #expect(result != nil)
-        #expect(result!.string == "exit 127")
+        guard let result else {
+            Issue.record("Expected attributed trailing string")
+            return
+        }
+        #expect(result.string == "exit 127")
     }
 
     @Test func trailingAttributedStringNilWhenEmpty() {

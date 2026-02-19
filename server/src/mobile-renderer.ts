@@ -11,7 +11,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, extname, basename } from "node:path";
+import { join } from "node:path";
 import { HOST_EXTENSIONS_DIR } from "./extension-loader.js";
 
 // ─── Types ───
