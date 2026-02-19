@@ -57,27 +57,11 @@ struct SkillFileView: View {
                         Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.string = content
                         }
-                        NavigationLink(value: SkillEditorDestination(
-                            skillName: skillName,
-                            filePath: filePath,
-                            content: content,
-                            isNew: false
-                        )) {
-                            Label("Edit", systemImage: "pencil")
-                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                 }
             }
-        }
-        .navigationDestination(for: SkillEditorDestination.self) { dest in
-            SkillEditorView(
-                skillName: dest.skillName,
-                filePath: dest.filePath,
-                initialContent: dest.content,
-                isNew: dest.isNew
-            )
         }
         .task { await load() }
     }
