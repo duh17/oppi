@@ -417,7 +417,6 @@ struct APIClientTests {
                   {
                     "id":"hard-1",
                     "decision":"block",
-                    "risk":"critical",
                     "match": {"tool":"read", "pathMatches":"*auth.json*"}
                   }
                 ],
@@ -428,7 +427,6 @@ struct APIClientTests {
                   {
                     "id":"allow-test",
                     "decision":"allow",
-                    "risk":"low",
                     "match": {"tool":"bash", "commandMatches":"npm test*"}
                   }
                 ]
@@ -439,7 +437,6 @@ struct APIClientTests {
                   {
                     "id":"hard-1",
                     "decision":"block",
-                    "risk":"critical",
                     "match": {"tool":"read", "pathMatches":"*auth.json*"}
                   }
                 ],
@@ -447,7 +444,6 @@ struct APIClientTests {
                   {
                     "id":"allow-test",
                     "decision":"allow",
-                    "risk":"low",
                     "match": {"tool":"bash", "commandMatches":"npm test*"}
                   }
                 ]
@@ -484,7 +480,6 @@ struct APIClientTests {
                   {
                     "id":"allow-test",
                     "decision":"allow",
-                    "risk":"low",
                     "match": {"tool":"bash","commandMatches":"npm test*"}
                   }
                 ]
@@ -496,7 +491,6 @@ struct APIClientTests {
         let permission = PolicyPermissionRecord(
             id: "allow-test",
             decision: "allow",
-            risk: .low,
             label: nil,
             reason: nil,
             immutable: nil,
@@ -513,6 +507,37 @@ struct APIClientTests {
         let policy = try await client.patchWorkspacePolicy(workspaceId: "w1", permissions: [permission])
         #expect(policy.permissions.count == 1)
         #expect(policy.permissions[0].id == "allow-test")
+    }
+
+    @Test func patchWorkspacePolicyFallback() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/workspaces/w1/policy")
+
+            let body = self.requestBodyData(request)
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+                Issue.record("Expected JSON body")
+                return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
+            }
+            #expect(json["fallback"] as? String == "ask")
+
+            return self.mockResponse(json: """
+            {
+              "workspace": {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
+              "policy": {
+                "fallback": "ask",
+                "permissions": []
+              }
+            }
+            """)
+        }
+
+        let policy = try await client.patchWorkspacePolicy(workspaceId: "w1", fallback: "ask")
+        #expect(policy.fallback == "ask")
+        #expect(policy.permissions.isEmpty)
     }
 
     @Test func deleteWorkspacePolicyPermissionRemovesPermission() async throws {
@@ -554,7 +579,6 @@ struct APIClientTests {
                   "scope":"global",
                   "source":"learned",
                   "description":"Allow git operations",
-                  "risk":"medium",
                   "createdAt":1700000000000,
                   "match":{"executable":"git"}
                 }
@@ -567,6 +591,77 @@ struct APIClientTests {
         #expect(rules.count == 1)
         #expect(rules[0].id == "r1")
         #expect(rules[0].scope == "global")
+    }
+
+    @Test func patchPolicyRuleSendsPatchAndDecodesResponse() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "PATCH")
+            #expect(request.url?.path == "/policy/rules/r1")
+
+            let bodyData = self.requestBodyData(request)
+            guard
+                let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+                let effect = json["effect"] as? String,
+                let description = json["description"] as? String
+            else {
+                Issue.record("Expected JSON patch body")
+                return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
+            }
+
+            #expect(effect == "deny")
+            #expect(description == "Block git push")
+
+            return self.mockResponse(json: """
+            {
+              "rule": {
+                "id":"r1",
+                "effect":"deny",
+                "tool":"bash",
+                "scope":"workspace",
+                "workspaceId":"w1",
+                "source":"learned",
+                "description":"Block git push",
+                "createdAt":1700000000000,
+                "match":{"commandPattern":"git push*"}
+              }
+            }
+            """)
+        }
+
+        let updated = try await client.patchPolicyRule(
+            ruleId: "r1",
+            request: PolicyRulePatchRequest(
+                effect: "deny",
+                description: "Block git push",
+                tool: "bash",
+                match: .init(
+                    executable: nil,
+                    domain: nil,
+                    pathPattern: nil,
+                    commandPattern: "git push*"
+                )
+            )
+        )
+
+        #expect(updated.id == "r1")
+        #expect(updated.effect == "deny")
+        #expect(updated.scope == "workspace")
+    }
+
+    @Test func deletePolicyRuleUsesDeleteRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "DELETE")
+            #expect(request.url?.path == "/policy/rules/r1")
+            return self.mockResponse(json: "{\"ok\":true,\"deleted\":\"r1\"}")
+        }
+
+        try await client.deletePolicyRule(ruleId: "r1")
     }
 
     @Test func listPolicyAuditDecodesResponse() async throws {
@@ -587,7 +682,6 @@ struct APIClientTests {
                   
                   "tool":"bash",
                   "displaySummary":"git push",
-                  "risk":"medium",
                   "decision":"allow",
                   "resolvedBy":"user",
                   "layer":"user_response"

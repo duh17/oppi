@@ -1,5 +1,5 @@
 /**
- * Pi process spawning — host and container modes.
+ * Pi process spawning — host mode.
  *
  * Factory functions that create pi child processes with the correct
  * args, env vars, and extension configuration. Extracted from
@@ -15,8 +15,6 @@ import { fileURLToPath } from "node:url";
 import type { Session, Workspace, PolicyConfig as GlobalPolicyConfig } from "./types.js";
 import { HOST_ENV, HOST_PATH } from "./host-env.js";
 import type { GateServer } from "./gate.js";
-import type { SandboxManager } from "./sandbox.js";
-import type { AuthProxy } from "./auth-proxy.js";
 import { resolveWorkspaceExtensions } from "./extension-loader.js";
 import { PolicyEngine, type PathAccess } from "./policy.js";
 
@@ -48,8 +46,6 @@ export const HOST_TODOS_EXTENSION = join(homedir(), ".pi", "agent", "extensions"
 /** Dependencies injected by SessionManager into spawn functions. */
 export interface SpawnDeps {
   gate: GateServer;
-  sandbox: SandboxManager;
-  authProxy: AuthProxy | null;
   piExecutable: string;
   /** Optional global declarative policy from server config. */
   globalPolicy?: GlobalPolicyConfig;
@@ -140,6 +136,7 @@ export async function spawnPiHost(
   const mergedGlobalPolicy: GlobalPolicyConfig | undefined = deps.globalPolicy
     ? {
         ...deps.globalPolicy,
+        fallback: workspace?.policy?.fallback || deps.globalPolicy.fallback,
         permissions: [
           ...deps.globalPolicy.permissions,
           ...(workspace?.policy?.permissions || []),
@@ -239,70 +236,11 @@ export async function spawnPiHost(
   return setupProcHandlers(key, session, proc, deps);
 }
 
-// ─── Container Mode ───
-
-/**
- * Spawn pi inside a container via SandboxManager.
- */
-export async function spawnPiContainer(
-  session: Session,
-  workspaceId: string,
-  userName: string | undefined,
-  workspace: Workspace | undefined,
-  deps: SpawnDeps,
-): Promise<ChildProcess> {
-  const key = session.id;
-
-  // Register session with auth proxy (proxy validates session tokens on API requests)
-  deps.authProxy?.registerSession(session.id);
-
-  // Create gate TCP socket (extension connects from container to host-gateway)
-  const gatePort = await deps.gate.createSessionSocket(session.id, workspaceId);
-
-  // Configure per-session policy for container.
-  const defaultPolicyMode = "container";
-  const mergedGlobalPolicy: GlobalPolicyConfig | undefined = deps.globalPolicy
-    ? {
-        ...deps.globalPolicy,
-        permissions: [
-          ...deps.globalPolicy.permissions,
-          ...(workspace?.policy?.permissions || []),
-        ],
-      }
-    : undefined;
-
-  const policySource: string | GlobalPolicyConfig = mergedGlobalPolicy || defaultPolicyMode;
-  const containerPolicy = new PolicyEngine(policySource);
-  deps.gate.setSessionPolicy(session.id, containerPolicy);
-  console.log(
-    `${ts()} [session:${session.id}] policy: mode=${containerPolicy.getPolicyMode()}, source=${deps.globalPolicy ? "global-policy" : `default-mode:${defaultPolicyMode}`} (container mode)`,
-  );
-
-  // Pass through API keys for OpenRouter and other providers
-  const extraEnv: Record<string, string> = {};
-  if (process.env.OPENROUTER_API_KEY) {
-    extraEnv.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  }
-
-  // Spawn pi in container
-  const proc = deps.sandbox.spawnPi({
-    sessionId: session.id,
-    workspaceId,
-    userName,
-    model: session.model,
-    workspace,
-    gatePort,
-    env: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
-  });
-
-  return setupProcHandlers(key, session, proc, deps);
-}
-
 // ─── Process Handler Setup ───
 
 /**
  * Wire up RPC line handling, stderr logging, exit/error handlers,
- * and wait for pi to be ready. Shared by host and container modes.
+ * and wait for pi to be ready.
  */
 export async function setupProcHandlers(
   key: string,

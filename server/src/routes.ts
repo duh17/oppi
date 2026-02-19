@@ -25,7 +25,6 @@ import { tmpdir, homedir, hostname } from "node:os";
 import type { Storage } from "./storage.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer } from "./gate.js";
-import type { SandboxManager } from "./sandbox.js";
 import type { SkillRegistry, UserSkillStore } from "./skills.js";
 import { SkillValidationError } from "./skills.js";
 import type { UserStreamMux } from "./stream.js";
@@ -59,6 +58,7 @@ import type {
   ClientLogUploadRequest,
   ApiError,
   PolicyPermission,
+  PolicyDecision,
 } from "./types.js";
 
 function ts(): string {
@@ -79,7 +79,6 @@ export interface RouteContext {
   storage: Storage;
   sessions: SessionManager;
   gate: GateServer;
-  sandbox: SandboxManager;
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
   streamMux: UserStreamMux;
@@ -123,6 +122,8 @@ export class RouteHandler {
       return this.handleGetPendingPermissions(url, res);
     if (path === "/policy/rules" && method === "GET")
       return this.handleGetPolicyRules(url, res);
+    if (path.startsWith("/policy/rules/") && method === "PATCH")
+      return this.handlePatchPolicyRule(path, req, res);
     if (path.startsWith("/policy/rules/") && method === "DELETE")
       return this.handleDeletePolicyRule(path, res);
     if (path === "/policy/audit" && method === "GET")
@@ -706,8 +707,8 @@ export class RouteHandler {
       return;
     }
 
-    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
-      this.error(res, 400, 'runtime must be "host" or "container"');
+    if (body.runtime && body.runtime !== "host") {
+      this.error(res, 400, 'runtime must be "host"');
       return;
     }
 
@@ -727,6 +728,17 @@ export class RouteHandler {
       );
       if (invalid.length > 0) {
         this.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
+        return;
+      }
+    }
+
+    if (body.policy?.fallback !== undefined) {
+      if (
+        body.policy.fallback !== "allow" &&
+        body.policy.fallback !== "ask" &&
+        body.policy.fallback !== "block"
+      ) {
+        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
         return;
       }
     }
@@ -773,8 +785,8 @@ export class RouteHandler {
 
     const body = await this.parseBody<UpdateWorkspaceRequest>(req);
 
-    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
-      this.error(res, 400, 'runtime must be "host" or "container"');
+    if (body.runtime && body.runtime !== "host") {
+      this.error(res, 400, 'runtime must be "host"');
       return;
     }
 
@@ -806,6 +818,17 @@ export class RouteHandler {
       }
     }
 
+    if (body.policy?.fallback !== undefined) {
+      if (
+        body.policy.fallback !== "allow" &&
+        body.policy.fallback !== "ask" &&
+        body.policy.fallback !== "block"
+      ) {
+        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
+        return;
+      }
+    }
+
     if (body.policy?.permissions) {
       for (const permission of body.policy.permissions) {
         const validationError = this.validateWorkspacePolicyPermission(permission);
@@ -826,11 +849,6 @@ export class RouteHandler {
     if (!updated) {
       this.error(res, 404, "Workspace not found");
       return;
-    }
-
-    // If skills changed on a container workspace, re-sync the sandbox
-    if (body.skills && updated.runtime === "container") {
-      this.ctx.sandbox.resyncWorkspaceSkills(wsId, updated.skills);
     }
 
     this.json(res, { workspace: updated });
@@ -856,7 +874,7 @@ export class RouteHandler {
       globalPolicy,
       workspacePolicy,
       effectivePolicy: {
-        fallback: globalPolicy?.fallback ?? "ask",
+        fallback: workspacePolicy.fallback ?? globalPolicy?.fallback ?? "ask",
         guardrails: globalPolicy?.guardrails ?? [],
         permissions: [...(globalPolicy?.permissions ?? []), ...workspacePolicy.permissions],
       },
@@ -874,13 +892,35 @@ export class RouteHandler {
       return;
     }
 
-    const body = await this.parseBody<{ permissions?: PolicyPermission[] }>(req);
-    if (!Array.isArray(body.permissions)) {
-      this.error(res, 400, "permissions array required");
+    const body = await this.parseBody<{
+      permissions?: PolicyPermission[];
+      fallback?: PolicyDecision;
+    }>(req);
+
+    const hasPermissions = Object.prototype.hasOwnProperty.call(body, "permissions");
+    const hasFallback = Object.prototype.hasOwnProperty.call(body, "fallback");
+
+    if (!hasPermissions && !hasFallback) {
+      this.error(res, 400, "permissions or fallback must be provided");
       return;
     }
 
-    for (const permission of body.permissions) {
+    if (hasPermissions && !Array.isArray(body.permissions)) {
+      this.error(res, 400, "permissions must be an array when provided");
+      return;
+    }
+
+    let fallback = workspace.policy?.fallback;
+    if (hasFallback) {
+      if (body.fallback !== "allow" && body.fallback !== "ask" && body.fallback !== "block") {
+        this.error(res, 400, "fallback must be one of allow|ask|block");
+        return;
+      }
+      fallback = body.fallback;
+    }
+
+    const incomingPermissions = body.permissions || [];
+    for (const permission of incomingPermissions) {
       const validationError = this.validateWorkspacePolicyPermission(permission);
       if (validationError) {
         this.error(res, 400, validationError);
@@ -897,9 +937,13 @@ export class RouteHandler {
     const existing = workspace.policy?.permissions || [];
     const mergedById = new Map<string, PolicyPermission>();
     for (const permission of existing) mergedById.set(permission.id, permission);
-    for (const permission of body.permissions) mergedById.set(permission.id, permission);
+    for (const permission of incomingPermissions) mergedById.set(permission.id, permission);
 
-    const updated = this.ctx.storage.setWorkspacePolicyPermissions(wsId, Array.from(mergedById.values()));
+    const updated = this.ctx.storage.setWorkspacePolicyPermissions(
+      wsId,
+      Array.from(mergedById.values()),
+      fallback,
+    );
     if (!updated) {
       this.error(res, 404, "Workspace not found");
       return;
@@ -1399,34 +1443,6 @@ export class RouteHandler {
     }
 
     const jsonlPaths: string[] = [];
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
-
-    const containerDirs: string[] = [];
-    if (session.workspaceId) {
-      containerDirs.push(
-        join(
-          sandboxBaseDir,
-          session.workspaceId,
-          "sessions",
-          sessionId,
-          "agent",
-          "sessions",
-          "--work--",
-        ),
-      );
-    }
-
-    for (const containerDir of containerDirs) {
-      if (!existsSync(containerDir)) continue;
-      for (const f of readdirSync(containerDir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .sort()) {
-        const p = join(containerDir, f);
-        if (!jsonlPaths.includes(p)) {
-          jsonlPaths.push(p);
-        }
-      }
-    }
 
     if (session.piSessionFiles?.length) {
       for (const p of session.piSessionFiles) {
@@ -1581,8 +1597,17 @@ export class RouteHandler {
     }
   }
 
+  private legacySandboxBaseDir(): string {
+    const storageWithDataDir = this.ctx.storage as Storage & {
+      getDataDir?: () => string;
+    };
+    const dataDir = storageWithDataDir.getDataDir?.() ?? process.cwd();
+    const sandboxesDir = join(dataDir, "sandboxes");
+    return existsSync(sandboxesDir) ? sandboxesDir : dataDir;
+  }
+
   private loadSessionTrace(session: Session, traceView: TraceViewMode = "context") {
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
+    const sandboxBaseDir = this.legacySandboxBaseDir();
     let trace = readSessionTrace(sandboxBaseDir, session.id, session.workspaceId, {
       view: traceView,
     });
@@ -1609,23 +1634,6 @@ export class RouteHandler {
     const workspace = session.workspaceId
       ? this.ctx.storage.getWorkspace(session.workspaceId)
       : undefined;
-
-    if (session.runtime === "container") {
-      if (workspace?.hostMount) {
-        const resolved = workspace.hostMount.replace(/^~/, homedir());
-        return existsSync(resolved) ? resolved : null;
-      }
-      if (!session.workspaceId) {
-        return null;
-      }
-
-      const workspaceSandbox = join(
-        this.ctx.sandbox.getBaseDir(),
-        session.workspaceId,
-        "workspace",
-      );
-      return existsSync(workspaceSandbox) ? workspaceSandbox : null;
-    }
 
     if (workspace?.hostMount) {
       const resolved = workspace.hostMount.replace(/^~/, homedir());
@@ -1710,7 +1718,6 @@ export class RouteHandler {
         tool: decision.tool,
         input: decision.input,
         displaySummary: decision.displaySummary,
-        risk: decision.risk,
         reason: decision.reason,
         timeoutAt: decision.timeoutAt,
         expires: decision.expires ?? true,
@@ -1763,8 +1770,176 @@ export class RouteHandler {
     this.json(res, { rules });
   }
 
+  private async handlePatchPolicyRule(
+    path: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const ruleId = decodeURIComponent(path.split("/").pop() || "");
+    if (!ruleId) {
+      this.error(res, 400, "Missing rule ID");
+      return;
+    }
+
+    // Verify rule exists and belongs to this user
+    const allRules = this.ctx.gate.ruleStore.getAll();
+    const existing = allRules.find((r) => r.id === ruleId);
+    if (!existing || !this.isRuleVisibleToUser(existing)) {
+      this.error(res, 404, "Rule not found");
+      return;
+    }
+
+    const body = await this.parseBody<{
+      effect?: unknown;
+      description?: unknown;
+      tool?: unknown;
+      match?: unknown;
+      expiresAt?: unknown;
+    }>(req);
+
+    const hasField = (key: string): boolean => Object.prototype.hasOwnProperty.call(body, key);
+    const hasPatchField =
+      hasField("effect") ||
+      hasField("description") ||
+      hasField("tool") ||
+      hasField("match") ||
+      hasField("expiresAt");
+
+    if (!hasPatchField) {
+      this.error(res, 400, "At least one patch field is required");
+      return;
+    }
+
+    const updates: {
+      effect?: LearnedRule["effect"];
+      tool?: LearnedRule["tool"] | null;
+      match?: LearnedRule["match"];
+      description?: string;
+      expiresAt?: number | null;
+    } = {};
+
+    if (hasField("effect")) {
+      if (body.effect !== "allow" && body.effect !== "deny") {
+        this.error(res, 400, 'effect must be "allow" or "deny"');
+        return;
+      }
+      updates.effect = body.effect;
+    }
+
+    if (hasField("description")) {
+      if (typeof body.description !== "string") {
+        this.error(res, 400, "description must be a string");
+        return;
+      }
+      const trimmed = body.description.trim();
+      if (!trimmed) {
+        this.error(res, 400, "description cannot be empty");
+        return;
+      }
+      updates.description = trimmed;
+    }
+
+    if (hasField("tool")) {
+      if (body.tool === null) {
+        updates.tool = null;
+      } else if (typeof body.tool === "string") {
+        const trimmed = body.tool.trim();
+        if (!trimmed) {
+          this.error(res, 400, "tool cannot be empty");
+          return;
+        }
+        updates.tool = trimmed;
+      } else {
+        this.error(res, 400, "tool must be a string or null");
+        return;
+      }
+    }
+
+    if (hasField("match")) {
+      if (!body.match || typeof body.match !== "object" || Array.isArray(body.match)) {
+        this.error(res, 400, "match must be an object");
+        return;
+      }
+
+      const raw = body.match as Record<string, unknown>;
+      const keys = ["executable", "domain", "pathPattern", "commandPattern"] as const;
+      for (const key of keys) {
+        const value = raw[key];
+        if (value !== undefined && typeof value !== "string") {
+          this.error(res, 400, `match.${key} must be a string`);
+          return;
+        }
+      }
+
+      const normalizedMatch: NonNullable<LearnedRule["match"]> = {
+        executable: typeof raw.executable === "string" ? raw.executable.trim() || undefined : undefined,
+        domain: typeof raw.domain === "string" ? raw.domain.trim() || undefined : undefined,
+        pathPattern:
+          typeof raw.pathPattern === "string" ? raw.pathPattern.trim() || undefined : undefined,
+        commandPattern:
+          typeof raw.commandPattern === "string"
+            ? raw.commandPattern.trim() || undefined
+            : undefined,
+      };
+
+      const hasMatchCondition = Boolean(
+        normalizedMatch.executable ||
+          normalizedMatch.domain ||
+          normalizedMatch.pathPattern ||
+          normalizedMatch.commandPattern,
+      );
+
+      if (!hasMatchCondition) {
+        this.error(res, 400, "match must include at least one condition");
+        return;
+      }
+
+      updates.match = normalizedMatch;
+    }
+
+    if (hasField("expiresAt")) {
+      if (body.expiresAt === null) {
+        updates.expiresAt = null;
+      } else if (typeof body.expiresAt === "number" && Number.isFinite(body.expiresAt)) {
+        const timestamp = Math.trunc(body.expiresAt);
+        if (timestamp <= 0) {
+          this.error(res, 400, "expiresAt must be a positive timestamp or null");
+          return;
+        }
+        updates.expiresAt = timestamp;
+      } else {
+        this.error(res, 400, "expiresAt must be a number or null");
+        return;
+      }
+    }
+
+    const finalTool =
+      updates.tool !== undefined ? (updates.tool === null ? undefined : updates.tool) : existing.tool;
+    const finalMatch = updates.match !== undefined ? updates.match : existing.match;
+    const hasFinalMatchCondition = Boolean(
+      finalMatch?.executable ||
+        finalMatch?.domain ||
+        finalMatch?.pathPattern ||
+        finalMatch?.commandPattern,
+    );
+
+    if ((!finalTool || finalTool === "*") && !hasFinalMatchCondition) {
+      this.error(res, 400, "rule must include a specific tool or match condition");
+      return;
+    }
+
+    const updated = this.ctx.gate.ruleStore.update(ruleId, updates);
+    if (!updated) {
+      this.error(res, 500, "Failed to update rule");
+      return;
+    }
+
+    console.log(`[policy] Rule ${ruleId} updated: ${updated.description}`);
+    this.json(res, { rule: updated });
+  }
+
   private handleDeletePolicyRule(path: string, res: ServerResponse): void {
-    const ruleId = path.split("/").pop();
+    const ruleId = decodeURIComponent(path.split("/").pop() || "");
     if (!ruleId) {
       this.error(res, 400, "Missing rule ID");
       return;
@@ -1898,7 +2073,7 @@ export class RouteHandler {
 
     const traceView = this.resolveTraceView(url);
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
+    const sandboxBaseDir = this.legacySandboxBaseDir();
 
     let trace = this.loadSessionTrace(hydratedSession, traceView);
 

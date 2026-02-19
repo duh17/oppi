@@ -55,7 +55,6 @@ struct PolicyPermissionRecord: Codable, Identifiable, Sendable {
 
     let id: String
     let decision: String
-    let risk: RiskLevel?
     let label: String?
     let reason: String?
     let immutable: Bool?
@@ -72,6 +71,7 @@ struct PolicyConfigRecord: Codable, Sendable {
 }
 
 struct WorkspacePolicyRecord: Codable, Sendable {
+    let fallback: String?
     let permissions: [PolicyPermissionRecord]
 }
 
@@ -83,7 +83,8 @@ struct WorkspacePolicyResponse: Decodable, Sendable {
 }
 
 struct WorkspacePolicyPatchRequest: Encodable, Sendable {
-    let permissions: [PolicyPermissionRecord]
+    let permissions: [PolicyPermissionRecord]?
+    let fallback: String?
 }
 
 struct WorkspacePolicyMutationResponse: Decodable, Sendable {
@@ -108,14 +109,13 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
     let sessionId: String?
     let source: String
     let description: String
-    let risk: RiskLevel
     let createdAt: Date
     let createdBy: String?
     let expiresAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, effect, tool, match, scope, workspaceId, sessionId, source
-        case description, risk, createdAt, createdBy, expiresAt
+        case description, createdAt, createdBy, expiresAt
     }
 
     init(from decoder: Decoder) throws {
@@ -129,7 +129,6 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
         source = try c.decode(String.self, forKey: .source)
         description = try c.decode(String.self, forKey: .description)
-        risk = try c.decode(RiskLevel.self, forKey: .risk)
         let createdAtMs = try c.decode(Double.self, forKey: .createdAt)
         createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
         createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
@@ -139,6 +138,24 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
             expiresAt = nil
         }
     }
+}
+
+struct PolicyRulePatchRequest: Encodable, Sendable {
+    struct Match: Encodable, Sendable {
+        let executable: String?
+        let domain: String?
+        let pathPattern: String?
+        let commandPattern: String?
+    }
+
+    let effect: String?
+    let description: String?
+    let tool: String?
+    let match: Match?
+}
+
+struct PolicyRuleMutationResponse: Decodable, Sendable {
+    let rule: PolicyRuleRecord
 }
 
 struct PolicyAuditUserChoice: Decodable, Sendable {
@@ -171,7 +188,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let workspaceId: String
     let tool: String
     let displaySummary: String
-    let risk: RiskLevel
     let decision: String
     let resolvedBy: String
     let layer: String
@@ -181,7 +197,7 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, timestamp, sessionId, workspaceId, tool, displaySummary
-        case risk, decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
+        case decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
     }
 
     init(from decoder: Decoder) throws {
@@ -193,7 +209,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
         workspaceId = try c.decode(String.self, forKey: .workspaceId)
         tool = try c.decode(String.self, forKey: .tool)
         displaySummary = try c.decode(String.self, forKey: .displaySummary)
-        risk = try c.decode(RiskLevel.self, forKey: .risk)
         decision = try c.decode(String.self, forKey: .decision)
         resolvedBy = try c.decode(String.self, forKey: .resolvedBy)
         layer = try c.decode(String.self, forKey: .layer)

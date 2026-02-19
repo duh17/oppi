@@ -289,12 +289,17 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspacePolicyResponse.self, from: data)
     }
 
-    /// Upsert workspace-scoped policy permissions.
+    /// Patch workspace-scoped policy settings (permissions and/or fallback).
     func patchWorkspacePolicy(
         workspaceId: String,
-        permissions: [PolicyPermissionRecord]
+        permissions: [PolicyPermissionRecord]? = nil,
+        fallback: String? = nil
     ) async throws -> WorkspacePolicyRecord {
-        let body = WorkspacePolicyPatchRequest(permissions: permissions)
+        guard permissions != nil || fallback != nil else {
+            throw APIError.server(status: 400, message: "permissions or fallback required")
+        }
+
+        let body = WorkspacePolicyPatchRequest(permissions: permissions, fallback: fallback)
         let (data, response) = try await request("PATCH", path: "/workspaces/\(workspaceId)/policy", body: body)
         try checkStatus(response, data: data)
         return try JSONDecoder().decode(WorkspacePolicyMutationResponse.self, from: data).policy
@@ -316,6 +321,19 @@ actor APIClient {
         let data = try await get(route)
         struct Response: Decodable { let rules: [PolicyRuleRecord] }
         return try JSONDecoder().decode(Response.self, from: data).rules
+    }
+
+    /// Update an existing remembered policy rule.
+    func patchPolicyRule(ruleId: String, request body: PolicyRulePatchRequest) async throws -> PolicyRuleRecord {
+        let (data, response) = try await request("PATCH", path: "/policy/rules/\(ruleId)", body: body)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(PolicyRuleMutationResponse.self, from: data).rule
+    }
+
+    /// Delete a remembered policy rule by id.
+    func deletePolicyRule(ruleId: String) async throws {
+        let (data, response) = try await request("DELETE", path: "/policy/rules/\(ruleId)")
+        try checkStatus(response, data: data)
     }
 
     /// Fetch recent policy audit decisions for the workspace/user.
