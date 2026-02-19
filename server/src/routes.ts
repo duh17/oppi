@@ -15,18 +15,15 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
-import { join, resolve, extname, dirname } from "node:path";
-import { tmpdir, homedir, hostname } from "node:os";
+import { join, resolve, extname } from "node:path";
+import { homedir, hostname } from "node:os";
 import type { Storage } from "./storage.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer } from "./gate.js";
 import type { SkillRegistry, UserSkillStore } from "./skills.js";
-import { SkillValidationError } from "./skills.js";
 import type { UserStreamMux } from "./stream.js";
 import {
   readSessionTrace,
@@ -36,6 +33,7 @@ import {
   findToolOutput,
   type TraceViewMode,
 } from "./trace.js";
+import { PolicyEngine, defaultPolicy, type PathAccess } from "./policy.js";
 import {
   collectFileMutations,
   reconstructBaselineFromCurrent,
@@ -569,11 +567,6 @@ export class RouteHandler {
       return;
     }
 
-    if (body.runtime && body.runtime !== "host") {
-      this.error(res, 400, 'runtime must be "host"');
-      return;
-    }
-
     if (body.memoryNamespace && !this.ctx.isValidMemoryNamespace(body.memoryNamespace)) {
       this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
       return;
@@ -646,11 +639,6 @@ export class RouteHandler {
     }
 
     const body = await this.parseBody<UpdateWorkspaceRequest>(req);
-
-    if (body.runtime && body.runtime !== "host") {
-      this.error(res, 400, 'runtime must be "host"');
-      return;
-    }
 
     if (body.skills) {
       const unknown = body.skills.filter((s) => !this.ctx.skillRegistry.get(s));
@@ -743,6 +731,56 @@ export class RouteHandler {
     });
   }
 
+  private refreshActiveWorkspaceSessionPolicies(workspace: Workspace): void {
+    const sessions = this.ctx.storage.listSessions();
+
+    const cwd = workspace.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
+    const allowedPaths: PathAccess[] = [
+      { path: cwd, access: "readwrite" },
+      { path: join(homedir(), ".pi"), access: "read" },
+    ];
+
+    if (workspace.allowedPaths) {
+      for (const entry of workspace.allowedPaths) {
+        allowedPaths.push({
+          path: entry.path.replace(/^~/, homedir()),
+          access: entry.access,
+        });
+      }
+    }
+
+    const globalPolicy = this.ctx.storage.getConfig().policy;
+    const mergedGlobalPolicy = globalPolicy
+      ? {
+          ...globalPolicy,
+          fallback: workspace.policy?.fallback ?? globalPolicy.fallback,
+          permissions: [...globalPolicy.permissions, ...(workspace.policy?.permissions || [])],
+        }
+      : undefined;
+
+    const policySource = mergedGlobalPolicy || defaultPolicy();
+    const allowedExecutables = workspace.allowedExecutables;
+
+    let refreshed = 0;
+
+    for (const session of sessions) {
+      if (session.workspaceId !== workspace.id) continue;
+      if (!this.ctx.sessions.isActive(session.id)) continue;
+
+      this.ctx.gate.setSessionPolicy(
+        session.id,
+        new PolicyEngine(policySource, { allowedPaths, allowedExecutables }),
+      );
+      refreshed += 1;
+    }
+
+    if (refreshed > 0) {
+      console.log(
+        `${ts()} [policy] refreshed session policy for workspace ${workspace.id} (${refreshed} active session${refreshed === 1 ? "" : "s"})`,
+      );
+    }
+  }
+
   private async handlePatchWorkspacePolicy(
     wsId: string,
     req: IncomingMessage,
@@ -811,6 +849,8 @@ export class RouteHandler {
       return;
     }
 
+    this.refreshActiveWorkspaceSessionPolicies(updated);
+
     this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
   }
 
@@ -830,6 +870,8 @@ export class RouteHandler {
       this.error(res, 404, "Workspace not found");
       return;
     }
+
+    this.refreshActiveWorkspaceSessionPolicies(updated);
 
     this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
   }
@@ -1128,7 +1170,6 @@ export class RouteHandler {
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
-    session.runtime = workspace.runtime;
     this.ctx.storage.saveSession(session);
 
     const hydrated = this.ctx.ensureSessionContextWindow(session);
@@ -1233,7 +1274,6 @@ export class RouteHandler {
 
     forkSession.workspaceId = workspace.id;
     forkSession.workspaceName = workspace.name;
-    forkSession.runtime = workspace.runtime;
     forkSession.piSessionFile = sourceSessionFile;
     forkSession.piSessionFiles = Array.from(
       new Set([...(latestSource.piSessionFiles || []), sourceSessionFile]),
