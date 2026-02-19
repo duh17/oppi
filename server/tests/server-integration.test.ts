@@ -278,17 +278,6 @@ describe("WebSocket", () => {
   });
 });
 
-// ── Security profile ──
-
-describe("security profile API", () => {
-  it("GET /security/profile returns current profile", async () => {
-    const res = await get("/security/profile");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.profile).toBeTypeOf("string");
-  });
-});
-
 // ── Policy ──
 
 describe("policy API", () => {
@@ -346,11 +335,31 @@ describe("themes API", () => {
   const validTheme = {
     theme: {
       colors: {
-        bg: "#000000", bgDark: "#111111", bgHighlight: "#222222",
-        fg: "#ffffff", fgDim: "#cccccc", comment: "#888888",
-        blue: "#0000ff", cyan: "#00ffff", green: "#00ff00",
-        orange: "#ff8800", purple: "#8800ff", red: "#ff0000",
-        yellow: "#ffff00",
+        // Base (13)
+        bg: "#1a1b26", bgDark: "#16161e", bgHighlight: "#292e42",
+        fg: "#c0caf5", fgDim: "#a9b1d6", comment: "#565f89",
+        blue: "#7aa2f7", cyan: "#7dcfff", green: "#9ece6a",
+        orange: "#ff9e64", purple: "#bb9af7", red: "#f7768e",
+        yellow: "#e0af68", thinkingText: "#a9b1d6",
+        // User message (2)
+        userMessageBg: "#292e42", userMessageText: "#c0caf5",
+        // Tool state (5)
+        toolPendingBg: "#1e2a4a", toolSuccessBg: "#1e2e1e", toolErrorBg: "#2e1e1e",
+        toolTitle: "#c0caf5", toolOutput: "#a9b1d6",
+        // Markdown (10)
+        mdHeading: "#ffaa00", mdLink: "#0000ff", mdLinkUrl: "#666666",
+        mdCode: "#00ffff", mdCodeBlock: "#00ff00", mdCodeBlockBorder: "#808080",
+        mdQuote: "#808080", mdQuoteBorder: "#808080", mdHr: "#808080",
+        mdListBullet: "#00ffff",
+        // Diffs (3)
+        toolDiffAdded: "#00ff00", toolDiffRemoved: "#ff0000", toolDiffContext: "#808080",
+        // Syntax (9)
+        syntaxComment: "#6A9955", syntaxKeyword: "#569CD6", syntaxFunction: "#DCDCAA",
+        syntaxVariable: "#9CDCFE", syntaxString: "#CE9178", syntaxNumber: "#B5CEA8",
+        syntaxType: "#4EC9B0", syntaxOperator: "#D4D4D4", syntaxPunctuation: "#D4D4D4",
+        // Thinking (6)
+        thinkingOff: "#505050", thinkingMinimal: "#6e6e6e", thinkingLow: "#5f87af",
+        thinkingMedium: "#81a2be", thinkingHigh: "#b294bb", thinkingXhigh: "#d183e8",
       },
     },
   };
@@ -426,26 +435,20 @@ describe("device token API", () => {
   });
 });
 
-// ── Security profile ──
+// ── Workspace policy ──
 
-describe("security profile mutation", () => {
-  it("PUT /security/profile updates profile", async () => {
-    const res = await put("/security/profile", { profile: "tailscale-permissive" });
-    expect(res.status).toBe(200);
-  });
+describe("workspace policy", () => {
+  it("GET /workspaces/:id/policy returns merged policy object", async () => {
+    const createRes = await post("/workspaces", { name: "policy-check", skills: [] });
+    expect(createRes.status).toBe(201);
+    const { workspace } = await createRes.json();
 
-  it("PUT /security/profile rejects invalid profile", async () => {
-    const res = await put("/security/profile", { profile: "nonexistent-profile" });
-    expect(res.status).toBe(400);
-  });
-
-  it("GET /policy/profile returns policy profile object", async () => {
-    const res = await get("/policy/profile");
+    const res = await get(`/workspaces/${workspace.id}/policy`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    // profile is an object with runtime, preset, rules, etc.
-    expect(body.profile).toBeTypeOf("object");
-    expect(body.profile.runtime).toBeTypeOf("string");
+    expect(body.workspaceId).toBe(workspace.id);
+    expect(body.effectivePolicy).toBeTypeOf("object");
+    expect(Array.isArray(body.effectivePolicy.permissions)).toBe(true);
   });
 });
 

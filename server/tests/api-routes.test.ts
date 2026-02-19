@@ -21,8 +21,6 @@ const ROUTES = {
   userStream: /^\/stream$/,
   userStreamEvents: /^\/stream\/events$/,
   permissionsPending: /^\/permissions\/pending$/,
-  securityProfile: /^\/security\/profile$/,
-  policyProfile: /^\/policy\/profile$/,
   policyRules: /^\/policy\/rules$/,
   policyAudit: /^\/policy\/audit$/,
 };
@@ -116,14 +114,6 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches pending permissions snapshot route", () => {
     expect("/permissions/pending".match(ROUTES.permissionsPending)).toBeTruthy();
-  });
-
-  it("matches security profile route", () => {
-    expect("/security/profile".match(ROUTES.securityProfile)).toBeTruthy();
-  });
-
-  it("matches policy profile route", () => {
-    expect("/policy/profile".match(ROUTES.policyProfile)).toBeTruthy();
   });
 
   it("matches policy rules route", () => {

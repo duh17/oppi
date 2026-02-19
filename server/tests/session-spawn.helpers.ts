@@ -26,7 +26,6 @@ export function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
     name: "pios",
     runtime: "host",
     skills: [],
-    policyPreset: "host",
     hostMount: "~/workspace/oppi",
     createdAt: now,
     updatedAt: now,
@@ -56,13 +55,13 @@ export function makeDeps(overrides?: Partial<SpawnDeps>): SpawnDeps {
 export function getSpawnPolicy(
   setSessionPolicy: ReturnType<typeof vi.fn>,
   sessionId: string,
-  expectedPreset: "host" | "container",
+  expectedMode: "host" | "container",
 ): PolicyEngine {
   expect(setSessionPolicy).toHaveBeenCalledWith(sessionId, expect.any(PolicyEngine));
   const call = setSessionPolicy.mock.calls.at(-1);
   if (!call) throw new Error("setSessionPolicy was not called");
   const [, policy] = call as [string, PolicyEngine];
-  expect(policy.getPresetName()).toBe(expectedPreset);
+  expect(policy.getPolicyMode()).toBe(expectedMode);
   return policy;
 }
 

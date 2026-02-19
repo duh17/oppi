@@ -11,8 +11,12 @@
 import { globMatch } from "./glob.js";
 import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname as pathDirname, resolve as pathResolve } from "node:path";
+import { join, dirname as pathDirname } from "node:path";
 import type { LearnedRule } from "./rules.js";
+import type {
+  PolicyConfig as DeclarativePolicyConfig,
+  PolicyPermission as DeclarativePolicyPermission,
+} from "./types.js";
 
 // ─── Types ───
 
@@ -24,12 +28,13 @@ export interface PolicyRule {
   exec?: string; // For bash: executable name ("git", "rm", "sudo")
   pattern?: string; // Glob against command or path
   pathWithin?: string; // Path must be inside this directory
+  domain?: string; // Browser domain match (for nav.js)
   action: PolicyAction;
   label?: string;
   risk?: RiskLevel;
 }
 
-export interface PolicyPreset {
+interface CompiledPolicy {
   name: string;
   hardDeny: PolicyRule[];
   rules: PolicyRule[];
@@ -301,35 +306,6 @@ export function splitBashCommandChain(command: string): string[] {
 }
 
 const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
-
-const HOST_SAFE_READ_ONLY_EXECUTABLES = new Set([
-  "ls",
-  "cat",
-  "head",
-  "tail",
-  "grep",
-  "rg",
-  "find",
-  "wc",
-  "diff",
-  "tree",
-  "jq",
-  "sort",
-  "uniq",
-  "cut",
-  "stat",
-  "file",
-]);
-
-const HOST_SAFE_GIT_SUBCOMMANDS = new Set([
-  "status",
-  "log",
-  "diff",
-  "show",
-  "branch",
-  "blame",
-  "rev-parse",
-]);
 
 // ─── Data Egress Detection ───
 
@@ -933,10 +909,10 @@ export function listAllowlistDomains(allowlistPath?: string): string[] {
   return Array.from(domains).sort();
 }
 
-// ─── Presets ───
+// ─── Built-in policy modes ───
 
 /**
- * Container preset — the default for oppi-server.
+ * Container policy mode — the default for oppi-server.
  *
  * Philosophy: the Apple container IS the security boundary.
  * The policy only gates things the container can't protect against:
@@ -948,7 +924,7 @@ export function listAllowlistDomains(allowlistPath?: string): string[] {
  * works on the dev machine (regex-matched dangerous patterns only), but even
  * more permissive because there's no host system to damage.
  */
-export const PRESET_CONTAINER: PolicyPreset = {
+const BUILTIN_CONTAINER_POLICY: CompiledPolicy = {
   name: "container",
   hardDeny: [
     // Privilege escalation — can't escape container, but deny on principle
@@ -1271,7 +1247,7 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   // Local host-control flows (explicit approval required in host mode)
   {
     tool: "bash",
-    pattern: "*ios/scripts/build-install.sh*",
+    pattern: "*scripts/build-install.sh*",
     action: "ask",
     label: "Reinstall iOS app",
     risk: "high",
@@ -1310,62 +1286,60 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
 ];
 
 /**
- * Host preset (developer trust mode) — for pi running directly on the Mac.
+ * Host policy mode (developer trust) — for pi running directly on the Mac.
  *
  * Philosophy: behave like pi CLI. Tools are mostly free-flowing.
  * The gate asks only for external/high-impact actions and denies secret exfil.
  */
-export const PRESET_HOST: PolicyPreset = {
+const BUILTIN_HOST_POLICY: CompiledPolicy = {
   name: "host",
   hardDeny: HOST_HARD_DENY,
   rules: HOST_EXTERNAL_ASK_RULES,
   defaultAction: "allow",
 };
 
-/**
- * Host preset (standard mode) — approval-first on host runtime.
- *
- * Philosophy: safer defaults for non-technical users.
- * - read-only actions in workspace bounds auto-allow
- * - external/high-impact actions ask
- * - everything else asks by default
- */
-export const PRESET_HOST_STANDARD: PolicyPreset = {
-  name: "host_standard",
-  hardDeny: HOST_HARD_DENY,
-  rules: HOST_EXTERNAL_ASK_RULES,
-  defaultAction: "ask",
-};
+function resolveBuiltInPolicy(mode: string): CompiledPolicy | undefined {
+  switch (mode) {
+    case "container":
+      return BUILTIN_CONTAINER_POLICY;
+    case "host":
+      return BUILTIN_HOST_POLICY;
+    default:
+      return undefined;
+  }
+}
 
-/**
- * Host preset (locked mode) — deny unknowns on host runtime.
- *
- * Philosophy: high-control environment.
- * - read-only actions in workspace bounds auto-allow
- * - known tools ask for explicit user approval
- * - unknown tools are denied by default
- */
-export const PRESET_HOST_LOCKED: PolicyPreset = {
-  name: "host_locked",
-  hardDeny: HOST_HARD_DENY,
-  rules: [
-    ...HOST_EXTERNAL_ASK_RULES,
-    { tool: "read", action: "ask", label: "Read file", risk: "medium" },
-    { tool: "find", action: "ask", label: "Find files", risk: "medium" },
-    { tool: "ls", action: "ask", label: "List directory", risk: "medium" },
-    { tool: "write", action: "ask", label: "Write file", risk: "high" },
-    { tool: "edit", action: "ask", label: "Edit file", risk: "high" },
-    { tool: "bash", action: "ask", label: "Command execution", risk: "high" },
-  ],
-  defaultAction: "deny",
-};
+function mapDecisionToAction(decision: "allow" | "ask" | "block"): PolicyAction {
+  if (decision === "block") return "deny";
+  return decision;
+}
 
-export const PRESETS: Record<string, PolicyPreset> = {
-  container: PRESET_CONTAINER,
-  host: PRESET_HOST,
-  host_standard: PRESET_HOST_STANDARD,
-  host_locked: PRESET_HOST_LOCKED,
-};
+function mapPermissionToRule(permission: DeclarativePolicyPermission): PolicyRule {
+  const match = permission.match;
+
+  return {
+    tool: match.tool,
+    exec: match.executable,
+    pattern: match.commandMatches || match.pathMatches,
+    pathWithin: match.pathWithin,
+    domain: match.domain,
+    action: mapDecisionToAction(permission.decision),
+    label: permission.label || permission.reason,
+    risk: permission.risk,
+  };
+}
+
+function compileDeclarativePolicy(policy: DeclarativePolicyConfig): CompiledPolicy {
+  return {
+    name: policy.mode || "declarative",
+    hardDeny: policy.guardrails
+      .filter((rule) => rule.immutable || rule.decision === "block")
+      .map(mapPermissionToRule)
+      .map((rule) => ({ ...rule, action: "deny" as const })),
+    rules: policy.permissions.map(mapPermissionToRule),
+    defaultAction: mapDecisionToAction(policy.fallback),
+  };
+}
 
 // ─── Per-Session Config ───
 
@@ -1394,24 +1368,23 @@ export interface PolicyConfig {
   allowedExecutables?: string[];
 }
 
-// Host standard/locked presets reuse the same policy engine with extra
-// constrained-host heuristics (safe read-only bash + workspace path bounds)
-// implemented in evaluate().
-
 // ─── Policy Engine ───
 
 export class PolicyEngine {
-  private preset: PolicyPreset;
+  private policy: CompiledPolicy;
   private config: PolicyConfig;
 
-  constructor(presetName: string = "container", config?: PolicyConfig) {
-    const preset = PRESETS[presetName];
-    if (!preset) {
-      throw new Error(
-        `Unknown policy preset: ${presetName}. Available: ${Object.keys(PRESETS).join(", ")}`,
-      );
+  constructor(policyOrMode: string | DeclarativePolicyConfig = "container", config?: PolicyConfig) {
+    if (typeof policyOrMode === "string") {
+      const builtInPolicy = resolveBuiltInPolicy(policyOrMode);
+      if (!builtInPolicy) {
+        throw new Error(`Unknown built-in policy mode: ${policyOrMode}. Available: container, host`);
+      }
+      this.policy = builtInPolicy;
+    } else {
+      this.policy = compileDeclarativePolicy(policyOrMode);
     }
-    this.preset = preset;
+
     this.config = config || { allowedPaths: [] };
   }
 
@@ -1421,7 +1394,7 @@ export class PolicyEngine {
    * Layered evaluation:
    * 1. Hard denies (immutable — credential exfiltration, privilege escalation)
    * 2. Rules (destructive operations on workspace data)
-   * 3. Default action (allow for container preset)
+   * 3. Default action (allow for container mode)
    *
    * Pipes and subshells are NOT auto-escalated. The container is the
    * security boundary — `grep foo | wc -l` shouldn't need phone approval.
@@ -1430,7 +1403,7 @@ export class PolicyEngine {
     const { tool, input } = req;
 
     // Layer 1: Hard denies (immutable)
-    for (const rule of this.preset.hardDeny) {
+    for (const rule of this.policy.hardDeny) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: "deny",
@@ -1446,28 +1419,6 @@ export class PolicyEngine {
     const structuralHardDeny = this.evaluateStructuralHardDeny(tool, input);
     if (structuralHardDeny) {
       return structuralHardDeny;
-    }
-
-    // Layer 1.25: Constrained host auto-allow (safe read-only commands)
-    // Applies only to host_standard / host_locked presets.
-    if (tool === "bash") {
-      const command = (input as { command?: string }).command || "";
-      if (this.isConstrainedHostPreset() && this.isSafeReadOnlyHostBash(command)) {
-        return {
-          action: "allow",
-          reason: "Host read-only command",
-          risk: "low",
-          layer: "rule",
-          ruleLabel: "Host safe read-only",
-        };
-      }
-    }
-
-    // Layer 1.3: Constrained host path bounds (file tools)
-    // Auto-allows reads/writes only when inside configured workspace paths.
-    const constrainedPathDecision = this.evaluateConstrainedHostPathAccess(tool, input);
-    if (constrainedPathDecision) {
-      return constrainedPathDecision;
     }
 
     // Layer 1.5: Structural heuristics (not glob-based)
@@ -1521,7 +1472,7 @@ export class PolicyEngine {
 
     // Layer 1.6: Web-browser skill commands
     // Recognize browser skill invocations and apply domain-based policy.
-    // Works on BOTH container and host presets.
+    // Works on BOTH container and host modes.
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
       const browser = parseBrowserCommand(command);
@@ -1594,7 +1545,7 @@ export class PolicyEngine {
     }
 
     // Layer 2: Rules (external actions, destructive operations)
-    for (const rule of this.preset.rules) {
+    for (const rule of this.policy.rules) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: rule.action,
@@ -1606,15 +1557,9 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 2.5: Workspace configured executable allowlist (constrained host presets)
-    const configuredExecDecision = this.evaluateConfiguredExecutableAllow(tool, input);
-    if (configuredExecDecision) {
-      return configuredExecDecision;
-    }
-
     // Layer 3: Default
     return {
-      action: this.preset.defaultAction,
+      action: this.policy.defaultAction,
       reason: "No matching rule — using default",
       risk: "low",
       layer: "default",
@@ -1708,14 +1653,14 @@ export class PolicyEngine {
    * Evaluate a tool call with learned rules layered in.
    *
    * Evaluation order:
-   *   1. Hard denies (immutable, from preset)
+   *   1. Hard denies (immutable, from policy mode)
    *   2. Learned/manual deny rules (explicit deny wins)
    *   3. Session allow rules
    *   4. Workspace allow rules
    *   5. Global allow rules
    *   6. Structural heuristics (pipe-to-shell, data egress, browser)
-   *   7. Preset rules + domain allowlist
-   *   8. Preset default
+   *   7. Built-in/declarative rules + domain allowlist
+   *   8. Policy fallback default
    */
   evaluateWithRules(
     req: GateRequest,
@@ -1729,7 +1674,7 @@ export class PolicyEngine {
     const parsed = this.parseRequestContext(req);
 
     // Layer 1: Hard denies (immutable, same as evaluate())
-    for (const rule of this.preset.hardDeny) {
+    for (const rule of this.policy.hardDeny) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: "deny",
@@ -1821,7 +1766,7 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 6+: Fall through to existing evaluate() for heuristics, preset rules, default
+    // Layer 6+: Fall through to existing evaluate() for heuristics, rules, and default fallback
     return this.evaluate(req);
   }
 
@@ -2149,6 +2094,7 @@ export class PolicyEngine {
     }
 
     if (normalized.includes("ios/scripts/build-install.sh") ||
+        normalized.includes("scripts/build-install.sh") ||
         normalized.includes("scripts/ios-dev-up.sh") ||
         normalized.startsWith("xcrun devicectl device install app") ||
         normalized.startsWith("npx tsx src/cli.ts serve") ||
@@ -2261,140 +2207,8 @@ export class PolicyEngine {
     return true;
   }
 
-  private isConstrainedHostPreset(): boolean {
-    return this.preset.name === "host_standard" || this.preset.name === "host_locked";
-  }
-
-  private normalizeExecutable(exec: string): string {
-    return exec.includes("/") ? exec.split("/").pop() || exec : exec;
-  }
-
-  private isPathWithinRoot(path: string, root: string): boolean {
-    const normalizedPath = pathResolve(path);
-    const normalizedRoot = pathResolve(root);
-    return normalizedPath === normalizedRoot || normalizedPath.startsWith(normalizedRoot + "/");
-  }
-
-  /**
-   * Constrained host profile: auto-allow file tools only within configured paths.
-   */
-  private evaluateConstrainedHostPathAccess(
-    tool: string,
-    input: Record<string, unknown>,
-  ): PolicyDecision | null {
-    if (!this.isConstrainedHostPreset()) return null;
-    if (!["read", "write", "edit", "find", "ls"].includes(tool)) {
-      return null;
-    }
-
-    const path = (input as { path?: string }).path;
-    if (!path || !path.startsWith("/")) {
-      return null;
-    }
-
-    const needsWrite = tool === "write" || tool === "edit";
-    const allowed = this.config.allowedPaths.some((entry) => {
-      if (!this.isPathWithinRoot(path, entry.path)) return false;
-      if (!needsWrite) return true;
-      return entry.access === "readwrite";
-    });
-
-    if (!allowed) return null;
-
-    return {
-      action: "allow",
-      reason: "Within workspace path bounds",
-      risk: "low",
-      layer: "rule",
-      ruleLabel: "Path bounds",
-    };
-  }
-
-  /**
-   * Constrained host profile: auto-allow plain read-only bash commands.
-   *
-   * Safety requirements:
-   * - every command segment must be read-only
-   * - no pipes, redirects, or subshells
-   * - git limited to read-only subcommands
-   */
-  private isSafeReadOnlyHostBash(command: string): boolean {
-    const segments = splitBashCommandChain(command);
-    if (segments.length === 0) return false;
-
-    for (const segment of segments) {
-      // Split pipelines so `grep ... | head -10` is evaluated per-stage
-      // instead of bailing on the pipe character.
-      const stages = splitPipelineStages(segment);
-
-      for (const stage of stages) {
-        const parsed = parseBashCommand(stage);
-        const exec = this.normalizeExecutable(parsed.executable);
-        if (!exec) return false;
-
-        // Helpers are always safe for chaining.
-        if (CHAIN_HELPER_EXECUTABLES.has(exec)) continue;
-
-        // Redirects and subshells are not considered read-only-safe.
-        if (parsed.hasRedirect || parsed.hasSubshell) {
-          return false;
-        }
-
-        if (HOST_SAFE_READ_ONLY_EXECUTABLES.has(exec)) continue;
-
-        if (exec === "git") {
-          const subcommand = parsed.args[0] || "";
-          if (HOST_SAFE_GIT_SUBCOMMANDS.has(subcommand)) continue;
-        }
-
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Workspace-level executable allowlist for constrained host presets.
-   *
-   * Only applies to simple, single-segment commands. This keeps
-   * allowlist semantics predictable and avoids hidden chain escalation.
-   */
-  private evaluateConfiguredExecutableAllow(
-    tool: string,
-    input: Record<string, unknown>,
-  ): PolicyDecision | null {
-    if (!this.isConstrainedHostPreset()) return null;
-    if (tool !== "bash") return null;
-
-    const allowedExecs = this.config.allowedExecutables;
-    if (!allowedExecs || allowedExecs.length === 0) return null;
-
-    const command = (input as { command?: string }).command || "";
-    const segments = splitBashCommandChain(command);
-    if (segments.length !== 1) return null;
-
-    const parsed = parseBashCommand(segments[0]);
-    const exec = this.normalizeExecutable(parsed.executable);
-    if (!exec) return null;
-
-    if (parsed.hasPipe || parsed.hasRedirect || parsed.hasSubshell) {
-      return null;
-    }
-
-    if (!allowedExecs.includes(exec)) return null;
-
-    return {
-      action: "allow",
-      reason: `Workspace allowlist: ${exec}`,
-      risk: "low",
-      layer: "rule",
-      ruleLabel: "Workspace executable allowlist",
-    };
-  }
-
-  getPresetName(): string {
-    return this.preset.name;
+  getPolicyMode(): string {
+    return this.policy.name;
   }
 
   // ─── Internal ───
@@ -2407,6 +2221,14 @@ export class PolicyEngine {
 
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
+
+      if (rule.domain) {
+        const browser = parseBrowserCommand(command);
+        if (!browser?.domain || browser.domain !== rule.domain) {
+          return false;
+        }
+      }
+
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {

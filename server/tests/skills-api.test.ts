@@ -95,7 +95,6 @@ function makeWorkspace(
     name: `ws-${id}`,
     runtime: "container",
     skills,
-    policyPreset: "container",
     createdAt: now,
     updatedAt: now,
   };

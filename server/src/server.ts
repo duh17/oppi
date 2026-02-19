@@ -7,7 +7,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { type Socket } from "node:net";
+import { BlockList, isIP, type Socket } from "node:net";
 import { type Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -78,19 +78,13 @@ export function formatUnauthorizedAuthLog(opts: {
   authorization: string | string[] | undefined;
 }): string {
   const authPresent = hasAuthHeader(opts.authorization);
-  // Show token prefix for debugging auth mismatches
-  let tokenHint = "";
-  if (authPresent && typeof opts.authorization === "string") {
-    const tok = opts.authorization.replace(/^Bearer\s+/, "");
-    tokenHint = ` tok=${tok.substring(0, 8)}…`;
-  }
 
   if (opts.transport === "ws") {
-    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}${tokenHint}`;
+    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
   }
 
   const method = opts.method || "GET";
-  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}${tokenHint}`;
+  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
 }
 
 export function formatPermissionRequestLog(opts: {
@@ -119,19 +113,76 @@ function isWildcardBindHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::";
 }
 
+export function normalizeRemoteAddress(remoteAddress: string | undefined): { ip: string; family: "ipv4" | "ipv6" } | null {
+  if (!remoteAddress) return null;
+
+  const trimmed = remoteAddress.trim();
+  if (!trimmed) return null;
+
+  // IPv4-mapped IPv6 (::ffff:192.168.1.10)
+  if (trimmed.toLowerCase().startsWith("::ffff:")) {
+    const mapped = trimmed.slice(7);
+    if (isIP(mapped) === 4) {
+      return { ip: mapped, family: "ipv4" };
+    }
+  }
+
+  const family = isIP(trimmed);
+  if (family === 4) return { ip: trimmed, family: "ipv4" };
+  if (family === 6) return { ip: trimmed, family: "ipv6" };
+  return null;
+}
+
+export function buildClientAllowlist(cidrs: string[] | undefined): BlockList | null {
+  if (!cidrs || cidrs.length === 0) return null;
+
+  const list = new BlockList();
+  for (const cidr of cidrs) {
+    const [rawBase, rawPrefix] = cidr.split("/");
+    const base = rawBase?.trim();
+    const prefix = Number(rawPrefix);
+    if (!base || !Number.isInteger(prefix)) continue;
+
+    const family = isIP(base);
+    if (family === 4) {
+      list.addSubnet(base, prefix, "ipv4");
+    } else if (family === 6) {
+      list.addSubnet(base, prefix, "ipv6");
+    }
+  }
+  return list;
+}
+
+export function isClientAllowed(
+  remoteAddress: string | undefined,
+  allowlist: BlockList | null,
+): boolean {
+  if (!allowlist) return true;
+  const normalized = normalizeRemoteAddress(remoteAddress);
+  if (!normalized) return false;
+  return allowlist.check(normalized.ip, normalized.family);
+}
+
 /**
  * Startup-only warnings for insecure server bind + transport posture.
  *
  * These warnings are intentionally advisory (non-blocking) so operators can
  * run permissive local/dev setups while still seeing risk posture at boot.
  */
-export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
-  const warnings: string[] = [];
-  const security = config.security;
-  const identity = config.identity;
-  const invite = config.invite;
+export function validateStartupSecurityConfig(config: ServerConfig): string | null {
   const host = normalizeBindHost(config.host);
   const loopbackOnly = isLoopbackBindHost(host);
+
+  if (!loopbackOnly && !config.token) {
+    return `Cannot bind to ${config.host} without a token configured. Set token in config or use --host 127.0.0.1`;
+  }
+
+  return null;
+}
+
+export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
+  const warnings: string[] = [];
+  const host = normalizeBindHost(config.host);
   const wildcardBind = isWildcardBindHost(host);
 
   if (wildcardBind) {
@@ -140,27 +191,9 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
     );
   }
 
-  if (!loopbackOnly && security && !security.requireTlsOutsideTailnet) {
+  if (config.allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
     warnings.push(
-      "security.requireTlsOutsideTailnet=false while binding beyond loopback; public-network clients can fall back to cleartext HTTP/WS.",
-    );
-  }
-
-  if (security && !security.requirePinnedServerIdentity) {
-    warnings.push(
-      "security.requirePinnedServerIdentity=false disables pinned identity mismatch enforcement on clients.",
-    );
-  }
-
-  if (identity && !identity.enabled) {
-    warnings.push(
-      "identity.enabled=false disables signed bootstrap trust metadata and weakens fake-server resistance.",
-    );
-  }
-
-  if (invite && invite.maxAgeSeconds > 3600) {
-    warnings.push(
-      `invite.maxAgeSeconds=${invite.maxAgeSeconds} increases replay window; prefer short-lived invites (<=600s).`,
+      "allowedCidrs contains a global range (0.0.0.0/0 or ::/0); this permits connections from any source network.",
     );
   }
 
@@ -360,7 +393,7 @@ export class Server {
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
-    this.policy = new PolicyEngine("host"); // Default host policy (developer trust). Per-session overrides via gate.setSessionPolicy().
+    this.policy = new PolicyEngine(config.policy || "host"); // Default host policy unless declarative global policy is configured.
 
     // v2 policy infrastructure
     const ruleStore = new RuleStore(join(dataDir, "rules.json"));
@@ -491,6 +524,12 @@ export class Server {
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
+    const config = this.storage.getConfig();
+    const startupSecurityError = validateStartupSecurityConfig(config);
+    if (startupSecurityError) {
+      throw new Error(startupSecurityError);
+    }
+
     // Best-effort cleanup from previous crashes before accepting connections.
     await this.sandbox.cleanupOrphanedContainers();
 
@@ -507,7 +546,6 @@ export class Server {
     // Prime model catalog in background so first picker open is fast.
     void this.refreshModelCatalog(true);
 
-    const config = this.storage.getConfig();
     const securityWarnings = formatStartupSecurityWarnings(config);
     for (const warning of securityWarnings) {
       console.warn(`[startup][security] ${warning}`);
@@ -610,7 +648,7 @@ export class Server {
    * Only fires for permission requests and session lifecycle events.
    */
   private pushFallback(msg: ServerMessage): void {
-    const tokens = this.storage.getDeviceTokens();
+    const tokens = this.storage.getPushDeviceTokens();
     if (tokens.length === 0) return;
 
     if (msg.type === "permission_request") {
@@ -1052,12 +1090,18 @@ export class Server {
     const configToken = this.storage.getToken();
     if (configToken && secureTokenEquals(configToken, token)) return true;
 
-    // Check device tokens (issued during pairing)
-    for (const dt of this.storage.getDeviceTokens()) {
+    // Check auth device tokens (issued during pairing)
+    for (const dt of this.storage.getAuthDeviceTokens()) {
       if (secureTokenEquals(dt, token)) return true;
     }
 
     return false;
+  }
+
+  private isSourceAllowed(remoteAddress: string | undefined): boolean {
+    const allowedCidrs = this.storage.getConfig().allowedCidrs;
+    const allowlist = buildClientAllowlist(allowedCidrs);
+    return isClientAllowed(remoteAddress, allowlist);
   }
 
   // ─── HTTP Router ───
@@ -1066,6 +1110,12 @@ export class Server {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const path = url.pathname;
     const method = req.method || "GET";
+
+    if (!this.isSourceAllowed(req.socket.remoteAddress)) {
+      console.log(`${ts()} [auth] 403 ${method} ${path} — source ip not in allowedCidrs (${req.socket.remoteAddress ?? "unknown"})`);
+      this.error(res, 403, "Forbidden");
+      return;
+    }
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -1079,6 +1129,18 @@ export class Server {
     }
     if (path === "/health") {
       this.json(res, { ok: true, protocol: 2 });
+      return;
+    }
+
+    // Pairing bootstrap endpoint is intentionally unauthenticated.
+    if (path === "/pair" && method === "POST") {
+      try {
+        await this.routes.dispatch(method, path, url, req, res);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Internal error";
+        console.error("HTTP error:", err);
+        this.error(res, 500, message);
+      }
       return;
     }
 
@@ -1127,6 +1189,13 @@ export class Server {
     (socket as Socket).setNoDelay?.(true);
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    if (!this.isSourceAllowed((socket as Socket).remoteAddress)) {
+      console.log(`${ts()} [auth] 403 WS upgrade ${url.pathname} — source ip not in allowedCidrs (${(socket as Socket).remoteAddress ?? "unknown"})`);
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     const authenticated = this.authenticate(req);
     if (!authenticated) {
       console.log(

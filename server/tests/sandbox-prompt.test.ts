@@ -12,7 +12,6 @@ function ws(overrides: Partial<Workspace> = {}): Workspace {
     name: "research",
     runtime: "container",
     skills: [],
-    policyPreset: "container",
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,

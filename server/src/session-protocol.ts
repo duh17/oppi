@@ -10,6 +10,7 @@
  */
 
 import type { ServerMessage, Session, SessionMessage } from "./types.js";
+import type { MobileRendererRegistry } from "./mobile-renderer.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -134,6 +135,8 @@ export interface TranslationContext {
   partialResults: Map<string, string>;
   /** Assistant text already streamed via text_delta for the current turn. */
   streamedAssistantText: string;
+  /** Mobile renderer registry for pre-rendering tool call/result summaries. */
+  mobileRenderers?: MobileRendererRegistry;
 }
 
 /**
@@ -211,12 +214,14 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
 
     case "tool_execution_start": {
       const toolCallId = resolveToolCallId();
+      const callSegments = ctx.mobileRenderers?.renderCall(event.toolName, event.args || {});
       return [
         {
           type: "tool_start",
           tool: event.toolName,
           args: event.args || {},
           toolCallId,
+          ...(callSegments ? { callSegments } : {}),
         },
       ];
     }
@@ -280,10 +285,18 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
 
       ctx.partialResults.delete(key);
 
+      // Forward structured details and error status from pi tool results.
+      // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})
+      // and built-in tools emit BashToolDetails, ReadToolDetails, etc.
+      const details = event.result?.details;
+      const resultSegments = ctx.mobileRenderers?.renderResult(event.toolName, details, !!event.isError);
       messages.push({
         type: "tool_end",
         tool: event.toolName,
         toolCallId,
+        ...(details !== undefined && details !== null ? { details } : {}),
+        ...(event.isError ? { isError: true } : {}),
+        ...(resultSegments ? { resultSegments } : {}),
       });
 
       return messages;

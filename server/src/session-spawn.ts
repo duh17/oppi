@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Session, Workspace } from "./types.js";
+import type { Session, Workspace, PolicyConfig as GlobalPolicyConfig } from "./types.js";
 import { HOST_ENV, HOST_PATH } from "./host-env.js";
 import type { GateServer } from "./gate.js";
 import type { SandboxManager } from "./sandbox.js";
@@ -51,6 +51,8 @@ export interface SpawnDeps {
   sandbox: SandboxManager;
   authProxy: AuthProxy | null;
   piExecutable: string;
+  /** Optional global declarative policy from server config. */
+  globalPolicy?: GlobalPolicyConfig;
   /** Callback for each RPC line from pi stdout. */
   onRpcLine: (key: string, line: string) => void;
   /** Callback when pi process exits or errors. */
@@ -115,9 +117,8 @@ export async function spawnPiHost(
     workspace?.id || "",
   );
 
-  // Configure per-session policy based on workspace settings.
-  // Host sessions default to "host" (developer trust mode) unless workspace overrides.
-  const presetName = workspace?.policyPreset || "host";
+  // Configure per-session policy based on global + workspace declarative policy.
+  const defaultPolicyMode = "host";
   const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
 
   const allowedPaths: PathAccess[] = [
@@ -136,10 +137,21 @@ export async function spawnPiHost(
   }
 
   const allowedExecutables = workspace?.allowedExecutables;
-  const policy = new PolicyEngine(presetName, { allowedPaths, allowedExecutables });
+  const mergedGlobalPolicy: GlobalPolicyConfig | undefined = deps.globalPolicy
+    ? {
+        ...deps.globalPolicy,
+        permissions: [
+          ...deps.globalPolicy.permissions,
+          ...(workspace?.policy?.permissions || []),
+        ],
+      }
+    : undefined;
+
+  const policySource: string | GlobalPolicyConfig = mergedGlobalPolicy || defaultPolicyMode;
+  const policy = new PolicyEngine(policySource, { allowedPaths, allowedExecutables });
   deps.gate.setSessionPolicy(session.id, policy);
   console.log(
-    `${ts()} [session:${session.id}] policy: preset=${presetName}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
+    `${ts()} [session:${session.id}] policy: mode=${policy.getPolicyMode()}, source=${deps.globalPolicy ? "global-policy" : `default-mode:${defaultPolicyMode}`}, paths=${allowedPaths.map((p) => `${p.path}(${p.access})`).join(", ")}, execs=${allowedExecutables?.join(",") || "default"}`,
   );
 
   // Build pi args.
@@ -247,11 +259,24 @@ export async function spawnPiContainer(
   // Create gate TCP socket (extension connects from container to host-gateway)
   const gatePort = await deps.gate.createSessionSocket(session.id, workspaceId);
 
-  // Configure per-session policy for container (permissive — container IS the boundary)
-  const presetName = workspace?.policyPreset || "container";
-  const containerPolicy = new PolicyEngine(presetName);
+  // Configure per-session policy for container.
+  const defaultPolicyMode = "container";
+  const mergedGlobalPolicy: GlobalPolicyConfig | undefined = deps.globalPolicy
+    ? {
+        ...deps.globalPolicy,
+        permissions: [
+          ...deps.globalPolicy.permissions,
+          ...(workspace?.policy?.permissions || []),
+        ],
+      }
+    : undefined;
+
+  const policySource: string | GlobalPolicyConfig = mergedGlobalPolicy || defaultPolicyMode;
+  const containerPolicy = new PolicyEngine(policySource);
   deps.gate.setSessionPolicy(session.id, containerPolicy);
-  console.log(`${ts()} [session:${session.id}] policy: preset=${presetName} (container mode)`);
+  console.log(
+    `${ts()} [session:${session.id}] policy: mode=${containerPolicy.getPolicyMode()}, source=${deps.globalPolicy ? "global-policy" : `default-mode:${defaultPolicyMode}`} (container mode)`,
+  );
 
   // Pass through API keys for OpenRouter and other providers
   const extraEnv: Record<string, string> = {};

@@ -38,6 +38,7 @@ oppi init                  Interactive setup wizard
 oppi serve                 Start the server
 oppi pair [--host <h>]     Generate QR code for iOS pairing
 oppi status                Show server + pairing status
+oppi doctor                Security + environment diagnostics
 oppi token rotate          Rotate bearer token (invalidates existing clients)
 oppi config get <key>      Read a config value
 oppi config set <key> <v>  Write a config value
@@ -59,9 +60,14 @@ Key settings:
 | `defaultModel` | `anthropic/claude-sonnet-4-20250514` | Default model for new sessions |
 | `maxSessionsPerWorkspace` | `3` | Session limit per workspace |
 | `maxSessionsGlobal` | `5` | Total session limit |
-| `security.profile` | `tailscale-permissive` | Security profile (`tailscale-permissive` or `strict`) |
+| `allowedCidrs` | private ranges + loopback | Source IP allowlist for HTTP/WS |
+| `token` | generated on pairing | Owner/admin bearer token |
 
 Run `oppi init` to set these interactively.
+
+Config schema reference: `docs/config-schema.md`.
+
+Security + pairing v3 draft (recommended posture): `docs/security-pairing-spec-v3.md`.
 
 ## Data Directory
 
@@ -70,7 +76,8 @@ All state (config, sessions, workspaces) lives under one directory:
 ```
 ~/.config/oppi/
 ├── config.json          # Server configuration
-├── identity/            # Ed25519 server keys
+├── identity_ed25519     # Ed25519 private key
+├── identity_ed25519.pub # Ed25519 public key
 ├── sessions/            # Session state + history
 ├── workspaces/          # Workspace definitions
 ├── rules.json           # Learned policy rules
@@ -93,14 +100,18 @@ npm run dev       # Start with tsx watch (auto-reload)
 
 ## Security
 
-- Ed25519 signed pairing invites (time-limited, single-use)
-- Timing-safe bearer token auth on all endpoints
+Oppi should be treated like SSH access to your workstation once authenticated.
+
+Current + target controls:
+- Timing-safe bearer auth on all HTTP/WS endpoints
+- Token class separation (owner/admin, pairing bootstrap, device auth, push tokens)
+- One-time, short-lived pairing bootstrap with device token issuance
+- Source CIDR allowlist + startup exposure warnings
 - Credential isolation — API keys never enter containers (auth proxy injects on the host)
 - Config files written 0600, directories 0700
-- Security profiles: `tailscale-permissive` (default) or `strict`
-- Hard deny rules block dangerous operations regardless of user policy
+- Hard deny policy rules for dangerous operations
 
-See `docs/` for detailed security documentation.
+See `docs/security-pairing-spec-v3.md` for the v3 pairing/security contract and rollout guardrails.
 
 ## License
 

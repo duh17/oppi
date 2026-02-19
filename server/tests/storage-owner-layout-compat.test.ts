@@ -55,7 +55,6 @@ describe("storage strict owner layout", () => {
       name: "Legacy Workspace",
       runtime: "container",
       skills: ["fetch"],
-      policyPreset: "container",
       createdAt: Date.now() - 8_000,
       updatedAt: Date.now() - 8_000,
     };

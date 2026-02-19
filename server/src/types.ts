@@ -2,7 +2,13 @@
  * Core types for oppi-server.
  */
 
+import type { StyledSegment } from "./mobile-renderer.js";
+
 // ─── Workspaces ───
+
+export interface WorkspacePolicyConfig {
+  permissions: PolicyPermission[];
+}
 
 export interface Workspace {
   id: string;
@@ -17,7 +23,7 @@ export interface Workspace {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string; // "container" | "host" | "host_standard" | "host_locked"
+  policy?: WorkspacePolicyConfig; // workspace additive permissions (merged onto global policy)
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
   allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
 
@@ -107,28 +113,35 @@ export interface SessionMessage {
 
 // ─── Server Config ───
 
-export type SecurityProfile = "tailscale-permissive" | "strict";
+export type PolicyDecision = "allow" | "ask" | "block";
+export type PolicyRisk = "low" | "medium" | "high" | "critical";
 
-export interface ServerSecurityConfig {
-  profile: SecurityProfile;
-  requireTlsOutsideTailnet: boolean;
-  allowInsecureHttpInTailnet: boolean;
-  requirePinnedServerIdentity: boolean;
+export interface PolicyMatch {
+  tool?: string;
+  executable?: string;
+  commandMatches?: string;
+  pathMatches?: string;
+  pathWithin?: string;
+  domain?: string;
 }
 
-export interface ServerIdentityConfig {
-  enabled: boolean;
-  algorithm: "ed25519";
-  keyId: string;
-  privateKeyPath: string;
-  publicKeyPath: string;
-  fingerprint: string;
+export interface PolicyPermission {
+  id: string;
+  decision: PolicyDecision;
+  risk?: PolicyRisk;
+  label?: string;
+  reason?: string;
+  immutable?: boolean;
+  match: PolicyMatch;
 }
 
-export interface ServerInviteConfig {
-  format: "v2-signed";
-  maxAgeSeconds: number;
-  singleUse: boolean;
+export interface PolicyConfig {
+  schemaVersion: 1;
+  mode?: string;
+  description?: string;
+  fallback: PolicyDecision;
+  guardrails: PolicyPermission[];
+  permissions: PolicyPermission[];
 }
 
 export interface ServerConfig {
@@ -143,16 +156,24 @@ export interface ServerConfig {
   maxSessionsGlobal: number;
   /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
   approvalTimeoutMs?: number;
-  // v2 security contract
-  security?: ServerSecurityConfig;
-  identity?: ServerIdentityConfig;
-  invite?: ServerInviteConfig;
+  /** Source CIDRs allowed to connect to HTTP/WS endpoints. */
+  allowedCidrs: string[];
 
-  // Pairing token — the single bearer token for client auth
+  /** Declarative global policy config (guardrails + permissions). */
+  policy?: PolicyConfig;
+
+  // Owner/admin bearer token
   token?: string;
 
+  // One-time pairing token bootstrap state
+  pairingToken?: string;
+  pairingTokenExpiresAt?: number;
+
+  // Device auth state (issued during pairing)
+  authDeviceTokens?: string[];
+
   // Push notification state (written by iOS client registration)
-  deviceTokens?: string[];
+  pushDeviceTokens?: string[];
   liveActivityToken?: string;
 
   // Per-model thinking preferences (synced from iOS)
@@ -183,7 +204,7 @@ export interface CreateWorkspaceRequest {
   icon?: string;
   runtime?: "host" | "container";
   skills: string[];
-  policyPreset?: string;
+  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -198,7 +219,7 @@ export interface UpdateWorkspaceRequest {
   icon?: string;
   runtime?: "host" | "container";
   skills?: string[];
-  policyPreset?: string;
+  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -432,9 +453,9 @@ export type ServerMessage = // ── Connection ──
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
   // ── Tool execution ──
-  | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string }
+  | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string; callSegments?: StyledSegment[] }
   | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
-  | { type: "tool_end"; tool: string; toolCallId?: string }
+  | { type: "tool_end"; tool: string; toolCallId?: string; details?: unknown; isError?: boolean; resultSegments?: StyledSegment[] }
   // ── Turn delivery acknowledgements (idempotent send contract) ──
   | {
       type: "turn_ack";
@@ -535,11 +556,26 @@ export interface RegisterDeviceTokenRequest {
   tokenType?: "apns" | "liveactivity";
 }
 
-// ─── Invite ───
+// ─── Pairing / Invite ───
+
+export interface PairDeviceRequest {
+  pairingToken: string;
+  deviceName?: string;
+}
+
+export interface PairDeviceResponse {
+  deviceToken: string;
+}
 
 export interface InviteData {
   host: string;
   port: number;
   token: string;
+  pairingToken?: string;
   name: string;
+}
+
+export interface InvitePayloadV3 extends InviteData {
+  v: 3;
+  fingerprint?: string;
 }

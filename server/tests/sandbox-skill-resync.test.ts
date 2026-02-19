@@ -41,7 +41,6 @@ function makeWorkspace(id: string, skills: string[], runtime: "host" | "containe
     name: `ws-${id}`,
     runtime,
     skills,
-    policyPreset: runtime === "container" ? "container" : "host",
     createdAt: now,
     updatedAt: now,
   };

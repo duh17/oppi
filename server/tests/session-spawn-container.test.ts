@@ -18,7 +18,7 @@ describe("session-spawn spawnPiContainer", () => {
   it("wires sandbox, gate, and auth-proxy with expected spawn payload", async () => {
     const session = makeSession();
     session.model = "openai-codex/gpt-5.3-codex";
-    const workspace = makeWorkspace({ runtime: "container", policyPreset: "container" });
+    const workspace = makeWorkspace({ runtime: "container" });
 
     const proc = new StubProcess();
     const createSessionSocket = vi.fn(async () => 51111);

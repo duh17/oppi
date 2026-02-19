@@ -132,7 +132,7 @@ export class GateServer extends EventEmitter {
 
   /**
    * Set a per-session policy engine. Used by SessionManager to apply
-   * workspace-specific presets and path access rules.
+   * workspace/global policy composition and path access rules.
    */
   setSessionPolicy(sessionId: string, policy: PolicyEngine): void {
     this.sessionPolicies.set(sessionId, policy);
