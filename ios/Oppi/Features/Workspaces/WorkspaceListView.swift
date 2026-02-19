@@ -25,7 +25,11 @@ struct WorkspaceListView: View {
                                 WorkspaceEditView(workspace: workspace)
                                     .onAppear { coordinator.switchToServer(server) }
                             } label: {
-                                WorkspaceRowView(workspace: workspace)
+                                WorkspaceRowView(
+                                    workspace: workspace,
+                                    badgeIcon: server.resolvedBadgeIcon,
+                                    badgeColor: server.resolvedBadgeColor
+                                )
                             }
                         }
                         .onDelete { offsets in
@@ -80,6 +84,8 @@ struct WorkspaceListView: View {
 
 private struct WorkspaceRowView: View {
     let workspace: Workspace
+    var badgeIcon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
         HStack(spacing: 12) {
@@ -90,13 +96,13 @@ private struct WorkspaceRowView: View {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
-                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
                 }
 
                 if let description = workspace.description {
                     Text(description)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(1)
                 }
 

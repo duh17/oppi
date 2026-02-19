@@ -11,9 +11,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var description: String?
     var icon: String?           // SF Symbol name or emoji
 
-    // Runtime
-    var runtime: String         // "container" | "host"
-
     // Skills
     var skills: [String]        // ["searxng", "fetch", "ast-grep"]
 
@@ -35,7 +32,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     let createdAt: Date
     var updatedAt: Date
 
-    var isContainerRuntime: Bool { runtime == "container" }
 }
 
 // MARK: - Codable (Unix millisecond timestamps)
@@ -43,7 +39,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
 extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
-        case runtime
         case skills
         case systemPrompt, hostMount
         case memoryEnabled, memoryNamespace
@@ -60,8 +55,6 @@ extension Workspace: Codable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         skills = try c.decode([String].self, forKey: .skills)
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
-        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
-            ?? (hostMount == nil ? "container" : "host")
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
@@ -81,7 +74,6 @@ extension Workspace: Codable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(icon, forKey: .icon)
-        try c.encode(runtime, forKey: .runtime)
         try c.encode(skills, forKey: .skills)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
@@ -93,4 +85,3 @@ extension Workspace: Codable {
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)
     }
 }
-

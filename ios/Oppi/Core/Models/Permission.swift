@@ -1,13 +1,5 @@
 import Foundation
 
-/// Risk level for a permission request.
-enum RiskLevel: String, Codable, Sendable {
-    case low
-    case medium
-    case high
-    case critical
-}
-
 /// Rule persistence scope for permission responses.
 enum PermissionScope: String, Codable, Sendable {
     case once
@@ -33,7 +25,6 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
     let tool: String
     let input: [String: JSONValue]
     let displaySummary: String
-    let risk: RiskLevel
     let reason: String
     let timeoutAt: Date
     let expires: Bool
@@ -45,7 +36,6 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
         tool: String,
         input: [String: JSONValue],
         displaySummary: String,
-        risk: RiskLevel,
         reason: String,
         timeoutAt: Date,
         expires: Bool = true,
@@ -56,7 +46,6 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
         self.tool = tool
         self.input = input
         self.displaySummary = displaySummary
-        self.risk = risk
         self.reason = reason
         self.timeoutAt = timeoutAt
         self.expires = expires
@@ -68,7 +57,7 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
 
 extension PermissionRequest: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, sessionId, tool, input, displaySummary, risk, reason, timeoutAt, expires, resolutionOptions
+        case id, sessionId, tool, input, displaySummary, reason, timeoutAt, expires, resolutionOptions
     }
 
     init(from decoder: Decoder) throws {
@@ -78,7 +67,6 @@ extension PermissionRequest: Codable {
         tool = try c.decode(String.self, forKey: .tool)
         input = try c.decode([String: JSONValue].self, forKey: .input)
         displaySummary = try c.decode(String.self, forKey: .displaySummary)
-        risk = try c.decode(RiskLevel.self, forKey: .risk)
         reason = try c.decode(String.self, forKey: .reason)
 
         let timeoutMs = try c.decode(Double.self, forKey: .timeoutAt)
@@ -94,7 +82,6 @@ extension PermissionRequest: Codable {
         try c.encode(tool, forKey: .tool)
         try c.encode(input, forKey: .input)
         try c.encode(displaySummary, forKey: .displaySummary)
-        try c.encode(risk, forKey: .risk)
         try c.encode(reason, forKey: .reason)
         try c.encode(timeoutAt.timeIntervalSince1970 * 1000, forKey: .timeoutAt)
         try c.encode(expires, forKey: .expires)
@@ -120,12 +107,12 @@ struct PermissionResponseChoice: Sendable, Equatable {
         self.expiresInMs = expiresInMs
     }
 
-    static func allowOnce() -> PermissionResponseChoice {
-        PermissionResponseChoice(action: .allow, scope: .once, expiresInMs: nil)
+    static func allowOnce() -> Self {
+        Self(action: .allow, scope: .once, expiresInMs: nil)
     }
 
-    static func denyOnce() -> PermissionResponseChoice {
-        PermissionResponseChoice(action: .deny, scope: .once, expiresInMs: nil)
+    static func denyOnce() -> Self {
+        Self(action: .deny, scope: .once, expiresInMs: nil)
     }
 }
 

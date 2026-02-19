@@ -2,11 +2,13 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping non_optional_string_data_conversion
+
 // MARK: - Mock URL Protocol
 
 /// Intercepts URLSession requests and returns preset responses.
 /// Configured per-test via `MockURLProtocol.handler`.
-final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+class MockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, HTTPURLResponse))?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -679,7 +681,7 @@ struct APIClientTests {
                   "timestamp":1700000000000,
                   "sessionId":"s1",
                   "workspaceId":"w1",
-                  
+
                   "tool":"bash",
                   "displaySummary":"git push",
                   "decision":"allow",
@@ -956,7 +958,6 @@ struct APIClientTests {
         #expect(response.removedLines == 4)
         #expect(response.cacheKey == "s1:Sources/App.swift:tc-3")
     }
-
 
     // MARK: - Device Token
 

@@ -26,7 +26,9 @@ private final class SafeSizingCell: UICollectionViewCell {
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
-        let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+        guard let attributes = layoutAttributes.copy() as? UICollectionViewLayoutAttributes else {
+            return layoutAttributes
+        }
 
         let targetSize = CGSize(
             width: attributes.size.width,
@@ -563,7 +565,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return Int(String(digits))
         }
 
-
         private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
             if let currentAudioPlayer = self.audioPlayer,
                currentAudioPlayer === audioPlayer {
@@ -844,19 +845,11 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 // Keep tap as no-op so accidental touches don't churn reconfigures.
                 return
 
-            case .systemEvent(let systemID, let message):
-                guard let compaction = Self.compactionPresentation(from: message),
-                      compaction.canExpand else {
-                    return
-                }
-
-                if reducer.expandedItemIDs.contains(systemID) {
-                    reducer.expandedItemIDs.remove(systemID)
-                } else {
-                    reducer.expandedItemIDs.insert(systemID)
-                }
-
-                reconfigureItems([systemID], in: collectionView)
+            case .systemEvent:
+                // Compaction rows now use an explicit chevron button affordance
+                // for expand/collapse to keep row-level tap behavior consistent
+                // with double-tap copy gestures.
+                return
 
             default:
                 break
@@ -974,14 +967,43 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
             if let compaction = Self.compactionPresentation(from: message) {
                 let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
+                let onToggleExpand: (() -> Void)?
+                if compaction.canExpand {
+                    onToggleExpand = { [weak self] in
+                        self?.toggleCompactionExpansion(itemID: itemID)
+                    }
+                } else {
+                    onToggleExpand = nil
+                }
+
                 return CompactionTimelineRowConfiguration(
                     presentation: compaction,
                     isExpanded: isExpanded,
-                    themeID: currentThemeID
+                    themeID: currentThemeID,
+                    onToggleExpand: onToggleExpand
                 )
             }
 
             return SystemTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        }
+
+        private func toggleCompactionExpansion(itemID: String) {
+            guard let reducer,
+                  let collectionView,
+                  let item = currentItemByID[itemID],
+                  case .systemEvent(_, let message) = item,
+                  let compaction = Self.compactionPresentation(from: message),
+                  compaction.canExpand else {
+                return
+            }
+
+            if reducer.expandedItemIDs.contains(itemID) {
+                reducer.expandedItemIDs.remove(itemID)
+            } else {
+                reducer.expandedItemIDs.insert(itemID)
+            }
+
+            reconfigureItems([itemID], in: collectionView)
         }
 
         private func nativeErrorConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {

@@ -102,7 +102,7 @@ struct SyntaxHighlighterTests {
 
     @Test func highlightEmptyString() {
         let result = SyntaxHighlighter.highlight("", language: .swift)
-        #expect(String(result.characters) == "")
+        #expect(String(result.characters).isEmpty)
     }
 
     @Test func highlightPreservesText() {

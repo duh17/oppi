@@ -152,7 +152,7 @@ struct RestorationStateTests {
     // MARK: - Corrupted data returns nil
 
     @Test func corruptedDataReturnsNil() {
-        UserDefaults.standard.set("not json".data(using: .utf8), forKey: RestorationState.key)
+        UserDefaults.standard.set(Data("not json".utf8), forKey: RestorationState.key)
         #expect(RestorationState.load() == nil)
         RestorationState.clear()
     }

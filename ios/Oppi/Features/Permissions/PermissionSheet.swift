@@ -97,7 +97,7 @@ struct PermissionSheet: View {
                 if !request.reason.isEmpty {
                     Text(request.reason)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -115,9 +115,9 @@ private struct PermissionSheetHeader: View {
 
     var body: some View {
         HStack {
-            Image(systemName: request.risk.systemImage)
+            Image(systemName: "exclamationmark.shield")
                 .font(.title2)
-                .foregroundStyle(Color.riskColor(request.risk))
+                .foregroundStyle(.themeOrange)
 
             Text("Permission Request")
                 .font(.headline)
@@ -127,11 +127,11 @@ private struct PermissionSheetHeader: View {
             if request.hasExpiry {
                 Text(request.timeoutAt, style: .timer)
                     .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
             } else {
                 Label("No expiry", systemImage: "infinity")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
             }
         }
     }
@@ -231,10 +231,7 @@ private struct CommandBox: View {
 
 // MARK: - Action Buttons
 
-/// Allow/Deny buttons with risk-appropriate emphasis.
-///
-/// Low/Medium: Allow is prominent. High: both equal weight.
-/// Critical: Deny is prominent, Allow is deliberately plain.
+/// Allow/Deny action buttons for permission requests.
 private struct PermissionActionButtons: View {
     private struct ExtraChoice: Identifiable {
         let id: String
@@ -249,20 +246,8 @@ private struct PermissionActionButtons: View {
 
     @State private var isResolving = false
 
-    private var isCritical: Bool { request.risk == .critical }
-
-    private var allowTint: Color {
-        switch request.risk {
-        case .low: return .themeGreen
-        case .medium: return .themeBlue
-        case .high: return .themeOrange
-        case .critical: return .themeFgDim
-        }
-    }
-
-    private var denyWidth: CGFloat {
-        request.risk == .low ? 80 : .infinity
-    }
+    private var allowTint: Color { .themeGreen }
+    private var denyWidth: CGFloat { .infinity }
 
     private var options: PermissionResolutionOptions {
         request.resolutionOptions
@@ -341,31 +326,13 @@ private struct PermissionActionButtons: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                // Deny button (one-time)
-                if isCritical {
-                    denyLabel
-                        .buttonStyle(.borderedProminent)
-                        .tint(.themeRed)
-                } else {
-                    denyLabel
-                        .buttonStyle(.bordered)
-                        .tint(.themeRed)
-                }
+                denyLabel
+                    .buttonStyle(.bordered)
+                    .tint(.themeRed)
 
-                // Allow button (one-time)
-                if isCritical {
-                    allowLabel
-                        .buttonStyle(.bordered)
-                        .tint(allowTint)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.themeRed, lineWidth: 2)
-                        )
-                } else {
-                    allowLabel
-                        .buttonStyle(.borderedProminent)
-                        .tint(allowTint)
-                }
+                allowLabel
+                    .buttonStyle(.borderedProminent)
+                    .tint(allowTint)
             }
 
             if !extraChoices.isEmpty {
@@ -407,7 +374,7 @@ private struct PermissionActionButtons: View {
             resolve(.allowOnce())
         } label: {
             HStack(spacing: 6) {
-                if BiometricService.shared.requiresBiometric(for: request.risk) {
+                if BiometricService.shared.requiresBiometric {
                     Image(systemName: biometricIcon)
                         .font(.caption)
                 }

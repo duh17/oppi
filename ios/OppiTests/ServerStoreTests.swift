@@ -47,14 +47,14 @@ struct ServerStoreTests {
         defer { cleanupKeychain(store) }
 
         // Initial pair
-        let _ = store.addOrUpdate(from: ServerCredentials(
+        _ = store.addOrUpdate(from: ServerCredentials(
             host: "old-host.local", port: 7749, token: "sk_old", name: "studio",
             serverFingerprint: "sha256:repair-test"
         ))
         let originalAddedAt = store.servers[0].addedAt
 
         // Re-pair with same fingerprint, new credentials
-        let _ = store.addOrUpdate(from: ServerCredentials(
+        _ = store.addOrUpdate(from: ServerCredentials(
             host: "new-host.ts.net", port: 8080, token: "sk_new", name: "studio-v2",
             serverFingerprint: "sha256:repair-test"
         ))

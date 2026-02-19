@@ -18,7 +18,6 @@ npm run check   # typecheck + lint + format check
 src/            Source code
 tests/          Test files (vitest)
 extensions/     Built-in extensions (permission-gate)
-sandbox/        Container sandbox config
 docs/           Server design docs
 scripts/        Server ops scripts
 ```

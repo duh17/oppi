@@ -12,6 +12,7 @@ enum ChatItem: Identifiable, Equatable {
     /// Locally generated audio clip for playback in the timeline.
     case audioClip(id: String, title: String, fileURL: URL, timestamp: Date)
     case thinking(id: String, preview: String, hasMore: Bool, isDone: Bool = false)
+    // swiftlint:disable:next enum_case_associated_values_count
     case toolCall(
         id: String,
         tool: String,

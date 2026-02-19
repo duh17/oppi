@@ -763,7 +763,6 @@ struct ChatSessionManagerTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -796,6 +795,12 @@ private struct HistoryReloadCall: Equatable, Sendable {
     let cachedLastEventId: String?
 }
 
+private struct HistoryReloadSnapshot: Equatable, Sendable {
+    let calls: [HistoryReloadCall]
+    let cancellations: Int
+    let completions: Int
+}
+
 private actor HistoryReloadTracker {
     private var calls: [HistoryReloadCall] = []
     private var cancellations = 0
@@ -814,8 +819,8 @@ private actor HistoryReloadTracker {
         completions += 1
     }
 
-    func snapshot() -> (calls: [HistoryReloadCall], cancellations: Int, completions: Int) {
-        (calls, cancellations, completions)
+    func snapshot() -> HistoryReloadSnapshot {
+        HistoryReloadSnapshot(calls: calls, cancellations: cancellations, completions: completions)
     }
 
     func waitForCalls(_ expected: Int, timeoutMs: Int = 1_000) async -> Bool {

@@ -9,9 +9,9 @@
  * WebSocket benchmark is optional and requires auth/session context.
  *
  * Usage:
- *   npx tsx test-load-ws.ts
- *   npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
- *   npx tsx test-load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
+ *   npx tsx scripts/manual/load-ws.ts
+ *   npx tsx scripts/manual/load-ws.ts --host 127.0.0.1 --port 7749
+ *   npx tsx scripts/manual/load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
  *
  * Environment variables (equivalent):
  *   LOAD_HOST, LOAD_PORT
@@ -581,7 +581,7 @@ async function runWsBenchmark(config: BenchConfig): Promise<void> {
 function printUsage(): void {
   console.log(`
 Usage:
-  npx tsx test-load-ws.ts [options]
+  npx tsx scripts/manual/load-ws.ts [options]
 
 Options:
   --host <host>                          (default: 127.0.0.1)
@@ -601,8 +601,8 @@ Options:
   --ws-timeout-ms <ms>                   (default: 4000)
 
 Examples:
-  npx tsx test-load-ws.ts --host 127.0.0.1 --port 7749
-  npx tsx test-load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
+  npx tsx scripts/manual/load-ws.ts --host 127.0.0.1 --port 7749
+  npx tsx scripts/manual/load-ws.ts --token <token> --workspace <workspaceId> --session <sessionId>
 `);
 }
 

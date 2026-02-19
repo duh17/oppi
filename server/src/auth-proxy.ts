@@ -1,9 +1,9 @@
 /**
- * Auth-injecting reverse proxy for container API access.
+ * Auth-injecting reverse proxy for provider API access.
  *
- * Real API credentials never enter containers. Containers send requests
- * with placeholder tokens, and this proxy replaces them with real credentials
- * from the host's auth.json before forwarding to upstream APIs.
+ * Real API credentials never enter session-scoped auth stubs. The client sends
+ * placeholder tokens, and this proxy replaces them with real credentials
+ * from local auth.json before forwarding to upstream APIs.
  *
  * Per-provider credential stubs:
  *   Anthropic:    api_key "sk-ant-oat01-proxy-<sessionId>" (OAuth-shaped)
@@ -13,10 +13,10 @@
  *                  proxy swaps Authorization header with real JWT)
  *
  * Flow:
- *   Container → HTTP (placeholder auth) → Auth Proxy
+ *   Session client → HTTP (placeholder auth) → Auth Proxy
  *     → extract session ID from placeholder
  *     → validate session is registered
- *     → read real credential from host auth.json
+ *     → read real credential from local auth.json
  *     → inject real auth headers
  *     → HTTPS → upstream API
  */
@@ -81,8 +81,8 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 /**
  * Build a fake JWT that carries session ID and account ID.
  *
- * The container's openai-codex SDK calls extractAccountId(token) which
- * parses the JWT payload. Our fake JWT satisfies that parser while being
+ * The openai-codex SDK calls extractAccountId(token) which parses the JWT
+ * payload. Our fake JWT satisfies that parser while being
  * obviously unusable as a real credential (alg: "none", no real signature).
  */
 function buildFakeJwt(sessionId: string, accountId: string): string {
@@ -123,7 +123,7 @@ export interface ProviderRoute {
   extractSessionId: (headers: Record<string, string>) => string | null;
   /** Inject real auth headers, replacing the placeholder. */
   injectAuth: (token: string, headers: Record<string, string>) => void;
-  /** Build the stub credential for the container's auth.json. */
+  /** Build the stub credential for per-session auth state. */
   buildStubCredential: (
     sessionId: string,
     realCredential: Record<string, unknown>,
@@ -182,7 +182,7 @@ export const ROUTES: ProviderRoute[] = [
     injectAuth(token: string, headers: Record<string, string>): void {
       // Replace fake JWT with real one.
       // All other headers (chatgpt-account-id, OpenAI-Beta, originator,
-      // User-Agent) are already correct — built by the container SDK
+      // User-Agent) are already correct — built by the SDK
       // using the account ID from the fake JWT payload.
       headers["authorization"] = `Bearer ${token}`;
     },

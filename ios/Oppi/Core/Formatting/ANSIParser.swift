@@ -54,7 +54,7 @@ enum ANSIParser {
     // MARK: - Regex
 
     /// Matches any ANSI escape sequence: ESC [ ... final-byte
-    fileprivate nonisolated(unsafe) static let escapePattern: Regex<Substring> = /\x1B\[[0-9;]*[A-Za-z]/
+    nonisolated(unsafe) fileprivate static let escapePattern: Regex<Substring> = /\x1B\[[0-9;]*[A-Za-z]/
 }
 
 // MARK: - Scanner

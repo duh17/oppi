@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { isIP } from "node:net";
 import { generateId } from "./id.js";
+import { defaultPolicy } from "./policy.js";
 import type {
   Session,
   SessionMessage,
@@ -68,60 +69,7 @@ function defaultAllowedCidrs(): string[] {
   ];
 }
 
-function defaultPolicyConfig(): NonNullable<ServerConfig["policy"]> {
-  return {
-    schemaVersion: 1,
-    mode: "balanced",
-    description: "Safer default for most users: ask on high-impact actions, allow low-risk local reads.",
-    fallback: "ask",
-    guardrails: [
-      {
-        id: "block-secret-files",
-        decision: "block",
-        label: "Block secret credential files",
-        reason: "Never allow direct reads of private key material",
-        immutable: true,
-        match: {
-          tool: "read",
-          pathMatches: "*identity_ed25519*",
-        },
-      },
-      {
-        id: "block-host-root-rm",
-        decision: "block",
-        label: "Block destructive root delete",
-        reason: "Prevents catastrophic filesystem deletion",
-        immutable: true,
-        match: {
-          tool: "bash",
-          executable: "rm",
-          commandMatches: "rm -rf /*",
-        },
-      },
-    ],
-    permissions: [
-      {
-        id: "ask-git-push",
-        decision: "ask",
-        label: "Push code to remote",
-        match: {
-          tool: "bash",
-          executable: "git",
-          commandMatches: "git push*",
-        },
-      },
-      {
-        id: "allow-safe-read-workspace",
-        decision: "allow",
-        label: "Allow read-only workspace inspection",
-        match: {
-          tool: "read",
-          pathWithin: "/Users/chenda/workspace/oppi",
-        },
-      },
-    ],
-  };
-}
+
 
 function createDefaultConfig(dataDir: string): ServerConfig {
   return {
@@ -137,7 +85,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     approvalTimeoutMs: 120 * 1000,
 
     allowedCidrs: defaultAllowedCidrs(),
-    policy: defaultPolicyConfig(),
+    policy: defaultPolicy(),
   };
 }
 
@@ -347,6 +295,7 @@ function normalizeConfig(
       "fallback",
       "guardrails",
       "permissions",
+      "heuristics",
     ]);
 
     if (strictUnknown) {
@@ -580,7 +529,56 @@ function normalizeConfig(
       .map((entry, i) => parsePermission(entry, `${path}.permissions[${i}]`))
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
-    return {
+    // Parse heuristics (optional — omitted means use defaults)
+    let heuristics: import("./types.js").PolicyHeuristics | undefined;
+    if ("heuristics" in value && value.heuristics != null) {
+      if (!isRecord(value.heuristics)) {
+        errors.push(`${path}.heuristics: expected object`);
+        changed = true;
+      } else {
+        const h = value.heuristics;
+        const validHeuristicKeys = new Set([
+          "pipeToShell",
+          "dataEgress",
+          "secretEnvInUrl",
+          "secretFileAccess",
+          "browserUnknownDomain",
+          "browserEval",
+        ]);
+
+        if (strictUnknown) {
+          for (const key of Object.keys(h)) {
+            if (!validHeuristicKeys.has(key)) {
+              errors.push(`${path}.heuristics.${key}: unknown key`);
+            }
+          }
+        }
+
+        const parseHeuristicValue = (
+          raw: unknown,
+          hPath: string,
+        ): "allow" | "ask" | "block" | false | undefined => {
+          if (raw === undefined) return undefined;
+          if (raw === false) return false;
+          if (raw === "allow" || raw === "ask" || raw === "block") return raw;
+          errors.push(`${hPath}: expected one of allow|ask|block or false`);
+          changed = true;
+          return undefined;
+        };
+
+        heuristics = {};
+        for (const key of validHeuristicKeys) {
+          if (key in h) {
+            const val = parseHeuristicValue(h[key], `${path}.heuristics.${key}`);
+            if (val !== undefined) {
+              (heuristics as Record<string, unknown>)[key] = val;
+            }
+          }
+        }
+      }
+    }
+
+    const result: NonNullable<ServerConfig["policy"]> = {
       schemaVersion: 1,
       mode,
       description,
@@ -588,6 +586,8 @@ function normalizeConfig(
       guardrails,
       permissions,
     };
+    if (heuristics) result.heuristics = heuristics;
+    return result;
   };
 
   if ("policy" in obj) {
@@ -1185,7 +1185,6 @@ export class Storage {
     const id = generateId(8);
     const now = Date.now();
 
-    const runtime = "host" as const;
     const extensions = normalizeExtensionList(req.extensions);
 
     const workspace: Workspace = {
@@ -1193,7 +1192,6 @@ export class Storage {
       name: req.name,
       description: req.description,
       icon: req.icon,
-      runtime,
       skills: req.skills,
       policy: req.policy,
       systemPrompt: req.systemPrompt,
@@ -1222,25 +1220,14 @@ export class Storage {
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
-  private validateWorkspaceRuntime(_workspace: Pick<Workspace, "id" | "runtime">): "host" {
-    // Host-only runtime model (v1 release hardening).
-    // Legacy "container" records are coerced to host on read.
-    return "host";
-  }
-
   private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
     const workspaceId = typeof raw.id === "string" ? raw.id : "unknown";
-    const runtime = this.validateWorkspaceRuntime({
-      id: workspaceId,
-      runtime: raw.runtime as Workspace["runtime"],
-    });
 
     const workspace: Workspace = {
       id: workspaceId,
       name: typeof raw.name === "string" ? raw.name : "",
       description: typeof raw.description === "string" ? raw.description : undefined,
       icon: typeof raw.icon === "string" ? raw.icon : undefined,
-      runtime,
       skills: Array.isArray(raw.skills)
         ? raw.skills.filter((skill): skill is string => typeof skill === "string")
         : [],
@@ -1330,12 +1317,6 @@ export class Storage {
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined) workspace.description = updates.description;
     if (updates.icon !== undefined) workspace.icon = updates.icon;
-    if (updates.runtime !== undefined) {
-      workspace.runtime = this.validateWorkspaceRuntime({
-        id: workspace.id,
-        runtime: updates.runtime,
-      });
-    }
     if (updates.skills !== undefined) workspace.skills = updates.skills;
     if (updates.policy !== undefined) workspace.policy = updates.policy;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;

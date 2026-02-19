@@ -1,6 +1,8 @@
 import Testing
 @testable import Oppi
 
+// swiftlint:disable large_tuple
+
 @Suite("ComposerAutocomplete")
 struct ComposerAutocompleteTests {
 

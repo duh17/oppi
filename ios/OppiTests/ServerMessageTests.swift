@@ -271,7 +271,7 @@ struct ServerMessageTests {
 
     @Test func decodesPermissionRequest() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"rm -rf /"},"displaySummary":"bash: rm -rf /","risk":"critical","reason":"Destructive command","timeoutAt":1700000120000}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"rm -rf /"},"displaySummary":"bash: rm -rf /","reason":"Destructive command","timeoutAt":1700000120000}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -280,14 +280,13 @@ struct ServerMessageTests {
         }
         #expect(perm.id == "perm1")
         #expect(perm.tool == "bash")
-        #expect(perm.risk == .critical)
         #expect(perm.displaySummary == "bash: rm -rf /")
         #expect(perm.expires)
     }
 
     @Test func decodesPermissionRequestWithoutExpiry() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"expires":false}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","reason":"Git push","timeoutAt":1700000120000,"expires":false}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -300,7 +299,7 @@ struct ServerMessageTests {
 
     @Test func decodesPermissionRequestResolutionOptions() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"resolutionOptions":{"allowSession":true,"allowAlways":true,"alwaysDescription":"Allow all git commands","denyAlways":true}}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","reason":"Git push","timeoutAt":1700000120000,"resolutionOptions":{"allowSession":true,"allowAlways":true,"alwaysDescription":"Allow all git commands","denyAlways":true}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -470,7 +469,7 @@ struct ServerMessageTests {
     }
 
     @Test func permissionRequestMissingFieldsThrows() {
-        // Missing required fields like tool, risk, etc.
+        // Missing required fields like tool, etc.
         let json = #"{"type":"permission_request","id":"p1","sessionId":"s1"}"#
         #expect(throws: DecodingError.self) {
             try ServerMessage.decode(from: json)
