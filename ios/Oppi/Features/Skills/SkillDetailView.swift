@@ -41,28 +41,6 @@ struct SkillDetailView: View {
         }
         .navigationTitle(skillName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let detail {
-                ToolbarItem(placement: .primaryAction) {
-                    NavigationLink(value: SkillEditorDestination(
-                        skillName: skillName,
-                        filePath: "SKILL.md",
-                        content: detail.content,
-                        isNew: false
-                    )) {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                }
-            }
-        }
-        .navigationDestination(for: SkillEditorDestination.self) { dest in
-            SkillEditorView(
-                skillName: dest.skillName,
-                filePath: dest.filePath,
-                initialContent: dest.content,
-                isNew: dest.isNew
-            )
-        }
         .task { await load() }
     }
 

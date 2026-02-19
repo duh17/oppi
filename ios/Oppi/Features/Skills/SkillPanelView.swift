@@ -70,14 +70,6 @@ struct SkillPanelView: View {
         .navigationDestination(for: SkillFileDestination.self) { dest in
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
-        .navigationDestination(for: SkillEditorDestination.self) { dest in
-            SkillEditorView(
-                skillName: dest.skillName,
-                filePath: dest.filePath,
-                initialContent: dest.content,
-                isNew: dest.isNew
-            )
-        }
     }
 }
 
