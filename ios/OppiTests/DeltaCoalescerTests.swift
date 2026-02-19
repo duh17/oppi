@@ -19,7 +19,7 @@ struct DeltaCoalescerTests {
 
         #expect(flushed.count == 1)
         #expect(flushed[0].count == 1)
-        guard case .toolStart(_, _, let tool, _) = flushed[0][0] else {
+        guard case .toolStart(_, _, let tool, _, _) = flushed[0][0] else {
             Issue.record("Expected toolStart")
             return
         }

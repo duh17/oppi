@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import CryptoKit
 @testable import Oppi
 
 // MARK: - Session Codable
@@ -380,70 +379,31 @@ struct ServerCredentialsTests {
         #expect(original == decoded)
     }
 
-    @Test func decodeLegacyCredentialPayloadDefaultsSecurityFields() throws {
-        let json = """
-        {"host":"legacy-host","port":7749,"token":"sk_legacy","name":"Legacy"}
-        """
-
-        let decoded = try JSONDecoder().decode(ServerCredentials.self, from: json.data(using: .utf8)!)
-
-        #expect(decoded.serverFingerprint == nil)
-        #expect(decoded.securityProfile == nil)
-        #expect(decoded.inviteVersion == nil)
-        #expect(decoded.inviteKeyId == nil)
-        #expect(decoded.requireTlsOutsideTailnet == nil)
-        #expect(decoded.allowInsecureHttpInTailnet == nil)
-        #expect(decoded.requirePinnedServerIdentity == nil)
-    }
-
-    @Test func decodeCredentialPayloadWithSecurityFields() throws {
+    @Test func decodeCredentialPayloadWithFingerprint() throws {
         let json = """
         {
             "host":"secure-host",
             "port":7749,
             "token":"sk_secure",
             "name":"Secure",
-            "serverFingerprint":"sha256:abc123",
-            "securityProfile":"host",
-            "inviteVersion":2,
-            "inviteKeyId":"srv-key-1",
-            "requireTlsOutsideTailnet":true,
-            "allowInsecureHttpInTailnet":false,
-            "requirePinnedServerIdentity":true
+            "serverFingerprint":"sha256:abc123"
         }
         """
 
         let decoded = try JSONDecoder().decode(ServerCredentials.self, from: json.data(using: .utf8)!)
 
         #expect(decoded.serverFingerprint == "sha256:abc123")
-        #expect(decoded.securityProfile == "host")
-        #expect(decoded.inviteVersion == 2)
-        #expect(decoded.inviteKeyId == "srv-key-1")
-        #expect(decoded.requireTlsOutsideTailnet == true)
-        #expect(decoded.allowInsecureHttpInTailnet == false)
-        #expect(decoded.requirePinnedServerIdentity == true)
     }
 }
 
-private struct InvitePayloadFixture: Codable {
+private struct InvitePayloadV3Fixture: Codable {
+    var v: Int
     var host: String
     var port: Int
     var token: String
+    var pairingToken: String?
     var name: String
-    var fingerprint: String
-    var securityProfile: String
-}
-
-private struct InviteEnvelopeFixture: Codable {
-    var v: Int
-    var alg: String
-    var kid: String
-    var iat: Int
-    var exp: Int
-    var nonce: String
-    var publicKey: String
-    var payload: InvitePayloadFixture
-    var sig: String
+    var fingerprint: String?
 }
 
 private extension Data {
@@ -457,125 +417,66 @@ private extension Data {
 
 @Suite("ServerCredentials Invite Security")
 struct ServerCredentialsInviteSecurityTests {
-    private func defaultPayload() -> InvitePayloadFixture {
-        InvitePayloadFixture(
+    private func defaultPayloadV3() -> InvitePayloadV3Fixture {
+        InvitePayloadV3Fixture(
+            v: 3,
             host: "mac-studio.taila3ebc.ts.net",
             port: 7749,
-            token: "sk_test_invite",
+            token: "",
+            pairingToken: "pt_test_invite",
             name: "mac-studio",
-            fingerprint: "sha256:test-fingerprint",
-            securityProfile: "tailscale-permissive"
+            fingerprint: "sha256:test-fingerprint"
         )
     }
 
-    private func buildSigningInput(_ envelope: InviteEnvelopeFixture) -> String {
-        let p = envelope.payload
-        return [
-            "v=\(envelope.v)",
-            "alg=\(envelope.alg)",
-            "kid=\(envelope.kid)",
-            "iat=\(envelope.iat)",
-            "exp=\(envelope.exp)",
-            "nonce=\(envelope.nonce)",
-            "publicKey=\(envelope.publicKey)",
-            "host=\(p.host)",
-            "port=\(p.port)",
-            "token=\(p.token)",
-            "name=\(p.name)",
-            "fingerprint=\(p.fingerprint)",
-            "securityProfile=\(p.securityProfile)",
-        ].joined(separator: "\n")
-    }
+    @Test func decodeInvitePayloadAcceptsUnsignedV3Payload() throws {
+        let payload = defaultPayloadV3()
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
 
-    private func makeSignedEnvelope(
-        iat: Int,
-        exp: Int,
-        payload: InvitePayloadFixture? = nil
-    ) throws -> InviteEnvelopeFixture {
-        let signingKey = Curve25519.Signing.PrivateKey()
-        let publicKey = Data(signingKey.publicKey.rawRepresentation).base64URLEncodedString
-
-        var envelope = InviteEnvelopeFixture(
-            v: 2,
-            alg: "Ed25519",
-            kid: "srv-test",
-            iat: iat,
-            exp: exp,
-            nonce: "nonce-123",
-            publicKey: publicKey,
-            payload: payload ?? defaultPayload(),
-            sig: ""
-        )
-
-        let signingInput = buildSigningInput(envelope)
-        let signature = try signingKey.signature(for: Data(signingInput.utf8))
-        envelope.sig = signature.base64URLEncodedString
-        return envelope
-    }
-
-    private func encodeEnvelope(_ envelope: InviteEnvelopeFixture) throws -> String {
-        let data = try JSONEncoder().encode(envelope)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw NSError(domain: "ServerCredentialsInviteSecurityTests", code: -1)
-        }
-        return json
-    }
-
-    @Test func decodeInvitePayloadAcceptsSignedV2Envelope() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
-
-        let json = try encodeEnvelope(envelope)
         let creds = ServerCredentials.decodeInvitePayload(json)
 
         #expect(creds != nil)
-        #expect(creds?.host == envelope.payload.host)
-        #expect(creds?.port == envelope.payload.port)
-        #expect(creds?.token == envelope.payload.token)
-        #expect(creds?.inviteVersion == 2)
-        #expect(creds?.inviteKeyId == envelope.kid)
-        #expect(creds?.securityProfile == envelope.payload.securityProfile)
-        #expect(creds?.normalizedServerFingerprint == envelope.payload.fingerprint)
+        #expect(creds?.host == payload.host)
+        #expect(creds?.port == payload.port)
+        #expect(creds?.token == payload.token)
+        #expect(creds?.pairingToken == payload.pairingToken)
+        #expect(creds?.normalizedServerFingerprint == payload.fingerprint)
     }
 
-    @Test func decodeInviteURLAcceptsSignedV2DeepLink() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
-        let inviteJSON = try encodeEnvelope(envelope)
-        let inviteB64 = Data(inviteJSON.utf8).base64URLEncodedString
+    @Test func decodeInviteURLAcceptsUnsignedV3DeepLink() throws {
+        let payload = defaultPayloadV3()
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let inviteB64 = Data(json.utf8).base64URLEncodedString
 
-        let piConnectURL = try #require(URL(string: "pi://connect?v=2&invite=\(inviteB64)"))
-        let oppiConnectURL = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
-        let oppiPairURL = try #require(URL(string: "oppi://pair?invite=\(inviteB64)"))
+        let connectURL = try #require(URL(string: "oppi://connect?v=3&invite=\(inviteB64)"))
+        let pairURL = try #require(URL(string: "oppi://pair?v=3&invite=\(inviteB64)"))
 
-        let piConnectCreds = ServerCredentials.decodeInviteURL(piConnectURL)
-        let oppiConnectCreds = ServerCredentials.decodeInviteURL(oppiConnectURL)
-        let oppiPairCreds = ServerCredentials.decodeInviteURL(oppiPairURL)
-        let decodedFromString = ServerCredentials.decodeInviteURLString("oppi://pair?invite=\(inviteB64)")
+        let connectCreds = ServerCredentials.decodeInviteURL(connectURL)
+        let pairCreds = ServerCredentials.decodeInviteURL(pairURL)
 
-        #expect(piConnectCreds?.host == envelope.payload.host)
-        #expect(oppiConnectCreds?.host == envelope.payload.host)
-        #expect(oppiPairCreds?.host == envelope.payload.host)
-        #expect(decodedFromString?.host == envelope.payload.host)
-        #expect(piConnectCreds?.inviteVersion == 2)
-        #expect(oppiConnectCreds?.inviteVersion == 2)
-        #expect(oppiPairCreds?.inviteVersion == 2)
+        #expect(connectCreds?.host == payload.host)
+        #expect(pairCreds?.host == payload.host)
     }
 
-    @Test func decodeInviteURLRejectsLegacyUnsignedDeepLink() throws {
-        let legacyURL = try #require(
-            URL(string: "pi://connect?host=mac-studio.taila3ebc.ts.net&port=7749&token=sk_legacy&name=legacy")
-        )
+    @Test func decodeInviteURLRejectsUnsupportedVersion() throws {
+        let payload = defaultPayloadV3()
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let inviteB64 = Data(json.utf8).base64URLEncodedString
 
-        let creds = ServerCredentials.decodeInviteURL(legacyURL)
+        let unsupported = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
+        let creds = ServerCredentials.decodeInviteURL(unsupported)
+
         #expect(creds == nil)
     }
 
     @Test func decodeInviteURLRejectsUnknownRoute() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        let envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
-        let inviteJSON = try encodeEnvelope(envelope)
-        let inviteB64 = Data(inviteJSON.utf8).base64URLEncodedString
+        let payload = defaultPayloadV3()
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+        let inviteB64 = Data(json.utf8).base64URLEncodedString
 
         let unsupported = try #require(URL(string: "oppi://migrate?invite=\(inviteB64)"))
         let creds = ServerCredentials.decodeInviteURL(unsupported)
@@ -595,39 +496,6 @@ struct ServerCredentialsInviteSecurityTests {
         let creds = ServerCredentials.decodeInvitePayload(legacy)
         #expect(creds == nil)
     }
-
-    @Test func decodeInvitePayloadRejectsTamperedSignedEnvelope() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        var envelope = try makeSignedEnvelope(iat: now, exp: now + 600)
-
-        // Adversary mutates payload after signature is produced.
-        envelope.payload.host = "evil.example.com"
-
-        let json = try encodeEnvelope(envelope)
-        let creds = ServerCredentials.decodeInvitePayload(json)
-
-        #expect(creds == nil)
-    }
-
-    @Test func decodeInvitePayloadRejectsExpiredSignedEnvelope() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        let envelope = try makeSignedEnvelope(iat: now - 600, exp: now - 1)
-
-        let json = try encodeEnvelope(envelope)
-        let creds = ServerCredentials.decodeInvitePayload(json)
-
-        #expect(creds == nil)
-    }
-
-    @Test func decodeInvitePayloadRejectsFutureIssuedAtBeyondClockSkew() throws {
-        let now = Int(Date().timeIntervalSince1970)
-        let envelope = try makeSignedEnvelope(iat: now + 301, exp: now + 900)
-
-        let json = try encodeEnvelope(envelope)
-        let creds = ServerCredentials.decodeInvitePayload(json)
-
-        #expect(creds == nil)
-    }
 }
 
 // MARK: - Workspace Codable
@@ -644,7 +512,6 @@ struct WorkspaceCodableTests {
             "icon": "hammer",
             "runtime": "host",
             "skills": ["searxng", "fetch"],
-            "policyPreset": "restricted",
             "systemPrompt": "You are helpful",
             "hostMount": "/Users/me/workspace",
             "memoryEnabled": true,
@@ -664,7 +531,6 @@ struct WorkspaceCodableTests {
         #expect(ws.icon == "hammer")
         #expect(ws.runtime == "host")
         #expect(ws.skills == ["searxng", "fetch"])
-        #expect(ws.policyPreset == "restricted")
         #expect(ws.systemPrompt == "You are helpful")
         #expect(ws.hostMount == "/Users/me/workspace")
         #expect(ws.memoryEnabled == true)
@@ -692,7 +558,6 @@ struct WorkspaceCodableTests {
         #expect(ws.icon == nil)
         #expect(ws.runtime == "container")
         #expect(ws.skills.isEmpty)
-        #expect(ws.policyPreset == "container") // default
         #expect(ws.systemPrompt == nil)
         #expect(ws.hostMount == nil)
         #expect(ws.memoryEnabled == nil)
@@ -706,7 +571,7 @@ struct WorkspaceCodableTests {
         {
             "id": "w3", "name": "RT",
             "description": "test", "icon": "star",
-            "runtime": "host", "skills": ["fetch"], "policyPreset": "container",
+            "runtime": "host", "skills": ["fetch"],
             "systemPrompt": "prompt", "hostMount": "/work",
             "memoryEnabled": false, "memoryNamespace": "ns",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
@@ -720,15 +585,14 @@ struct WorkspaceCodableTests {
         #expect(original == decoded)
     }
 
-    @Test func policyPresetDefaultsToContainer() throws {
+    @Test func runtimeDefaultsToContainerWhenHostMountMissing() throws {
         let json = """
         {
-            "id": "w4", "name": "NoPolicyField",
+            "id": "w4", "name": "NoRuntimeField",
             "skills": [], "createdAt": 0, "updatedAt": 0
         }
         """
         let ws = try JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
-        #expect(ws.policyPreset == "container")
         #expect(ws.runtime == "container")
     }
 }

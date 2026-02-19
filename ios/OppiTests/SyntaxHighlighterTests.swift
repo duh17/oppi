@@ -204,8 +204,8 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlight(command, language: .shell)
 
         #expect(String(result.characters) == command)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
-        #expect(foregroundColor(of: "-scheme", in: result) == .tokyoYellow)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
+        #expect(foregroundColor(of: "-scheme", in: result) == .themeSyntaxVariable)
     }
 
     @Test func shellHighlightingUsesShellHeuristics() {
@@ -213,13 +213,13 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
         #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
-        #expect(foregroundColor(of: "-scheme", in: result) == .tokyoYellow)
-        #expect(foregroundColor(of: "OppiUIReliability", in: result) == .tokyoFg)
-        #expect(foregroundColor(of: "2>&1", in: result) == .tokyoPurple)
-        #expect(foregroundColor(of: "grep", in: result) == .tokyoCyan)
-        #expect(foregroundColor(of: "-E", in: result) == .tokyoYellow)
-        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == .tokyoGreen)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
+        #expect(foregroundColor(of: "-scheme", in: result) == .themeSyntaxVariable)
+        #expect(foregroundColor(of: "OppiUIReliability", in: result) == .themeSyntaxVariable)
+        #expect(foregroundColor(of: "2>&1", in: result) == .themeSyntaxOperator)
+        #expect(foregroundColor(of: "grep", in: result) == .themeSyntaxFunction)
+        #expect(foregroundColor(of: "-E", in: result) == .themeSyntaxVariable)
+        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == .themeSyntaxString)
     }
 
     @Test func shellCommentDetectionRespectsTokenBoundaries() {
@@ -227,8 +227,8 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
         #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "foo#bar", in: result) == .tokyoFg)
-        #expect(foregroundColor(of: "# trailing comment", in: result) == .tokyoComment)
+        #expect(foregroundColor(of: "foo#bar", in: result) == .themeSyntaxVariable)
+        #expect(foregroundColor(of: "# trailing comment", in: result) == .themeSyntaxComment)
     }
 
     @Test func shellAssignmentsKeepCommandPosition() {
@@ -236,10 +236,10 @@ struct SyntaxHighlighterTests {
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
         #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "FOO=bar", in: result) == .tokyoCyan)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .tokyoCyan)
-        #expect(foregroundColor(of: "--scheme", in: result) == .tokyoYellow)
-        #expect(foregroundColor(of: "$SCHEME", in: result) == .tokyoCyan)
+        #expect(foregroundColor(of: "FOO=bar", in: result) == .themeSyntaxType)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
+        #expect(foregroundColor(of: "--scheme", in: result) == .themeSyntaxVariable)
+        #expect(foregroundColor(of: "$SCHEME", in: result) == .themeSyntaxType)
     }
 
     @Test func shellHighlightingBridgesToUIKitForegroundColors() {
@@ -259,8 +259,8 @@ struct SyntaxHighlighterTests {
         let commandColor = bridged.attribute(.foregroundColor, at: commandRange.location, effectiveRange: nil) as? UIColor
         let optionColor = bridged.attribute(.foregroundColor, at: optionRange.location, effectiveRange: nil) as? UIColor
 
-        #expect(commandColor == UIColor(Color.tokyoCyan))
-        #expect(optionColor == UIColor(Color.tokyoYellow))
+        #expect(commandColor == UIColor(Color.themeSyntaxFunction))
+        #expect(optionColor == UIColor(Color.themeSyntaxVariable))
     }
 
     private func foregroundColor(of substring: String, in attributed: AttributedString) -> Color? {

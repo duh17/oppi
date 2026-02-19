@@ -178,7 +178,7 @@ final class ProtocolSnapshotTests: XCTestCase {
     func testToolExecution() throws {
         // tool_start
         let startMsg = try decodeMessage("tool_start")
-        guard case .toolStart(let tool, _, let toolCallId) = startMsg else {
+        guard case .toolStart(let tool, _, let toolCallId, _) = startMsg else {
             XCTFail("Expected .toolStart")
             return
         }
@@ -196,11 +196,49 @@ final class ProtocolSnapshotTests: XCTestCase {
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
-        guard case .toolEnd(let endTool, _) = endMsg else {
+        guard case .toolEnd(let endTool, _, _, _, _) = endMsg else {
             XCTFail("Expected .toolEnd")
             return
         }
         XCTAssertEqual(endTool, "bash")
+
+        // tool_end_with_details
+        let detailsMsg = try decodeMessage("tool_end_with_details")
+        guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs) = detailsMsg else {
+            XCTFail("Expected .toolEnd with details")
+            return
+        }
+        XCTAssertEqual(detTool, "remember")
+        XCTAssertEqual(isError, false)
+        if case .object(let dict) = details {
+            XCTAssertEqual(dict["file"], .string("2026-02-18.md"))
+            XCTAssertEqual(dict["redacted"], .bool(false))
+        } else {
+            XCTFail("Expected object details")
+        }
+        // Result segments from server mobile renderer
+        XCTAssertNotNil(resultSegs)
+        XCTAssertEqual(resultSegs?.count, 2)
+        XCTAssertEqual(resultSegs?[0].text, "✓ Saved")
+        XCTAssertEqual(resultSegs?[0].style, .success)
+        XCTAssertEqual(resultSegs?[1].style, .muted)
+
+        // tool_start_with_segments
+        let segMsg = try decodeMessage("tool_start_with_segments")
+        guard case .toolStart(let segTool, let segArgs, _, let callSegs) = segMsg else {
+            XCTFail("Expected .toolStart with callSegments")
+            return
+        }
+        XCTAssertEqual(segTool, "read")
+        XCTAssertEqual(segArgs["path"], .string("src/main.ts"))
+        XCTAssertNotNil(callSegs)
+        XCTAssertEqual(callSegs?.count, 3)
+        XCTAssertEqual(callSegs?[0].text, "read ")
+        XCTAssertEqual(callSegs?[0].style, .bold)
+        XCTAssertEqual(callSegs?[1].text, "src/main.ts")
+        XCTAssertEqual(callSegs?[1].style, .accent)
+        XCTAssertEqual(callSegs?[2].text, ":1-50")
+        XCTAssertEqual(callSegs?[2].style, .warning)
     }
 
     func testCompaction() throws {

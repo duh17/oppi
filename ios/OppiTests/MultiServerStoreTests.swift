@@ -316,7 +316,6 @@ struct MultiServerStoreTests {
             icon: nil,
             runtime: "container",
             skills: [],
-            policyPreset: "container",
             systemPrompt: nil,
             hostMount: nil,
             memoryEnabled: nil,
