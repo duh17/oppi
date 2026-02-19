@@ -199,7 +199,7 @@ private struct ToolOutputMedia: View {
                 } else {
                     Text(fallbackText)
                         .font(.caption.monospaced())
-                        .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
+                        .foregroundStyle(isError ? .themeRed : .themeFg)
                         .textSelection(.enabled)
                 }
             }
@@ -218,7 +218,7 @@ private struct ToolOutputMedia: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .task(id: ansiKey) {
             guard !renderText.isEmpty else {
@@ -231,7 +231,7 @@ private struct ToolOutputMedia: View {
             ansiAttributed = await Task.detached(priority: .userInitiated) {
                 ANSIParser.attributedString(
                     from: text,
-                    baseForeground: shouldTintError ? .tokyoRed : .tokyoFg
+                    baseForeground: shouldTintError ? .themeRed : .themeFg
                 )
             }.value
         }
@@ -270,11 +270,11 @@ private struct StructuredToolOutputView: View {
     var body: some View {
         Text(prettyJSON)
             .font(.caption.monospaced())
-            .foregroundStyle(isError ? .tokyoRed : .tokyoFg)
+            .foregroundStyle(isError ? .themeRed : .themeFg)
             .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.tokyoBgDark)
+            .background(Color.themeBgDark)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .contextMenu {
                 Button("Copy Output", systemImage: "doc.on.doc") {
@@ -318,26 +318,26 @@ struct AsyncImageBlob: View {
                     }
             } else if decodeFailed {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         VStack(spacing: 4) {
                             Image(systemName: "photo.badge.exclamationmark")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             Text("Image preview unavailable")
                                 .font(.caption2)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             if let mimeType {
                                 Text(mimeType)
                                     .font(.caption2.monospaced())
-                                    .foregroundStyle(.tokyoComment.opacity(0.7))
+                                    .foregroundStyle(.themeComment.opacity(0.7))
                             }
                         }
                     }
             } else {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         ProgressView()
@@ -391,15 +391,15 @@ struct AsyncAudioBlob: View {
         HStack(spacing: 10) {
             Image(systemName: "waveform")
                 .font(.caption)
-                .foregroundStyle(.tokyoPurple)
+                .foregroundStyle(.themePurple)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.tokyoFg)
+                    .foregroundStyle(.themeFg)
                 Text(subtitle)
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             Spacer()
@@ -407,7 +407,7 @@ struct AsyncAudioBlob: View {
             if decodeFailed {
                 Image(systemName: "xmark.circle")
                     .font(.caption)
-                    .foregroundStyle(.tokyoRed)
+                    .foregroundStyle(.themeRed)
             } else if decodedData == nil {
                 ProgressView()
                     .controlSize(.small)
@@ -420,15 +420,15 @@ struct AsyncAudioBlob: View {
                         if isLoading {
                             ProgressView()
                                 .controlSize(.mini)
-                                .tint(.tokyoPurple)
+                                .tint(.themePurple)
                         } else if isPlaying {
                             Image(systemName: "stop.fill")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoPurple)
+                                .foregroundStyle(.themePurple)
                         } else {
                             Image(systemName: "play.fill")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                         }
                     }
                     .frame(width: 28, height: 28)
@@ -438,7 +438,7 @@ struct AsyncAudioBlob: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.tokyoBgHighlight)
+        .background(Color.themeBgHighlight)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .task(id: base64.prefix(32)) {
             decodeFailed = false
@@ -478,7 +478,7 @@ struct AsyncDiffView: View {
                 ProgressView().controlSize(.small)
                 Text(precomputedLines == nil ? "Computing diff…" : "Loading diff…")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
             .padding(8)
             .task {

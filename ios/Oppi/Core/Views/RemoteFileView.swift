@@ -39,10 +39,10 @@ struct RemoteFileView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.title)
-                            .foregroundStyle(.tokyoRed)
+                            .foregroundStyle(.themeRed)
                         Text(errorMessage)
                             .font(.subheadline)
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                             .multilineTextAlignment(.center)
                     }
                     .padding()
@@ -61,7 +61,7 @@ struct RemoteFileView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
             .navigationTitle(filename)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -14,19 +14,10 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     var host: String
     /// Server port.
     var port: Int
-    /// Auth token (sk_...).
+    /// Auth token.
     var token: String
     /// Server Ed25519 fingerprint (same as `id`).
     var fingerprint: String
-
-    // ── Invite metadata ──
-
-    var securityProfile: String?
-    var inviteVersion: Int?
-    var inviteKeyId: String?
-    var requireTlsOutsideTailnet: Bool?
-    var allowInsecureHttpInTailnet: Bool?
-    var requirePinnedServerIdentity: Bool?
 
     // ── Local state (not from server) ──
 
@@ -44,13 +35,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
             port: port,
             token: token,
             name: name,
-            serverFingerprint: fingerprint,
-            securityProfile: securityProfile,
-            inviteVersion: inviteVersion,
-            inviteKeyId: inviteKeyId,
-            requireTlsOutsideTailnet: requireTlsOutsideTailnet,
-            allowInsecureHttpInTailnet: allowInsecureHttpInTailnet,
-            requirePinnedServerIdentity: requirePinnedServerIdentity
+            serverFingerprint: fingerprint
         )
     }
 
@@ -76,12 +61,6 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.port = credentials.port
         self.token = credentials.token
         self.fingerprint = fp
-        self.securityProfile = credentials.securityProfile
-        self.inviteVersion = credentials.inviteVersion
-        self.inviteKeyId = credentials.inviteKeyId
-        self.requireTlsOutsideTailnet = credentials.requireTlsOutsideTailnet
-        self.allowInsecureHttpInTailnet = credentials.allowInsecureHttpInTailnet
-        self.requirePinnedServerIdentity = credentials.requirePinnedServerIdentity
         self.addedAt = Date()
         self.sortOrder = sortOrder
     }
@@ -93,11 +72,5 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.host = credentials.host
         self.port = credentials.port
         self.token = credentials.token
-        self.securityProfile = credentials.securityProfile
-        self.inviteVersion = credentials.inviteVersion
-        self.inviteKeyId = credentials.inviteKeyId
-        self.requireTlsOutsideTailnet = credentials.requireTlsOutsideTailnet
-        self.allowInsecureHttpInTailnet = credentials.allowInsecureHttpInTailnet
-        self.requirePinnedServerIdentity = credentials.requirePinnedServerIdentity
     }
 }

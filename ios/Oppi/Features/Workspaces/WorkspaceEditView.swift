@@ -12,7 +12,6 @@ struct WorkspaceEditView: View {
     @State private var icon: String = ""
     @State private var selectedSkills: Set<String> = []
     @State private var runtime: String = "container"
-    @State private var policyPreset: String = "container"
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var memoryEnabled: Bool = false
@@ -73,20 +72,7 @@ struct WorkspaceEditView: View {
                      ? "Container runtime: isolated environment."
                      : "Host runtime: direct process on macOS host.")
                     .font(.caption)
-                    .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
-            }
-
-            Section("Policy") {
-                Picker("Preset", selection: $policyPreset) {
-                    ForEach(policyOptions, id: \.value) { option in
-                        Text(option.label).tag(option.value)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Text(policyPresetDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(runtime == "container" ? .themeGreen : .themeOrange)
             }
 
             Section(runtime == "container" ? "Workspace Mount" : "Host Working Directory") {
@@ -146,7 +132,7 @@ struct WorkspaceEditView: View {
                                     Spacer()
 
                                     Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .tokyoBlue : .secondary)
+                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .secondary)
                                         .imageScale(.large)
                                 }
                             }
@@ -198,17 +184,17 @@ struct WorkspaceEditView: View {
                 TextEditor(text: $systemPrompt)
                     .frame(minHeight: 120)
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.tokyoFg)
-                    .tint(.tokyoBlue)
+                    .foregroundStyle(.themeFg)
+                    .tint(.themeBlue)
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.tokyoBgDark)
+                            .fill(Color.themeBgDark)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.tokyoComment.opacity(0.25), lineWidth: 1)
+                            .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
                     )
 
                 Text("Appended to the base agent prompt")
@@ -241,9 +227,6 @@ struct WorkspaceEditView: View {
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
         .onAppear { loadFromWorkspace() }
-        .onChange(of: runtime) { _, newRuntime in
-            normalizePolicyPreset(for: newRuntime)
-        }
         .task {
             await loadModels()
             await loadExtensions()
@@ -261,36 +244,6 @@ struct WorkspaceEditView: View {
                 seen.insert(value)
                 return true
             }
-    }
-
-    private var policyOptions: [(label: String, value: String)] {
-        if runtime == "host" {
-            return [
-                ("Host Dev", "host"),
-                ("Host Standard", "host_standard"),
-                ("Host Locked", "host_locked"),
-            ]
-        }
-        return [("Container", "container")]
-    }
-
-    private var policyPresetDescription: String {
-        switch policyPreset {
-        case "host":
-            return "Developer trust mode: low friction, broad local autonomy."
-        case "host_standard":
-            return "Approval-first host mode for regular users."
-        case "host_locked":
-            return "Strict host mode: unknown actions blocked by default."
-        default:
-            return "Container mode: isolated runtime with standard supervision."
-        }
-    }
-
-    private func normalizePolicyPreset(for runtime: String) {
-        let allowed = Set(policyOptions.map(\.value))
-        guard !allowed.contains(policyPreset) else { return }
-        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private var selectedExtensionNames: [String] {
@@ -329,14 +282,12 @@ struct WorkspaceEditView: View {
         icon = workspace.icon ?? ""
         selectedSkills = Set(workspace.skills)
         runtime = workspace.runtime
-        policyPreset = workspace.policyPreset
         hostMount = workspace.hostMount ?? ""
         systemPrompt = workspace.systemPrompt ?? ""
         memoryEnabled = workspace.memoryEnabled ?? false
         memoryNamespace = workspace.memoryNamespace ?? ""
         extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
         defaultModel = workspace.defaultModel ?? ""
-        normalizePolicyPreset(for: runtime)
     }
 
     private func loadModels() async {
@@ -373,7 +324,6 @@ struct WorkspaceEditView: View {
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
             runtime: runtime,
-            policyPreset: policyPreset,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,
             memoryEnabled: memoryEnabled,
@@ -427,7 +377,7 @@ private struct SkillToggleRow: View {
                     Spacer()
 
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? .tokyoBlue : .secondary)
+                        .foregroundStyle(isSelected ? .themeBlue : .secondary)
                         .imageScale(.large)
                 }
             }

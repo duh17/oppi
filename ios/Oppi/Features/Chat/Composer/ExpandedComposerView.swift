@@ -60,7 +60,7 @@ struct ExpandedComposerView: View {
     }
 
     private var accentColor: Color {
-        isBashMode ? .tokyoGreen : .tokyoBlue
+        isBashMode ? .themeGreen : .themeBlue
     }
 
     private var autocompleteContext: ComposerAutocompleteContext {
@@ -121,7 +121,7 @@ struct ExpandedComposerView: View {
                 FullSizeTextView(
                     text: textFieldBinding,
                     font: .monospacedSystemFont(ofSize: 17, weight: .regular),
-                    textColor: UIColor(Color.tokyoFg),
+                    textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
                     onPasteImages: handlePastedImages,
                     autoFocusOnAppear: false
@@ -133,21 +133,21 @@ struct ExpandedComposerView: View {
                         .padding(.bottom, 8)
                 }
 
-                Divider().overlay(Color.tokyoComment.opacity(0.2))
+                Divider().overlay(Color.themeComment.opacity(0.2))
 
                 bottomBar
             }
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
             .navigationTitle(isBusy ? "Steer Agent" : "Compose")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(Color.tokyoBgDark, for: .navigationBar)
+            .toolbarBackground(Color.themeBgDark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundStyle(.tokyoFgDim)
+                    .foregroundStyle(.themeFgDim)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -157,10 +157,11 @@ struct ExpandedComposerView: View {
                             .fontWeight(.semibold)
                     }
                     .disabled(!canSend)
-                    .foregroundStyle(canSend ? accentColor : .tokyoComment)
+                    .foregroundStyle(canSend ? accentColor : .themeComment)
                 }
             }
         }
+        .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
         }
@@ -187,11 +188,11 @@ struct ExpandedComposerView: View {
             Text("Shell command mode")
                 .font(.caption)
         }
-        .foregroundStyle(.tokyoGreen)
+        .foregroundStyle(.themeGreen)
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoGreen.opacity(0.08))
+        .background(Color.themeGreen.opacity(0.08))
     }
 
     private var bottomBar: some View {
@@ -225,14 +226,14 @@ struct ExpandedComposerView: View {
                         Text("\(charCount)C")
                     }
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
         .padding(.top, 8)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
     }
 
     private var imageStrip: some View {
@@ -247,7 +248,7 @@ struct ExpandedComposerView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.tokyoComment.opacity(0.3), lineWidth: 1)
+                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
                             )
 
                         Button {
@@ -284,7 +285,7 @@ struct ExpandedComposerView: View {
         } label: {
             Image(systemName: "plus.circle.fill")
                 .font(.title3)
-                .foregroundStyle(isBashMode ? .tokyoComment : .tokyoBlue)
+                .foregroundStyle(isBashMode ? .themeComment : .themeBlue)
                 .symbolRenderingMode(.hierarchical)
         }
         .disabled(isBashMode)

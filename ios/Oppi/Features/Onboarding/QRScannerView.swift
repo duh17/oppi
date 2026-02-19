@@ -3,7 +3,7 @@ import VisionKit
 
 /// QR code scanner using DataScannerViewController (VisionKit, iOS 16+).
 ///
-/// Supports signed v2 invite envelope JSON and deep-link invite URLs.
+/// Supports unsigned v3 invite JSON and deep-link invite URLs.
 struct QRScannerView: UIViewControllerRepresentable {
     let onScan: (ServerCredentials) -> Void
 

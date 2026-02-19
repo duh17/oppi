@@ -69,6 +69,7 @@ struct ChatTimelineView: View {
                 reducer: reducer,
                 toolOutputStore: reducer.toolOutputStore,
                 toolArgsStore: reducer.toolArgsStore,
+                toolSegmentStore: reducer.toolSegmentStore,
                 connection: connection,
                 audioPlayer: audioPlayer,
                 theme: theme,
@@ -78,7 +79,7 @@ struct ChatTimelineView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             PermissionOverlay(sessionId: sessionId)
         }
-        .background(Color.tokyoBg)
+        .background(Color.themeBg)
         .overlay {
             if reducer.items.isEmpty && !isBusy {
                 ChatEmptyState()

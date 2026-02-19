@@ -4,10 +4,10 @@ extension Color {
     /// Risk-tier color palette for permission cards — tokyo night variant.
     static func riskColor(_ risk: RiskLevel) -> Color {
         switch risk {
-        case .low: return .tokyoGreen
-        case .medium: return .tokyoYellow
-        case .high: return .tokyoOrange
-        case .critical: return .tokyoRed
+        case .low: return .themeGreen
+        case .medium: return .themeYellow
+        case .high: return .themeOrange
+        case .critical: return .themeRed
         }
     }
 }

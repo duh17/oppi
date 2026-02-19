@@ -143,11 +143,6 @@ final class ServerConnection {
     /// Returns `false` if the credentials contain a malformed host.
     @discardableResult
     func configure(credentials: ServerCredentials) -> Bool {
-        if let violation = ConnectionSecurityPolicy.evaluate(credentials: credentials) {
-            logger.error("Connection policy violation for host=\(credentials.host): \(violation.localizedDescription)")
-            return false
-        }
-
         guard let baseURL = credentials.baseURL else {
             logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
             return false

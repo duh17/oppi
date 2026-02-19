@@ -72,7 +72,7 @@ struct SessionOutlineView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 8)
 
-                Divider().overlay(Color.tokyoComment.opacity(0.3))
+                Divider().overlay(Color.themeComment.opacity(0.3))
 
                 switch mode {
                 case .outline:
@@ -86,7 +86,7 @@ struct SessionOutlineView: View {
                     )
                 }
             }
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
             .searchable(
                 text: $searchText,
                 prompt: mode == .outline ? "Search session timeline…" : "Search changed files…"
@@ -117,22 +117,22 @@ struct SessionOutlineView: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(
-                                filter == f ? Color.tokyoBlue : Color.tokyoBgHighlight,
+                                filter == f ? Color.themeBlue : Color.themeBgHighlight,
                                 in: Capsule()
                             )
-                            .foregroundStyle(filter == f ? .white : .tokyoFgDim)
+                            .foregroundStyle(filter == f ? .white : .themeFgDim)
                     }
                     .buttonStyle(.plain)
                 }
                 Spacer()
                 Text("\(filteredItems.count) items")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
 
-            Divider().overlay(Color.tokyoComment.opacity(0.3))
+            Divider().overlay(Color.themeComment.opacity(0.3))
 
             // Outline list
             ScrollView {
@@ -313,8 +313,8 @@ private struct OutlineRow: View {
                         .font(.caption2.bold())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.tokyoOrange.opacity(0.18), in: Capsule())
-                        .foregroundStyle(.tokyoOrange)
+                        .background(Color.themeOrange.opacity(0.18), in: Capsule())
+                        .foregroundStyle(.themeOrange)
                 }
 
                 // Diff stats for edit tools
@@ -323,12 +323,12 @@ private struct OutlineRow: View {
                         if stats.added > 0 {
                             Text("+\(stats.added)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.tokyoGreen)
+                                .foregroundStyle(.themeGreen)
                         }
                         if stats.removed > 0 {
                             Text("-\(stats.removed)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.tokyoRed)
+                                .foregroundStyle(.themeRed)
                         }
                     }
                 }
@@ -337,7 +337,7 @@ private struct OutlineRow: View {
                 if let ts = item.timestamp {
                     Text(ts, style: .time)
                         .font(.caption2)
-                        .foregroundStyle(.tokyoComment)
+                        .foregroundStyle(.themeComment)
                 }
             }
             .padding(.horizontal)
@@ -345,7 +345,7 @@ private struct OutlineRow: View {
 
             if showDivider {
                 Divider()
-                    .overlay(Color.tokyoComment.opacity(0.15))
+                    .overlay(Color.themeComment.opacity(0.15))
                     .padding(.leading, 42)
             }
         }
@@ -379,35 +379,35 @@ private struct OutlineRow: View {
 
     private var iconColor: Color {
         if isCompaction {
-            return .tokyoOrange
+            return .themeOrange
         }
 
         switch item {
-        case .userMessage: return .tokyoBlue
-        case .assistantMessage: return .tokyoPurple
-        case .audioClip: return .tokyoPurple
-        case .thinking: return .tokyoPurple
+        case .userMessage: return .themeBlue
+        case .assistantMessage: return .themePurple
+        case .audioClip: return .themePurple
+        case .thinking: return .themePurple
         case .toolCall(_, _, _, _, _, let isError, _):
-            return isError ? .tokyoRed : .tokyoCyan
-        case .permission: return .tokyoOrange
-        case .permissionResolved: return .tokyoGreen
-        case .systemEvent: return .tokyoComment
-        case .error: return .tokyoRed
+            return isError ? .themeRed : .themeCyan
+        case .permission: return .themeOrange
+        case .permissionResolved: return .themeGreen
+        case .systemEvent: return .themeComment
+        case .error: return .themeRed
         }
     }
 
     private var textColor: Color {
         if isCompaction {
-            return .tokyoFg
+            return .themeFg
         }
 
         switch item {
-        case .userMessage: return .tokyoFg
-        case .assistantMessage: return .tokyoFgDim
-        case .audioClip: return .tokyoFgDim
-        case .thinking: return .tokyoComment
-        case .toolCall: return .tokyoFgDim
-        default: return .tokyoComment
+        case .userMessage: return .themeFg
+        case .assistantMessage: return .themeFgDim
+        case .audioClip: return .themeFgDim
+        case .thinking: return .themeComment
+        case .toolCall: return .themeFgDim
+        default: return .themeComment
         }
     }
 }

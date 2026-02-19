@@ -185,9 +185,9 @@ struct WorkspaceDetailView: View {
             }
 
             NavigationLink {
-                WorkspacePolicyProfileView(workspace: workspace)
+                WorkspacePolicyView(workspace: workspace)
             } label: {
-                Label("Safety Profile", systemImage: "shield.lefthalf.filled")
+                Label("Safety Policy", systemImage: "shield.lefthalf.filled")
             }
 
         }
@@ -382,58 +382,64 @@ struct WorkspaceDetailView: View {
     }
 }
 
-// MARK: - Safety Profile
+// MARK: - Safety Policy
 
-private struct WorkspacePolicyProfileView: View {
+private struct WorkspacePolicyView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
 
-    @State private var profile: PolicyProfile?
+    @State private var policy: WorkspacePolicyResponse?
     @State private var rules: [PolicyRuleRecord] = []
     @State private var auditEntries: [PolicyAuditEntry] = []
     @State private var isLoading = false
     @State private var error: String?
+    @State private var editorDraft: PolicyPermissionDraft?
+    @State private var pendingDeletePermission: PolicyPermissionRecord?
 
     var body: some View {
         List {
-            if let profile {
-                summarySection(profile)
+            if let policy {
+                summarySection(policy)
 
-                Section("Always Blocked") {
-                    if profile.alwaysBlocked.isEmpty {
-                        Text("No hard blocks configured.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(profile.alwaysBlocked) { item in
-                            PolicyProfileItemRow(item: item)
+                Section("Global Guardrails") {
+                    if let global = policy.globalPolicy, !global.guardrails.isEmpty {
+                        ForEach(global.guardrails) { permission in
+                            policyPermissionRow(permission)
                         }
+                    } else {
+                        Text("No global guardrails configured.")
+                            .foregroundStyle(.secondary)
                     }
                 }
 
-                Section("Needs Approval") {
-                    if profile.needsApproval.isEmpty {
-                        Text("No approval-required actions.")
+                Section("Workspace Permissions") {
+                    if policy.workspacePolicy.permissions.isEmpty {
+                        Text("No workspace-specific permissions.")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(profile.needsApproval) { item in
-                            PolicyProfileItemRow(item: item)
+                        ForEach(policy.workspacePolicy.permissions) { permission in
+                            Button {
+                                editorDraft = PolicyPermissionDraft(permission: permission)
+                            } label: {
+                                policyPermissionRow(permission)
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    pendingDeletePermission = permission
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
-                    }
-                }
-
-                Section("Runs Automatically") {
-                    ForEach(profile.usuallyAllowed, id: \.self) { line in
-                        Label(line, systemImage: "checkmark.circle")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
                     }
                 }
             } else if isLoading {
                 Section {
                     HStack {
                         Spacer()
-                        ProgressView("Loading policy profile…")
+                        ProgressView("Loading workspace policy…")
                         Spacer()
                     }
                 }
@@ -449,8 +455,8 @@ private struct WorkspacePolicyProfileView: View {
                             Text(rule.description)
                                 .font(.subheadline)
                             HStack(spacing: 8) {
-                                policyChip(rule.effect.uppercased(), color: rule.effect == "deny" ? .tokyoRed : .tokyoGreen)
-                                policyChip(rule.scope.capitalized, color: .tokyoBlue)
+                                policyChip(rule.effect.uppercased(), color: rule.effect == "deny" ? .themeRed : .themeGreen)
+                                policyChip(rule.scope.capitalized, color: .themeBlue)
                                 policyChip(rule.risk.label, color: Color.riskColor(rule.risk))
                             }
 
@@ -492,9 +498,9 @@ private struct WorkspacePolicyProfileView: View {
                             HStack(spacing: 8) {
                                 policyChip(
                                     entry.decision.capitalized,
-                                    color: entry.decision == "deny" ? .tokyoRed : .tokyoGreen
+                                    color: entry.decision == "deny" ? .themeRed : .themeGreen
                                 )
-                                policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .tokyoBlue)
+                                policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .themeBlue)
                                 policyChip(entry.risk.label, color: Color.riskColor(entry.risk))
                                 Spacer()
                                 Text(entry.timestamp, style: .relative)
@@ -513,13 +519,46 @@ private struct WorkspacePolicyProfileView: View {
                 }
             }
         }
-        .navigationTitle("Safety Profile")
+        .navigationTitle("Safety Policy")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await loadAll()
         }
         .task {
             await loadAll()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    editorDraft = PolicyPermissionDraft.defaultDraft()
+                } label: {
+                    Label("Add Permission", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(item: $editorDraft) { draft in
+            NavigationStack {
+                WorkspacePermissionEditorView(draft: draft) { updated in
+                    Task { await upsertWorkspacePermission(updated) }
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete Permission",
+            isPresented: Binding(
+                get: { pendingDeletePermission != nil },
+                set: { if !$0 { pendingDeletePermission = nil } }
+            ),
+            presenting: pendingDeletePermission
+        ) { permission in
+            Button("Delete", role: .destructive) {
+                Task { await deleteWorkspacePermission(permission) }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeletePermission = nil
+            }
+        } message: { permission in
+            Text("Remove workspace permission \(permission.label ?? permission.id)?")
         }
         .alert("Policy Error", isPresented: Binding(
             get: { error != nil },
@@ -532,23 +571,20 @@ private struct WorkspacePolicyProfileView: View {
     }
 
     @ViewBuilder
-    private func summarySection(_ profile: PolicyProfile) -> some View {
+    private func summarySection(_ policy: WorkspacePolicyResponse) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    RuntimeBadge(runtime: profile.runtime, compact: true)
-                    policyChip(
-                        profile.supervisionLevel == "high" ? "High Supervision" : "Standard Supervision",
-                        color: profile.supervisionLevel == "high" ? .tokyoOrange : .tokyoGreen
-                    )
+                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    policyChip("Fallback: \(policy.effectivePolicy.fallback.uppercased())", color: .themeBlue)
                     Spacer()
                 }
 
-                Text(profile.summary)
+                Text("Effective policy includes \(policy.effectivePolicy.guardrails.count) guardrails and \(policy.effectivePolicy.permissions.count) permissions.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                Text("Preset: \(policyPresetLabel(profile.policyPreset)) • Updated \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Workspace permissions: \(policy.workspacePolicy.permissions.count)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -556,6 +592,28 @@ private struct WorkspacePolicyProfileView: View {
         } header: {
             Text(workspace.name)
         }
+    }
+
+    @ViewBuilder
+    private func policyPermissionRow(_ permission: PolicyPermissionRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(permission.label ?? permission.id)
+                    .font(.subheadline)
+                Spacer()
+                policyChip(permission.decision.uppercased(), color: permission.decision == "block" ? .themeRed : (permission.decision == "ask" ? .themeOrange : .themeGreen))
+                if let risk = permission.risk {
+                    policyChip(risk.label, color: Color.riskColor(risk))
+                }
+            }
+
+            if let matchSummary = permissionMatchSummary(permission.match) {
+                Text(matchSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -568,14 +626,15 @@ private struct WorkspacePolicyProfileView: View {
             .foregroundStyle(color)
     }
 
-    private func policyPresetLabel(_ value: String) -> String {
-        switch value {
-        case "container": return "Container"
-        case "host": return "Host Dev"
-        case "host_standard": return "Host Standard"
-        case "host_locked": return "Host Locked"
-        default: return value
-        }
+    private func permissionMatchSummary(_ match: PolicyPermissionRecord.Match) -> String? {
+        var parts: [String] = []
+        if let tool = match.tool, !tool.isEmpty { parts.append("tool: \(tool)") }
+        if let executable = match.executable, !executable.isEmpty { parts.append("exec: \(executable)") }
+        if let command = match.commandMatches, !command.isEmpty { parts.append("command: \(command)") }
+        if let path = match.pathMatches, !path.isEmpty { parts.append("path: \(path)") }
+        if let within = match.pathWithin, !within.isEmpty { parts.append("within: \(within)") }
+        if let domain = match.domain, !domain.isEmpty { parts.append("domain: \(domain)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
     private func ruleMatchSummary(_ match: PolicyRuleRecord.Match?) -> String? {
@@ -605,11 +664,11 @@ private struct WorkspacePolicyProfileView: View {
         defer { isLoading = false }
 
         do {
-            async let profileTask = api.getPolicyProfile(workspaceId: workspace.id)
+            async let policyTask = api.getWorkspacePolicy(workspaceId: workspace.id)
             async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
             async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
 
-            profile = try await profileTask
+            policy = try await policyTask
             rules = try await rulesTask
             auditEntries = try await auditTask
             error = nil
@@ -617,39 +676,242 @@ private struct WorkspacePolicyProfileView: View {
             self.error = error.localizedDescription
         }
     }
+
+    private func upsertWorkspacePermission(_ draft: PolicyPermissionDraft) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            let permission = draft.asPermissionRecord()
+            let updatedPolicy = try await api.patchWorkspacePolicy(
+                workspaceId: workspace.id,
+                permissions: [permission]
+            )
+
+            if let current = policy {
+                policy = WorkspacePolicyResponse(
+                    workspaceId: current.workspaceId,
+                    globalPolicy: current.globalPolicy,
+                    workspacePolicy: updatedPolicy,
+                    effectivePolicy: current.effectivePolicy
+                )
+            }
+
+            editorDraft = nil
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func deleteWorkspacePermission(_ permission: PolicyPermissionRecord) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            let updatedPolicy = try await api.deleteWorkspacePolicyPermission(
+                workspaceId: workspace.id,
+                permissionId: permission.id
+            )
+
+            if let current = policy {
+                policy = WorkspacePolicyResponse(
+                    workspaceId: current.workspaceId,
+                    globalPolicy: current.globalPolicy,
+                    workspacePolicy: updatedPolicy,
+                    effectivePolicy: current.effectivePolicy
+                )
+            }
+
+            pendingDeletePermission = nil
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }
 
-private struct PolicyProfileItemRow: View {
-    let item: PolicyProfileItem
+private struct PolicyPermissionDraft: Identifiable {
+    let id = UUID()
+    var permissionId: String
+    var decision: String
+    var risk: RiskLevel
+    var label: String
+    var reason: String
+    var tool: String
+    var executable: String
+    var commandMatches: String
+    var pathMatches: String
+    var pathWithin: String
+    var domain: String
+
+    init(
+        permissionId: String,
+        decision: String,
+        risk: RiskLevel,
+        label: String,
+        reason: String,
+        tool: String,
+        executable: String,
+        commandMatches: String,
+        pathMatches: String,
+        pathWithin: String,
+        domain: String
+    ) {
+        self.permissionId = permissionId
+        self.decision = decision
+        self.risk = risk
+        self.label = label
+        self.reason = reason
+        self.tool = tool
+        self.executable = executable
+        self.commandMatches = commandMatches
+        self.pathMatches = pathMatches
+        self.pathWithin = pathWithin
+        self.domain = domain
+    }
+
+    static func defaultDraft() -> PolicyPermissionDraft {
+        Self(
+            permissionId: "allow-\(UUID().uuidString.prefix(8).lowercased())",
+            decision: "allow",
+            risk: .low,
+            label: "",
+            reason: "",
+            tool: "bash",
+            executable: "",
+            commandMatches: "",
+            pathMatches: "",
+            pathWithin: "",
+            domain: ""
+        )
+    }
+
+    init(permission: PolicyPermissionRecord) {
+        permissionId = permission.id
+        decision = permission.decision
+        risk = permission.risk ?? .medium
+        label = permission.label ?? ""
+        reason = permission.reason ?? ""
+        tool = permission.match.tool ?? ""
+        executable = permission.match.executable ?? ""
+        commandMatches = permission.match.commandMatches ?? ""
+        pathMatches = permission.match.pathMatches ?? ""
+        pathWithin = permission.match.pathWithin ?? ""
+        domain = permission.match.domain ?? ""
+    }
+
+    func asPermissionRecord() -> PolicyPermissionRecord {
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return PolicyPermissionRecord(
+            id: permissionId.trimmingCharacters(in: .whitespacesAndNewlines),
+            decision: decision,
+            risk: risk,
+            label: trimmedLabel.isEmpty ? nil : trimmedLabel,
+            reason: trimmedReason.isEmpty ? nil : trimmedReason,
+            immutable: nil,
+            match: .init(
+                tool: nonEmpty(tool),
+                executable: nonEmpty(executable),
+                commandMatches: nonEmpty(commandMatches),
+                pathMatches: nonEmpty(pathMatches),
+                pathWithin: nonEmpty(pathWithin),
+                domain: nonEmpty(domain)
+            )
+        )
+    }
+
+    private func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct WorkspacePermissionEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var draft: PolicyPermissionDraft
+    let onSave: (PolicyPermissionDraft) -> Void
+
+    init(draft: PolicyPermissionDraft, onSave: @escaping (PolicyPermissionDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        self.onSave = onSave
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: item.risk.systemImage)
-                    .font(.caption)
-                    .foregroundStyle(Color.riskColor(item.risk))
-                Text(item.title)
-                    .font(.subheadline)
-                Spacer()
-                Text(item.risk.label)
-                    .font(.caption2)
-                    .foregroundStyle(Color.riskColor(item.risk))
+        Form {
+            Section("Rule") {
+                TextField("permission id", text: $draft.permissionId)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+
+                Picker("Decision", selection: $draft.decision) {
+                    Text("Allow").tag("allow")
+                    Text("Ask").tag("ask")
+                    Text("Block").tag("block")
+                }
+
+                Picker("Risk", selection: $draft.risk) {
+                    Text("Low").tag(RiskLevel.low)
+                    Text("Medium").tag(RiskLevel.medium)
+                    Text("High").tag(RiskLevel.high)
+                    Text("Critical").tag(RiskLevel.critical)
+                }
+
+                TextField("label (optional)", text: $draft.label)
+                TextField("reason (optional)", text: $draft.reason)
             }
 
-            if let description = item.description, !description.isEmpty {
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let example = item.example, !example.isEmpty {
-                Text(example)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
+            Section("Match") {
+                TextField("tool (bash/read/write/edit/*)", text: $draft.tool)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("executable (optional)", text: $draft.executable)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("command glob (optional)", text: $draft.commandMatches)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("path glob (optional)", text: $draft.pathMatches)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("pathWithin (optional)", text: $draft.pathWithin)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("domain (optional)", text: $draft.domain)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
             }
         }
-        .padding(.vertical, 2)
+        .navigationTitle("Edit Permission")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(draft)
+                    dismiss()
+                }
+                .disabled(!isValid)
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        !draft.permissionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        hasAnyMatchField
+    }
+
+    private var hasAnyMatchField: Bool {
+        [
+            draft.tool,
+            draft.executable,
+            draft.commandMatches,
+            draft.pathMatches,
+            draft.pathWithin,
+            draft.domain,
+        ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }

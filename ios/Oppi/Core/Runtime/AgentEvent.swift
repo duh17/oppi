@@ -13,9 +13,9 @@ enum AgentEvent: Sendable {
     case messageEnd(sessionId: String, content: String)
 
     /// Tool events carry a client-generated `toolEventId` (v1: sequential assumption).
-    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue])
+    case toolStart(sessionId: String, toolEventId: String, tool: String, args: [String: JSONValue], callSegments: [StyledSegment]? = nil)
     case toolOutput(sessionId: String, toolEventId: String, output: String, isError: Bool)
-    case toolEnd(sessionId: String, toolEventId: String)
+    case toolEnd(sessionId: String, toolEventId: String, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil)
 
     // Compaction
     case compactionStart(sessionId: String, reason: String)

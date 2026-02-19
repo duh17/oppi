@@ -21,10 +21,10 @@ struct TodoToolOutputView: View {
         case .text(let text):
             Text(String(text.prefix(2000)))
                 .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.tokyoBgDark)
+                .background(Color.themeBgDark)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -131,7 +131,7 @@ private struct TodoToolItemCard: View {
                 if let created = todo.createdAt, !created.isEmpty {
                     Text(created)
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.tokyoComment)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(1)
                 }
             }
@@ -139,7 +139,7 @@ private struct TodoToolItemCard: View {
             if let title = todo.title, !title.isEmpty {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tokyoFg)
+                    .foregroundStyle(.themeFg)
             }
 
             if !todo.normalizedTags.isEmpty {
@@ -148,10 +148,10 @@ private struct TodoToolItemCard: View {
                         ForEach(todo.normalizedTags, id: \.self) { tag in
                             Text(tag)
                                 .font(.caption2.monospaced())
-                                .foregroundStyle(.tokyoBlue)
+                                .foregroundStyle(.themeBlue)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.tokyoBgHighlight)
+                                .background(Color.themeBgHighlight)
                                 .clipShape(Capsule())
                         }
                     }
@@ -159,23 +159,23 @@ private struct TodoToolItemCard: View {
             }
 
             if !bodyPreview.isEmpty {
-                Divider().overlay(Color.tokyoComment.opacity(0.2))
+                Divider().overlay(Color.themeComment.opacity(0.2))
                 MarkdownText(bodyPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if isBodyTruncated {
                     Text("… body truncated")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoComment)
+                        .foregroundStyle(.themeComment)
                 }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.tokyoComment.opacity(0.25), lineWidth: 1)
+                .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
         )
     }
 }
@@ -195,11 +195,11 @@ private struct TodoToolListCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.tokyoComment.opacity(0.25), lineWidth: 1)
+                .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
         )
     }
 
@@ -209,7 +209,7 @@ private struct TodoToolListCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.caption2.monospaced().bold())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
 
                 ForEach(Array(items.prefix(Self.maxRowsPerSection).enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -220,7 +220,7 @@ private struct TodoToolListCard: View {
                         if let title = item.title, !title.isEmpty {
                             Text(title)
                                 .font(.caption)
-                                .foregroundStyle(.tokyoFg)
+                                .foregroundStyle(.themeFg)
                                 .lineLimit(1)
                         }
                     }
@@ -230,7 +230,7 @@ private struct TodoToolListCard: View {
                 if items.count > Self.maxRowsPerSection {
                     Text("+\(items.count - Self.maxRowsPerSection) more")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoComment)
+                        .foregroundStyle(.themeComment)
                 }
             }
         }
@@ -246,8 +246,8 @@ private struct TodoIDLabel: View {
     private var textView: some View {
         Text(display)
             .font(.caption2.monospaced())
-            .foregroundStyle(.tokyoCyan)
-            .underline(id != nil, color: .tokyoCyan.opacity(0.45))
+            .foregroundStyle(.themeCyan)
+            .underline(id != nil, color: .themeCyan.opacity(0.45))
     }
 
     var body: some View {
@@ -279,10 +279,10 @@ private struct TodoStatusBadge: View {
 
     private var tint: Color {
         switch normalized {
-        case "done", "closed": return .tokyoGreen
-        case "in-progress", "in_progress", "inprogress": return .tokyoOrange
-        case "open": return .tokyoBlue
-        default: return .tokyoComment
+        case "done", "closed": return .themeGreen
+        case "in-progress", "in_progress", "inprogress": return .themeOrange
+        case "open": return .themeBlue
+        default: return .themeComment
         }
     }
 

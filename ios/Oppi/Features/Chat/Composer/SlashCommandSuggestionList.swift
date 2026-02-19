@@ -14,19 +14,19 @@ struct SlashCommandSuggestionList: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(command.invocation)
                                 .font(.system(.body, design: .monospaced).weight(.medium))
-                                .foregroundStyle(.tokyoBlue)
+                                .foregroundStyle(.themeBlue)
 
                             Spacer(minLength: 4)
 
                             Text(command.source.label)
                                 .font(.caption2.monospaced())
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                         }
 
                         if let description = command.description {
                             Text(description)
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -39,14 +39,14 @@ struct SlashCommandSuggestionList: View {
 
                 if index < suggestions.count - 1 {
                     Divider()
-                        .overlay(Color.tokyoComment.opacity(0.18))
+                        .overlay(Color.themeComment.opacity(0.18))
                 }
             }
         }
-        .background(Color.tokyoBgDark, in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.tokyoComment.opacity(0.22), lineWidth: 1)
+                .stroke(Color.themeComment.opacity(0.22), lineWidth: 1)
         )
     }
 }

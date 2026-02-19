@@ -14,7 +14,6 @@ struct WorkspaceCreateView: View {
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
     @State private var runtime = "container"
-    @State private var policyPreset = "container"
     @State private var isCreating = false
     @State private var error: String?
 
@@ -70,7 +69,7 @@ struct WorkspaceCreateView: View {
                                     Spacer()
 
                                     Image(systemName: selectedSkills.contains(skill.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .tokyoBlue : .secondary)
+                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .themeBlue : .secondary)
                                         .imageScale(.large)
                                 }
                             }
@@ -90,20 +89,7 @@ struct WorkspaceCreateView: View {
                          ? "Container isolates filesystem/tools (recommended)."
                          : "Host runs directly on Mac with full host access.")
                         .font(.caption)
-                        .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
-                }
-
-                Section("Policy") {
-                    Picker("Preset", selection: $policyPreset) {
-                        ForEach(policyOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    Text(policyPresetDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(runtime == "container" ? .themeGreen : .themeOrange)
                 }
 
                 if let error {
@@ -128,40 +114,7 @@ struct WorkspaceCreateView: View {
                 }
             }
             .task { await loadSkills() }
-            .onChange(of: runtime) { _, newRuntime in
-                normalizePolicyPreset(for: newRuntime)
-            }
         }
-    }
-
-    private var policyOptions: [(label: String, value: String)] {
-        if runtime == "host" {
-            return [
-                ("Host Dev", "host"),
-                ("Host Standard", "host_standard"),
-                ("Host Locked", "host_locked"),
-            ]
-        }
-        return [("Container", "container")]
-    }
-
-    private var policyPresetDescription: String {
-        switch policyPreset {
-        case "host":
-            return "Developer trust mode: low friction, broad local autonomy."
-        case "host_standard":
-            return "Approval-first host mode for regular users."
-        case "host_locked":
-            return "Strict host mode: unknown actions blocked by default."
-        default:
-            return "Container mode: isolated runtime with standard supervision."
-        }
-    }
-
-    private func normalizePolicyPreset(for runtime: String) {
-        let allowed = Set(policyOptions.map(\.value))
-        guard !allowed.contains(policyPreset) else { return }
-        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private func loadSkills() async {
@@ -193,8 +146,7 @@ struct WorkspaceCreateView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
-            runtime: runtime,
-            policyPreset: policyPreset
+            runtime: runtime
         )
 
         do {

@@ -404,7 +404,7 @@ struct OppiApp: App {
 
         let initialCreds = server.credentials
         coordinator.switchToServer(server)
-        var creds = initialCreds
+        let creds = initialCreds
 
         guard connection.configure(credentials: creds) else {
             launchOutcome = "invalid_credentials"
@@ -422,57 +422,7 @@ struct OppiApp: App {
         // Even if security profile check fails (server offline), show cached workspace.
         navigation.showOnboarding = false
 
-        // Enforce trust + transport contract as early as possible.
-        do {
-            let profile = try await api.securityProfile()
-
-            if let violation = ConnectionSecurityPolicy.evaluate(host: creds.host, profile: profile) {
-                launchOutcome = "blocked_transport_policy"
-                appLog.error("SECURITY transport policy blocked host=\(creds.host, privacy: .public): \(violation.localizedDescription, privacy: .public)")
-                connection.extensionToast = "Server blocked: \(violation.localizedDescription)"
-                return
-            }
-
-            let serverFingerprint = profile.identity.normalizedFingerprint
-            let storedFingerprint = creds.normalizedServerFingerprint
-
-            if profile.requirePinnedServerIdentity ?? false {
-                if let serverFingerprint, let storedFingerprint, serverFingerprint != storedFingerprint {
-                    launchOutcome = "identity_mismatch"
-                    appLog.error(
-                        "SECURITY pinned identity mismatch host=\(creds.host, privacy: .public) stored=\(storedFingerprint, privacy: .public) server=\(serverFingerprint, privacy: .public)"
-                    )
-                    connection.extensionToast = "Server identity changed. Re-pair from Settings."
-                    return
-                }
-
-                if serverFingerprint == nil {
-                    launchOutcome = "missing_server_fingerprint"
-                    appLog.error("SECURITY pinned identity required but server fingerprint missing")
-                    connection.extensionToast = "Server identity missing. Re-pair from Settings."
-                    return
-                }
-            }
-
-            let upgraded = creds.applyingSecurityProfile(profile)
-            if upgraded != creds {
-                // Save to per-server keychain slot (not legacy)
-                if let server = serverStore.addOrUpdate(from: upgraded) {
-                    try? KeychainService.saveServer(server)
-                }
-                coordinator.invalidateAPIClient(for: upgraded.normalizedServerFingerprint ?? "")
-                creds = upgraded
-                guard connection.configure(credentials: upgraded) else {
-                    launchOutcome = "blocked_transport_policy"
-                    connection.extensionToast = "Server transport policy changed. Re-pair from Settings."
-                    return
-                }
-            }
-        } catch {
-            launchOutcome = "missing_security_profile"
-            appLog.error("SECURITY profile check failed on launch: \(error.localizedDescription, privacy: .public)")
-            // Server unreachable — continue with cached data, don't kick to onboarding.
-        }
+        // Security profile is server-config managed and no longer required for launch.
 
         // 2. Restore UI state (tab, active session, draft, scroll position)
         if let restored {

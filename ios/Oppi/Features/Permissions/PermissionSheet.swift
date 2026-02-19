@@ -64,7 +64,7 @@ struct PermissionSheet: View {
                         .padding(.vertical, 12)
                 }
                 .buttonStyle(.bordered)
-                .tint(.tokyoRed)
+                .tint(.themeRed)
                 .padding(.horizontal, 24)
                 .padding(.bottom, 16)
             }
@@ -172,25 +172,25 @@ private struct CommandBox: View {
                         .font(.caption2)
                 }
             }
-            .foregroundStyle(.tokyoComment)
+            .foregroundStyle(.themeComment)
 
             if showsSummaryHint {
                 Text(summary)
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Text(actionText)
                 .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -253,10 +253,10 @@ private struct PermissionActionButtons: View {
 
     private var allowTint: Color {
         switch request.risk {
-        case .low: return .tokyoGreen
-        case .medium: return .tokyoBlue
-        case .high: return .tokyoOrange
-        case .critical: return .tokyoFgDim
+        case .low: return .themeGreen
+        case .medium: return .themeBlue
+        case .high: return .themeOrange
+        case .critical: return .themeFgDim
         }
     }
 
@@ -345,11 +345,11 @@ private struct PermissionActionButtons: View {
                 if isCritical {
                     denyLabel
                         .buttonStyle(.borderedProminent)
-                        .tint(.tokyoRed)
+                        .tint(.themeRed)
                 } else {
                     denyLabel
                         .buttonStyle(.bordered)
-                        .tint(.tokyoRed)
+                        .tint(.themeRed)
                 }
 
                 // Allow button (one-time)
@@ -359,7 +359,7 @@ private struct PermissionActionButtons: View {
                         .tint(allowTint)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.tokyoRed, lineWidth: 2)
+                                .stroke(Color.themeRed, lineWidth: 2)
                         )
                 } else {
                     allowLabel

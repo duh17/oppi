@@ -42,6 +42,14 @@ actor APIClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    /// Exchange a one-time pairing token for a long-lived auth device token.
+    func pairDevice(pairingToken: String, deviceName: String? = nil) async throws -> PairDeviceResponse {
+        let body = PairDeviceRequest(pairingToken: pairingToken, deviceName: deviceName)
+        let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+    }
+
     /// Get authenticated user info.
     func me() async throws -> User {
         let data = try await get("/me")
@@ -52,33 +60,6 @@ actor APIClient {
     func serverInfo() async throws -> ServerInfo {
         let data = try await get("/server/info")
         return try JSONDecoder().decode(ServerInfo.self, from: data)
-    }
-
-    /// Fetch server-authored security posture for trust + transport checks.
-    func securityProfile() async throws -> ServerSecurityProfile {
-        let data = try await get("/security/profile")
-        return try JSONDecoder().decode(ServerSecurityProfile.self, from: data)
-    }
-
-    /// Update server security posture.
-    ///
-    /// This modifies global server policy settings and returns the updated profile.
-    func updateSecurityProfile(
-        profile: String,
-        requireTlsOutsideTailnet: Bool,
-        allowInsecureHttpInTailnet: Bool,
-        requirePinnedServerIdentity: Bool,
-        inviteMaxAgeSeconds: Int
-    ) async throws -> ServerSecurityProfile {
-        let body = UpdateSecurityProfileRequest(
-            profile: profile,
-            requireTlsOutsideTailnet: requireTlsOutsideTailnet,
-            allowInsecureHttpInTailnet: allowInsecureHttpInTailnet,
-            requirePinnedServerIdentity: requirePinnedServerIdentity,
-            invite: InviteUpdate(maxAgeSeconds: inviteMaxAgeSeconds)
-        )
-        let data = try await put("/security/profile", body: body)
-        return try JSONDecoder().decode(ServerSecurityProfile.self, from: data)
     }
 
     // MARK: - Sessions
@@ -302,15 +283,28 @@ actor APIClient {
 
     // MARK: - Safety Policy
 
-    /// Fetch a human-readable policy profile for a workspace.
-    func getPolicyProfile(workspaceId: String? = nil) async throws -> PolicyProfile {
-        var route = "/policy/profile"
-        if let workspaceId {
-            route += "?workspaceId=\(try encodeQueryPath(workspaceId))"
-        }
-        let data = try await get(route)
-        struct Response: Decodable { let profile: PolicyProfile }
-        return try JSONDecoder().decode(Response.self, from: data).profile
+    /// Fetch merged policy for a workspace (global + workspace + effective).
+    func getWorkspacePolicy(workspaceId: String) async throws -> WorkspacePolicyResponse {
+        let data = try await get("/workspaces/\(workspaceId)/policy")
+        return try JSONDecoder().decode(WorkspacePolicyResponse.self, from: data)
+    }
+
+    /// Upsert workspace-scoped policy permissions.
+    func patchWorkspacePolicy(
+        workspaceId: String,
+        permissions: [PolicyPermissionRecord]
+    ) async throws -> WorkspacePolicyRecord {
+        let body = WorkspacePolicyPatchRequest(permissions: permissions)
+        let (data, response) = try await request("PATCH", path: "/workspaces/\(workspaceId)/policy", body: body)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(WorkspacePolicyMutationResponse.self, from: data).policy
+    }
+
+    /// Delete a workspace policy permission by id.
+    func deleteWorkspacePolicyPermission(workspaceId: String, permissionId: String) async throws -> WorkspacePolicyRecord {
+        let (data, response) = try await request("DELETE", path: "/workspaces/\(workspaceId)/policy/permissions/\(permissionId)")
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(WorkspacePolicyMutationResponse.self, from: data).policy
     }
 
     /// List effective learned/manual policy rules visible to the user.
@@ -592,6 +586,15 @@ actor APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         logger.debug("\(method) \(path)")
+        return try await session.data(for: req)
+    }
+
+    private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: try makeURL(path: path))
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(body)
+        logger.debug("\(method) \(path) [no-auth]")
         return try await session.data(for: req)
     }
 

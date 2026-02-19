@@ -100,18 +100,9 @@ private struct WorkspaceRowView: View {
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 4) {
-                    Text("\(workspace.skills.count) skills")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-
-                    Text("•")
-                        .foregroundStyle(.tertiary)
-
-                    Text(workspace.policyPresetLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                Text("\(workspace.skills.count) skills")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)

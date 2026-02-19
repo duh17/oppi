@@ -6,7 +6,7 @@ struct ChatEmptyState: View {
     var body: some View {
         Text("π")
             .font(.system(size: 48, design: .monospaced).weight(.bold))
-            .foregroundStyle(.tokyoPurple.opacity(0.5))
+            .foregroundStyle(.themePurple.opacity(0.5))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -22,21 +22,21 @@ struct JumpToBottomHintButton: View {
     var body: some View {
         Button(action: onTap) {
             Circle()
-                .fill(Color.tokyoBgHighlight.opacity(0.95))
+                .fill(Color.themeBgHighlight.opacity(0.95))
                 .frame(width: 34, height: 34)
                 .overlay(
                     Circle()
-                        .stroke((isStreaming ? Color.tokyoBlue : Color.tokyoComment).opacity(0.34), lineWidth: 1)
+                        .stroke((isStreaming ? Color.themeBlue : Color.themeComment).opacity(0.34), lineWidth: 1)
                 )
                 .overlay {
                     Image(systemName: "arrow.down")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(isStreaming ? .tokyoBlue : .tokyoFg)
+                        .foregroundStyle(isStreaming ? .themeBlue : .themeFg)
                 }
                 .overlay(alignment: .topTrailing) {
                     if isStreaming {
                         Circle()
-                            .fill(Color.tokyoBlue)
+                            .fill(Color.themeBlue)
                             .frame(width: 6, height: 6)
                             .scaleEffect(pulse ? 1.0 : 0.72)
                             .opacity(pulse ? 1.0 : 0.55)
@@ -75,16 +75,16 @@ struct SessionEndedFooter: View {
     var body: some View {
         VStack(spacing: 6) {
             Divider()
-                .overlay(Color.tokyoComment.opacity(0.3))
+                .overlay(Color.themeComment.opacity(0.3))
 
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle")
                     .font(.subheadline)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
 
                 Text("Session ended")
                     .font(.subheadline)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
 
                 if let session {
                     Spacer()
@@ -93,13 +93,13 @@ struct SessionEndedFooter: View {
                     if totalTokens > 0 {
                         Text(formatTokenCount(totalTokens) + " tokens")
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                     }
 
                     if session.cost > 0 {
                         Text(String(format: "$%.3f", session.cost))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                     }
                 }
             }
@@ -114,7 +114,7 @@ struct SessionEndedFooter: View {
                         if isResuming {
                             ProgressView()
                                 .controlSize(.small)
-                                .tint(.tokyoBg)
+                                .tint(.themeBg)
                         } else {
                             Image(systemName: "play.fill")
                                 .font(.subheadline)
@@ -124,8 +124,8 @@ struct SessionEndedFooter: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
-                    .background(Color.tokyoGreen)
-                    .foregroundStyle(Color.tokyoBg)
+                    .background(Color.themeGreen)
+                    .foregroundStyle(Color.themeBg)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .disabled(isResuming)
