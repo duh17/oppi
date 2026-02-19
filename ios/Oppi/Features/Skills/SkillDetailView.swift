@@ -163,8 +163,10 @@ struct SkillDetailView: View {
 }
 
 /// Navigation destination for viewing a skill's detail page.
-struct SkillDetailDestination: Hashable {
+struct SkillDetailDestination: Hashable, Identifiable {
     let skillName: String
+
+    var id: String { skillName }
 }
 
 /// Navigation destination for viewing a file inside a skill.
