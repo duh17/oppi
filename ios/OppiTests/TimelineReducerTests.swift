@@ -495,11 +495,11 @@ struct TimelineReducerTests {
         defer { cache.clearAll() }
 
         let content = "same-content"
-        cache.set(content, themeID: .tokyoNight, segments: [.text(AttributedString("night"))])
-        cache.set(content, themeID: .tokyoNightDay, segments: [.text(AttributedString("day"))])
+        cache.set(content, themeID: .dark, segments: [.text(AttributedString("dark"))])
+        cache.set(content, themeID: .light, segments: [.text(AttributedString("light"))])
 
-        #expect(cache.get(content, themeID: .tokyoNight) != nil)
-        #expect(cache.get(content, themeID: .tokyoNightDay) != nil)
+        #expect(cache.get(content, themeID: .dark) != nil)
+        #expect(cache.get(content, themeID: .light) != nil)
 
         let stats = cache.snapshot()
         #expect(stats.entries == 2)

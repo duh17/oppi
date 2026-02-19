@@ -12,7 +12,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: ["command": "ls"])
-        guard case .toolStart(_, let startId, let tool, let args) = startEvent else {
+        guard case .toolStart(_, let startId, let tool, let args, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }
@@ -30,7 +30,7 @@ struct ToolEventMapperTests {
         #expect(!isError)
 
         let endEvent = mapper.end(sessionId: "s1")
-        guard case .toolEnd(_, let endId) = endEvent else {
+        guard case .toolEnd(_, let endId, _, _, _) = endEvent else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -44,14 +44,14 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let start1 = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let id1, _, _) = start1 else {
+        guard case .toolStart(_, let id1, _, _, _) = start1 else {
             Issue.record("Expected toolStart")
             return
         }
         _ = mapper.end(sessionId: "s1")
 
         let start2 = mapper.start(sessionId: "s1", tool: "read", args: [:])
-        guard case .toolStart(_, let id2, _, _) = start2 else {
+        guard case .toolStart(_, let id2, _, _, _) = start2 else {
             Issue.record("Expected toolStart")
             return
         }
@@ -83,7 +83,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let event = mapper.end(sessionId: "s1")
-        guard case .toolEnd(_, let id) = event else {
+        guard case .toolEnd(_, let id, _, _, _) = event else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -97,7 +97,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let startId, _, _) = start else {
+        guard case .toolStart(_, let startId, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -119,7 +119,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let startId, _, _) = start else {
+        guard case .toolStart(_, let startId, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -142,7 +142,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let start = mapper.start(sessionId: "session-42", tool: "read", args: [:])
-        guard case .toolStart(let sid, _, _, _) = start else {
+        guard case .toolStart(let sid, _, _, _, _) = start else {
             Issue.record("Expected toolStart")
             return
         }
@@ -156,7 +156,7 @@ struct ToolEventMapperTests {
         #expect(sid2 == "session-42")
 
         let end = mapper.end(sessionId: "session-42")
-        guard case .toolEnd(let sid3, _) = end else {
+        guard case .toolEnd(let sid3, _, _, _, _) = end else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -174,7 +174,7 @@ struct ToolEventMapperTests {
         ]
 
         let event = mapper.start(sessionId: "s1", tool: "bash", args: args)
-        guard case .toolStart(_, _, _, let resultArgs) = event else {
+        guard case .toolStart(_, _, _, let resultArgs, _) = event else {
             Issue.record("Expected toolStart")
             return
         }
@@ -204,7 +204,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
-        guard case .toolStart(_, let startId, _, _) = startEvent else {
+        guard case .toolStart(_, let startId, _, _, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }
@@ -218,7 +218,7 @@ struct ToolEventMapperTests {
         #expect(outputId == "server-tc-1", "Output should use server-provided toolCallId")
 
         let endEvent = mapper.end(sessionId: "s1", toolCallId: "server-tc-1")
-        guard case .toolEnd(_, let endId) = endEvent else {
+        guard case .toolEnd(_, let endId, _, _, _) = endEvent else {
             Issue.record("Expected toolEnd")
             return
         }
@@ -246,7 +246,7 @@ struct ToolEventMapperTests {
         let mapper = ToolEventMapper()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:])
-        guard case .toolStart(_, let id, _, _) = startEvent else {
+        guard case .toolStart(_, let id, _, _, _) = startEvent else {
             Issue.record("Expected toolStart")
             return
         }

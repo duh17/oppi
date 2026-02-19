@@ -16,7 +16,8 @@ set -euo pipefail
 #   mv ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.appstoreconnect/
 #   # Add to your shell profile:
 #   export ASC_KEY_ID="XXXXXXXXXX"
-#   export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#   export ASC_ISSUER_ID_FILE="$HOME/.appstoreconnect/issuer_id"  # preferred
+#   # or: export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 #   export OPPI_TEAM_ID="YOUR_TEAM_ID"   # optional, defaults to project.yml value
 #
 # Usage:
@@ -30,6 +31,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SCHEME="Oppi"
 TEAM_ID="${OPPI_TEAM_ID:-AZAQMY4SPZ}"
+LOCAL_ENV_FILE="$IOS_DIR/.env.testflight.local"
+
+# Optional local env file (gitignored) for developer-specific TestFlight config.
+if [[ -f "$LOCAL_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$LOCAL_ENV_FILE"
+  set +a
+fi
 
 BUILD_ONLY=0
 BUMP=0
@@ -52,8 +62,12 @@ Options:
 
 Environment:
   ASC_KEY_ID         App Store Connect API Key ID
-  ASC_ISSUER_ID      App Store Connect Issuer ID
+  ASC_ISSUER_ID      App Store Connect Issuer ID (optional if ASC_ISSUER_ID_FILE set)
+  ASC_ISSUER_ID_FILE Path to file containing issuer UUID (default: ~/.appstoreconnect/issuer_id)
   ASC_KEY_PATH       Path to AuthKey .p8 file (optional, auto-detected)
+
+Local config file (optional, gitignored):
+  ios/.env.testflight.local
 EOF
   exit "${1:-0}"
 }
@@ -108,6 +122,28 @@ resolve_asc_key() {
   return 1
 }
 
+resolve_asc_issuer() {
+  if [[ -n "${ASC_ISSUER_ID:-}" ]]; then
+    return 0
+  fi
+
+  local issuer_file="${ASC_ISSUER_ID_FILE:-$HOME/.appstoreconnect/issuer_id}"
+  if [[ ! -f "$issuer_file" ]]; then
+    return 1
+  fi
+
+  local issuer
+  issuer=$(tr -d '[:space:]' < "$issuer_file")
+  if [[ "$issuer" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    ASC_ISSUER_ID="$issuer"
+    ASC_ISSUER_ID_FILE="$issuer_file"
+    return 0
+  fi
+
+  echo "error: Invalid ASC issuer ID format in $issuer_file" >&2
+  return 1
+}
+
 if ! resolve_asc_key; then
   echo "error: No App Store Connect API key found."
   echo ""
@@ -123,10 +159,20 @@ if ! resolve_asc_key; then
   exit 1
 fi
 
-if [[ -z "${ASC_KEY_ID:-}" || -z "${ASC_ISSUER_ID:-}" ]]; then
-  echo "error: ASC_KEY_ID and ASC_ISSUER_ID must be set."
+if ! resolve_asc_issuer; then
+  echo "error: ASC issuer ID is missing."
+  echo "  Option 1: export ASC_ISSUER_ID=<your-issuer-id>"
+  echo "  Option 2 (preferred):"
+  echo "    mkdir -p ~/.appstoreconnect"
+  echo "    printf '%s\n' '<your-issuer-id>' > ~/.appstoreconnect/issuer_id"
+  echo "    chmod 600 ~/.appstoreconnect/issuer_id"
+  echo "    export ASC_ISSUER_ID_FILE=~/.appstoreconnect/issuer_id"
+  exit 1
+fi
+
+if [[ -z "${ASC_KEY_ID:-}" ]]; then
+  echo "error: ASC_KEY_ID must be set."
   echo "  export ASC_KEY_ID=<your-key-id>"
-  echo "  export ASC_ISSUER_ID=<your-issuer-id>"
   exit 1
 fi
 
