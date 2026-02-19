@@ -273,7 +273,6 @@ struct WorkspaceStoreTests {
             "id": "\(id)",
             "name": "\(name)",
             "skills": [],
-            "policyPreset": "container",
             "createdAt": \(now),
             "updatedAt": \(now)
         }
