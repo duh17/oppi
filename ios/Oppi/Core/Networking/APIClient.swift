@@ -671,4 +671,3 @@ actor APIClient {
     private struct EmptyBody: Encodable {}
     private struct ServerError: Decodable { let error: String }
 }
-

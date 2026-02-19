@@ -105,7 +105,6 @@ final class ProtocolSnapshotTests: XCTestCase {
         XCTAssertEqual(session.contextTokens, 2300)
         XCTAssertEqual(session.contextWindow, 200000)
         XCTAssertEqual(session.thinkingLevel, "high")
-        XCTAssertEqual(session.runtime, "host")
     }
 
     func testSessionChangeStats() throws {
@@ -137,7 +136,6 @@ final class ProtocolSnapshotTests: XCTestCase {
         XCTAssertEqual(perm.sessionId, "test-session-1")
         XCTAssertEqual(perm.tool, "bash")
         XCTAssertEqual(perm.displaySummary, "Run: rm -rf node_modules")
-        XCTAssertEqual(perm.risk, .high)
         XCTAssertEqual(perm.reason, "Destructive file operation")
         XCTAssertNotNil(perm.resolutionOptions)
         XCTAssertEqual(perm.resolutionOptions?.allowSession, true)

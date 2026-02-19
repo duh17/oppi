@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping large_tuple
+
 @Suite("ServerConnection")
 struct ServerConnectionTests {
 
@@ -33,7 +35,6 @@ struct ServerConnectionTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -225,7 +226,7 @@ struct ServerConnectionTests {
             id: "p1", sessionId: "s1", tool: "bash",
             input: ["command": .string("rm -rf /")],
             displaySummary: "bash: rm -rf /",
-            risk: .critical, reason: "Destructive",
+            reason: "Destructive",
             timeoutAt: Date().addingTimeInterval(120)
         )
 
@@ -267,15 +268,21 @@ struct ServerConnectionTests {
             id: "p2", sessionId: "other-s2", tool: "bash",
             input: ["command": .string("git push")],
             displaySummary: "bash: git push",
-            risk: .high, reason: "Git push",
+            reason: "Git push",
             timeoutAt: Date().addingTimeInterval(120)
         )
 
         conn.handleServerMessage(.permissionRequest(perm), sessionId: "stream-s1")
 
-        #expect(capturedRequestSessionId == "other-s2")
-        #expect(capturedActiveSessionId == "active-s1")
-        #expect(capturedShouldNotify == true)
+        if ReleaseFeatures.pushNotificationsEnabled {
+            #expect(capturedRequestSessionId == "other-s2")
+            #expect(capturedActiveSessionId == "active-s1")
+            #expect(capturedShouldNotify == true)
+        } else {
+            #expect(capturedRequestSessionId == nil)
+            #expect(capturedActiveSessionId == nil)
+            #expect(capturedShouldNotify == nil)
+        }
     }
 
     @MainActor
@@ -284,14 +291,14 @@ struct ServerConnectionTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .low, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(120)
         )
         conn.permissionStore.add(perm)
 
         conn.handleServerMessage(.permissionExpired(id: "p1", reason: "timeout"), sessionId: "s1")
 
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
@@ -300,14 +307,14 @@ struct ServerConnectionTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .low, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(120)
         )
         conn.permissionStore.add(perm)
 
         conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
 
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
@@ -1096,7 +1103,7 @@ struct ServerConnectionTests {
         )
         let server = PairedServer(from: creds)!
 
-        let _ = conn.switchServer(to: server)
+        _ = conn.switchServer(to: server)
         // Switch to the same server again — should return true immediately
         let result = conn.switchServer(to: server)
         #expect(result == true)
@@ -1117,10 +1124,10 @@ struct ServerConnectionTests {
         let server1 = PairedServer(from: creds1)!
         let server2 = PairedServer(from: creds2)!
 
-        let _ = conn.switchServer(to: server1)
+        _ = conn.switchServer(to: server1)
         #expect(conn.currentServerId == "sha256:fp-a")
 
-        let _ = conn.switchServer(to: server2)
+        _ = conn.switchServer(to: server2)
         #expect(conn.currentServerId == "sha256:fp-b")
     }
 
@@ -1225,7 +1232,6 @@ struct ForegroundRecoveryTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -1243,7 +1249,6 @@ struct ForegroundRecoveryTests {
             name: "Workspace",
             description: nil,
             icon: nil,
-            runtime: "container",
             skills: [],
             systemPrompt: nil,
             hostMount: nil,

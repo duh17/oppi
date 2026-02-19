@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Single pending: swipe right to allow, left to deny.
 /// Multiple pending: swipe disabled, shows "+N more" badge. Tap to open sheet.
-/// Critical risk: swipe-to-allow disabled (must use detail sheet).
+/// When biometric is enabled, swipe-to-allow is disabled (must use detail sheet).
 struct PermissionPill: View {
     let request: PermissionRequest
     let totalCount: Int
@@ -22,11 +22,9 @@ struct PermissionPill: View {
     /// Swipe-to-allow disabled when biometric is required (must use sheet → Face ID).
     private var canSwipeAllow: Bool {
         isSinglePending
-        && request.risk != .critical
-        && !BiometricService.shared.requiresBiometric(for: request.risk)
+        && !BiometricService.shared.requiresBiometric
     }
     private var canSwipeDeny: Bool { isSinglePending }
-    private var riskColor: Color { Color.riskColor(request.risk) }
 
     private var biometricPillIcon: String {
         switch LAContext().biometryType {
@@ -97,10 +95,10 @@ struct PermissionPill: View {
                     .transition(.opacity)
             }
 
-            // Risk icon
-            Image(systemName: request.risk.systemImage)
+            // Tool icon
+            Image(systemName: "exclamationmark.shield")
                 .font(.subheadline.bold())
-                .foregroundStyle(riskColor)
+                .foregroundStyle(.themeOrange)
 
             // Tool context icon (browser gets a globe, others skip)
             if isBrowserCommand {
@@ -139,8 +137,8 @@ struct PermissionPill: View {
                     .clipShape(Capsule())
             }
 
-            // Biometric lock icon (no swipe-to-allow for gated risks)
-            if BiometricService.shared.requiresBiometric(for: request.risk) && isSinglePending {
+            // Biometric lock icon
+            if BiometricService.shared.requiresBiometric && isSinglePending {
                 Image(systemName: biometricPillIcon)
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
@@ -179,7 +177,7 @@ struct PermissionPill: View {
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .strokeBorder(riskColor.opacity(0.4), lineWidth: 1)
+                    .strokeBorder(Color.themeOrange.opacity(0.4), lineWidth: 1)
             )
     }
 
@@ -238,7 +236,7 @@ struct PermissionPill: View {
     }
 
     private var accessibilityHint: String {
-        if isSinglePending && request.risk != .critical {
+        if isSinglePending {
             "Swipe right to allow, left to deny, or double tap for details"
         } else {
             "Double tap for details"

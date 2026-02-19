@@ -516,7 +516,7 @@ enum ToolRowTextRenderer {
         truncatedDisplayText(
             text,
             maxCharacters: maxRenderedOutputCharacters,
-            note: "\n… output truncated for display. Use Copy Output for full content."
+            note: "\n… output truncated for display. Use Copy for full content."
         )
     }
 }

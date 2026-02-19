@@ -13,7 +13,6 @@ struct WorkspaceCreateView: View {
     @State private var description = ""
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
-    @State private var runtime = "container"
     @State private var isCreating = false
     @State private var error: String?
 
@@ -37,7 +36,7 @@ struct WorkspaceCreateView: View {
                 Section("Skills") {
                     if skills.isEmpty {
                         Text("Loading skills…")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else {
                         ForEach(skills) { skill in
                             Button {
@@ -49,53 +48,31 @@ struct WorkspaceCreateView: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 4) {
-                                            Text(skill.name)
-                                                .font(.body)
-
-                                            if !skill.containerSafe {
-                                                Image(systemName: "exclamationmark.triangle.fill")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.orange)
-                                            }
-                                        }
+                                        Text(skill.name)
+                                            .font(.body)
 
                                         Text(skill.description)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.themeComment)
                                             .lineLimit(2)
                                     }
 
                                     Spacer()
 
                                     Image(systemName: selectedSkills.contains(skill.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .themeBlue : .secondary)
+                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .themeBlue : .themeComment)
                                         .imageScale(.large)
                                 }
                             }
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
                         }
                     }
-                }
-
-                Section("Runtime") {
-                    Picker("Runtime", selection: $runtime) {
-                        Text("Container").tag("container")
-                        Text("Host").tag("host")
-                    }
-                    .pickerStyle(.segmented)
-
-                    Text(runtime == "container"
-                         ? "Container isolates filesystem/tools (recommended)."
-                         : "Host runs directly on Mac with full host access.")
-                        .font(.caption)
-                        .foregroundStyle(runtime == "container" ? .themeGreen : .themeOrange)
                 }
 
                 if let error {
                     Section {
                         Text(error)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                             .font(.caption)
                     }
                 }
@@ -145,8 +122,7 @@ struct WorkspaceCreateView: View {
             name: name,
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
-            skills: Array(selectedSkills),
-            runtime: runtime
+            skills: Array(selectedSkills)
         )
 
         do {

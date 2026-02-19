@@ -90,7 +90,7 @@ private struct ParsedToolOutput: Sendable {
     let isReadWithMedia: Bool
     let structured: JSONValue?
 
-    static func parse(_ output: String, isReadFile: Bool) -> ParsedToolOutput {
+    static func parse(_ output: String, isReadFile: Bool) -> Self {
         let images = ImageExtractor.extract(from: output)
         let audio = AudioExtractor.extract(from: output)
 
@@ -109,7 +109,7 @@ private struct ParsedToolOutput: Sendable {
 
         let structured = parseStructuredJSON(strippedText, isReadFile: isReadFile, hasMedia: !images.isEmpty || !audio.isEmpty)
 
-        return ParsedToolOutput(
+        return Self(
             images: images,
             audio: audio,
             strippedText: strippedText,
@@ -237,7 +237,7 @@ private struct ToolOutputMedia: View {
         }
         .contextMenu {
             if !strippedText.isEmpty {
-                Button("Copy Output", systemImage: "doc.on.doc") {
+                Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = strippedText
                 }
             }
@@ -277,7 +277,7 @@ private struct StructuredToolOutputView: View {
             .background(Color.themeBgDark)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .contextMenu {
-                Button("Copy Output", systemImage: "doc.on.doc") {
+                Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = prettyJSON
                 }
             }
@@ -305,7 +305,7 @@ struct AsyncImageBlob: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture { showFullScreen = true }
                     .contextMenu {
-                        Button("Copy Image", systemImage: "doc.on.doc") {
+                        Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = decoded
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {

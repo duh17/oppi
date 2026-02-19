@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 
+// swiftlint:disable large_tuple
+
 // MARK: - SyntaxLanguage
 
 /// Language identification for syntax highlighting.
@@ -29,7 +31,7 @@ enum SyntaxLanguage: Sendable, Hashable {
     case unknown
 
     /// Detect language from file extension or code fence name.
-    static func detect(_ identifier: String) -> SyntaxLanguage {
+    static func detect(_ identifier: String) -> Self {
         switch identifier.lowercased() {
         case "swift": return .swift
         case "ts", "tsx", "mts", "cts", "typescript": return .typescript
@@ -334,7 +336,7 @@ enum SyntaxHighlighter {
             }
 
             // Preprocessor (#include, #define) for C/C++
-            if chars[i] == "#", (language == .c || language == .cpp) {
+            if chars[i] == "#", language == .c || language == .cpp {
                 result += colored(String(chars[i...]), .themeSyntaxKeyword)
                 return result
             }
@@ -738,8 +740,8 @@ enum SyntaxHighlighter {
 
     private static func matchesAt(_ chars: [Character], offset: Int, pattern: [Character]) -> Bool {
         guard offset + pattern.count <= chars.count else { return false }
-        for j in 0..<pattern.count {
-            if chars[offset + j] != pattern[j] { return false }
+        for j in 0..<pattern.count where chars[offset + j] != pattern[j] {
+            return false
         }
         return true
     }
@@ -788,8 +790,7 @@ enum SyntaxHighlighter {
         if chars[i] == "-" { i += 1 }
         while i < chars.count {
             let c = chars[i]
-            if c.isNumber || c == "." { i += 1 }
-            else if (c == "e" || c == "E") {
+            if c.isNumber || c == "." { i += 1 } else if c == "e" || c == "E" {
                 i += 1
                 if i < chars.count, chars[i] == "+" || chars[i] == "-" { i += 1 }
             } else { break }

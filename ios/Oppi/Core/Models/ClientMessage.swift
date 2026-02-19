@@ -92,7 +92,7 @@ enum ThinkingLevel: String, Codable, Sendable {
     case off, minimal, low, medium, high, xhigh
 
     /// Next level in the standard cycle: off → low → medium → high → off.
-    var next: ThinkingLevel {
+    var next: Self {
         switch self {
         case .off: return .low
         case .minimal: return .low

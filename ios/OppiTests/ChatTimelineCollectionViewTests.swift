@@ -4,7 +4,7 @@ import UIKit
 @testable import Oppi
 
 @Suite("ChatTimelineCollectionView.Coordinator")
-struct ChatTimelineCollectionViewCoordinatorTests {
+struct ChatTimelineCoordinatorTests {
 
     @MainActor
     @Test func uniqueItemsKeepingLastRetainsLatestDuplicate() {
@@ -756,7 +756,6 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             tool: "bash",
             input: [:],
             displaySummary: "command: rm -rf /tmp/demo",
-            risk: .high,
             reason: "filesystem write",
             timeoutAt: Date().addingTimeInterval(60),
             expires: true,
@@ -994,7 +993,39 @@ struct ChatTimelineCollectionViewCoordinatorTests {
     }
 
     @MainActor
-    @Test func tappingCompactionRowTogglesExpansionWhenSummaryIsLong() {
+    @Test func compactionChevronActionTogglesExpansionWhenSummaryIsLong() throws {
+        let harness = makeHarness(sessionId: "session-a")
+        let itemID = "compaction-expand-1"
+        let summary = String(repeating: "keep-calm ", count: 24)
+
+        let config = makeConfiguration(
+            items: [
+                .systemEvent(id: itemID, message: "Context compacted: \(summary)"),
+            ],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+
+        let cell = try configuredCell(in: harness.collectionView, item: 0)
+        let compactionConfig = try #require(cell.contentConfiguration as? CompactionTimelineRowConfiguration)
+        let toggle = try #require(compactionConfig.onToggleExpand)
+
+        toggle()
+        #expect(harness.reducer.expandedItemIDs.contains(itemID))
+
+        toggle()
+        #expect(!harness.reducer.expandedItemIDs.contains(itemID))
+    }
+
+    @MainActor
+    @Test func tappingCompactionRowDoesNotToggleExpansion() {
         let harness = makeHarness(sessionId: "session-a")
         let itemID = "compaction-expand-1"
         let summary = String(repeating: "keep-calm ", count: 24)
@@ -1018,12 +1049,7 @@ struct ChatTimelineCollectionViewCoordinatorTests {
             harness.collectionView,
             didSelectItemAt: IndexPath(item: 0, section: 0)
         )
-        #expect(harness.reducer.expandedItemIDs.contains(itemID))
 
-        harness.coordinator.collectionView(
-            harness.collectionView,
-            didSelectItemAt: IndexPath(item: 0, section: 0)
-        )
         #expect(!harness.reducer.expandedItemIDs.contains(itemID))
     }
 
@@ -1425,6 +1451,8 @@ struct ChatTimelineCollectionViewCoordinatorTests {
         let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "bash-1", item: item))
         guard case .bash = config.expandedContent else { Issue.record("Expected .bash"); return }
         if case .bash(_, _, let unwrapped) = config.expandedContent { #expect(unwrapped) }
+        #expect(config.toolNamePrefix == "$")
+        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     @MainActor
@@ -2007,6 +2035,166 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedReadMarkdownDisablesRowTapCopyToAllowTextSelection() {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\n- item"),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func expandedReadSwiftKeepsRowDoubleTapForFullScreen() {
+        let config = makeToolConfiguration(
+            expandedContent: .code(
+                text: "struct Test {}",
+                language: .swift,
+                startLine: 1,
+                filePath: "Test.swift"
+            ),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func expandedWriteMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\n- write markdown"),
+            toolNamePrefix: "write",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func expandedRememberMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "remembered note"),
+            toolNamePrefix: "remember",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        #expect(!view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func expandedWriteSwiftKeepsRowDoubleTapForFullScreen() {
+        let config = makeToolConfiguration(
+            expandedContent: .code(
+                text: "struct Written {}",
+                language: .swift,
+                startLine: 1,
+                filePath: "Written.swift"
+            ),
+            toolNamePrefix: "write",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+    }
+
+    @MainActor
+    @Test func commandContextMenuUsesCopyThenCopyOutput() throws {
+        let config = makeToolConfiguration(
+            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
+            copyCommandText: "echo hi",
+            copyOutputText: "hi",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .command))
+        #expect(actionTitles(in: menu) == ["Copy", "Copy Output"])
+    }
+
+    @MainActor
+    @Test func outputContextMenuUsesCopyThenCopyCommand() throws {
+        let config = makeToolConfiguration(
+            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
+            copyCommandText: "echo hi",
+            copyOutputText: "hi",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .output))
+        #expect(actionTitles(in: menu) == ["Copy", "Copy Command"])
+    }
+
+    @MainActor
+    @Test func expandedContextMenuPrependsOpenFullScreenBeforeCopy() throws {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\n- item"),
+            copyCommandText: "read docs/notes.md",
+            copyOutputText: "# Notes\n\n- item",
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .expanded))
+        #expect(actionTitles(in: menu) == ["Open Full Screen", "Copy", "Copy Command"])
+    }
+
+    @MainActor
+    @Test func shortExpandedReadMarkdownHidesFullScreenFloatingButton() throws {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\n- item"),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        let expandButton = try #require(allViews(in: view)
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
+
+        #expect(expandButton.isHidden)
+    }
+
+    @MainActor
+    @Test func overflowingExpandedReadMarkdownShowsFullScreenFloatingButton() throws {
+        let markdown = "# Notes\n\n" + Array(repeating: "- item", count: 900).joined(separator: "\n")
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: markdown),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        _ = fittedSize(for: view, width: 370)
+
+        let expandButton = try #require(allViews(in: view)
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
+
+        #expect(!expandButton.isHidden)
+    }
+
+    @MainActor
     @Test func emptyExpandedBodyProducesFiniteCompactHeight() {
         let config = makeToolConfiguration(
             expandedContent: .bash(command: nil, output: nil, unwrapped: true),
@@ -2076,7 +2264,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func reapplyingSameExpandedTodoCardReusesHostedView() throws {
+    @Test func reapplyingSameExpandedTodoCardUsesUIKitNativeViewWhenSwiftUIHotPathDisabled() throws {
         let output = """
         {
           "id": "TODO-a27df231",
@@ -2095,18 +2283,53 @@ struct ToolTimelineRowContentViewTests {
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 370)
 
-        let initialHosted = try #require(allViews(in: view).first {
+        // UIKit-first hot-path policy: no hosted SwiftUI view by default.
+        let initialHosted = allViews(in: view).first {
             String(describing: type(of: $0)).contains("UIHosting")
+        }
+        #expect(initialHosted == nil)
+
+        let initialLabel = try #require(allLabels(in: view).first {
+            renderedText(of: $0).contains("TODO-a27df231")
         })
+        let initialRendered = renderedText(of: initialLabel)
 
         view.configuration = config
         _ = fittedSize(for: view, width: 370)
 
-        let updatedHosted = try #require(allViews(in: view).first {
+        let updatedHosted = allViews(in: view).first {
             String(describing: type(of: $0)).contains("UIHosting")
-        })
+        }
+        #expect(updatedHosted == nil)
 
-        #expect(initialHosted === updatedHosted)
+        let updatedLabel = try #require(allLabels(in: view).first {
+            renderedText(of: $0).contains("TODO-a27df231")
+        })
+        #expect(renderedText(of: updatedLabel) == initialRendered)
+    }
+
+    @MainActor
+    @Test func expandedReadMediaUsesUIKitNativeViewWhenSwiftUIHotPathDisabled() throws {
+        let output = "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)"
+
+        let config = makeToolConfiguration(
+            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 370)
+
+        let hosted = allViews(in: view).first {
+            String(describing: type(of: $0)).contains("UIHosting")
+        }
+        #expect(hosted == nil)
+
+        let mediaLabel = try #require(allLabels(in: view).first {
+            renderedText(of: $0).contains("Images (1)")
+        })
+        #expect(!renderedText(of: mediaLabel).isEmpty)
     }
 
     @MainActor
@@ -2203,6 +2426,47 @@ struct ToolTimelineRowContentViewTests {
 
         let codeBlockView = firstView(ofType: NativeCodeBlockView.self, in: view)
         #expect(codeBlockView != nil)
+    }
+
+    @MainActor
+    @Test func expandedMarkdownInitialSizingBeforeLayoutPassAvoidsViewportMaxJump() {
+        let config = makeToolConfiguration(
+            expandedContent: .markdown(text: "Oppi repo normalized per request."),
+            toolNamePrefix: "remember",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 300)
+
+        #expect(firstPassSize.height.isFinite)
+        #expect(firstPassSize.height > 0)
+        #expect(
+            firstPassSize.height < 260,
+            "Initial markdown sizing should stay compact; got \(firstPassSize.height)"
+        )
+    }
+
+    @MainActor
+    @Test func expandedPlainTextInitialSizingBeforeLayoutPassAvoidsViewportMaxJump() {
+        let config = makeToolConfiguration(
+            expandedContent: .text(
+                text: "remember text: Oppi iOS bash tool-row header updated, tags: [6 items]",
+                language: nil
+            ),
+            toolNamePrefix: "remember",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 300)
+
+        #expect(firstPassSize.height.isFinite)
+        #expect(firstPassSize.height > 0)
+        #expect(
+            firstPassSize.height < 260,
+            "Initial wrapped text sizing should stay compact; got \(firstPassSize.height)"
+        )
     }
 
     @MainActor
@@ -2532,6 +2796,43 @@ struct AssistantTimelineRowContentViewTests {
         #expect(codeBlockView != nil)
     }
 
+    @MainActor
+    @Test func contextMenuUsesCopyAndCopyAsMarkdown() throws {
+        let text = "Assistant answer"
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy", "Copy as Markdown"])
+    }
+
+    @MainActor
+    @Test func contextMenuAppendsForkAfterCopyActions() throws {
+        let text = "Assistant answer"
+        let view = AssistantTimelineRowContentView(
+            configuration: makeAssistantConfiguration(
+                text: text,
+                canFork: true,
+                onFork: {}
+            )
+        )
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy", "Copy as Markdown", "Fork from here"])
+    }
+
+    @MainActor
+    @Test func bubbleInstallsDoubleTapCopyGesture() {
+        let text = "Assistant answer"
+        let view = AssistantTimelineRowContentView(configuration: makeAssistantConfiguration(text: text))
+
+        let recognizers = allGestureRecognizers(in: view)
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
+        #expect(hasDoubleTap)
+    }
+
     // MARK: - Code Block Horizontal Scroll Regression
 
     @MainActor
@@ -2816,6 +3117,141 @@ struct AssistantTimelineRowContentViewTests {
     }
 }
 
+@Suite("Timeline copy context menus")
+struct TimelineCopyContextMenuTests {
+    @MainActor
+    @Test func userRowContextMenuUsesCopyPrimary() throws {
+        let config = UserTimelineRowConfiguration(
+            text: "hello",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            themeID: .dark
+        )
+        let view = UserTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test func userRowInstallsDoubleTapCopyGesture() {
+        let config = UserTimelineRowConfiguration(
+            text: "hello",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            themeID: .dark
+        )
+        let view = UserTimelineRowContentView(configuration: config)
+
+        let recognizers = allGestureRecognizers(in: view)
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
+        #expect(hasDoubleTap)
+    }
+
+    @MainActor
+    @Test func permissionRowContextMenuUsesCopyPrimary() throws {
+        let config = PermissionTimelineRowConfiguration(
+            outcome: .allowed,
+            tool: "bash",
+            summary: "command: ls",
+            themeID: .dark
+        )
+        let view = PermissionTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test func permissionRowInstallsDoubleTapCopyGesture() {
+        let config = PermissionTimelineRowConfiguration(
+            outcome: .allowed,
+            tool: "bash",
+            summary: "command: ls",
+            themeID: .dark
+        )
+        let view = PermissionTimelineRowContentView(configuration: config)
+
+        let recognizers = allGestureRecognizers(in: view)
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
+        #expect(hasDoubleTap)
+    }
+
+    @MainActor
+    @Test func errorRowContextMenuUsesCopyPrimary() throws {
+        let config = ErrorTimelineRowConfiguration(
+            message: "Permission denied",
+            themeID: .dark
+        )
+        let view = ErrorTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test func errorRowInstallsDoubleTapCopyGesture() {
+        let config = ErrorTimelineRowConfiguration(
+            message: "Permission denied",
+            themeID: .dark
+        )
+        let view = ErrorTimelineRowContentView(configuration: config)
+
+        let recognizers = allGestureRecognizers(in: view)
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
+        #expect(hasDoubleTap)
+    }
+
+    @MainActor
+    @Test func compactionRowContextMenuUsesCopyPrimary() throws {
+        let config = CompactionTimelineRowConfiguration(
+            presentation: .init(
+                phase: .completed,
+                detail: "Summary",
+                tokensBefore: 12_345
+            ),
+            isExpanded: false,
+            themeID: .dark
+        )
+        let view = CompactionTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu())
+        #expect(actionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test func compactionRowInstallsDoubleTapCopyGesture() {
+        let config = CompactionTimelineRowConfiguration(
+            presentation: .init(
+                phase: .completed,
+                detail: "Summary",
+                tokensBefore: 12_345
+            ),
+            isExpanded: false,
+            themeID: .dark
+        )
+        let view = CompactionTimelineRowContentView(configuration: config)
+
+        let recognizers = allGestureRecognizers(in: view)
+        let hasDoubleTap = recognizers.contains {
+            guard let tap = $0 as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired == 2
+        }
+        #expect(hasDoubleTap)
+    }
+}
+
 @MainActor
 private func allLabels(in root: UIView) -> [UILabel] {
     var labels: [UILabel] = []
@@ -2897,6 +3333,11 @@ private func allScrollViews(in root: UIView) -> [UIScrollView] {
 @MainActor
 private func renderedText(of label: UILabel) -> String {
     label.attributedText?.string ?? label.text ?? ""
+}
+
+@MainActor
+private func actionTitles(in menu: UIMenu) -> [String] {
+    menu.children.compactMap { ($0 as? UIAction)?.title }
 }
 
 private actor FetchProbe {
@@ -3077,8 +3518,20 @@ private func configuredCell(
     item: Int,
     section: Int = 0
 ) throws -> UICollectionViewCell {
-    let dataSource = try #require(collectionView.dataSource)
-    return dataSource.collectionView(collectionView, cellForItemAt: IndexPath(item: item, section: section))
+    let indexPath = IndexPath(item: item, section: section)
+
+    // Never call dataSource.collectionView(_:cellForItemAt:) directly in tests.
+    // UIKit expects dequeued cells to flow through its normal display pipeline;
+    // bypassing that can trip diffable snapshot assertions on reconfigure.
+    collectionView.layoutIfNeeded()
+    if let cell = collectionView.cellForItem(at: indexPath) {
+        return cell
+    }
+
+    collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
+    collectionView.layoutIfNeeded()
+
+    return try #require(collectionView.cellForItem(at: indexPath))
 }
 
 private func waitForCondition(
@@ -3102,6 +3555,8 @@ private func makeToolConfiguration(
     title: String = "$ bash",
     preview: String? = nil,
     expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil,
+    copyCommandText: String? = nil,
+    copyOutputText: String? = nil,
     languageBadge: String? = nil,
     trailing: String? = nil,
     toolNamePrefix: String? = "$",
@@ -3116,8 +3571,8 @@ private func makeToolConfiguration(
         title: title,
         preview: preview,
         expandedContent: expandedContent,
-        copyCommandText: nil,
-        copyOutputText: nil,
+        copyCommandText: copyCommandText,
+        copyOutputText: copyOutputText,
         languageBadge: languageBadge,
         trailing: trailing,
         titleLineBreakMode: .byTruncatingTail,
@@ -3136,13 +3591,15 @@ private func makeToolConfiguration(
 }
 
 private func makeAssistantConfiguration(
-    text: String = "Assistant response with https://example.com"
+    text: String = "Assistant response with https://example.com",
+    canFork: Bool = false,
+    onFork: (() -> Void)? = nil
 ) -> AssistantTimelineRowConfiguration {
     AssistantTimelineRowConfiguration(
         text: text,
         isStreaming: false,
-        canFork: false,
-        onFork: nil,
+        canFork: canFork,
+        onFork: onFork,
         themeID: .dark
     )
 }
@@ -3162,6 +3619,27 @@ private func fittedSize(for view: UIView, width: CGFloat) -> CGSize {
     container.setNeedsLayout()
     container.layoutIfNeeded()
 
+    return view.systemLayoutSizeFitting(
+        CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+    )
+}
+
+@MainActor
+private func fittedSizeWithoutPrelayout(for view: UIView, width: CGFloat) -> CGSize {
+    let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 800))
+    view.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(view)
+
+    NSLayoutConstraint.activate([
+        view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        view.topAnchor.constraint(equalTo: container.topAnchor),
+    ])
+
+    // Intentionally skip layoutIfNeeded to mirror the first self-sizing pass,
+    // where scrollView.frameLayoutGuide widths can still be zero.
     return view.systemLayoutSizeFitting(
         CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
         withHorizontalFittingPriority: .required,

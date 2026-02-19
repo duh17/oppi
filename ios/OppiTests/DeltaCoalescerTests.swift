@@ -46,7 +46,7 @@ struct DeltaCoalescerTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: rm",
-            risk: .high, reason: "Destructive",
+            reason: "Destructive",
             timeoutAt: Date().addingTimeInterval(120)
         )
         coalescer.receive(.permissionRequest(perm))

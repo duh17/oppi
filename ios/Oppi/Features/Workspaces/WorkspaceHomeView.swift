@@ -90,7 +90,9 @@ struct WorkspaceHomeView: View {
                             activeCount: activeCount(for: workspace.id, serverId: serverId),
                             stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
                             hasAttention: hasAttention(for: workspace.id, serverId: serverId),
-                            isUnreachable: isUnreachable
+                            isUnreachable: isUnreachable,
+                            badgeIcon: server.resolvedBadgeIcon,
+                            badgeColor: server.resolvedBadgeColor
                         )
                     }
                     .disabled(isUnreachable)
@@ -112,7 +114,7 @@ struct WorkspaceHomeView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .padding(.leading, 8)
                 }
                 .buttonStyle(.plain)
@@ -190,12 +192,14 @@ private struct ServerSectionHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "server.rack")
-                    .font(.caption2)
-                    .foregroundStyle(statusColor)
+                RuntimeBadge(
+                    compact: true,
+                    icon: server.resolvedBadgeIcon,
+                    badgeColor: server.resolvedBadgeColor
+                )
                 Text(server.name)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.themeFg)
             }
 
             Spacer()
@@ -209,14 +213,6 @@ private struct ServerSectionHeader: View {
         .padding(.vertical, 2)
     }
 
-    private var statusColor: Color {
-        switch freshnessState {
-        case .live: return .green
-        case .syncing: return .blue
-        case .stale: return .orange
-        case .offline: return .red
-        }
-    }
 }
 
 // MARK: - Workspace Home Row
@@ -227,6 +223,8 @@ private struct WorkspaceHomeRow: View {
     let stoppedCount: Int
     let hasAttention: Bool
     var isUnreachable: Bool = false
+    var badgeIcon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
         HStack(spacing: 12) {
@@ -238,7 +236,7 @@ private struct WorkspaceHomeRow: View {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
-                        .foregroundStyle(isUnreachable ? .secondary : .primary)
+                        .foregroundStyle(isUnreachable ? .themeComment : .themeFg)
 
                     if hasAttention {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -248,22 +246,22 @@ private struct WorkspaceHomeRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
 
                     if isUnreachable {
                         Text("Unreachable")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                     } else if activeCount > 0 {
                         Label("\(activeCount) active", systemImage: "circle.fill")
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.themeGreen)
                     }
 
                     if stoppedCount > 0 {
                         Label("\(stoppedCount) stopped", systemImage: "stop.circle")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
 
                     if !isUnreachable && activeCount == 0 && stoppedCount == 0 {

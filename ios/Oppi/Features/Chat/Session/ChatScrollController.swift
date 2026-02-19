@@ -115,7 +115,8 @@ final class ChatScrollController {
         keyboardObservers = names.map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
-                    self?.keyboardTransitionUntil = ContinuousClock.now.advanced(by: self!.keyboardSettleDuration)
+                    guard let self else { return }
+                    self.keyboardTransitionUntil = ContinuousClock.now.advanced(by: self.keyboardSettleDuration)
                 }
             }
         }

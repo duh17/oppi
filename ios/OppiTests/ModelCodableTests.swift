@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping
+
 // MARK: - Session Codable
 
 @Suite("Session Codable")
@@ -18,7 +20,6 @@ struct SessionCodableTests {
             "createdAt": 1700000000000,
             "lastActivity": 1700003600000,
             "model": "claude-sonnet-4-20250514",
-            "runtime": "container",
             "messageCount": 5,
             "tokens": {"input": 100, "output": 50},
             "cost": 0.01,
@@ -35,7 +36,6 @@ struct SessionCodableTests {
         #expect(session.name == "Test Session")
         #expect(session.status == .busy)
         #expect(session.model == "claude-sonnet-4-20250514")
-        #expect(session.runtime == "container")
         #expect(session.messageCount == 5)
         #expect(session.tokens.input == 100)
         #expect(session.tokens.output == 50)
@@ -68,7 +68,6 @@ struct SessionCodableTests {
         #expect(session.workspaceName == nil)
         #expect(session.name == nil)
         #expect(session.model == nil)
-        #expect(session.runtime == nil)
         #expect(session.contextTokens == nil)
         #expect(session.contextWindow == nil)
         #expect(session.lastMessage == nil)
@@ -85,7 +84,6 @@ struct SessionCodableTests {
             "createdAt": 1700000000000,
             "lastActivity": 1700001000000,
             "model": "claude-sonnet-4-20250514",
-            "runtime": "host",
             "messageCount": 10,
             "tokens": {"input": 200, "output": 100},
             "cost": 0.05,
@@ -235,7 +233,6 @@ struct PermissionCodableTests {
             "tool": "bash",
             "input": {"command": "rm -rf /"},
             "displaySummary": "bash: rm -rf /",
-            "risk": "critical",
             "reason": "Destructive command",
             "timeoutAt": 1700003600000
         }
@@ -247,7 +244,6 @@ struct PermissionCodableTests {
         #expect(perm.tool == "bash")
         #expect(perm.input["command"] == .string("rm -rf /"))
         #expect(perm.displaySummary == "bash: rm -rf /")
-        #expect(perm.risk == .critical)
         #expect(perm.reason == "Destructive command")
         #expect(perm.timeoutAt.timeIntervalSince1970 == 1700003600)
         #expect(perm.expires)
@@ -261,7 +257,6 @@ struct PermissionCodableTests {
             "tool": "bash",
             "input": {"command": "git push origin main"},
             "displaySummary": "bash: git push origin main",
-            "risk": "high",
             "reason": "Git push",
             "timeoutAt": 1700003600000,
             "expires": false
@@ -279,7 +274,7 @@ struct PermissionCodableTests {
             "id": "p2", "sessionId": "s1", "tool": "read",
             "input": {"path": "/etc/passwd"},
             "displaySummary": "read: /etc/passwd",
-            "risk": "low", "reason": "Read access",
+            "reason": "Read access",
             "timeoutAt": 1700000060000
         }
         """
@@ -287,19 +282,6 @@ struct PermissionCodableTests {
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(PermissionRequest.self, from: encoded)
         #expect(original == decoded)
-    }
-
-    @Test func allRiskLevels() throws {
-        for level in ["low", "medium", "high", "critical"] {
-            let json = """
-            {
-                "id":"p","sessionId":"s","tool":"t","input":{},"displaySummary":"x",
-                "risk":"\(level)","reason":"r","timeoutAt":0
-            }
-            """
-            let perm = try JSONDecoder().decode(PermissionRequest.self, from: json.data(using: .utf8)!)
-            #expect(perm.risk.rawValue == level)
-        }
     }
 
     @Test func permissionActionCodable() throws {
@@ -510,7 +492,6 @@ struct WorkspaceCodableTests {
             "name": "Development",
             "description": "Dev workspace",
             "icon": "hammer",
-            "runtime": "host",
             "skills": ["searxng", "fetch"],
             "systemPrompt": "You are helpful",
             "hostMount": "/Users/me/workspace",
@@ -529,7 +510,6 @@ struct WorkspaceCodableTests {
         #expect(ws.name == "Development")
         #expect(ws.description == "Dev workspace")
         #expect(ws.icon == "hammer")
-        #expect(ws.runtime == "host")
         #expect(ws.skills == ["searxng", "fetch"])
         #expect(ws.systemPrompt == "You are helpful")
         #expect(ws.hostMount == "/Users/me/workspace")
@@ -556,7 +536,6 @@ struct WorkspaceCodableTests {
         #expect(ws.id == "w2")
         #expect(ws.description == nil)
         #expect(ws.icon == nil)
-        #expect(ws.runtime == "container")
         #expect(ws.skills.isEmpty)
         #expect(ws.systemPrompt == nil)
         #expect(ws.hostMount == nil)
@@ -571,7 +550,7 @@ struct WorkspaceCodableTests {
         {
             "id": "w3", "name": "RT",
             "description": "test", "icon": "star",
-            "runtime": "host", "skills": ["fetch"],
+            "skills": ["fetch"],
             "systemPrompt": "prompt", "hostMount": "/work",
             "memoryEnabled": false, "memoryNamespace": "ns",
             "extensionMode": "explicit", "extensions": ["custom-ext"],
@@ -585,7 +564,7 @@ struct WorkspaceCodableTests {
         #expect(original == decoded)
     }
 
-    @Test func runtimeDefaultsToContainerWhenHostMountMissing() throws {
+    @Test func decodeWorkspaceWithoutRuntimeField() throws {
         let json = """
         {
             "id": "w4", "name": "NoRuntimeField",
@@ -593,7 +572,9 @@ struct WorkspaceCodableTests {
         }
         """
         let ws = try JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
-        #expect(ws.runtime == "container")
+        #expect(ws.id == "w4")
+        #expect(ws.name == "NoRuntimeField")
+        #expect(ws.skills.isEmpty)
     }
 }
 

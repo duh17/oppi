@@ -181,7 +181,7 @@ enum ToolPresentationBuilder {
     private struct CollapsedPresentation {
         var title: String
         var toolNamePrefix: String?
-        var toolNameColor: UIColor = UIColor(Color.themeCyan)
+        var toolNameColor = UIColor(Color.themeCyan)
         var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
         var languageBadge: String?
         var editAdded: Int?
@@ -206,7 +206,10 @@ enum ToolPresentationBuilder {
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if isExpanded {
-                result.title = "bash"
+                // Expanded bash rows already have a dedicated command panel.
+                // Keep the header icon-only ("$" symbol) and reserve line
+                // height with a single space so body content doesn't shift up.
+                result.title = " "
             } else {
                 result.title = compactCommand.isEmpty ? "bash" : compactCommand
                 result.titleLineBreakMode = .byTruncatingMiddle

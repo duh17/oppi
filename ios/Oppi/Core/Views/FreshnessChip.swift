@@ -37,7 +37,7 @@ struct FreshnessChip: View {
                 .foregroundStyle(tint)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
                 .monospacedDigit()
         }
         .padding(.horizontal, 8)

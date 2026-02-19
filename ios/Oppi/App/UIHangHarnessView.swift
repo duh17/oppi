@@ -230,8 +230,7 @@ struct UIHangHarnessView: View {
                             "command": .string("rm -rf /tmp/demo"),
                         ],
                         displaySummary: "command: rm -rf /tmp/demo",
-                        risk: .high,
-                        reason: "Filesystem mutation in host mode",
+                        reason: "Filesystem mutation requires approval",
                         timeoutAt: visualTS.addingTimeInterval(120),
                         expires: true,
                         resolutionOptions: nil

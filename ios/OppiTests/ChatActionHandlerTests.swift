@@ -693,7 +693,7 @@ struct ChatActionHandlerTests {
         // Simulate the title generator being slow (the real on-device LLM takes ~1-2s)
         handler._generateSessionTitleForTesting = { _ in
             // By the time this returns, messageCount will have grown
-            return "Container runtime bridge"
+            return "Local process bridge"
         }
 
         var setSessionNameValue: String?
@@ -720,7 +720,7 @@ struct ChatActionHandlerTests {
         }
 
         _ = handler.sendPrompt(
-            text: "implement loopback bridge for container runtime",
+            text: "implement loopback bridge for local process",
             images: [],
             isBusy: false,
             connection: connection,
@@ -741,8 +741,8 @@ struct ChatActionHandlerTests {
             setSessionNameValue != nil
         }
 
-        #expect(setSessionNameValue == "Container runtime bridge")
-        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Container runtime bridge")
+        #expect(setSessionNameValue == "Local process bridge")
+        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Local process bridge")
     }
 
     // MARK: - Rename
@@ -922,7 +922,6 @@ struct ChatActionHandlerTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: messageCount,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,

@@ -493,8 +493,8 @@ enum FlatSegment: Sendable {
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID()
-    ) -> [FlatSegment] {
-        var result: [FlatSegment] = []
+    ) -> [Self] {
+        var result: [Self] = []
         result.reserveCapacity(blocks.count)
 
         var pendingText = AttributedString()
@@ -755,18 +755,23 @@ struct CodeBlockView: View {
     @State private var showFullScreen = false
 
     var body: some View {
-        CodeBlockChrome(language: language, code: code, onExpand: { showFullScreen = true }) {
-            if let highlighted {
-                Text(highlighted)
-                    .font(.system(.caption, design: .monospaced))
-                    .fixedSize(horizontal: true, vertical: false)
-            } else {
-                Text(code)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.themeFg)
-                    .fixedSize(horizontal: true, vertical: false)
+        CodeBlockChrome(
+            language: language,
+            code: code,
+            onExpand: { showFullScreen = true },
+            content: {
+                if let highlighted {
+                    Text(highlighted)
+                        .font(.system(.caption, design: .monospaced))
+                        .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text(code)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.themeFg)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
-        }
+        )
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: code, language: language, filePath: nil, startLine: 1

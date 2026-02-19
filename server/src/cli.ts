@@ -24,7 +24,7 @@ import { Server } from "./server.js";
 import { envInit, envShow } from "./host-env.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
-import type { InviteData, InvitePayloadV3 } from "./types.js";
+import type { InviteData, InvitePayloadV3, ServerConfig } from "./types.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -730,7 +730,7 @@ function cmdConfig(
 
     try {
       const coerced = coerceValue(value, meta.type);
-      storage.updateConfig({ [key]: coerced } as Partial<import("./types.js").ServerConfig>);
+      storage.updateConfig({ [key]: coerced } as Partial<ServerConfig>);
       console.log(c.green(`  ✓ ${key} = ${coerced}`));
       console.log(c.dim(`    Saved to ${storage.getConfigPath()}`));
       console.log("");
@@ -760,13 +760,13 @@ function cmdEnv(action: string | undefined): void {
       envShow();
       break;
     default:
-      console.log(c.bold("  oppi env") + " — manage host environment for sessions");
+      console.log(c.bold("  oppi env") + " — manage local session environment");
       console.log("");
       console.log(`    ${c.cyan("env init")}    Capture current $PATH into ~/.config/oppi/env`);
-      console.log(`    ${c.cyan("env show")}    Show resolved host PATH`);
+      console.log(`    ${c.cyan("env show")}    Show resolved session PATH`);
       console.log("");
       console.log(c.dim("  Run 'env init' from your interactive shell (fish, zsh, bash)."));
-      console.log(c.dim("  The server reads this file at startup for host-mode sessions."));
+      console.log(c.dim("  The server reads this file at startup for local sessions."));
       break;
   }
 }
@@ -786,8 +786,8 @@ function cmdHelp(): void {
   console.log(`    ${c.cyan("status")}                     Show server status`);
   console.log(`    ${c.cyan("doctor")}                     Security + environment diagnostics`);
   console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
-  console.log(`    ${c.cyan("env init")}                   Capture shell PATH for host sessions`);
-  console.log(`    ${c.cyan("env show")}                   Show resolved host PATH`);
+  console.log(`    ${c.cyan("env init")}                   Capture shell PATH for local sessions`);
+  console.log(`    ${c.cyan("env show")}                   Show resolved session PATH`);
   console.log("");
 
   console.log("  " + c.bold("Configuration:"));

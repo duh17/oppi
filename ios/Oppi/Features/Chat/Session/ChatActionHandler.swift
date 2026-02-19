@@ -43,13 +43,16 @@ final class ChatActionHandler {
         UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? true
     }
     private static let autoTitleInstructions = """
-        You create concise coding session titles.
-        Return only the title text.
+        You generate concise coding session titles.
+        Return exactly one line containing only the title text.
+
         Rules:
-        - 2 to 5 words.
-        - Focus on one concrete objective.
-        - No quotes, markdown, or trailing punctuation.
-        - For TODO/task-list/planning sessions, start with "TODO:" then 2 to 4 words.
+        - 2 to 6 words.
+        - Capture one concrete objective.
+        - Prefer specific nouns from the request (feature, bug, file, subsystem, tool).
+        - Skip conversational filler like "please", "can you", "help me", or "I need to".
+        - No quotes, markdown, emojis, or trailing punctuation.
+        - Do not add "TODO:"; the app adds TODO prefixing when needed.
         """
 
     var sendProgressText: String? {
@@ -527,10 +530,11 @@ final class ChatActionHandler {
         }
 
         let prompt = """
-            Create a short session title from this first user message.
+            Create a concise session title from the first user message.
 
-            First user message:
+            <first_user_message>
             \(firstMessage)
+            </first_user_message>
             """
 
         do {

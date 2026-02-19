@@ -22,7 +22,7 @@ struct ImageBlobView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture { showFullScreen = true }
                     .contextMenu {
-                        Button("Copy Image", systemImage: "doc.on.doc") {
+                        Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = decoded
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {
