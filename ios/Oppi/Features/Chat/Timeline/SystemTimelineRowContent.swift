@@ -83,4 +83,3 @@ final class SystemTimelineRowContentView: UIView, UIContentView {
         messageLabel.text = configuration.message
     }
 }
-

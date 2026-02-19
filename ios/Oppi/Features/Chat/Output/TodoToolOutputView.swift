@@ -259,10 +259,10 @@ private struct TodoIDLabel: View {
             }
             .buttonStyle(.plain)
             .contextMenu {
-                Button("Copy ID", systemImage: "doc.on.doc") {
+                Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = id
                 }
-                Button("Copy todo get command", systemImage: "terminal") {
+                Button("Copy Todo Get Command", systemImage: "terminal") {
                     UIPasteboard.general.string = "todo get \(id)"
                 }
             }

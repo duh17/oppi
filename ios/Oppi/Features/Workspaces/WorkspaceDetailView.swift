@@ -8,6 +8,7 @@ struct WorkspaceDetailView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
 
@@ -59,6 +60,22 @@ struct WorkspaceDetailView: View {
 
     private var hasSessionSearchQuery: Bool {
         !normalizedSessionSearchQuery.isEmpty
+    }
+
+    private var serverBadgeIcon: ServerBadgeIcon {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeIcon
+    }
+
+    private var serverBadgeColor: ServerBadgeColor {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeColor
     }
 
     private var workspaceSessions: [Session] {
@@ -287,7 +304,7 @@ struct WorkspaceDetailView: View {
                         }
 
                         HStack(spacing: 8) {
-                            RuntimeBadge(runtime: workspace.runtime, compact: true)
+                            RuntimeBadge(compact: true, icon: serverBadgeIcon, badgeColor: serverBadgeColor)
                             Text("\(workspace.skills.count) skills")
                                 .font(.caption)
                                 .foregroundStyle(.themeComment)
@@ -569,6 +586,7 @@ private struct WorkspacePolicyView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
 
     @State private var policy: WorkspacePolicyResponse?
     @State private var rules: [PolicyRuleRecord] = []
@@ -579,6 +597,22 @@ private struct WorkspacePolicyView: View {
     @State private var pendingDeletePermission: PolicyPermissionRecord?
     @State private var rememberedRuleDraft: RememberedRuleDraft?
     @State private var pendingDeleteRule: PolicyRuleRecord?
+
+    private var policyBadgeIcon: ServerBadgeIcon {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeIcon
+    }
+
+    private var policyBadgeColor: ServerBadgeColor {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeColor
+    }
 
     var body: some View {
         List {
@@ -771,7 +805,7 @@ private struct WorkspacePolicyView: View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    RuntimeBadge(compact: true, icon: policyBadgeIcon, badgeColor: policyBadgeColor)
                     Menu {
                         ForEach(["allow", "ask", "block"], id: \.self) { option in
                             Button {
@@ -1053,7 +1087,7 @@ private struct PolicyPermissionDraft: Identifiable {
         self.domain = domain
     }
 
-    static func defaultDraft() -> PolicyPermissionDraft {
+    static func defaultDraft() -> Self {
         Self(
             permissionId: "allow-\(UUID().uuidString.prefix(8).lowercased())",
             decision: "allow",

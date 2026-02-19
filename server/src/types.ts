@@ -18,16 +18,13 @@ export interface Workspace {
   description?: string; // shown in workspace picker
   icon?: string; // SF Symbol name or emoji
 
-  // Runtime — where pi runs
-  runtime: "host" | "container";
-
   // Skills — which skills to sync into the session
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
   policy?: WorkspacePolicyConfig; // workspace additive permissions (merged onto global policy)
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
-  allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
+  allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
   // Context
   systemPrompt?: string; // Additional instructions appended to base prompt
@@ -88,13 +85,12 @@ export interface Session {
   lastMessage?: string;
 
   // Health
-  warnings?: string[]; // bootstrap/runtime warnings surfaced to iOS
+  warnings?: string[]; // bootstrap/session warnings surfaced to iOS
 
   // Agent config state (synced from pi get_state)
   thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
-  // Runtime metadata (used for trace recovery/replay)
-  runtime?: "host" | "container";
+  // Trace metadata (used for trace recovery/replay)
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
   piSessionId?: string; // pi internal session UUID reported by get_state
@@ -136,6 +132,26 @@ export interface PolicyPermission {
   match: PolicyMatch;
 }
 
+/**
+ * Named heuristics — complex detection logic that can't be expressed as globs.
+ * Each key maps to the action taken when the heuristic triggers.
+ * Set to `false` to disable a heuristic entirely.
+ */
+export interface PolicyHeuristics {
+  /** Detect `| sh`, `| bash` — arbitrary code execution via pipe. Default: "ask" */
+  pipeToShell?: PolicyDecision | false;
+  /** Detect curl -d, wget --post-data, etc. — outbound data transfer. Default: "ask" */
+  dataEgress?: PolicyDecision | false;
+  /** Detect $API_KEY, $SECRET in curl URLs — credential leakage. Default: "ask" */
+  secretEnvInUrl?: PolicyDecision | false;
+  /** Detect reads of ~/.ssh/, ~/.aws/, .env, etc. via cat/head/read. Default: "block" */
+  secretFileAccess?: PolicyDecision | false;
+  /** Browser nav to domains not in fetch allowlist. Default: "ask" */
+  browserUnknownDomain?: PolicyDecision | false;
+  /** Browser eval.js (arbitrary JS execution). Default: "ask" */
+  browserEval?: PolicyDecision | false;
+}
+
 export interface PolicyConfig {
   schemaVersion: 1;
   mode?: string;
@@ -143,6 +159,8 @@ export interface PolicyConfig {
   fallback: PolicyDecision;
   guardrails: PolicyPermission[];
   permissions: PolicyPermission[];
+  /** Named heuristics for complex pattern detection. Omit to use defaults. */
+  heuristics?: PolicyHeuristics;
 }
 
 export interface ServerConfig {
@@ -203,7 +221,6 @@ export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
   icon?: string;
-  runtime?: "host" | "container";
   skills: string[];
   policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
@@ -218,7 +235,6 @@ export interface UpdateWorkspaceRequest {
   name?: string;
   description?: string;
   icon?: string;
-  runtime?: "host" | "container";
   skills?: string[];
   policy?: WorkspacePolicyConfig;
   systemPrompt?: string;

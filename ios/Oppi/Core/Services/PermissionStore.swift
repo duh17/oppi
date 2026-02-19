@@ -31,6 +31,9 @@ final class PermissionStore {
     /// Total pending count for the active server (for badge display).
     var count: Int { pending.count }
 
+    /// Convenience emptiness check for active server permissions.
+    var isEmpty: Bool { pending.isEmpty }
+
     /// Add a new permission request.
     func add(_ request: PermissionRequest) {
         guard !pending.contains(where: { $0.id == request.id }) else { return }

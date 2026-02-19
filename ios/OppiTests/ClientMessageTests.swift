@@ -181,8 +181,18 @@ struct ClientMessageTests {
 
     // MARK: - Helpers
 
+    private enum DecodeError: Error {
+        case topLevelNotDictionary
+    }
+
     private func decode(_ msg: ClientMessage) throws -> [String: Any] {
         let data = try msg.jsonData()
-        return try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let object = try JSONSerialization.jsonObject(with: data)
+
+        guard let dictionary = object as? [String: Any] else {
+            throw DecodeError.topLevelNotDictionary
+        }
+
+        return dictionary
     }
 }

@@ -367,9 +367,7 @@ final class MarkdownTextStorage: NSTextStorage {
         guard trimmed.hasPrefix("#") else { return nil }
         var level = 0
         for ch in trimmed {
-            if ch == "#" { level += 1 }
-            else if ch == " " { break }
-            else { return nil }
+            if ch == "#" { level += 1 } else if ch == " " { break } else { return nil }
         }
         return (level >= 1 && level <= 6) ? level : nil
     }

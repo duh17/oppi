@@ -40,7 +40,7 @@ struct DictationConfig: Codable, Equatable, Sendable {
 
     // MARK: - Defaults
 
-    static let `default` = DictationConfig(
+    static let `default` = Self(
         enabled: false,
         endpointURL: "",
         model: "default",
@@ -54,9 +54,9 @@ struct DictationConfig: Codable, Equatable, Sendable {
 
     private static let storageKey = "\(AppIdentifiers.subsystem).dictation.config"
 
-    static func load() -> DictationConfig {
+    static func load() -> Self {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let config = try? JSONDecoder().decode(DictationConfig.self, from: data)
+              let config = try? JSONDecoder().decode(Self.self, from: data)
         else {
             return .default
         }

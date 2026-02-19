@@ -30,7 +30,7 @@ struct DictationSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Server URL")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                         TextField("http://mac-studio:8321", text: $config.endpointURL)
                             .keyboardType(.URL)
                             .autocapitalization(.none)
@@ -42,7 +42,7 @@ struct DictationSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Model")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                         TextField("default", text: $config.model)
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
@@ -53,7 +53,7 @@ struct DictationSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Language (optional)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                         TextField("en", text: $config.language)
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
@@ -64,7 +64,7 @@ struct DictationSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("API Key (optional)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                         SecureField("Bearer token", text: $config.apiKey)
                             .autocapitalization(.none)
                             .autocorrectionDisabled()
@@ -82,7 +82,7 @@ struct DictationSettingsView: View {
                         Text("Chunk Duration")
                         Spacer()
                         Text("\(config.chunkDurationSeconds, specifier: "%.1f")s")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .monospacedDigit()
                     }
                     Slider(value: $config.chunkDurationSeconds, in: 1.0...10.0, step: 0.5)
@@ -92,7 +92,7 @@ struct DictationSettingsView: View {
                         Text("Silence Timeout")
                         Spacer()
                         Text("\(config.silenceTimeoutSeconds, specifier: "%.1f")s")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .monospacedDigit()
                     }
                     Slider(value: $config.silenceTimeoutSeconds, in: 1.0...10.0, step: 0.5)
@@ -124,11 +124,11 @@ struct DictationSettingsView: View {
                         switch testResult {
                         case .success(let message):
                             Label(message, systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.themeGreen)
                                 .font(.caption)
                         case .failure(let message):
                             Label(message, systemImage: "xmark.circle.fill")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(.themeRed)
                                 .font(.caption)
                         }
                     }
@@ -143,7 +143,7 @@ struct DictationSettingsView: View {
         config.save()
     }
 
-    private func testConnection() async {
+    func testConnection() async {
         save()
         isTesting = true
         testResult = nil
@@ -168,15 +168,15 @@ struct DictationSettingsView: View {
         }
 
         var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"test.wav\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"test.wav\"\r\n".utf8))
+        body.append(Data("Content-Type: audio/wav\r\n\r\n".utf8))
         body.append(silentWAV)
-        body.append("\r\n".data(using: .utf8)!)
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(config.model)\r\n".data(using: .utf8)!)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append(Data("\r\n".utf8))
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"model\"\r\n\r\n".utf8))
+        body.append(Data("\(config.model)\r\n".utf8))
+        body.append(Data("--\(boundary)--\r\n".utf8))
         request.httpBody = body
 
         do {
@@ -191,8 +191,8 @@ struct DictationSettingsView: View {
             }
 
             if httpResponse.statusCode == 200 {
-                struct R: Decodable { let text: String }
-                if let r = try? JSONDecoder().decode(R.self, from: data) {
+                struct Response: Decodable { let text: String }
+                if let r = try? JSONDecoder().decode(Response.self, from: data) {
                     testResult = .success("Connected (\(ms)ms) — \"\(r.text.prefix(50))\"")
                 } else {
                     testResult = .success("Connected (\(ms)ms)")

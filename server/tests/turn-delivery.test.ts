@@ -4,7 +4,6 @@ import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
-import type { SandboxManager } from "../src/sandbox.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 
@@ -31,7 +30,6 @@ function makeSession(status: Session["status"] = "ready"): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    runtime: "host",
   };
 }
 
@@ -87,12 +85,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     destroySessionSocket: vi.fn(),
   } as unknown as GateServer;
 
-  const sandbox = {
-    stopAll: vi.fn(async () => {}),
-    stopWorkspaceContainer: vi.fn(async () => {}),
-  } as unknown as SandboxManager;
-
-  const manager = new SessionManager(storage, gate, sandbox);
+  const manager = new SessionManager(storage, gate);
 
   // Keep tests deterministic — we don't need idle timer behavior here.
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
@@ -104,7 +97,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     session,
     process,
     workspaceId: "w1",
-    runtime: "host",
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingResponses: new Map(),
     pendingUIRequests: new Map(),

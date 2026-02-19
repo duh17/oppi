@@ -5,6 +5,7 @@ struct ChatView: View {
     let sessionId: String
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -32,10 +33,6 @@ struct ChatView: View {
     @State private var showCompactConfirmation = false
     @State private var showSkillPanel = false
     @State private var isKeyboardVisible = false
-    @State private var coloredThinkingBorderEnabled = UserDefaults.standard.bool(
-        forKey: coloredThinkingBorderDefaultsKey
-    )
-
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
@@ -47,6 +44,19 @@ struct ChatView: View {
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
+    }
+
+    private var currentServer: PairedServer? {
+        guard let currentServerId = connection.currentServerId else { return nil }
+        return serverStore.server(for: currentServerId)
+    }
+
+    private var serverBadgeIcon: ServerBadgeIcon {
+        currentServer?.resolvedBadgeIcon ?? .defaultValue
+    }
+
+    private var serverBadgeColor: ServerBadgeColor {
+        currentServer?.resolvedBadgeColor ?? .defaultValue
     }
 
     private var sessionDisplayName: String {
@@ -159,9 +169,10 @@ struct ChatView: View {
                     }
                     Button { showSkillPanel = true } label: {
                         RuntimeStatusBadge(
-                            runtime: session?.runtime,
                             statusColor: session?.status.color ?? .themeComment,
-                            syncState: runtimeSyncState
+                            syncState: runtimeSyncState,
+                            icon: serverBadgeIcon,
+                            badgeColor: serverBadgeColor
                         )
                     }
                 }
@@ -181,8 +192,6 @@ struct ChatView: View {
         }
         .alert("Rename Session", isPresented: $showRenameAlert) {
             renameAlert
-        } message: {
-            Text("Keep it short (2–6 words). For task planning, start with TODO: ...")
         }
         .alert("Compact Context", isPresented: $showCompactConfirmation) {
             Button("Compact", role: .destructive) {
@@ -243,7 +252,9 @@ struct ChatView: View {
                 || connection.wsClient?.connectedSessionId == nil {
                 connection.disconnectSession()
             }
-            LiveActivityManager.shared.endIfNeeded()
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.endIfNeeded()
+            }
         }
     }
 
@@ -272,7 +283,7 @@ struct ChatView: View {
                     isSending: actionHandler.isSending,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
-                    dictationService: dictationService,
+                    dictationService: ReleaseFeatures.composerDictationEnabled ? dictationService : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     slashCommands: connection.slashCommands,
@@ -293,27 +304,26 @@ struct ChatView: View {
                     },
                     onExpand: presentComposer,
                     appliesOuterPadding: true,
-                    thinkingBorderColor: coloredThinkingBorderEnabled
-                        ? theme.thinking.color(for: connection.thinkingLevel)
-                        : .themeComment
-                ) {
-                    SessionToolbar(
-                        session: session,
-                        thinkingLevel: connection.thinkingLevel,
-                        onModelTap: { showModelPicker = true },
-                        onThinkingSelect: { level in
-                            actionHandler.setThinking(
-                                level,
-                                connection: connection,
-                                reducer: reducer,
-                                sessionId: sessionId
-                            )
-                        },
-                        onCompact: {
-                            showCompactConfirmation = true
-                        }
-                    )
-                }
+                    thinkingBorderColor: theme.thinking.color(for: connection.thinkingLevel),
+                    actionRow: {
+                        SessionToolbar(
+                            session: session,
+                            thinkingLevel: connection.thinkingLevel,
+                            onModelTap: { showModelPicker = true },
+                            onThinkingSelect: { level in
+                                actionHandler.setThinking(
+                                    level,
+                                    connection: connection,
+                                    reducer: reducer,
+                                    sessionId: sessionId
+                                )
+                            },
+                            onCompact: {
+                                showCompactConfirmation = true
+                            }
+                        )
+                    }
+                )
             }
         }
     }
@@ -564,5 +574,3 @@ struct ChatView: View {
         Button("Cancel", role: .cancel) {}
     }
 }
-
-

@@ -17,7 +17,6 @@ import {
   removeDomainFromAllowlist,
   listAllowlistDomains,
   type GateRequest,
-  type RiskLevel,
 } from "../src/policy.js";
 import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
@@ -76,7 +75,7 @@ function makeAllowlist(domains: string[]): string {
 const ruleCtx = {
   sessionId: "sess-1",
   workspaceId: "ws-1",
-  risk: "medium" as RiskLevel,
+  
 };
 
 const engine = new PolicyEngine("host");
@@ -162,7 +161,7 @@ describe("RuleStore", () => {
       effect: "allow", tool: "bash",
       match: { executable: "git" },
       scope: "global", source: "learned",
-      description: "Allow git", risk: "medium",
+      description: "Allow git",
     });
     expect(rule.id.length).toBeGreaterThan(0);
     expect(rule.createdAt).toBeGreaterThan(0);
@@ -176,7 +175,7 @@ describe("RuleStore", () => {
     const { store, path } = makeStore();
     const rule = store.add({
       effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "global", source: "learned", description: "Allow git", risk: "medium",
+      scope: "global", source: "learned", description: "Allow git",
     });
     expect(store.remove(rule.id)).toBe(true);
     expect(store.getAll()).toHaveLength(0);
@@ -190,7 +189,7 @@ describe("RuleStore", () => {
     store.add({
       effect: "allow", tool: "bash", match: { executable: "git" },
       scope: "session", sessionId: "sess-1", source: "learned",
-      description: "Allow git", risk: "medium",
+      description: "Allow git",
     });
     expect(store.getForSession("sess-1")).toHaveLength(1);
 
@@ -201,11 +200,11 @@ describe("RuleStore", () => {
   it("clearSessionRules() removes only that session", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "session", sessionId: "s1", source: "learned", description: "a", risk: "low" });
+      scope: "session", sessionId: "s1", source: "learned", description: "a" });
     store.add({ effect: "allow", tool: "bash", match: { executable: "npm" },
-      scope: "session", sessionId: "s1", source: "learned", description: "b", risk: "low" });
+      scope: "session", sessionId: "s1", source: "learned", description: "b" });
     store.add({ effect: "allow", tool: "bash", match: { executable: "cargo" },
-      scope: "session", sessionId: "s2", source: "learned", description: "c", risk: "low" });
+      scope: "session", sessionId: "s2", source: "learned", description: "c" });
 
     store.clearSessionRules("s1");
     expect(store.getForSession("s1")).toHaveLength(0);
@@ -215,11 +214,11 @@ describe("RuleStore", () => {
   it("getForWorkspace() returns workspace + global, excludes other workspaces", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "global", source: "learned", description: "git global", risk: "low" });
+      scope: "global", source: "learned", description: "git global" });
     store.add({ effect: "allow", tool: "bash", match: { executable: "npm" },
-      scope: "workspace", workspaceId: "ws-a", source: "learned", description: "npm ws-a", risk: "low" });
+      scope: "workspace", workspaceId: "ws-a", source: "learned", description: "npm ws-a" });
     store.add({ effect: "allow", tool: "bash", match: { executable: "cargo" },
-      scope: "workspace", workspaceId: "ws-b", source: "learned", description: "cargo ws-b", risk: "low" });
+      scope: "workspace", workspaceId: "ws-b", source: "learned", description: "cargo ws-b" });
 
     const wsA = store.getForWorkspace("ws-a");
     expect(wsA.some((r) => r.description === "git global")).toBe(true);
@@ -252,7 +251,7 @@ describe("evaluation order", () => {
   it("hard deny always wins even with global allow-all rule", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "*", scope: "global",
-      source: "manual", description: "Allow everything", risk: "low" });
+      source: "manual", description: "Allow everything" });
 
     const decision = engine.evaluateWithRules(
       bash("cat ~/.pi/agent/auth.json"), store.getAll(), "s1", "ws1",
@@ -264,9 +263,9 @@ describe("evaluation order", () => {
   it("explicit deny rule beats explicit allow rule", () => {
     const { store } = makeStore();
     store.add({ effect: "deny", tool: "bash", match: { executable: "rsync" },
-      scope: "global", source: "manual", description: "Deny rsync", risk: "high" });
+      scope: "global", source: "manual", description: "Deny rsync" });
     store.add({ effect: "allow", tool: "bash", match: { executable: "rsync" },
-      scope: "global", source: "manual", description: "Allow rsync", risk: "low" });
+      scope: "global", source: "manual", description: "Allow rsync" });
 
     const decision = engine.evaluateWithRules(
       bash("rsync -avz /src /dst"), store.getAll(), "s1", "ws1",
@@ -278,7 +277,7 @@ describe("evaluation order", () => {
   it("session allow rule is checked before workspace/global", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "session", sessionId: "s1", source: "learned", description: "Allow git (session)", risk: "low" });
+      scope: "session", sessionId: "s1", source: "learned", description: "Allow git (session)" });
 
     const decision = engine.evaluateWithRules(
       bash("git status"), store.getAll(), "s1", "ws1",
@@ -290,7 +289,7 @@ describe("evaluation order", () => {
   it("learned allow rule beats preset default ask", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "global", source: "learned", description: "Allow git", risk: "low" });
+      scope: "global", source: "learned", description: "Allow git" });
 
     const hostEngine = new PolicyEngine("host");
     const decision = hostEngine.evaluateWithRules(
@@ -321,7 +320,7 @@ describe("evaluation order", () => {
   it("session rule invisible to other sessions", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "session", sessionId: "s1", source: "learned", description: "Allow git (s1)", risk: "low" });
+      scope: "session", sessionId: "s1", source: "learned", description: "Allow git (s1)" });
 
     const hostEngine = new PolicyEngine("host");
     const decision = hostEngine.evaluateWithRules(
@@ -333,7 +332,7 @@ describe("evaluation order", () => {
   it("expired rules are ignored", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "global", source: "learned", description: "Allow git (expired)", risk: "low",
+      scope: "global", source: "learned", description: "Allow git (expired)",
       expiresAt: Date.now() - 60000 } as any);
 
     const hostEngine = new PolicyEngine("host");
@@ -347,7 +346,7 @@ describe("evaluation order", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash",
       match: { executable: "git", commandPattern: "git push *" },
-      scope: "global", source: "manual", description: "Allow git push only", risk: "low" });
+      scope: "global", source: "manual", description: "Allow git push only" });
 
     const hostEngine = new PolicyEngine("host");
 
@@ -369,19 +368,20 @@ describe("evaluation order", () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe("resolution options", () => {
-  it("critical risk: allowAlways=false", () => {
+  it("bash with recognizable executable: allowAlways with description", () => {
     const opts = engine.getResolutionOptions(bash("sudo rm /"), {
-      action: "ask", reason: "test", risk: "critical", layer: "rule",
+      action: "ask", reason: "test", layer: "rule",
     });
     expect(opts.allowSession).toBe(true);
-    expect(opts.allowAlways).toBe(false);
+    expect(opts.allowAlways).toBe(true);
+    expect(opts.alwaysDescription).toBe("Allow all sudo commands");
     expect(opts.denyAlways).toBe(true);
   });
 
   it("browser nav: allowAlways=true with domain description", () => {
     const req = nav("https://evil.example.org/page");
     const opts = engine.getResolutionOptions(req, {
-      action: "ask", reason: "unlisted domain", risk: "medium", layer: "rule",
+      action: "ask", reason: "unlisted domain", layer: "rule",
     });
     expect(opts.allowAlways).toBe(true);
     expect(opts.alwaysDescription).toBe("Add evil.example.org to domain allowlist");
@@ -390,7 +390,7 @@ describe("resolution options", () => {
   it("eval.js: allowAlways=false", () => {
     const req = evalJs("document.cookie");
     const opts = engine.getResolutionOptions(req, {
-      action: "ask", reason: "browser eval", risk: "medium", layer: "rule",
+      action: "ask", reason: "browser eval", layer: "rule",
     });
     expect(opts.allowSession).toBe(true);
     expect(opts.allowAlways).toBe(false);
@@ -399,7 +399,7 @@ describe("resolution options", () => {
   it("high-impact bash (git push): session-only allow", () => {
     const req = bash("git push origin main");
     const opts = engine.getResolutionOptions(req, {
-      action: "ask", reason: "test", risk: "medium", layer: "rule",
+      action: "ask", reason: "test", layer: "rule",
     });
     expect(opts.allowSession).toBe(true);
     expect(opts.allowAlways).toBe(false);
@@ -410,7 +410,7 @@ describe("resolution options", () => {
   it("git -C ... push: still session-only allow", () => {
     const req = bash("git -C /Users/chenda/workspace/oppi push origin main");
     const opts = engine.getResolutionOptions(req, {
-      action: "ask", reason: "test", risk: "medium", layer: "rule",
+      action: "ask", reason: "test", layer: "rule",
     });
     expect(opts.allowAlways).toBe(false);
   });
@@ -418,7 +418,7 @@ describe("resolution options", () => {
   it("low-impact bash (git status): allows always", () => {
     const req = bash("git status");
     const opts = engine.getResolutionOptions(req, {
-      action: "ask", reason: "test", risk: "medium", layer: "rule",
+      action: "ask", reason: "test", layer: "rule",
     });
     expect(opts.allowSession).toBe(true);
     expect(opts.allowAlways).toBe(true);
@@ -435,7 +435,7 @@ describe("AuditLog", () => {
     const { log } = makeAudit();
     const entry = log.record({
       sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "git status", risk: "low",
+      tool: "bash", displaySummary: "git status",
       decision: "allow", resolvedBy: "policy", layer: "default",
     });
     expect(entry.id.length).toBeGreaterThan(0);
@@ -445,10 +445,10 @@ describe("AuditLog", () => {
   it("query() returns entries in reverse chronological order", () => {
     const { log } = makeAudit();
     log.record({ sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "first", risk: "low",
+      tool: "bash", displaySummary: "first",
       decision: "allow", resolvedBy: "policy", layer: "default" });
     log.record({ sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "second", risk: "low",
+      tool: "bash", displaySummary: "second",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
     const entries = log.query({ limit: 10 });
@@ -460,10 +460,10 @@ describe("AuditLog", () => {
   it("query with sessionId filters", () => {
     const { log } = makeAudit();
     log.record({ sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "s1-cmd", risk: "low",
+      tool: "bash", displaySummary: "s1-cmd",
       decision: "allow", resolvedBy: "policy", layer: "default" });
     log.record({ sessionId: "s2", workspaceId: "ws1",
-      tool: "bash", displaySummary: "s2-cmd", risk: "low",
+      tool: "bash", displaySummary: "s2-cmd",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
     const s1 = log.query({ sessionId: "s1" });
@@ -474,10 +474,10 @@ describe("AuditLog", () => {
   it("query with workspaceId filters", () => {
     const { log } = makeAudit();
     log.record({ sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "u1-ws1", risk: "low",
+      tool: "bash", displaySummary: "u1-ws1",
       decision: "allow", resolvedBy: "policy", layer: "default" });
     log.record({ sessionId: "s2", workspaceId: "ws2",
-      tool: "bash", displaySummary: "u2-ws2", risk: "low",
+      tool: "bash", displaySummary: "u2-ws2",
       decision: "allow", resolvedBy: "policy", layer: "default" });
 
     const filtered = log.query({ workspaceId: "ws1" });
@@ -489,7 +489,7 @@ describe("AuditLog", () => {
     const { log } = makeAudit();
     for (let i = 0; i < 5; i++) {
       log.record({ sessionId: "s1", workspaceId: "ws1",
-        tool: "bash", displaySummary: `cmd-${i}`, risk: "low",
+        tool: "bash", displaySummary: `cmd-${i}`,
         decision: "allow", resolvedBy: "policy", layer: "default" });
     }
 
@@ -505,7 +505,7 @@ describe("AuditLog", () => {
       const entry = {
         id: `e${i}`, timestamp: baseTs + i * 1000,
         sessionId: "s1", workspaceId: "ws1",
-        tool: "bash", displaySummary: `cmd-${i}`, risk: "low",
+        tool: "bash", displaySummary: `cmd-${i}`,
         decision: "allow", resolvedBy: "policy", layer: "default",
       };
       writeFileSync(path, JSON.stringify(entry) + "\n", { flag: "a" });
@@ -520,7 +520,7 @@ describe("AuditLog", () => {
     const { log } = makeAudit();
     log.record({
       sessionId: "s1", workspaceId: "ws1",
-      tool: "bash", displaySummary: "git push", risk: "medium",
+      tool: "bash", displaySummary: "git push",
       decision: "allow", resolvedBy: "user", layer: "user_response",
       userChoice: { action: "allow", scope: "global", learnedRuleId: "rule-abc" },
     });
@@ -587,9 +587,9 @@ describe("concurrent sessions: rules isolation", () => {
   it("session rules are isolated between sessions", () => {
     const { store } = makeStore();
     store.add({ effect: "allow", tool: "bash", match: { executable: "git" },
-      scope: "session", sessionId: "s1", source: "learned", description: "git s1", risk: "low" });
+      scope: "session", sessionId: "s1", source: "learned", description: "git s1" });
     store.add({ effect: "deny", tool: "bash", match: { executable: "git" },
-      scope: "session", sessionId: "s2", source: "learned", description: "git s2", risk: "low" });
+      scope: "session", sessionId: "s2", source: "learned", description: "git s2" });
 
     const hostEngine = new PolicyEngine("host");
 

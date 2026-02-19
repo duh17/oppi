@@ -62,10 +62,10 @@ struct DiffContentView: View {
                 .stroke(theme.text.tertiary.opacity(0.35), lineWidth: 1)
         )
         .contextMenu {
-            Button("Expand", systemImage: "arrow.up.left.and.arrow.down.right") {
+            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                 showFullScreen = true
             }
-            Button("Copy New Text", systemImage: "doc.on.doc") {
+            Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = newText
             }
             Button("Copy Old Text", systemImage: "clock.arrow.circlepath") {
