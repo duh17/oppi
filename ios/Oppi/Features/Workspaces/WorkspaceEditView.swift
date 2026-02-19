@@ -384,9 +384,14 @@ private struct SkillToggleRow: View {
             .foregroundStyle(.primary)
 
             NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
-                EmptyView()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
-            .frame(width: 20)
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(skill.name) details")
         }
     }
 }
