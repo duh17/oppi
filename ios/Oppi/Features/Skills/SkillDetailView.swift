@@ -51,11 +51,11 @@ struct SkillDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(skill.description)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
 
             HStack(spacing: 8) {
                 badge(
-                    skill.containerSafe ? "Container Safe" : "Host Only",
+                    skill.containerSafe ? "Portable" : "Needs Local Tools",
                     icon: skill.containerSafe ? "checkmark.shield" : "desktopcomputer",
                     color: skill.containerSafe ? .themeGreen : .themeOrange
                 )
@@ -65,7 +65,7 @@ struct SkillDetailView: View {
                 }
 
                 if let detail, detail.files.count > 1 {
-                    badge("\(detail.files.count) files", icon: "doc.on.doc", color: .secondary)
+                    badge("\(detail.files.count) files", icon: "doc.on.doc", color: .themeComment)
                 }
             }
         }
@@ -102,12 +102,12 @@ struct SkillDetailView: View {
                     HStack(spacing: 6) {
                         Image(systemName: fileIcon(for: file))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .frame(width: 16)
 
                         Text(file)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
 
                         Spacer()
                     }
