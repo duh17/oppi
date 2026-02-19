@@ -22,8 +22,7 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
-    expect(result.config?.security?.profile).toBe("tailscale-permissive");
-    expect(result.config?.invite?.format).toBe("v2-signed");
+    expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
     expect(result.config?.approvalTimeoutMs).toBe(120_000);
   });
 
@@ -38,18 +37,15 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.unknownKey: unknown key"))).toBe(true);
   });
 
-  it("rejects invalid security profile", () => {
+  it("rejects invalid top-level allowedCidrs", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      security: {
-        ...Storage.getDefaultConfig(dir).security,
-        profile: "invalid-profile",
-      },
+      allowedCidrs: ["not-a-cidr"],
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("config.security.profile"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("config.allowedCidrs[0]"))).toBe(true);
   });
 
   it("accepts approvalTimeoutMs = 0 for non-expiring approvals", () => {
@@ -75,7 +71,7 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(true);
   });
 
-  it("backfills v2 security fields for legacy config in non-strict normalization", () => {
+  it("backfills defaults for legacy config in non-strict normalization", () => {
     const legacy = {
       port: 7749,
       host: "0.0.0.0",
@@ -92,12 +88,68 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
-    expect(result.config?.security).toBeDefined();
-    expect(result.config?.identity).toBeDefined();
-    expect(result.config?.invite).toBeDefined();
+    expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
   });
 
-  it("loadConfig rewrites legacy config with v2 defaults", () => {
+  it("migrates legacy security.allowedCidrs to top-level allowedCidrs", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      security: {
+        allowedCidrs: ["10.0.0.0/8"],
+      },
+    } as Record<string, unknown>;
+    delete raw.allowedCidrs;
+
+    const result = Storage.validateConfig(raw, dir, true);
+
+    expect(result.valid).toBe(true);
+    expect(result.config?.allowedCidrs).toEqual(["10.0.0.0/8"]);
+    expect(
+      result.warnings.some((w) => w.includes("config.security.allowedCidrs is deprecated; migrated")),
+    ).toBe(true);
+  });
+
+  it("prefers top-level allowedCidrs when both are present", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      allowedCidrs: ["192.168.0.0/16"],
+      security: {
+        allowedCidrs: ["10.0.0.0/8"],
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+
+    expect(result.valid).toBe(true);
+    expect(result.config?.allowedCidrs).toEqual(["192.168.0.0/16"]);
+    expect(
+      result.warnings.some((w) =>
+        w.includes("config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts legacy transport/profile keys but warns they are ignored", () => {
+    const defaults = Storage.getDefaultConfig(dir);
+    const raw = {
+      ...defaults,
+      security: {
+        allowedCidrs: ["10.0.0.0/8"],
+        profile: "strict",
+        requireTlsOutsideTailnet: false,
+        allowInsecureHttpInTailnet: true,
+        requirePinnedServerIdentity: false,
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("config.security.profile is deprecated"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("config.security.requireTlsOutsideTailnet is deprecated"))).toBe(true);
+  });
+
+  it("loadConfig rewrites legacy config with top-level allowedCidrs", () => {
     const legacy = {
       port: 7749,
       host: "0.0.0.0",
@@ -108,6 +160,9 @@ describe("Storage config validation", () => {
       workspaceIdleTimeoutMs: 1_800_000,
       maxSessionsPerWorkspace: 3,
       maxSessionsGlobal: 5,
+      security: {
+        allowedCidrs: ["10.0.0.0/8"],
+      },
     };
 
     writeFileSync(join(dir, "config.json"), JSON.stringify(legacy, null, 2));
@@ -116,59 +171,68 @@ describe("Storage config validation", () => {
     const config = storage.getConfig();
 
     expect(config.configVersion).toBe(2);
-    expect(config.security?.profile).toBe("tailscale-permissive");
-    expect(config.identity?.algorithm).toBe("ed25519");
-    expect(config.invite?.format).toBe("v2-signed");
+    expect(config.allowedCidrs).toEqual(["10.0.0.0/8"]);
 
     const rewritten = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")) as {
       configVersion?: number;
-      security?: { profile?: string };
-      identity?: { algorithm?: string };
-      invite?: { format?: string };
+      allowedCidrs?: string[];
+      security?: { allowedCidrs?: string[] };
     };
 
     expect(rewritten.configVersion).toBe(2);
-    expect(rewritten.security?.profile).toBe("tailscale-permissive");
-    expect(rewritten.identity?.algorithm).toBe("ed25519");
-    expect(rewritten.invite?.format).toBe("v2-signed");
+    expect(rewritten.allowedCidrs).toEqual(["10.0.0.0/8"]);
+    expect(rewritten.security).toBeUndefined();
   });
 
-  it("rejects removed invite.allowLegacyV1Unsigned key in strict mode", () => {
-    const defaults = Storage.getDefaultConfig(dir);
+  it("accepts declarative policy config", () => {
     const raw = {
-      ...defaults,
-      invite: {
-        ...defaults.invite!,
-        allowLegacyV1Unsigned: true,
+      ...Storage.getDefaultConfig(dir),
+      policy: {
+        schemaVersion: 1,
+        mode: "balanced",
+        fallback: "ask",
+        guardrails: [
+          {
+            id: "block-secret-files",
+            decision: "block",
+            risk: "critical",
+            immutable: true,
+            match: { tool: "read", pathMatches: "*identity_ed25519*" },
+          },
+        ],
+        permissions: [
+          {
+            id: "ask-git-push",
+            decision: "ask",
+            risk: "high",
+            label: "Push code to remote",
+            match: { tool: "bash", executable: "git", commandMatches: "git push*" },
+          },
+        ],
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
-
-    expect(result.valid).toBe(false);
-    expect(
-      result.errors.some((error) => error.includes("config.invite.allowLegacyV1Unsigned: unknown key")),
-    ).toBe(true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.policy?.fallback).toBe("ask");
+    expect(result.config?.policy?.guardrails[0]?.decision).toBe("block");
   });
 
-  it("rejects unsigned invite format", () => {
-    const defaults = Storage.getDefaultConfig(dir);
+  it("rejects unknown keys in policy config in strict mode", () => {
     const raw = {
-      ...defaults,
-      invite: {
-        ...defaults.invite!,
-        format: "v1-unsigned",
+      ...Storage.getDefaultConfig(dir),
+      policy: {
+        schemaVersion: 1,
+        fallback: "ask",
+        guardrails: [],
+        permissions: [],
+        unknownKey: true,
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
-
     expect(result.valid).toBe(false);
-    expect(
-      result.errors.some((error) =>
-        error.includes("config.invite.format: expected one of v2-signed"),
-      ),
-    ).toBe(true);
+    expect(result.errors.some((e) => e.includes("config.policy.unknownKey: unknown key"))).toBe(true);
   });
 
   it("validateConfigFile reports parse errors with file path", () => {

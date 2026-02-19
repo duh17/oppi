@@ -7,13 +7,14 @@
  *   serve           Start the server
  *   pair [name]     Pair iOS client with server owner token
  *   status          Show server status
+ *   doctor          Run security + environment diagnostics
  *   token           Rotate owner bearer token
  *   config          Show/get/set/validate server config
  */
 
 import * as c from "./ansi.js";
 import { renderTerminal as renderQR } from "./qr.js";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -21,14 +22,9 @@ import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
 import { envInit, envShow } from "./host-env.js";
-import {
-  createSignedInviteV2,
-  ensureIdentityMaterial,
-  type InviteV2Envelope,
-  type InviteV2Payload,
-} from "./security.js";
+import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
-import type { InviteData } from "./types.js";
+import type { InviteData, InvitePayloadV3 } from "./types.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -234,6 +230,7 @@ async function cmdPair(
 
   const config = storage.getConfig();
   const token = storage.ensurePaired();
+  const pairingToken = storage.issuePairingToken(90_000);
   const inviteHost = resolveInviteHost(hostOverride);
 
   if (!inviteHost) {
@@ -249,45 +246,37 @@ async function cmdPair(
     console.log(c.dim(`  (using local-network host: ${inviteHost})`));
   }
 
-  // Build signed v2 pairing payload.
+  // Build unsigned v3 pairing payload.
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
-    token,
-    name: shortHostLabel(inviteHost),
+    // Pairing v3 no longer ships long-lived auth token in invite payload.
+    token: "",
+    pairingToken,
+    name: requestedName?.trim() || shortHostLabel(inviteHost),
   };
 
-  const identityConfig = config.identity;
-  if (!identityConfig) {
-    console.log(c.red("  Error: config.identity is missing; cannot issue pairing QR."));
-    console.log(c.dim("  Run 'oppi config validate' to repair config."));
-    console.log("");
-    process.exit(1);
-  }
+  const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
-  const identity = ensureIdentityMaterial(identityConfig);
-  if (identityConfig.fingerprint !== identity.fingerprint) {
-    storage.updateConfig({ identity: { ...identityConfig, fingerprint: identity.fingerprint } });
-  }
-
-  const payload: InviteV2Payload = {
+  const invitePayload: InvitePayloadV3 = {
+    v: 3,
     host: inviteData.host,
     port: inviteData.port,
     token: inviteData.token,
+    pairingToken: inviteData.pairingToken,
     name: inviteData.name,
     fingerprint: identity.fingerprint,
-    securityProfile: config.security?.profile || "tailscale-permissive",
   };
 
-  const maxAgeSeconds = config.invite?.maxAgeSeconds || 600;
-  const envelope: InviteV2Envelope = createSignedInviteV2(identity, payload, maxAgeSeconds);
-  const inviteJson = JSON.stringify(envelope);
+  const inviteJson = JSON.stringify(invitePayload);
   const inviteUrl = `oppi://connect?${new URLSearchParams({
-    v: "2",
+    v: "3",
     invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
   }).toString()}`;
 
-  console.log(c.dim(`  (pairing format: v2-signed, expires in ${maxAgeSeconds}s)`));
+  console.log(c.dim("  (pairing format: v3-unsigned)"));
+  console.log(c.dim("  (includes one-time pairingToken for /pair bootstrap; expires in ~90s)"));
+  console.log(c.dim("  (owner/admin token is NOT embedded in QR payload)"));
 
   // Display
   console.log(`  📱 Pair with ${c.bold(shortHostLabel(inviteHost))}`);
@@ -366,6 +355,107 @@ function cmdStatus(storage: Storage): void {
     console.log(`  Status:   ${c.green("Paired")}`);
     console.log(`  Sessions: ${sessions.length}`);
   }
+  console.log("");
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function cmdDoctor(storage: Storage): void {
+  printHeader();
+
+  type CheckLevel = "pass" | "warn" | "fail";
+  type Check = { level: CheckLevel; message: string };
+  const checks: Check[] = [];
+
+  const config = storage.getConfig();
+  const host = config.host;
+  const loopback = isLoopbackHost(host);
+
+  const allowedCidrs = config.allowedCidrs || [];
+
+  if (!loopback && !config.token) {
+    checks.push({
+      level: "fail",
+      message: `non-loopback bind (${host}) without token configured`,
+    });
+  } else if (config.token) {
+    checks.push({ level: "pass", message: "auth token configured" });
+  } else {
+    checks.push({ level: "warn", message: "no token configured (loopback-only bind)" });
+  }
+
+  try {
+    const mode = statSync(storage.getConfigPath()).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      checks.push({ level: "warn", message: `config file permissions are ${mode.toString(8)} (recommend 600)` });
+    } else {
+      checks.push({ level: "pass", message: "config file permissions are private" });
+    }
+  } catch {
+    checks.push({ level: "warn", message: "could not inspect config file permissions" });
+  }
+
+  try {
+    const mode = statSync(storage.getDataDir()).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      checks.push({ level: "warn", message: `data dir permissions are ${mode.toString(8)} (recommend 700)` });
+    } else {
+      checks.push({ level: "pass", message: "data dir permissions are private" });
+    }
+  } catch {
+    checks.push({ level: "warn", message: "could not inspect data directory permissions" });
+  }
+
+  if (allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
+    checks.push({ level: "warn", message: "allowedCidrs contains global network range" });
+  } else {
+    checks.push({ level: "pass", message: "allowedCidrs excludes global ranges" });
+  }
+
+  if ((host === "0.0.0.0" || host === "::") && allowedCidrs.length > 0) {
+    checks.push({ level: "warn", message: "wildcard bind in use; rely on CIDR/firewall for exposure control" });
+  }
+  if (loopback && allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
+    checks.push({ level: "warn", message: "loopback bind with wide CIDRs is inconsistent" });
+  }
+
+  try {
+    execSync("command -v pi", { stdio: "ignore" });
+    checks.push({ level: "pass", message: "pi executable found" });
+  } catch {
+    checks.push({ level: "warn", message: "pi executable not found in PATH" });
+  }
+
+  const nodeMajor = Number(process.versions.node.split(".")[0] || "0");
+  if (nodeMajor < 22) {
+    checks.push({ level: "warn", message: `Node.js ${process.versions.node} detected (recommend >= 22)` });
+  } else {
+    checks.push({ level: "pass", message: `Node.js ${process.versions.node}` });
+  }
+
+  let criticalFailures = 0;
+  for (const check of checks) {
+    if (check.level === "pass") {
+      console.log(`  ${c.green("✓")} ${check.message}`);
+    } else if (check.level === "warn") {
+      console.log(`  ${c.yellow("!")} ${check.message}`);
+    } else {
+      criticalFailures++;
+      console.log(`  ${c.red("✗")} ${check.message}`);
+    }
+  }
+
+  console.log("");
+  if (criticalFailures > 0) {
+    console.log(c.red(`  Doctor failed: ${criticalFailures} critical issue(s)`));
+    console.log("");
+    process.exit(1);
+  }
+
+  console.log(c.green("  Doctor passed (no critical issues)"));
   console.log("");
 }
 
@@ -483,15 +573,8 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   console.log(c.green("  ✓ Config written to ") + c.dim(storage.getConfigPath()));
 
   // 4. Generate identity keys
-  const config = storage.getConfig();
-  if (config.identity) {
-    ensureIdentityMaterial(config.identity);
-    const identity = ensureIdentityMaterial(config.identity);
-    if (config.identity.fingerprint !== identity.fingerprint) {
-      storage.updateConfig({ identity: { ...config.identity, fingerprint: identity.fingerprint } });
-    }
-    console.log(c.green("  ✓ Identity keys generated"));
-  }
+  ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
+  console.log(c.green("  ✓ Identity keys generated"));
 
   // 5. Capture env if interactive shell
   if (process.env.PATH && process.env.PATH.includes("/homebrew/")) {
@@ -701,6 +784,7 @@ function cmdHelp(): void {
   console.log("  " + c.bold("Server:"));
   console.log("");
   console.log(`    ${c.cyan("status")}                     Show server status`);
+  console.log(`    ${c.cyan("doctor")}                     Security + environment diagnostics`);
   console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
   console.log(`    ${c.cyan("env init")}                   Capture shell PATH for host sessions`);
   console.log(`    ${c.cyan("env show")}                   Show resolved host PATH`);
@@ -775,6 +859,10 @@ async function main(): Promise<void> {
 
     case "status":
       cmdStatus(storage);
+      break;
+
+    case "doctor":
+      cmdDoctor(storage);
       break;
 
     case "token":

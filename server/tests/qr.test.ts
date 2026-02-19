@@ -95,7 +95,7 @@ describe("QR encoder", () => {
   });
 
   it("produces terminal output with consistent line widths", () => {
-    const url = "oppi://connect?v=2&invite=eyJ0ZXN0IjoidmFsdWUifQ";
+    const url = "oppi://connect?v=3&invite=eyJ0ZXN0IjoidmFsdWUifQ";
     const output = renderTerminal(url);
     const lines = output.split("\n");
     expect(lines.length).toBeGreaterThan(5);
@@ -104,7 +104,7 @@ describe("QR encoder", () => {
   });
 
   it("handles large payloads (400+ bytes)", () => {
-    const payload = "oppi://connect?v=2&invite=" + "A".repeat(400);
+    const payload = "oppi://connect?v=3&invite=" + "A".repeat(400);
     const matrix = encode(payload);
     const version = (matrix.length - 17) / 4;
     expect(version).toBeGreaterThanOrEqual(10);
@@ -140,24 +140,15 @@ describe.skipIf(!hasZbar)("QR encoder conformance (zbar)", () => {
     expect(zbarDecode(encode(data))).toBe(data);
   });
 
-  it("decodes realistic invite JSON (~484 bytes)", () => {
+  it("decodes realistic invite JSON (unsigned v3)", () => {
     const invite = JSON.stringify({
-      v: 2,
-      alg: "Ed25519",
-      kid: "srv-default",
-      iat: 1771268687,
-      exp: 1771269287,
-      nonce: "LS-oc_4tVIv1LPQh",
-      publicKey: "f_QFx-E-W44v653BYJ60uMOTMCB7eCRaN5_jZ23C2vk",
-      payload: {
-        host: "mac-studio.taila3ebc.ts.net",
-        port: 7749,
-        token: "sk_testtoken123456789012345",
-        name: "mac-studio",
-        fingerprint: "sha256:rHLwUOOWstvDHskxjWWWY2EQxQnouizidfxV7r3EWPw",
-        securityProfile: "tailscale-permissive",
-      },
-      sig: "c37C8IG2BCzOEu8SyVYahYc1VMwT0s3c2bXe8WwsUgbkdZ3l1nFk6spsCd4qGuK8Hrd4ygeIg0LUNDjJgLeoAA",
+      v: 3,
+      host: "mac-studio.taila3ebc.ts.net",
+      port: 7749,
+      token: "",
+      pairingToken: "pt_testtoken1234567890",
+      name: "mac-studio",
+      fingerprint: "sha256:rHLwUOOWstvDHskxjWWWY2EQxQnouizidfxV7r3EWPw",
     });
     expect(zbarDecode(encode(invite))).toBe(invite);
   });
