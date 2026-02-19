@@ -30,6 +30,7 @@ import {
   spawnPiHost,
   type SpawnDeps,
 } from "../src/session-spawn.js";
+import { PolicyEngine } from "../src/policy.js";
 import {
   awaitProcessReady,
   getSpawnPolicy,
@@ -127,6 +128,57 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.env.OPPI_SESSION).toBe("s1");
         expect(opts.env.OPPI_GATE_HOST).toBe("127.0.0.1");
     expect(opts.env.OPPI_GATE_PORT).toBe("45678");
+  });
+
+  it("applies workspace fallback overrides when toggled ask ⇄ allow", async () => {
+    const evaluateDefaultAction = async (workspaceFallback: "allow" | "ask") => {
+      const session = makeSession();
+      const workspace = makeWorkspace({
+        memoryEnabled: false,
+        policy: { permissions: [], fallback: workspaceFallback },
+      });
+
+      const createSessionSocket = vi.fn(async () => 49001);
+      const setSessionPolicy = vi.fn();
+      const deps = makeDeps({
+        gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+        piExecutable: "/opt/homebrew/bin/pi",
+        globalPolicy: {
+          schemaVersion: 1,
+          mode: "host",
+          fallback: "ask",
+          guardrails: [],
+          permissions: [],
+        },
+      });
+
+      const expectedCwd = join(homedir(), "workspace", "oppi");
+      const existing = new Set<string>([expectedCwd, OPPI_GATE_EXTENSION]);
+      mockedExistsSync.mockImplementation((path) =>
+        typeof path === "string" && existing.has(path),
+      );
+
+      const proc = new StubProcess();
+      mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+      await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+      expect(setSessionPolicy).toHaveBeenCalledWith("s1", expect.any(PolicyEngine));
+      const policy = setSessionPolicy.mock.calls.at(-1)?.[1] as PolicyEngine | undefined;
+      if (!policy) throw new Error("Expected setSessionPolicy to receive a policy engine");
+
+      const decision = policy.evaluate({
+        tool: "bash",
+        input: { command: "echo fallback-check" },
+        toolCallId: "tc-fallback",
+      });
+
+      return decision.action;
+    };
+
+    expect(await evaluateDefaultAction("allow")).toBe("allow");
+    expect(await evaluateDefaultAction("ask")).toBe("ask");
+    expect(await evaluateDefaultAction("allow")).toBe("allow");
   });
 
   it("loads named extensions from workspace.extensions", async () => {

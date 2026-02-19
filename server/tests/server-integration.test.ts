@@ -288,6 +288,21 @@ describe("policy API", () => {
     expect(body.rules).toBeInstanceOf(Array);
   });
 
+  it("PATCH /policy/rules/:id returns 404 for missing rule", async () => {
+    const res = await fetch(`${baseUrl}/policy/rules/does-not-exist`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "Updated" }),
+    });
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Rule not found");
+  });
+
   it("GET /policy/audit returns audit entries", async () => {
     const res = await get("/policy/audit");
     expect(res.status).toBe(200);
