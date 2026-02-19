@@ -3,7 +3,7 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillPanel")
 
-/// Quick skill browser shown from the runtime badge in ChatView.
+/// Quick skill browser shown from the session status badge in ChatView.
 ///
 /// Shows the skills enabled for the current workspace, with tappable
 /// rows that navigate to skill detail. Also lists available-but-disabled
@@ -84,7 +84,7 @@ private struct SkillRow: View {
             HStack(spacing: 6) {
                 Text(skill.name)
                     .font(.system(.body, design: .monospaced, weight: .medium))
-                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                    .foregroundStyle(isEnabled ? .themeFg : .themeComment)
 
                 if skill.hasScripts {
                     Image(systemName: "terminal")
@@ -96,12 +96,13 @@ private struct SkillRow: View {
                     Image(systemName: "desktopcomputer")
                         .font(.caption2)
                         .foregroundStyle(.themeOrange)
+                        .accessibilityLabel("Needs local tools")
                 }
             }
 
             Text(skill.description)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
                 .lineLimit(2)
         }
         .padding(.vertical, 2)
