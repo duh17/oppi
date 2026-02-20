@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
-    "oppi": "./dist/cli.js"
+    "oppi": "dist/cli.js"
   },
   "files": [
     "dist/",
