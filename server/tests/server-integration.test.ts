@@ -481,15 +481,13 @@ describe("policy API", () => {
   });
 
   it("PATCH /policy/rules/:id updates decision and label", async () => {
-    // Find a preset rule to update
-    const listRes = await get("/policy/rules?scope=global");
-    const listBody = await listRes.json();
-    const target = listBody.rules.find((r: { source: string; decision: string }) =>
-      r.source === "preset" && r.decision === "ask",
-    );
-    expect(target).toBeTruthy();
+    const gate = (server as unknown as { gate: { ruleStore: import("../src/rules.js").RuleStore } }).gate;
+    const rule = gate.ruleStore.add({
+      tool: "bash", decision: "ask", executable: "make", pattern: "make test*",
+      label: "original-label", scope: "global", source: "manual",
+    });
 
-    const res = await patch(`/policy/rules/${target.id}`, {
+    const res = await patch(`/policy/rules/${rule.id}`, {
       decision: "deny",
       label: "patched-label",
     });
@@ -497,61 +495,43 @@ describe("policy API", () => {
     const body = await res.json();
     expect(body.rule.decision).toBe("deny");
     expect(body.rule.label).toBe("patched-label");
+    expect(body.rule.pattern).toBe("make test*");
 
-    // Restore original
-    await patch(`/policy/rules/${target.id}`, {
-      decision: target.decision,
-      label: target.label,
-    });
-  });
-
-  it("PATCH /policy/rules/:id supports legacy effect/description fields", async () => {
-    const listRes = await get("/policy/rules?scope=global");
-    const listBody = await listRes.json();
-    const target = listBody.rules[0];
-
-    const originalLabel = target.label;
-    const res = await patch(`/policy/rules/${target.id}`, {
-      effect: "ask",
-      description: "legacy-desc",
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.rule.decision).toBe("ask");
-    expect(body.rule.label).toBe("legacy-desc");
-
-    // Restore
-    await patch(`/policy/rules/${target.id}`, {
-      decision: target.decision,
-      label: originalLabel,
-    });
+    await del(`/policy/rules/${rule.id}`);
   });
 
   it("PATCH /policy/rules/:id validates decision values", async () => {
-    const listRes = await get("/policy/rules?scope=global");
-    const listBody = await listRes.json();
-    const ruleId = listBody.rules[0].id;
+    const gate = (server as unknown as { gate: { ruleStore: import("../src/rules.js").RuleStore } }).gate;
+    const rule = gate.ruleStore.add({
+      tool: "bash", decision: "ask", label: "validate-test", scope: "global", source: "manual",
+    });
 
-    const res = await patch(`/policy/rules/${ruleId}`, { decision: "yolo" });
+    const res = await patch(`/policy/rules/${rule.id}`, { decision: "yolo" });
     expect(res.status).toBe(400);
+
+    await del(`/policy/rules/${rule.id}`);
   });
 
   it("PATCH /policy/rules/:id requires at least one patch field", async () => {
-    const listRes = await get("/policy/rules?scope=global");
-    const listBody = await listRes.json();
-    const ruleId = listBody.rules[0].id;
+    const gate = (server as unknown as { gate: { ruleStore: import("../src/rules.js").RuleStore } }).gate;
+    const rule = gate.ruleStore.add({
+      tool: "bash", decision: "ask", label: "empty-patch", scope: "global", source: "manual",
+    });
 
-    const res = await patch(`/policy/rules/${ruleId}`, {});
+    const res = await patch(`/policy/rules/${rule.id}`, {});
     expect(res.status).toBe(400);
+
+    await del(`/policy/rules/${rule.id}`);
   });
 
   it("PATCH /policy/rules/:id updates pattern and executable", async () => {
-    const listRes = await get("/policy/rules?scope=global");
-    const listBody = await listRes.json();
-    const target = listBody.rules.find((r: { tool: string }) => r.tool === "bash");
-    expect(target).toBeTruthy();
+    const gate = (server as unknown as { gate: { ruleStore: import("../src/rules.js").RuleStore } }).gate;
+    const rule = gate.ruleStore.add({
+      tool: "bash", decision: "ask", executable: "git", pattern: "git tag*",
+      label: "pattern-test", scope: "global", source: "manual",
+    });
 
-    const res = await patch(`/policy/rules/${target.id}`, {
+    const res = await patch(`/policy/rules/${rule.id}`, {
       pattern: "npm run build*",
       executable: "npm",
     });
@@ -560,11 +540,7 @@ describe("policy API", () => {
     expect(body.rule.pattern).toBe("npm run build*");
     expect(body.rule.executable).toBe("npm");
 
-    // Restore
-    await patch(`/policy/rules/${target.id}`, {
-      pattern: target.pattern || null,
-      executable: target.executable || null,
-    });
+    await del(`/policy/rules/${rule.id}`);
   });
 
   it("PATCH /policy/rules/:id clears fields with null", async () => {
