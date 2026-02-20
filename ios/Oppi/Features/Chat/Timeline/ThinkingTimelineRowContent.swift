@@ -285,7 +285,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             return
         }
 
-        // In-progress state.
+        // In-progress state: spinner header + live thinking preview.
         brainIcon.isHidden = true
 
         headerStack.isHidden = false
@@ -296,12 +296,26 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         chevronImageView.isHidden = true
         chevronImageView.image = nil
 
-        expandedContainerView.isHidden = true
-        expandedTextView.attributedText = nil
-        expandedTextView.text = nil
-        expandedContainerHeight?.constant = 0
-        expandedScrollView.contentOffset = .zero
-        expandedScrollView.alwaysBounceVertical = false
+        let streamingText = configuration.previewText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !streamingText.isEmpty {
+            expandedContainerView.isHidden = false
+            expandedContainerView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.06)
+            expandedContainerView.layer.borderColor = UIColor.clear.cgColor
+            applyExpandedTextStyle(
+                text: configuration.previewText,
+                palette: palette,
+                isPreviewOnly: true
+            )
+            updateExpandedViewportHeightIfNeeded(preferredWidth: bounds.width)
+        } else {
+            expandedContainerView.isHidden = true
+            expandedTextView.attributedText = nil
+            expandedTextView.text = nil
+            expandedContainerHeight?.constant = 0
+            expandedScrollView.contentOffset = .zero
+            expandedScrollView.alwaysBounceVertical = false
+        }
     }
 
     private func applyExpandedTextStyle(text: String, palette: ThemePalette, isPreviewOnly: Bool) {
@@ -339,7 +353,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     }
 
     private func updateExpandedViewportHeightIfNeeded(preferredWidth: CGFloat? = nil) {
-        guard shouldShowThoughtContent else {
+        guard !expandedContainerView.isHidden else {
             expandedContainerHeight?.constant = 0
             return
         }

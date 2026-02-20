@@ -889,10 +889,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if let idx = indexForID(id) {
             items[idx] = item
         } else {
-            // Pi RPC doesn't stream thinking_delta live — thinking arrives
-            // in message_end, AFTER text_delta has already been streaming.
-            // Insert the thinking block BEFORE the current assistant message
-            // so the timeline reads: thinking → response text.
+            // Thinking streams before text, so this normally appends in order.
+            // Fallback: if thinking arrives via message_end recovery (after text
+            // has already streamed), insert before the assistant message so the
+            // timeline reads: thinking → response text.
             if let assistantID = currentAssistantID,
                let assistantIdx = indexForID(assistantID) {
                 items.insert(item, at: assistantIdx)
