@@ -26,3 +26,40 @@ enum ReleaseFeatures {
     /// Composer microphone button + custom speech-to-text flow.
     static let composerDictationEnabled = false
 }
+
+/// Shipping toggles for first release hardening.
+///
+/// Keep these centralized so we can re-enable features intentionally
+/// once reliability is proven.
+enum ReleaseFeatures {
+    /// Remote/local notification flow for permission prompts.
+    static let pushNotificationsEnabled = false
+
+    /// Dynamic Island / Lock Screen session activity surface.
+    static let liveActivitiesEnabled = false
+
+    /// Composer microphone button + custom speech-to-text flow.
+    static let composerDictationEnabled = false
+}
+
+/// Rendering implementation gates for timeline hot paths.
+///
+/// Policy: keep chat timeline interactions UIKit-first for predictable sizing,
+/// lower allocation churn, and less SwiftUI diffing overhead under streaming.
+///
+/// SwiftUI implementations are retained as opt-in fallbacks for debugging and
+/// future parity checks while native UIKit replacements converge.
+enum HotPathRenderGates {
+    /// Enable legacy SwiftUI hosted expanded tool content (todo/read-media) in
+    /// timeline rows. Disabled by default to enforce UIKit-first hot paths.
+    ///
+    /// Debug override:
+    /// `OPPI_ENABLE_SWIFTUI_HOTPATH_FALLBACKS=1`
+    static var enableSwiftUIHotPathFallbacks: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.environment["OPPI_ENABLE_SWIFTUI_HOTPATH_FALLBACKS"] == "1"
+#else
+        false
+#endif
+    }
+}
