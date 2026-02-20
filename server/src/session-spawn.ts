@@ -49,6 +49,8 @@ export interface SpawnDeps {
   piExecutable: string;
   /** Optional global declarative policy from server config. */
   globalPolicy?: GlobalPolicyConfig;
+  /** When false, skip permission gate entirely. All tool calls auto-allow. */
+  permissionGate?: boolean;
   /** Resolve workspace skill name → host path (e.g. ~/.pi/agent/skills/<name>). */
   resolveSkillPath?: (name: string) => string | undefined;
   /** Callback for each RPC line from pi stdout. */
@@ -146,14 +148,23 @@ export async function spawnPiHost(
   const key = session.id;
 
   // Create gate TCP socket (extension connects via localhost)
-  const gatePort = await deps.gate.createSessionSocket(
-    session.id,
-    workspace?.id || "",
-  );
+  const gateEnabled = deps.permissionGate !== false;
+  const gatePort = gateEnabled
+    ? await deps.gate.createSessionSocket(session.id, workspace?.id || "")
+    : 0;
 
   // Configure per-session policy based on global + workspace declarative policy.
 
   const cwd = workspace?.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
+
+  if (workspace?.id && workspace.hostMount) {
+    const seeded = deps.gate.ruleStore.ensureWorkspaceDefaults(workspace.id, workspace.hostMount);
+    if (seeded.length > 0) {
+      console.log(
+        `${ts()} [policy] seeded workspace default rules for ${workspace.id} (+${seeded.length})`,
+      );
+    }
+  }
 
   const allowedPaths: PathAccess[] = [
     // Workspace directory — full read/write
@@ -197,13 +208,17 @@ export async function spawnPiHost(
   // then load workspace extensions resolved from workspace.extensions list.
   const piArgs = ["--mode", "rpc", "--no-extensions"];
 
-  // 1. Always load the oppi-server TCP permission gate extension
-  if (existsSync(OPPI_GATE_EXTENSION)) {
-    piArgs.push("--extension", OPPI_GATE_EXTENSION);
+  // 1. Load the oppi-server TCP permission gate extension (unless disabled)
+  if (gateEnabled) {
+    if (existsSync(OPPI_GATE_EXTENSION)) {
+      piArgs.push("--extension", OPPI_GATE_EXTENSION);
+    } else {
+      console.warn(
+        `${ts()} [session:${session.id}] oppi-server gate extension not found at ${OPPI_GATE_EXTENSION}`,
+      );
+    }
   } else {
-    console.warn(
-      `${ts()} [session:${session.id}] oppi-server gate extension not found at ${OPPI_GATE_EXTENSION}`,
-    );
+    console.log(`${ts()} [session:${session.id}] permission gate disabled by config`);
   }
 
   // 2. Workspace extensions
@@ -271,8 +286,7 @@ export async function spawnPiHost(
     env: {
       ...HOST_ENV,
       OPPI_SESSION: session.id,
-      OPPI_GATE_HOST: "127.0.0.1",
-      OPPI_GATE_PORT: String(gatePort),
+      ...(gateEnabled ? { OPPI_GATE_HOST: "127.0.0.1", OPPI_GATE_PORT: String(gatePort) } : {}),
     },
   });
 

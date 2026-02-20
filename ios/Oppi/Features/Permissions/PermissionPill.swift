@@ -31,29 +31,13 @@ struct PermissionPill: View {
         case .faceID: return "faceid"
         case .touchID: return "touchid"
         case .opticID: return "opticid"
+        case .none: return "lock.fill"
         @unknown default: return "lock.fill"
         }
     }
 
     private let swipeThreshold: CGFloat = 80
     private let hintThreshold: CGFloat = 40
-
-    /// Whether the display summary indicates a web-browser skill command.
-    private var isBrowserCommand: Bool {
-        let s = request.displaySummary
-        return s.hasPrefix("Navigate:") || s.hasPrefix("JS:") ||
-               s.hasPrefix("Screenshot") || s.hasPrefix("Start Chrome") ||
-               s.hasPrefix("Dismiss cookies") || s.hasPrefix("Browser:")
-    }
-
-    /// SF Symbol for the browser command type.
-    private var browserIcon: String {
-        let s = request.displaySummary
-        if s.hasPrefix("Navigate:") { return "safari" }
-        if s.hasPrefix("JS:") { return "curlybraces" }
-        if s.hasPrefix("Screenshot") { return "camera.viewfinder" }
-        return "globe"
-    }
 
     var body: some View {
         pillContent
@@ -99,13 +83,6 @@ struct PermissionPill: View {
             Image(systemName: "exclamationmark.shield")
                 .font(.subheadline.bold())
                 .foregroundStyle(.themeOrange)
-
-            // Tool context icon (browser gets a globe, others skip)
-            if isBrowserCommand {
-                Image(systemName: browserIcon)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
 
             // Command summary
             Text(request.displaySummary)

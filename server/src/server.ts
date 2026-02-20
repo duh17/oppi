@@ -20,7 +20,7 @@ import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
 import { UserStreamMux } from "./stream.js";
 import { RouteHandler, type ModelInfo } from "./routes.js";
-import { PolicyEngine, defaultPolicy } from "./policy.js";
+import { PolicyEngine, defaultPolicy, defaultPresetRules } from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
 import { RuleStore } from "./rules.js";
 import { AuditLog } from "./audit.js";
@@ -392,6 +392,7 @@ export class Server {
 
     // v2 policy infrastructure
     const ruleStore = new RuleStore(join(dataDir, "rules.json"));
+    ruleStore.seedIfEmpty(defaultPresetRules());
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {

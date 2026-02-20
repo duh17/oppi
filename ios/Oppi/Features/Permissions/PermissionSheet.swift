@@ -194,19 +194,7 @@ private struct CommandBox: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    /// Pick an icon based on tool name + summary content.
-    /// Browser commands come through as "bash" but the summary is smart
-    /// (e.g., "Navigate: github.com", "JS: document.title").
     private func iconForTool(_ tool: String) -> String {
-        // Check summary prefix for browser commands
-        if summary.hasPrefix("Navigate:") { return "safari" }
-        if summary.hasPrefix("JS:") { return "curlybraces" }
-        if summary.hasPrefix("Screenshot") { return "camera.viewfinder" }
-        if summary.hasPrefix("Start Chrome") { return "globe" }
-        if summary.hasPrefix("Dismiss cookies") { return "xmark.shield" }
-        if summary.hasPrefix("Pick element") { return "hand.tap" }
-        if summary.hasPrefix("Browser:") { return "globe" }
-
         switch tool.lowercased() {
         case "bash": return "terminal"
         case "read": return "doc.text"
@@ -216,16 +204,8 @@ private struct CommandBox: View {
         }
     }
 
-    /// Display a more descriptive tool label for browser commands.
     private var displayToolLabel: String {
-        if summary.hasPrefix("Navigate:") { return "web-browser" }
-        if summary.hasPrefix("JS:") { return "web-browser" }
-        if summary.hasPrefix("Screenshot") { return "web-browser" }
-        if summary.hasPrefix("Start Chrome") { return "web-browser" }
-        if summary.hasPrefix("Dismiss cookies") { return "web-browser" }
-        if summary.hasPrefix("Pick element") { return "web-browser" }
-        if summary.hasPrefix("Browser:") { return "web-browser" }
-        return tool
+        tool
     }
 }
 

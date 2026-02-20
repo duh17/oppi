@@ -1,96 +1,88 @@
-# Oppi
+<p align="center">
+  <img src="docs/images/app-icon.png" width="80" height="80" alt="Oppi" />
+</p>
 
-Oppi is a mobile client + self-hosted server for supervising local [pi](https://github.com/badlogic/pi-mono) coding sessions on your own machine.
+<h1 align="center">Oppi</h1>
 
-All agent execution happens on your own machine.
+<p align="center">
+  Native iOS client for <a href="https://github.com/badlogic/pi-mono">pi</a> coding sessions, supervised from your phone.
+</p>
 
-## Current Status
+<!-- screenshots: uncomment when images are in docs/images/
+<p align="center">
+  <img src="docs/images/screenshot-chat.png" width="220" />
+  <img src="docs/images/screenshot-diff.png" width="220" />
+  <img src="docs/images/screenshot-permission.png" width="220" />
+</p>
+-->
 
-- iOS app: TestFlight beta
-- Server: in this repo under `server/`
+---
 
-## Quick Start
+## How it works
 
-### Requirements
-
-- Host machine with Node.js 22+ (macOS or Linux)
-- `pi` CLI installed: `npm install -g @mariozechner/pi-coding-agent`
-- `pi` provider login completed (`pi` then `/login`)
-- iPhone with Oppi installed (TestFlight)
-
-### 1) Start the server (from source)
-
-```bash
-git clone https://github.com/duh17/oppi.git
-cd oppi/server
-npm install
-npm run build
-npx oppi init
-npx oppi serve
+```
+┌─────────┐         WSS / HTTPS         ┌──────────────┐       stdio        ┌─────┐
+│  iPhone  │  ◄───────────────────────►  │  oppi-server │  ◄──────────────►  │ pi  │
+│  (Oppi)  │    stream, approvals, UI    │  (Node.js)   │   spawn, manage    │ CLI │
+└─────────┘                              └──────────────┘                    └─────┘
+                                               │
+                                          permission gate
+                                          (TCP, per-session)
 ```
 
-> Once `oppi-server` is published to npm, global install is:
-> `npm install -g oppi-server`
+The server spawns and manages `pi` processes on your machine. The iOS app connects over WebSocket to stream tool calls, render output, and handle permission approvals. A per-session TCP permission gate lets the pi extension ask the server before executing risky operations.
 
-### 2) Pair your iPhone
+All execution stays on your machine.
 
-In a second terminal:
-
-```bash
-cd oppi/server
-npx oppi pair
-```
-
-Scan the QR in the Oppi app.
-
-### 3) Run your first session
-
-In Oppi:
-1. Create a workspace
-2. Start a session
-3. Send a prompt
-4. Approve/deny risky actions in the app when prompted
-
-## Remote Access (optional)
-
-If phone and server host are not on the same Wi-Fi, use Tailscale/WireGuard/etc.
-
-You can force a hostname/IP into the pairing QR:
+## Install
 
 ```bash
-npx oppi pair --host my-mac.example.com
-```
-
-## Useful Commands
-
-```bash
+npm install -g oppi-server
 oppi init
 oppi serve
-oppi pair --host <host>
-oppi status
-oppi doctor
-oppi config show
-oppi env init
 ```
 
-## Configuration and Docs
+Requires Node.js 20+ and [pi](https://github.com/badlogic/pi-mono) CLI installed and logged in.
 
-- Server setup/config: [`server/README.md`](server/README.md)
-- Config schema: [`server/docs/config-schema.md`](server/docs/config-schema.md)
-- Security docs: [`server/docs/`](server/docs)
-- Theme system: [`docs/theme-system.md`](docs/theme-system.md)
+Pair your phone:
 
-## Privacy (current TestFlight build)
+```bash
+oppi pair
+```
 
-- No third-party analytics or crash telemetry is enabled.
-- Sentry integration exists for development diagnostics, but TestFlight uploads disable `SENTRY_DSN`.
-- Oppi session/workspace data stays on your self-hosted server.
+Scan the QR in Oppi. If your phone and server aren't on the same network:
 
-## Demo Videos (coming soon)
+```bash
+oppi pair --host my-mac.tailnet.ts.net
+```
 
-- Setup from zero to first prompt
-- Pairing + approval flow
-- Theme import/customization
+## Features
+
+- Markdown rendering with syntax-highlighted code blocks
+- Inline diffs — see what the agent changed, line by line
+- Permission gate — approve or deny tool calls from your phone
+- Themes (tokyo-night variants, or import your own)
+- Workspaces and session management
+- image input
+
+## Commands
+
+```
+oppi init                  initialize config
+oppi serve                 start server
+oppi pair [--host <h>]     generate pairing QR
+oppi status                show running sessions
+oppi doctor                check setup
+oppi config show           show current config
+oppi config set <k> <v>    update config
+```
+
+## Docs
+
+- [Server README](server/README.md)
+- [Config schema](server/docs/config-schema.md)
+- [Theme system](docs/theme-system.md)
+- [Security & privacy](SECURITY.md)
 
 ## License
 

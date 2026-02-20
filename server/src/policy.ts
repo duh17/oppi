@@ -1,18 +1,18 @@
 /**
- * Policy engine — evaluates tool calls against user rules.
+ * Policy engine — evaluates tool calls against rule data + heuristics.
  *
- * Layered evaluation order:
- * 1. Hard denies (immutable, can't be overridden)
- * 2. Workspace boundary checks
- * 3. User rules (evaluated in order)
- * 4. Default action
+ * Effective order in evaluateWithRules():
+ * 1. Reserved guards (policy.* always ask)
+ * 2. Heuristics-as-code
+ * 3. User rules (deny-first, then most-specific)
+ * 4. Default ask
  */
 
 import { globMatch } from "./glob.js";
-import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname as pathDirname } from "node:path";
-import type { LearnedRule } from "./rules.js";
+import { join, resolve as pathResolve, normalize as pathNormalize } from "node:path";
+import type { Rule, RuleInput } from "./rules.js";
 import type {
   PolicyConfig as DeclarativePolicyConfig,
   PolicyPermission as DeclarativePolicyPermission,
@@ -27,7 +27,7 @@ export interface PolicyRule {
   exec?: string; // For bash: executable name ("git", "rm", "sudo")
   pattern?: string; // Glob against command or path
   pathWithin?: string; // Path must be inside this directory
-  domain?: string; // Browser domain match (for nav.js)
+  domain?: string; // Host/domain matcher
   action: PolicyAction;
   label?: string;
 }
@@ -38,8 +38,6 @@ interface ResolvedHeuristics {
   dataEgress: PolicyAction | false;
   secretEnvInUrl: PolicyAction | false;
   secretFileAccess: PolicyAction | false;
-  browserUnknownDomain: PolicyAction | false;
-  browserEval: PolicyAction | false;
 }
 
 interface CompiledPolicy {
@@ -314,6 +312,41 @@ export function splitBashCommandChain(command: string): string[] {
 }
 
 const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
+const FILE_PATH_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
+
+function normalizePathInput(rawPath: string): { rawNormalized: string; resolvedRealpath?: string } {
+  const expanded = rawPath.replace(/^~(?=$|\/)/, homedir());
+  const rawNormalized = pathNormalize(pathResolve(expanded));
+
+  try {
+    if (existsSync(rawNormalized)) {
+      return { rawNormalized, resolvedRealpath: realpathSync(rawNormalized) };
+    }
+  } catch {
+    // Best-effort only — use normalized raw path.
+  }
+
+  return { rawNormalized };
+}
+
+function literalPrefixLength(pattern: string): number {
+  let length = 0;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "*" || ch === "?" || ch === "[" || ch === "{") {
+      break;
+    }
+    length += 1;
+  }
+  return length;
+}
+
+function matcherTypeRank(rule: Rule): number {
+  if (rule.pattern && rule.executable) return 3;
+  if (rule.pattern) return 2;
+  if (rule.executable) return 1;
+  return 0;
+}
 
 // ─── Data Egress Detection ───
 
@@ -636,135 +669,10 @@ export function isDataEgress(parsed: ParsedCommand): boolean {
   return false;
 }
 
-// ─── Web Browser Skill Detection ───
-
-/**
- * Recognized web-browser skill scripts.
- * Commands look like: cd /.../.pi/agent/skills/web-browser && ./scripts/nav.js "https://..."
- */
-const BROWSER_SCRIPTS = new Set([
-  "nav.js",
-  "eval.js",
-  "screenshot.js",
-  "start.js",
-  "dismiss-cookies.js",
-  "pick.js",
-  "watch.js",
-  "logs-tail.js",
-  "net-summary.js",
-]);
-
-/** Read-only browser scripts that never need approval. */
-const BROWSER_READ_ONLY = new Set(["screenshot.js", "logs-tail.js", "net-summary.js", "watch.js"]);
-
-export interface ParsedBrowserCommand {
-  script: string; // "nav.js", "eval.js", etc.
-  url?: string; // Extracted URL for nav.js
-  domain?: string; // Extracted domain from URL
-  jsCode?: string; // Extracted JS for eval.js
-  flags?: string[]; // Additional flags (--new, --reject, etc.)
-}
-
-/**
- * Parse a bash command that invokes a web-browser skill script.
- *
- * Handles the common patterns:
- *   cd /.../.pi/agent/skills/web-browser && ./scripts/nav.js "https://..." 2>&1
- *   cd /.../.pi/agent/skills/web-browser && ./scripts/eval.js 'document.title' 2>&1
- *   cd /.../.pi/agent/skills/web-browser && sleep 3 && ./scripts/screenshot.js 2>&1
- *
- * Returns null if the command isn't a web-browser skill invocation.
- */
-export function parseBrowserCommand(command: string): ParsedBrowserCommand | null {
-  // Must contain a web-browser skill path indicator
-  if (
-    !command.includes("web-browser") &&
-    !command.includes("scripts/nav.js") &&
-    !command.includes("scripts/eval.js")
-  ) {
-    return null;
-  }
-
-  // Split on && to find the script invocation part(s)
-  const parts = command.split(/\s*&&\s*/);
-  let scriptPart: string | null = null;
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    // Skip cd, sleep, and redirect suffixes
-    if (trimmed.startsWith("cd ") || trimmed.startsWith("sleep ")) continue;
-    // Check if this part invokes a browser script
-    const scriptMatch = trimmed.match(/\.\/scripts\/(\S+\.js)/);
-    if (scriptMatch && BROWSER_SCRIPTS.has(scriptMatch[1])) {
-      scriptPart = trimmed;
-      break;
-    }
-  }
-
-  // Also check for chained scripts: nav.js "url" 2>&1 && ./scripts/eval.js '...' 2>&1
-  // Take the first recognized script as the primary
-  if (!scriptPart) {
-    for (const part of parts) {
-      const trimmed = part.trim();
-      const scriptMatch = trimmed.match(/\.\/scripts\/(\S+\.js)/);
-      if (scriptMatch && BROWSER_SCRIPTS.has(scriptMatch[1])) {
-        scriptPart = trimmed;
-        break;
-      }
-    }
-  }
-
-  if (!scriptPart) return null;
-
-  const scriptMatch = scriptPart.match(/\.\/scripts\/(\S+\.js)/);
-  if (!scriptMatch) return null;
-
-  const script = scriptMatch[1];
-  const result: ParsedBrowserCommand = { script };
-
-  // Strip 2>&1 suffix for cleaner parsing
-  const cleaned = scriptPart.replace(/\s*2>&1\s*$/, "").trim();
-  // Everything after the script name
-  const argsStr = cleaned.slice(cleaned.indexOf(script) + script.length).trim();
-
-  if (script === "nav.js") {
-    // Extract URL — may be quoted or unquoted
-    const urlMatch = argsStr.match(/["']?(https?:\/\/[^\s"']+)["']?/);
-    if (urlMatch) {
-      result.url = urlMatch[1];
-      try {
-        result.domain = new URL(urlMatch[1]).hostname;
-      } catch {
-        /* malformed URL */
-      }
-    }
-    // Check for --new flag
-    if (argsStr.includes("--new")) {
-      result.flags = ["--new"];
-    }
-  } else if (script === "eval.js") {
-    // Extract JS code — typically in single or double quotes
-    const jsMatch = argsStr.match(/['"](.+)['"]\s*$/s);
-    if (jsMatch) {
-      result.jsCode = jsMatch[1];
-    } else {
-      // Unquoted JS (rare but possible)
-      result.jsCode = argsStr || undefined;
-    }
-  } else if (script === "dismiss-cookies.js") {
-    if (argsStr.includes("--reject")) {
-      result.flags = ["--reject"];
-    }
-  }
-
-  return result;
-}
-
 // ─── Shared Domain Allowlist ───
 
 /**
- * Path to the fetch skill's domain allowlist.
- * Shared between fetch (Python) and web-browser policy (TypeScript).
+ * Path to the shared fetch domain allowlist.
  *
  * Format: one domain per line. Supports:
  *   example.com              — exact domain + subdomains
@@ -917,6 +825,91 @@ export function listAllowlistDomains(allowlistPath?: string): string[] {
   return Array.from(domains).sort();
 }
 
+// ─── Default Rule Presets ───
+
+/**
+ * Editable global presets seeded into rules.json on first run.
+ * These are convenience defaults, not an immutable security boundary.
+ */
+export function defaultPresetRules(): RuleInput[] {
+  return [
+    {
+      tool: "bash",
+      decision: "deny",
+      executable: "sudo",
+      label: "Block sudo",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "deny",
+      pattern: "*auth.json*",
+      label: "Protect API keys",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "deny",
+      pattern: "*printenv*_KEY*",
+      label: "Protect env secrets",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "deny",
+      pattern: "*printenv*_TOKEN*",
+      label: "Protect env tokens",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "read",
+      decision: "deny",
+      pattern: "**/.ssh/id_*",
+      label: "Protect SSH keys",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "deny",
+      pattern: "*:(){ :|:& };*",
+      label: "Block fork bomb",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "ask",
+      executable: "git",
+      pattern: "git push*",
+      label: "Git push",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "ask",
+      executable: "rm",
+      pattern: "rm *-*r*",
+      label: "Recursive delete",
+      scope: "global",
+      source: "preset",
+    },
+    {
+      tool: "bash",
+      decision: "ask",
+      executable: "ssh",
+      label: "SSH connection",
+      scope: "global",
+      source: "preset",
+    },
+  ];
+}
+
 // ─── Default Policy Config ───
 
 /**
@@ -925,7 +918,7 @@ export function listAllowlistDomains(allowlistPath?: string): string[] {
  * Philosophy: allow most local dev work, ask for external/destructive actions,
  * block credential exfiltration and privilege escalation.
  *
- * Structural heuristics (pipe-to-shell, data egress, browser domain checks)
+ * Structural heuristics (pipe-to-shell, data egress, secret checks)
  * are always active in evaluate() regardless of this config.
  */
 export function defaultPolicy(): DeclarativePolicyConfig {
@@ -1143,8 +1136,6 @@ export function defaultPolicy(): DeclarativePolicyConfig {
       dataEgress: "ask",
       secretEnvInUrl: "ask",
       secretFileAccess: "block",
-      browserUnknownDomain: "ask",
-      browserEval: "ask",
     },
   };
 }
@@ -1155,8 +1146,6 @@ const DEFAULT_HEURISTICS: ResolvedHeuristics = {
   dataEgress: "ask",
   secretEnvInUrl: "ask",
   secretFileAccess: "deny",
-  browserUnknownDomain: "ask",
-  browserEval: "ask",
 };
 
 // ── Legacy: kept only for test compatibility ──
@@ -1538,8 +1527,6 @@ function resolveHeuristics(h?: import("./types.js").PolicyHeuristics): ResolvedH
     dataEgress: h.dataEgress === false ? false : mapDecisionToAction(h.dataEgress || "ask"),
     secretEnvInUrl: h.secretEnvInUrl === false ? false : mapDecisionToAction(h.secretEnvInUrl || "ask"),
     secretFileAccess: h.secretFileAccess === false ? false : mapDecisionToAction(h.secretFileAccess || "block"),
-    browserUnknownDomain: h.browserUnknownDomain === false ? false : mapDecisionToAction(h.browserUnknownDomain || "ask"),
-    browserEval: h.browserEval === false ? false : mapDecisionToAction(h.browserEval || "ask"),
   };
 }
 
@@ -1685,74 +1672,6 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 1.6: Web-browser skill commands
-    if (tool === "bash") {
-      const command = (input as { command?: string }).command || "";
-      const browser = parseBrowserCommand(command);
-      if (browser) {
-        // Read-only scripts (screenshot, logs) — always allow
-        if (BROWSER_READ_ONLY.has(browser.script)) {
-          return {
-            action: "allow",
-            reason: `Browser read-only: ${browser.script}`,
-            layer: "rule",
-            ruleLabel: "Browser read-only",
-          };
-        }
-
-        // start.js — launching Chrome. Low risk but notable.
-        if (browser.script === "start.js") {
-          return {
-            action: "allow",
-            reason: "Launch browser",
-            layer: "rule",
-            ruleLabel: "Browser start",
-          };
-        }
-
-        // nav.js — check shared fetch domain allowlist
-        if (browser.script === "nav.js" && browser.domain) {
-          if (isInFetchAllowlist(browser.domain)) {
-            return {
-              action: "allow",
-              reason: `Allowed domain: ${browser.domain}`,
-              layer: "rule",
-              ruleLabel: "Browser domain allowlist",
-            };
-          }
-          // Domain not in allowlist
-          if (this.policy.heuristics.browserUnknownDomain !== false) {
-            return {
-              action: this.policy.heuristics.browserUnknownDomain,
-              reason: `Browser navigation to unlisted domain: ${browser.domain}`,
-              layer: "rule",
-              ruleLabel: "Browser unknown domain",
-            };
-          }
-        }
-
-        // eval.js — arbitrary JS execution
-        if (browser.script === "eval.js" && this.policy.heuristics.browserEval !== false) {
-          return {
-            action: this.policy.heuristics.browserEval,
-            reason: "Browser JS execution",
-            layer: "rule",
-            ruleLabel: "Browser eval",
-          };
-        }
-
-        // dismiss-cookies.js, pick.js — low risk but interactive
-        if (browser.script === "dismiss-cookies.js" || browser.script === "pick.js") {
-          return {
-            action: "allow",
-            reason: `Browser interaction: ${browser.script}`,
-            layer: "rule",
-            ruleLabel: "Browser interaction",
-          };
-        }
-      }
-    }
-
     // Layer 2: Rules (external actions, destructive operations)
     for (const rule of this.policy.rules) {
       if (this.matchesRule(rule, tool, input)) {
@@ -1775,9 +1694,6 @@ export class PolicyEngine {
 
   /**
    * Get a human-readable summary of a tool call for display on phone.
-   *
-   * Browser commands get smart parsing: "Navigate: github.com/user/repo"
-   * instead of "cd /home/pi/.pi/agent/skills/web-browser && ./scripts/nav.js ..."
    */
   formatDisplaySummary(req: GateRequest): string {
     const { tool, input } = req;
@@ -1785,13 +1701,6 @@ export class PolicyEngine {
     switch (tool) {
       case "bash": {
         const command = (input as { command?: string }).command || "";
-
-        // Try browser skill parsing first
-        const browser = parseBrowserCommand(command);
-        if (browser) {
-          return this.formatBrowserSummary(browser, command);
-        }
-
         return command || "bash (unknown command)";
       }
       case "read":
@@ -1811,88 +1720,74 @@ export class PolicyEngine {
     }
   }
 
-  /**
-   * Format a browser skill command into a clean summary.
-   *
-   * nav.js  → "Navigate: github.com/user/repo"
-   * eval.js → "JS: document.title"
-   * screenshot.js → "Screenshot"
-   * start.js → "Start Chrome"
-   * dismiss-cookies.js → "Dismiss cookies"
-   */
-  private formatBrowserSummary(browser: ParsedBrowserCommand, _raw: string): string {
-    switch (browser.script) {
-      case "nav.js":
-        if (browser.url) {
-          // Show domain + path, strip protocol for brevity
-          const clean = browser.url.replace(/^https?:\/\//, "");
-          // Truncate very long URLs
-          const display = clean.length > 80 ? clean.slice(0, 77) + "..." : clean;
-          const flag = browser.flags?.includes("--new") ? " (new tab)" : "";
-          return `Navigate: ${display}${flag}`;
-        }
-        return "Navigate (no URL)";
-      case "eval.js":
-        if (browser.jsCode) {
-          const code =
-            browser.jsCode.length > 120 ? browser.jsCode.slice(0, 117) + "..." : browser.jsCode;
-          return `JS: ${code}`;
-        }
-        return "JS: (eval)";
-      case "screenshot.js":
-        return "Screenshot";
-      case "start.js":
-        return "Start Chrome";
-      case "dismiss-cookies.js": {
-        const action = browser.flags?.includes("--reject") ? "reject" : "accept";
-        return `Dismiss cookies (${action})`;
-      }
-      case "pick.js":
-        return "Pick element";
-      default:
-        return `Browser: ${browser.script}`;
-    }
-  }
-
   // ─── v2: Evaluate with learned rules ───
 
   /**
-   * Evaluate a tool call with learned rules layered in.
+   * Evaluate a tool call with unified user rules.
    *
-   * Evaluation order:
-   *   1. Hard denies (immutable, from policy mode)
-   *   2. Learned/manual deny rules (explicit deny wins)
-   *   3. Session allow rules
-   *   4. Workspace allow rules
-   *   5. Global allow rules
-   *   6. Structural heuristics (pipe-to-shell, data egress, browser)
-   *   7. Built-in/declarative rules + domain allowlist
-   *   8. Policy fallback default
+   * Layered evaluation:
+   *   1. Reserved guards (policy.* tools always ask)
+   *   2. Heuristics (structural detection)
+   *   3. User rules (deny wins, then most specific non-deny)
+   *   4. Default ask
    */
   evaluateWithRules(
     req: GateRequest,
-    rules: LearnedRule[],
+    rules: Rule[],
     sessionId: string,
     workspaceId: string,
   ): PolicyDecision {
-    const { tool, input } = req;
-
-    // Parse context for matching
-    const parsed = this.parseRequestContext(req);
-
-    // Layer 1: Hard denies (immutable, same as evaluate())
-    for (const rule of this.policy.hardDeny) {
-      if (this.matchesRule(rule, tool, input)) {
-        return {
-          action: "deny",
-          reason: rule.label || "Blocked by hard deny rule",
-          layer: "hard_deny",
-          ruleLabel: rule.label,
-        };
-      }
+    if (req.tool.startsWith("policy.")) {
+      return {
+        action: "ask",
+        reason: "Policy changes always require approval",
+        layer: "rule",
+        ruleLabel: "policy guard",
+      };
     }
 
-    // Layer 1.1: Secret file access heuristic
+    const heuristicDecision = this.evaluateHeuristics(req);
+    if (heuristicDecision) {
+      return heuristicDecision;
+    }
+
+    const parsed = this.parseRequestContext(req);
+    const applicable = rules.filter((rule) => this.isRuleApplicable(rule, sessionId, workspaceId));
+    const matching = applicable.filter((rule) => this.matchesUserRule(rule, req, parsed));
+
+    if (matching.length === 0) {
+      return {
+        action: "ask",
+        reason: "No matching rule — using default ask",
+        layer: "default",
+      };
+    }
+
+    const denyMatches = matching.filter((rule) => rule.decision === "deny");
+    if (denyMatches.length > 0) {
+      const best = this.pickMostSpecificRule(denyMatches, parsed);
+      return {
+        action: "deny",
+        reason: best.label || "Denied by rule",
+        layer: this.layerForScope(best.scope),
+        ruleLabel: best.label,
+        ruleId: best.id,
+      };
+    }
+
+    const best = this.pickMostSpecificRule(matching, parsed);
+    return {
+      action: best.decision,
+      reason: best.label || `Matched ${best.scope} rule`,
+      layer: this.layerForScope(best.scope),
+      ruleLabel: best.label,
+      ruleId: best.id,
+    };
+  }
+
+  private evaluateHeuristics(req: GateRequest): PolicyDecision | null {
+    const { tool, input } = req;
+
     if (this.policy.heuristics.secretFileAccess !== false) {
       const secretDeny = this.evaluateSecretFileAccess(tool, input);
       if (secretDeny) {
@@ -1901,295 +1796,61 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 2: Learned deny rules (explicit deny always wins, but respects scope)
-    // Deny rules are checked in the same scope order as allow rules:
-    //   session denies (only for this session) → workspace denies → global denies
-    const denyRules = rules.filter((r) => r.effect === "deny");
-    const scopedDenies = denyRules.filter((r) => {
-      if (r.scope === "session") return r.sessionId === sessionId;
-      if (r.scope === "workspace") return r.workspaceId === workspaceId;
-      return r.scope === "global";
-    });
-    for (const rule of scopedDenies) {
-      if (this.matchesLearnedRule(rule, tool, input, parsed)) {
-        return {
-          action: "deny",
-          reason: rule.description,
-          layer: "learned_deny",
-          ruleLabel: rule.description,
-          ruleId: rule.id,
-        };
-      }
-    }
+    if (tool === "bash") {
+      const command = (input as { command?: string }).command || "";
+      const segments = splitBashCommandChain(command);
 
-    // Layer 3-5: Allow rules by scope (session → workspace → global)
-    const allowRules = rules.filter((r) => r.effect === "allow");
+      for (const segment of segments) {
+        if (this.policy.heuristics.pipeToShell !== false && /\|\s*(ba)?sh\b/.test(segment)) {
+          return {
+            action: this.policy.heuristics.pipeToShell,
+            reason: "Pipe to shell (arbitrary code execution)",
+            layer: "rule",
+            ruleLabel: "Pipe to shell",
+          };
+        }
 
-    // Session rules first
-    const sessionRules = allowRules.filter(
-      (r) => r.scope === "session" && r.sessionId === sessionId,
-    );
-    for (const rule of sessionRules) {
-      if (this.matchesLearnedRule(rule, tool, input, parsed)) {
-        return {
-          action: "allow",
-          reason: rule.description,
-          layer: "session_rule",
-          ruleLabel: rule.description,
-          ruleId: rule.id,
-        };
-      }
-    }
+        const stages = splitPipelineStages(segment);
+        for (const stage of stages) {
+          const parsed = parseBashCommand(stage);
 
-    // Workspace rules
-    const wsRules = allowRules.filter(
-      (r) => r.scope === "workspace" && r.workspaceId === workspaceId,
-    );
-    for (const rule of wsRules) {
-      if (this.matchesLearnedRule(rule, tool, input, parsed)) {
-        return {
-          action: "allow",
-          reason: rule.description,
-          layer: "workspace_rule",
-          ruleLabel: rule.description,
-          ruleId: rule.id,
-        };
-      }
-    }
+          if (this.policy.heuristics.dataEgress !== false && isDataEgress(parsed)) {
+            return {
+              action: this.policy.heuristics.dataEgress,
+              reason: "Outbound data transfer",
+              layer: "rule",
+              ruleLabel: "Data egress",
+            };
+          }
 
-    // Global rules
-    const globalRules = allowRules.filter((r) => r.scope === "global");
-    for (const rule of globalRules) {
-      if (this.matchesLearnedRule(rule, tool, input, parsed)) {
-        return {
-          action: "allow",
-          reason: rule.description,
-          layer: "global_rule",
-          ruleLabel: rule.description,
-          ruleId: rule.id,
-        };
-      }
-    }
-
-    // Layer 6+: Fall through to existing evaluate() for heuristics, rules, and default fallback
-    return this.evaluate(req);
-  }
-
-  // ─── v2: Resolution options ───
-
-  /**
-   * Determine which resolution scopes to offer the phone user.
-   *
-   * Called when evaluate() returns "ask". Tells the phone what buttons to show.
-   */
-  getResolutionOptions(req: GateRequest, _decision: PolicyDecision): ResolutionOptions {
-    const parsed = this.parseRequestContext(req);
-
-    // eval.js: session only (code changes every time, can't generalize)
-    if (parsed.browserScript === "eval.js") {
-      return {
-        allowSession: true,
-        allowAlways: false,
-        denyAlways: true,
-      };
-    }
-
-    // Browser nav with a domain: offer "always allow" with domain description
-    if (parsed.browserScript === "nav.js" && parsed.domain) {
-      return {
-        allowSession: true,
-        allowAlways: true,
-        alwaysDescription: `Add ${parsed.domain} to domain allowlist`,
-        denyAlways: true,
-      };
-    }
-
-    // Regular bash with recognizable executable.
-    // High-impact external actions stay session-scoped to avoid over-broad
-    // learned rules like "allow all git" from a single git push approval.
-    if (req.tool === "bash" && parsed.executable) {
-      if (this.requiresCommandScopedApproval(parsed.command || "", parsed.executable)) {
-        return {
-          allowSession: true,
-          allowAlways: false,
-          denyAlways: true,
-        };
+          if (this.policy.heuristics.secretEnvInUrl !== false && hasSecretEnvExpansionInUrl(parsed)) {
+            return {
+              action: this.policy.heuristics.secretEnvInUrl,
+              reason: "Possible secret env exfiltration in URL",
+              layer: "rule",
+              ruleLabel: "Secret env expansion in URL",
+            };
+          }
+        }
       }
 
-      return {
-        allowSession: true,
-        allowAlways: true,
-        alwaysDescription: `Allow all ${parsed.executable} commands`,
-        denyAlways: true,
-      };
-    }
-
-    // File operations
-    if (["write", "edit"].includes(req.tool) && parsed.path) {
-      const dir = pathDirname(parsed.path);
-      return {
-        allowSession: true,
-        allowAlways: true,
-        alwaysDescription: `Allow ${req.tool} in ${dir}`,
-        denyAlways: true,
-      };
-    }
-
-    // Fallback: session + deny always, no permanent allow
-    return {
-      allowSession: true,
-      allowAlways: false,
-      denyAlways: true,
-    };
-  }
-
-  // ─── v2: Smart rule suggestion ───
-
-  /**
-   * Generate a learned rule from a user's approval.
-   *
-   * Generalizes the specific request into a reusable rule:
-   *   git push origin main → { executable: "git", commandPattern: "git push*" }
-   *   nav.js github.com/x  → { domain: "github.com" }
-   *   write /workspace/x   → { pathPattern: "/workspace/**" }
-   *
-   * Returns null for requests that shouldn't be generalized (e.g., eval.js).
-   */
-  suggestRule(
-    req: GateRequest,
-    scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string },
-  ): Omit<LearnedRule, "id" | "createdAt"> | null {
-    const parsed = this.parseRequestContext(req);
-
-    // eval.js — not generalizable
-    if (parsed.browserScript === "eval.js") {
-      return null;
-    }
-
-    // Browser nav with domain
-    if (parsed.browserScript === "nav.js" && parsed.domain) {
-      return {
-        effect: "allow",
-        tool: "bash",
-        match: { domain: parsed.domain },
-        scope,
-        ...(scope === "session" ? { sessionId: context.sessionId } : {}),
-        ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
-        source: "learned",
-        description: `Allow browser navigation to ${parsed.domain}`,
-        createdBy: "server",
-      };
-    }
-
-    // Bash with recognizable executable
-    if (req.tool === "bash" && parsed.executable) {
-      const match = this.suggestBashMatch(parsed.command || "", parsed.executable);
-      const commandScoped = Boolean(match.commandPattern);
-      return {
-        effect: "allow",
-        tool: "bash",
-        match,
-        scope,
-        ...(scope === "session" ? { sessionId: context.sessionId } : {}),
-        ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
-        source: "learned",
-        description: commandScoped
-          ? `Allow ${parsed.executable} command pattern ${match.commandPattern}`
-          : `Allow ${parsed.executable} operations`,
-        createdBy: "server",
-      };
-    }
-
-    // File operations — generalize to directory
-    if (["write", "edit"].includes(req.tool) && parsed.path) {
-      // Find the workspace/project root (first 2-3 path components)
-      const parts = parsed.path.split("/").filter(Boolean);
-      const dirParts = parts.length > 2 ? parts.slice(0, 2) : parts.slice(0, -1);
-      const pattern = "/" + dirParts.join("/") + "/**";
-
-      return {
-        effect: "allow",
-        tool: req.tool,
-        match: { pathPattern: pattern },
-        scope,
-        ...(scope === "session" ? { sessionId: context.sessionId } : {}),
-        ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
-        source: "learned",
-        description: `Allow ${req.tool} in ${pattern}`,
-        createdBy: "server",
-      };
-    }
-
-    // Can't generalize — return null
-    return null;
-  }
-
-  /**
-   * Suggest a deny rule from a user's denial.
-   */
-  suggestDenyRule(
-    req: GateRequest,
-    scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string },
-  ): Omit<LearnedRule, "id" | "createdAt"> | null {
-    const parsed = this.parseRequestContext(req);
-
-    // Browser nav with domain
-    if (parsed.browserScript === "nav.js" && parsed.domain) {
-      return {
-        effect: "deny",
-        tool: "bash",
-        match: { domain: parsed.domain },
-        scope,
-        ...(scope === "session" ? { sessionId: context.sessionId } : {}),
-        ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
-        source: "learned",
-        description: `Deny browser navigation to ${parsed.domain}`,
-        createdBy: "server",
-      };
-    }
-
-    // Bash executable
-    if (req.tool === "bash" && parsed.executable) {
-      return {
-        effect: "deny",
-        tool: "bash",
-        match: { executable: parsed.executable },
-        scope,
-        ...(scope === "session" ? { sessionId: context.sessionId } : {}),
-        ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
-        source: "learned",
-        description: `Deny ${parsed.executable} operations`,
-        createdBy: "server",
-      };
     }
 
     return null;
   }
 
-  // ─── v2: Request context parsing (shared helper) ───
+  // ─── v2: Rule matching helpers ───
 
   private parseRequestContext(req: GateRequest): {
     executable?: string;
-    domain?: string;
-    browserScript?: string;
-    path?: string;
+    pathRawNormalized?: string;
+    pathResolved?: string;
     command?: string;
   } {
     const { tool, input } = req;
 
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
-      const browser = parseBrowserCommand(command);
-      if (browser) {
-        return {
-          browserScript: browser.script,
-          domain: browser.domain,
-          executable: browser.script,
-          command,
-        };
-      }
 
       const segments = splitBashCommandChain(command);
       const parsedSegments = segments
@@ -2200,100 +1861,121 @@ export class PolicyEngine {
         parsedSegments.find((parsed) => !CHAIN_HELPER_EXECUTABLES.has(parsed.executable)) ||
         parsedSegments[0];
 
-      return { executable: primary?.executable, command };
+      const executable = primary?.executable.includes("/")
+        ? primary.executable.split("/").pop() || primary.executable
+        : primary?.executable;
+
+      return { executable, command };
     }
 
-    if (["read", "write", "edit", "find", "ls"].includes(tool)) {
-      return { path: (input as { path?: string }).path };
+    if (FILE_PATH_TOOLS.has(tool)) {
+      const path = (input as { path?: string }).path;
+      if (!path) return {};
+      const normalized = normalizePathInput(path);
+      return {
+        pathRawNormalized: normalized.rawNormalized,
+        pathResolved: normalized.resolvedRealpath,
+      };
     }
 
     return {};
   }
 
-  private parseGitIntent(command: string): { subcommand?: string; remoteAction?: string } {
-    const tokens = command.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0 || tokens[0].toLowerCase() !== "git") return {};
+  private isRuleApplicable(rule: Rule, sessionId: string, workspaceId: string): boolean {
+    if (rule.expiresAt && rule.expiresAt < Date.now()) return false;
 
-    let i = 1;
-    while (i < tokens.length) {
-      const token = tokens[i];
-      if (!token.startsWith("-")) break;
-
-      // Git global options that consume a value.
-      if (["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"].includes(token)) {
-        i += 2;
-        continue;
-      }
-
-      i += 1;
+    if (rule.scope === "session") {
+      return rule.sessionId === sessionId;
     }
 
-    const subcommand = tokens[i]?.toLowerCase();
-    const remoteAction = subcommand === "remote" ? tokens[i + 1]?.toLowerCase() : undefined;
-    return { subcommand, remoteAction };
+    if (rule.scope === "workspace") {
+      return rule.workspaceId === workspaceId;
+    }
+
+    return rule.scope === "global";
   }
 
-  private suggestBashMatch(command: string, executable: string): { executable: string; commandPattern?: string } {
-    const normalized = command.trim().toLowerCase();
-    const exec = executable.toLowerCase();
+  private matchesUserRule(
+    rule: Rule,
+    req: GateRequest,
+    parsed: {
+      executable?: string;
+      pathRawNormalized?: string;
+      pathResolved?: string;
+      command?: string;
+    },
+  ): boolean {
+    const { tool, input } = req;
 
-    if (exec === "git") {
-      const intent = this.parseGitIntent(command);
-      if (intent.subcommand === "push") {
-        return { executable, commandPattern: "git push*" };
-      }
-      if (intent.subcommand === "remote" && ["add", "set-url"].includes(intent.remoteAction || "")) {
-        return { executable, commandPattern: "git remote *" };
-      }
-    }
-
-    if (exec === "npm" && normalized.startsWith("npm publish")) {
-      return { executable, commandPattern: "npm publish*" };
-    }
-    if (exec === "yarn" && normalized.startsWith("yarn publish")) {
-      return { executable, commandPattern: "yarn publish*" };
-    }
-    if (exec === "twine" && normalized.startsWith("twine upload")) {
-      return { executable, commandPattern: "twine upload*" };
+    if (rule.tool !== "*" && rule.tool !== tool) {
+      return false;
     }
 
-    // Default: executable-level allow for non-sensitive command families.
-    return { executable };
+    if (rule.executable) {
+      if (!parsed.executable) return false;
+      if (parsed.executable !== rule.executable) return false;
+    }
+
+    if (!rule.pattern) {
+      return true;
+    }
+
+    if (tool === "bash") {
+      const command = parsed.command || (input as { command?: string }).command || "";
+      if (command.length === 0) return false;
+
+      // Match bash glob patterns per chain segment so helper prefixes like
+      // `cd repo && git commit ...` still match `git commit*` rules.
+      const segments = splitBashCommandChain(command);
+      return segments.some((segment) => matchBashPattern(segment, rule.pattern!));
+    }
+
+    if (FILE_PATH_TOOLS.has(tool)) {
+      const candidates = [parsed.pathRawNormalized, parsed.pathResolved].filter(
+        (value): value is string => Boolean(value && value.length > 0),
+      );
+      if (candidates.length === 0) return false;
+      return candidates.some((path) => globMatch(path, rule.pattern!));
+    }
+
+    const serialized = JSON.stringify(input);
+    return globMatch(serialized, rule.pattern);
   }
 
-  private requiresCommandScopedApproval(command: string, executable?: string): boolean {
-    if (!executable) return false;
-    const normalized = command.trim().toLowerCase();
-    const exec = executable.toLowerCase();
+  private pickMostSpecificRule(
+    rules: Rule[],
+    _parsed: {
+      executable?: string;
+      pathRawNormalized?: string;
+      pathResolved?: string;
+      command?: string;
+    },
+  ): Rule {
+    const withIndex = rules.map((rule, index) => ({ rule, index }));
 
-    if (exec === "git") {
-      const intent = this.parseGitIntent(command);
-      if (intent.subcommand === "push") return true;
-      if (intent.subcommand === "remote" && ["add", "set-url"].includes(intent.remoteAction || "")) {
-        return true;
-      }
-    }
+    withIndex.sort((a, b) => {
+      const aMatcher = matcherTypeRank(a.rule);
+      const bMatcher = matcherTypeRank(b.rule);
+      if (aMatcher !== bMatcher) return bMatcher - aMatcher;
 
-    if ((exec === "npm" && normalized.startsWith("npm publish")) ||
-        (exec === "yarn" && normalized.startsWith("yarn publish")) ||
-        (exec === "twine" && normalized.startsWith("twine upload"))) {
-      return true;
-    }
+      const aPrefix = a.rule.pattern ? literalPrefixLength(a.rule.pattern) : 0;
+      const bPrefix = b.rule.pattern ? literalPrefixLength(b.rule.pattern) : 0;
+      if (aPrefix !== bPrefix) return bPrefix - aPrefix;
 
-    if (["ssh", "scp", "sftp", "rsync", "nc", "ncat", "socat", "telnet"].includes(exec)) {
-      return true;
-    }
+      const aDecisionBias = a.rule.decision === "ask" ? 1 : 0;
+      const bDecisionBias = b.rule.decision === "ask" ? 1 : 0;
+      if (aDecisionBias !== bDecisionBias) return bDecisionBias - aDecisionBias;
 
-    if (normalized.includes("ios/scripts/build-install.sh") ||
-        normalized.includes("scripts/build-install.sh") ||
-        normalized.includes("scripts/ios-dev-up.sh") ||
-        normalized.startsWith("xcrun devicectl device install app") ||
-        normalized.startsWith("npx tsx src/cli.ts serve") ||
-        normalized.startsWith("tsx src/cli.ts serve")) {
-      return true;
-    }
+      return a.index - b.index;
+    });
 
-    return false;
+    return withIndex[0].rule;
+  }
+
+  private layerForScope(scope: Rule["scope"]): PolicyDecision["layer"] {
+    if (scope === "session") return "session_rule";
+    if (scope === "workspace") return "workspace_rule";
+    return "global_rule";
   }
 
   private evaluateSecretFileAccess(
@@ -2346,55 +2028,6 @@ export class PolicyEngine {
     return null;
   }
 
-  /**
-   * Check if a learned rule matches the current request.
-   */
-  private matchesLearnedRule(
-    rule: LearnedRule,
-    tool: string,
-    input: Record<string, unknown>,
-    parsed: { executable?: string; domain?: string; browserScript?: string; path?: string },
-  ): boolean {
-    // Skip expired rules
-    if (rule.expiresAt && rule.expiresAt < Date.now()) return false;
-
-    // Tool must match
-    if (rule.tool && rule.tool !== "*" && rule.tool !== tool) return false;
-
-    // Match conditions — ALL non-null fields must match
-    if (rule.match) {
-      if (rule.match.executable && parsed.executable !== rule.match.executable) return false;
-      if (rule.match.domain && parsed.domain !== rule.match.domain) return false;
-
-      if (rule.match.pathPattern && parsed.path) {
-        const pattern = rule.match.pathPattern;
-        if (pattern.endsWith("/**")) {
-          const prefix = pattern.slice(0, -3);
-          if (!parsed.path.startsWith(prefix)) return false;
-        } else if (pattern !== parsed.path) {
-          return false;
-        }
-      } else if (rule.match.pathPattern && !parsed.path) {
-        return false;
-      }
-
-      if (rule.match.commandPattern) {
-        const command = (input as { command?: string }).command || "";
-        const re = new RegExp("^" + rule.match.commandPattern.replace(/\*/g, ".*") + "$");
-
-        if (tool === "bash") {
-          const segments = splitBashCommandChain(command);
-          const matched = segments.some((segment) => re.test(segment));
-          if (!matched) return false;
-        } else if (!re.test(command)) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
   getPolicyMode(): string {
     return this.policy.name;
   }
@@ -2409,13 +2042,6 @@ export class PolicyEngine {
 
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
-
-      if (rule.domain) {
-        const browser = parseBrowserCommand(command);
-        if (!browser?.domain || browser.domain !== rule.domain) {
-          return false;
-        }
-      }
 
       const segments = splitBashCommandChain(command);
 
