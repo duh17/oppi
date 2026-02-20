@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oppi.dev/schemas/safety-mode.schema.json",
+  "title": "Oppi Safety Mode",
+  "description": "Human-friendly policy preset format for Oppi permission gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mode", "fallback", "guardrails", "permissions"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["sandbox", "easy", "balanced", "strict"]
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "fallback": {
+      "description": "Decision used when no permission matches.",
+      "$ref": "#/$defs/decision"
+    },
+    "guardrails": {
+      "description": "Immutable safety blocks. Always evaluated first; cannot be overridden by learned permissions.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/permission" }
+    },
+    "permissions": {
+      "description": "Ordered list of match rules evaluated after guardrails.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/permission" }
+    }
+  },
+  "$defs": {
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "ask", "block"]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "$ref": "#/$defs/tool" },
+        "executable": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "commandMatches": {
+          "description": "Glob against full bash command text.",
+          "$ref": "#/$defs/glob"
+        },
+        "pathMatches": {
+          "description": "Glob against path-like tool args (read/write/edit/find/ls).",
+          "$ref": "#/$defs/glob"
+        },
+        "pathWithin": {
+          "description": "Require target path to stay within this directory.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "domain": {
+          "description": "Optional domain match for browser/network rules.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      },
+      "anyOf": [
+        { "required": ["tool"] },
+        { "required": ["executable"] },
+        { "required": ["commandMatches"] },
+        { "required": ["pathMatches"] },
+        { "required": ["pathWithin"] },
+        { "required": ["domain"] }
+      ]
+    },
+    "permission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "decision", "match"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+        },
+        "decision": { "$ref": "#/$defs/decision" },
+        "risk": { "$ref": "#/$defs/risk" },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "immutable": {
+          "type": "boolean",
+          "default": false
+        },
+        "match": { "$ref": "#/$defs/match" }
+      }
+    }
+  }
+}

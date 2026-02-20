@@ -46,7 +46,7 @@ struct ThemeImportView: View {
                             .font(.body.weight(.medium))
                         Text(summary.colorScheme)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
 
                     Spacer()
@@ -56,7 +56,7 @@ struct ThemeImportView: View {
                             .controlSize(.small)
                     } else if CustomThemeStore.load(name: summary.name) != nil {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.themeGreen)
                     }
                 }
                 .contentShape(Rectangle())

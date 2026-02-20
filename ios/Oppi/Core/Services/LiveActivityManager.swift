@@ -138,7 +138,7 @@ final class LiveActivityManager {
             currentState.activeTool = nil
             currentState.lastEvent = "Ready"
 
-        case .toolStart(_, _, let tool, _):
+        case .toolStart(_, _, let tool, _, _):
             currentState.status = "busy"
             currentState.activeTool = tool
             currentState.lastEvent = "Running \(displayToolName(tool))"
@@ -188,12 +188,12 @@ final class LiveActivityManager {
     ) {
         currentState.pendingPermissions = pending.count
 
-        if let top = pending.sorted(by: shouldPrioritizePermission).first {
+        if let top = pending.min(by: shouldPrioritizePermission) {
             currentState.pendingPermissionSession = sessionLabel(for: top.sessionId, sessions: sessions)
             currentState.pendingPermissionTool = top.tool
             currentState.pendingPermissionSummary = permissionSummaryForLiveActivity(top)
             currentState.pendingPermissionReason = top.reason
-            currentState.pendingPermissionRisk = top.risk.rawValue
+            currentState.pendingPermissionRisk = "medium"  // Placeholder for LA widget
 
             if top.sessionId == activeSessionId {
                 currentState.lastEvent = "Approval required"
@@ -281,9 +281,6 @@ final class LiveActivityManager {
     }
 
     private func shouldPrioritizePermission(_ lhs: PermissionRequest, _ rhs: PermissionRequest) -> Bool {
-        if lhs.risk.severity != rhs.risk.severity {
-            return lhs.risk.severity > rhs.risk.severity
-        }
         if lhs.timeoutAt != rhs.timeoutAt {
             return lhs.timeoutAt < rhs.timeoutAt
         }
@@ -300,14 +297,9 @@ final class LiveActivityManager {
     }
 
     private func permissionSummaryForLiveActivity(_ request: PermissionRequest) -> String {
-        switch request.risk {
-        case .critical, .high:
-            return "Open Oppi to review command"
-        case .medium, .low:
-            let trimmed = request.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return "Approval requested" }
-            return String(trimmed.prefix(80))
-        }
+        let trimmed = request.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Approval requested" }
+        return String(trimmed.prefix(80))
     }
 
     private func displayToolName(_ tool: String) -> String {
@@ -362,7 +354,7 @@ final class LiveActivityManager {
         if shouldAlertForPermission {
             alertConfiguration = AlertConfiguration(
                 title: "Approval required",
-                body: "Open Oppi to review command and risk",
+                body: "Open Oppi to review command",
                 sound: .default
             )
         } else {

@@ -23,7 +23,7 @@ struct FullScreenCodeView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .topLeading) {
-                Color.tokyoBgDark.ignoresSafeArea()
+                Color.themeBgDark.ignoresSafeArea()
                 codeBody
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -31,7 +31,7 @@ struct FullScreenCodeView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(.tokyoCyan)
+                        .foregroundStyle(.themeCyan)
                 }
                 ToolbarItem(placement: .principal) {
                     titleView
@@ -44,14 +44,15 @@ struct FullScreenCodeView: View {
                             }
                         }
                         .font(.caption)
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                     }
                     copyButton
                 }
             }
             .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(Color.tokyoBgHighlight, for: .navigationBar)
+            .toolbarBackground(Color.themeBgHighlight, for: .navigationBar)
         }
+        .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
     }
 
     // MARK: - Title
@@ -64,36 +65,36 @@ struct FullScreenCodeView: View {
                 if let path = filePath {
                     Text(path.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                         .lineLimit(1)
                 }
                 Text(language ?? "code")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
         case .diff(_, _, let filePath, _):
             VStack(spacing: 1) {
                 if let path = filePath {
                     Text(path.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                         .lineLimit(1)
                 }
                 Text("Diff")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
         case .markdown(_, let filePath):
             VStack(spacing: 1) {
                 if let path = filePath {
                     Text(path.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                         .lineLimit(1)
                 }
                 Text("Markdown")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
         }
     }
@@ -145,13 +146,13 @@ private struct FullScreenSourceBody: View {
         ScrollView(.vertical) {
             Text(content)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .textSelection(.enabled)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
     }
 }
 
@@ -162,7 +163,7 @@ private struct FullScreenMarkdownBody: View {
 
     var body: some View {
         NativeMarkdownReaderView(content: content)
-            .background(Color.tokyoBgDark)
+            .background(Color.themeBgDark)
     }
 }
 
@@ -195,10 +196,10 @@ private final class NativeMarkdownReaderContainerView: UIView {
 
         super.init(frame: frame)
 
-        backgroundColor = UIColor(Color.tokyoBgDark)
+        backgroundColor = UIColor(Color.themeBgDark)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.backgroundColor = UIColor(Color.tokyoBgDark)
+        scrollView.backgroundColor = UIColor(Color.themeBgDark)
         scrollView.alwaysBounceVertical = true
         scrollView.alwaysBounceHorizontal = false
         scrollView.showsVerticalScrollIndicator = true
@@ -286,7 +287,7 @@ private struct FullScreenCodeBody: View {
                 // Gutter
                 Text(numbers)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .multilineTextAlignment(.trailing)
                     .frame(width: gutterWidth, alignment: .trailing)
                     .padding(.horizontal, 6)
@@ -294,7 +295,7 @@ private struct FullScreenCodeBody: View {
 
                 // Separator
                 Rectangle()
-                    .fill(Color.tokyoComment.opacity(0.2))
+                    .fill(Color.themeComment.opacity(0.2))
                     .frame(width: 1)
 
                 // Code
@@ -305,7 +306,7 @@ private struct FullScreenCodeBody: View {
                     } else {
                         Text(content)
                             .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.tokyoFg)
+                            .foregroundStyle(.themeFg)
                     }
                 }
                 .textSelection(.enabled)
@@ -315,7 +316,7 @@ private struct FullScreenCodeBody: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .transaction { transaction in
             transaction.animation = nil
         }
@@ -417,10 +418,10 @@ private struct FullScreenDiffBody: View {
                     }
                 }
             }
-            .background(Color.tokyoBgDark)
+            .background(Color.themeBgDark)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
     }
 
     @ViewBuilder
@@ -548,7 +549,7 @@ private struct CopyIconButton: View {
             }
         } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .foregroundStyle(.tokyoFgDim)
+                .foregroundStyle(.themeFgDim)
         }
     }
 }

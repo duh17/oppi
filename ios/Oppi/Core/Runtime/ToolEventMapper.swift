@@ -11,10 +11,10 @@ import Foundation
 final class ToolEventMapper {
     private var currentToolEventID: String?
 
-    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil) -> AgentEvent {
+    func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil) -> AgentEvent {
         let id = toolCallId ?? UUID().uuidString
         currentToolEventID = id
-        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args)
+        return .toolStart(sessionId: sessionId, toolEventId: id, tool: tool, args: args, callSegments: callSegments)
     }
 
     func output(sessionId: String, output: String, isError: Bool, toolCallId: String? = nil) -> AgentEvent {
@@ -23,10 +23,10 @@ final class ToolEventMapper {
         return .toolOutput(sessionId: sessionId, toolEventId: id, output: output, isError: isError)
     }
 
-    func end(sessionId: String, toolCallId: String? = nil) -> AgentEvent {
+    func end(sessionId: String, toolCallId: String? = nil, details: JSONValue? = nil, isError: Bool = false, resultSegments: [StyledSegment]? = nil) -> AgentEvent {
         let id = toolCallId ?? currentToolEventID ?? UUID().uuidString
         currentToolEventID = nil
-        return .toolEnd(sessionId: sessionId, toolEventId: id)
+        return .toolEnd(sessionId: sessionId, toolEventId: id, details: details, isError: isError, resultSegments: resultSegments)
     }
 
     /// Reset state (e.g., on disconnect/reconnect).

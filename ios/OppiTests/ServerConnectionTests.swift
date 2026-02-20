@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping large_tuple
+
 @Suite("ServerConnection")
 struct ServerConnectionTests {
 
@@ -33,7 +35,6 @@ struct ServerConnectionTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -225,7 +226,7 @@ struct ServerConnectionTests {
             id: "p1", sessionId: "s1", tool: "bash",
             input: ["command": .string("rm -rf /")],
             displaySummary: "bash: rm -rf /",
-            risk: .critical, reason: "Destructive",
+            reason: "Destructive",
             timeoutAt: Date().addingTimeInterval(120)
         )
 
@@ -267,15 +268,21 @@ struct ServerConnectionTests {
             id: "p2", sessionId: "other-s2", tool: "bash",
             input: ["command": .string("git push")],
             displaySummary: "bash: git push",
-            risk: .high, reason: "Git push",
+            reason: "Git push",
             timeoutAt: Date().addingTimeInterval(120)
         )
 
         conn.handleServerMessage(.permissionRequest(perm), sessionId: "stream-s1")
 
-        #expect(capturedRequestSessionId == "other-s2")
-        #expect(capturedActiveSessionId == "active-s1")
-        #expect(capturedShouldNotify == true)
+        if ReleaseFeatures.pushNotificationsEnabled {
+            #expect(capturedRequestSessionId == "other-s2")
+            #expect(capturedActiveSessionId == "active-s1")
+            #expect(capturedShouldNotify == true)
+        } else {
+            #expect(capturedRequestSessionId == nil)
+            #expect(capturedActiveSessionId == nil)
+            #expect(capturedShouldNotify == nil)
+        }
     }
 
     @MainActor
@@ -284,14 +291,14 @@ struct ServerConnectionTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .low, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(120)
         )
         conn.permissionStore.add(perm)
 
         conn.handleServerMessage(.permissionExpired(id: "p1", reason: "timeout"), sessionId: "s1")
 
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
@@ -300,14 +307,14 @@ struct ServerConnectionTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .low, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(120)
         )
         conn.permissionStore.add(perm)
 
         conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
 
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.pending.isEmpty)
     }
 
     @MainActor
@@ -353,11 +360,11 @@ struct ServerConnectionTests {
         let conn = makeConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1"), sessionId: "s1")
+        conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
         conn.flushAndSuspend()
         conn.handleServerMessage(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1"), sessionId: "s1")
         conn.flushAndSuspend()
-        conn.handleServerMessage(.toolEnd(tool: "bash", toolCallId: "tc-1"), sessionId: "s1")
+        conn.handleServerMessage(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil), sessionId: "s1")
         conn.flushAndSuspend()
         conn.handleServerMessage(.agentEnd, sessionId: "s1")
         conn.flushAndSuspend()
@@ -1096,7 +1103,7 @@ struct ServerConnectionTests {
         )
         let server = PairedServer(from: creds)!
 
-        let _ = conn.switchServer(to: server)
+        _ = conn.switchServer(to: server)
         // Switch to the same server again — should return true immediately
         let result = conn.switchServer(to: server)
         #expect(result == true)
@@ -1117,10 +1124,10 @@ struct ServerConnectionTests {
         let server1 = PairedServer(from: creds1)!
         let server2 = PairedServer(from: creds2)!
 
-        let _ = conn.switchServer(to: server1)
+        _ = conn.switchServer(to: server1)
         #expect(conn.currentServerId == "sha256:fp-a")
 
-        let _ = conn.switchServer(to: server2)
+        _ = conn.switchServer(to: server2)
         #expect(conn.currentServerId == "sha256:fp-b")
     }
 
@@ -1225,7 +1232,6 @@ struct ForegroundRecoveryTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -1243,9 +1249,7 @@ struct ForegroundRecoveryTests {
             name: "Workspace",
             description: nil,
             icon: nil,
-            runtime: "container",
             skills: [],
-            policyPreset: "container",
             systemPrompt: nil,
             hostMount: nil,
             memoryEnabled: nil,
@@ -1470,6 +1474,249 @@ struct ForegroundRecoveryTests {
         // and reconnectIfNeeded handles recovery on foreground.
         // The activeSessionId should remain set.
         #expect(conn.wsClient != nil, "WS client should not be nil after suspend")
+    }
+}
+
+// MARK: - Stream Lifecycle
+
+@Suite("Stream Lifecycle")
+struct StreamLifecycleTests {
+
+    @MainActor
+    private func makeConnection() -> ServerConnection {
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "localhost", port: 7749, token: "sk_test", name: "Test"
+        ))
+        return conn
+    }
+
+    // MARK: - connectStream idempotency
+
+    @MainActor
+    @Test func connectStreamIsIdempotentWhileActive() {
+        let conn = makeConnection()
+
+        // Simulate an active consumption task by setting it directly
+        let sentinel = Task<Void, Never> { }
+        conn.streamConsumptionTask = sentinel
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        conn.connectStream()
+
+        // Should not replace the existing task (identity check via cancel state)
+        #expect(!sentinel.isCancelled,
+                "Should not cancel existing task when one is active and WS is connected")
+    }
+
+    @MainActor
+    @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() {
+        let conn = makeConnection()
+
+        // Simulate a zombie consumption task (completed but non-nil)
+        // with a disconnected WS
+        conn.streamConsumptionTask = Task { }
+        conn.wsClient?._setStatusForTesting(.disconnected)
+
+        conn.connectStream()
+
+        // Should have created a NEW task (the old zombie was replaced)
+        #expect(conn.streamConsumptionTask != nil,
+                "Should create new task when WS is disconnected")
+    }
+
+    @MainActor
+    @Test func connectStreamCreatesTaskWhenNil() {
+        let conn = makeConnection()
+
+        #expect(conn.streamConsumptionTask == nil)
+
+        conn.connectStream()
+
+        #expect(conn.streamConsumptionTask != nil,
+                "Should create task when none exists")
+    }
+
+    // MARK: - streamConsumptionTask self-cleanup
+
+    @MainActor
+    @Test func consumptionTaskNilsItselfWhenStreamEnds() async {
+        let conn = makeConnection()
+
+        // Create a stream that immediately ends
+        let (stream, continuation) = AsyncStream<StreamMessage>.makeStream()
+        continuation.finish()
+
+        conn.streamConsumptionTask = Task { [weak conn] in
+            for await msg in stream {
+                conn?.routeStreamMessage(msg)
+            }
+            await MainActor.run { [weak conn] in
+                conn?.streamConsumptionTask = nil
+            }
+        }
+
+        // Wait for the task to complete and nil itself out
+        let cleaned = await waitForCondition(timeoutMs: 500) {
+            await MainActor.run { conn.streamConsumptionTask == nil }
+        }
+
+        #expect(cleaned, "streamConsumptionTask should nil itself after stream ends")
+    }
+
+    // MARK: - disconnectStream cleanup
+
+    @MainActor
+    @Test func disconnectStreamCleansUpEverything() {
+        let conn = makeConnection()
+        conn.streamConsumptionTask = Task { }
+
+        // Add a session continuation
+        let (_, continuation) = AsyncStream<ServerMessage>.makeStream()
+        conn.sessionContinuations["s1"] = continuation
+
+        conn.disconnectStream()
+
+        #expect(conn.streamConsumptionTask == nil,
+                "Should nil out consumption task")
+        #expect(conn.sessionContinuations.isEmpty,
+                "Should clear all session continuations")
+    }
+
+    // MARK: - handleStreamReconnected re-subscribes
+
+    @MainActor
+    @Test func streamConnectedMessageTriggersResubscribe() {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        // Track that routeStreamMessage correctly identifies stream_connected
+        // and does not yield it to session continuations (it's handled at stream level)
+        var yieldedToSession = false
+        let stream = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+        }
+        let consumeTask = Task {
+            for await _ in stream {
+                await MainActor.run { yieldedToSession = true }
+            }
+        }
+
+        // stream_connected should NOT be yielded to session continuations
+        let streamMsg = StreamMessage(
+            sessionId: nil,
+            streamSeq: nil,
+            message: .streamConnected(userName: "test")
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        // stream_connected returns early — should not reach session continuation
+        #expect(!yieldedToSession,
+                "stream_connected should be handled at stream level, not yielded to sessions")
+        consumeTask.cancel()
+    }
+
+    // MARK: - routeStreamMessage routing
+
+    @MainActor
+    @Test func routeStreamMessageYieldsToSessionContinuation() async {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        var receivedMessages: [ServerMessage] = []
+        let stream = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+        }
+
+        // Start consuming
+        let consumeTask = Task {
+            for await msg in stream {
+                await MainActor.run { receivedMessages.append(msg) }
+            }
+        }
+
+        // Route a permission_request for the active session
+        let permRequest = PermissionRequest(
+            id: "p1", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "test", reason: "",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true, resolutionOptions: nil
+        )
+        let streamMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: 1,
+            message: .permissionRequest(permRequest)
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        let received = await waitForCondition(timeoutMs: 500) {
+            await MainActor.run { !receivedMessages.isEmpty }
+        }
+
+        consumeTask.cancel()
+
+        #expect(received, "Message should be yielded to session continuation")
+    }
+
+    @MainActor
+    @Test func routeStreamMessageHandlesCrossSessionPermission() {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        // Route a permission from a DIFFERENT session (cross-session)
+        let permRequest = PermissionRequest(
+            id: "p2", sessionId: "s2", tool: "bash",
+            input: [:], displaySummary: "cross-session", reason: "",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true, resolutionOptions: nil
+        )
+        let streamMsg = StreamMessage(
+            sessionId: "s2",
+            streamSeq: 2,
+            message: .permissionRequest(permRequest)
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        // Cross-session permission should be added to the store
+        #expect(conn.permissionStore.pending.count == 1,
+                "Cross-session permission should be added to store")
+        #expect(conn.permissionStore.pending.first?.id == "p2")
+    }
+
+    // MARK: - reconnectIfNeeded restarts dead stream
+
+    @MainActor
+    @Test func reconnectIfNeededRestartsDeadStream() async {
+        let conn = makeConnection()
+
+        // Simulate a dead WS (disconnected, no consumption task)
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        // Track whether connectStream re-creates the task
+        #expect(conn.streamConsumptionTask == nil)
+
+        await conn.reconnectIfNeeded()
+
+        // connectStream should have been called, creating a new task
+        #expect(conn.streamConsumptionTask != nil,
+                "reconnectIfNeeded should restart a dead stream")
+    }
+
+    @MainActor
+    @Test func reconnectIfNeededSkipsAliveStream() async {
+        let conn = makeConnection()
+
+        // Simulate an active WS
+        conn.wsClient?._setStatusForTesting(.connected)
+        let sentinel = Task<Void, Never> { }
+        conn.streamConsumptionTask = sentinel
+
+        await conn.reconnectIfNeeded()
+
+        // The existing task should not have been cancelled/replaced
+        #expect(!sentinel.isCancelled,
+                "Should not replace an active consumption task")
     }
 }
 

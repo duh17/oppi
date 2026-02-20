@@ -101,6 +101,44 @@ describe("RuleStore", () => {
     });
   });
 
+  describe("update", () => {
+    it("updates a persisted rule and writes changes to disk", () => {
+      const store = new RuleStore(rulesPath);
+      const rule = store.add(makeRule({ description: "before" }));
+
+      const updated = store.update(rule.id, {
+        effect: "deny",
+        description: "after",
+        match: { executable: "git", commandPattern: "git push*" },
+      });
+
+      expect(updated).toBeTruthy();
+      expect(updated?.effect).toBe("deny");
+      expect(updated?.description).toBe("after");
+      expect(updated?.match?.executable).toBe("git");
+
+      const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
+      expect(onDisk[0].effect).toBe("deny");
+      expect(onDisk[0].description).toBe("after");
+      expect(onDisk[0].match.executable).toBe("git");
+    });
+
+    it("updates session rules in-memory", () => {
+      const store = new RuleStore(rulesPath);
+      const rule = store.add(makeRule({ scope: "session", sessionId: "s1", tool: "bash" }));
+
+      const updated = store.update(rule.id, { tool: "write", expiresAt: Date.now() + 10_000 });
+      expect(updated?.tool).toBe("write");
+      expect(updated?.expiresAt).toBeGreaterThan(Date.now());
+      expect(existsSync(rulesPath)).toBe(false);
+    });
+
+    it("returns null for unknown id", () => {
+      const store = new RuleStore(rulesPath);
+      expect(store.update("missing", { description: "nope" })).toBeNull();
+    });
+  });
+
   // ── Queries ──
 
   describe("getGlobal", () => {

@@ -44,7 +44,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 6
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
@@ -61,6 +61,12 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleDisplayName: Oppi
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: dev.chenda.oppi.invite
+            CFBundleURLSchemes:
+              - oppi
+              - pi
         UILaunchScreen: {}
         UIBackgroundModes:
           - remote-notification
@@ -73,6 +79,7 @@ targets:
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
         SentryDSN: "$(SENTRY_DSN)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -111,7 +118,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 6
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         GENERATE_INFOPLIST_FILE: true

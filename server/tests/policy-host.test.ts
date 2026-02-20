@@ -150,6 +150,14 @@ describe("host preset: host-control flows gated", () => {
     expect(policy.evaluate(bash("./ios/scripts/build-install.sh --launch")).action).toBe("ask");
   });
 
+  it("asks for build-install script after cd ios", () => {
+    expect(
+      policy.evaluate(
+        bash("cd ios && scripts/build-install.sh --launch --device 00000000-0000-0000-0000-000000000000"),
+      ).action,
+    ).toBe("ask");
+  });
+
   it("asks for direct device install via devicectl", () => {
     expect(
       policy.evaluate(

@@ -11,35 +11,48 @@
 import { globMatch } from "./glob.js";
 import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname as pathDirname, resolve as pathResolve } from "node:path";
+import { join, dirname as pathDirname } from "node:path";
 import type { LearnedRule } from "./rules.js";
+import type {
+  PolicyConfig as DeclarativePolicyConfig,
+  PolicyPermission as DeclarativePolicyPermission,
+} from "./types.js";
 
 // ─── Types ───
 
 export type PolicyAction = "allow" | "ask" | "deny";
-export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface PolicyRule {
   tool?: string; // "bash" | "write" | "edit" | "read" | "*"
   exec?: string; // For bash: executable name ("git", "rm", "sudo")
   pattern?: string; // Glob against command or path
   pathWithin?: string; // Path must be inside this directory
+  domain?: string; // Browser domain match (for nav.js)
   action: PolicyAction;
   label?: string;
-  risk?: RiskLevel;
 }
 
-export interface PolicyPreset {
+/** Resolved heuristic actions (false = disabled). */
+interface ResolvedHeuristics {
+  pipeToShell: PolicyAction | false;
+  dataEgress: PolicyAction | false;
+  secretEnvInUrl: PolicyAction | false;
+  secretFileAccess: PolicyAction | false;
+  browserUnknownDomain: PolicyAction | false;
+  browserEval: PolicyAction | false;
+}
+
+interface CompiledPolicy {
   name: string;
   hardDeny: PolicyRule[];
   rules: PolicyRule[];
   defaultAction: PolicyAction;
+  heuristics: ResolvedHeuristics;
 }
 
 export interface PolicyDecision {
   action: PolicyAction;
   reason: string;
-  risk: RiskLevel;
   layer:
     | "hard_deny"
     | "learned_deny"
@@ -301,35 +314,6 @@ export function splitBashCommandChain(command: string): string[] {
 }
 
 const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
-
-const HOST_SAFE_READ_ONLY_EXECUTABLES = new Set([
-  "ls",
-  "cat",
-  "head",
-  "tail",
-  "grep",
-  "rg",
-  "find",
-  "wc",
-  "diff",
-  "tree",
-  "jq",
-  "sort",
-  "uniq",
-  "cut",
-  "stat",
-  "file",
-]);
-
-const HOST_SAFE_GIT_SUBCOMMANDS = new Set([
-  "status",
-  "log",
-  "diff",
-  "show",
-  "branch",
-  "blame",
-  "rev-parse",
-]);
 
 // ─── Data Egress Detection ───
 
@@ -933,28 +917,256 @@ export function listAllowlistDomains(allowlistPath?: string): string[] {
   return Array.from(domains).sort();
 }
 
-// ─── Presets ───
+// ─── Default Policy Config ───
 
 /**
- * Container preset — the default for oppi-server.
+ * Default policy configuration for new servers.
  *
- * Philosophy: the Apple container IS the security boundary.
- * The policy only gates things the container can't protect against:
- * - Credential exfiltration (API keys synced into container)
- * - Destructive operations on bind-mounted workspace data
- * - Escape attempts (sudo, privilege escalation)
+ * Philosophy: allow most local dev work, ask for external/destructive actions,
+ * block credential exfiltration and privilege escalation.
  *
- * Everything else flows through. This mirrors how pi's permission-gate
- * works on the dev machine (regex-matched dangerous patterns only), but even
- * more permissive because there's no host system to damage.
+ * Structural heuristics (pipe-to-shell, data egress, browser domain checks)
+ * are always active in evaluate() regardless of this config.
  */
-export const PRESET_CONTAINER: PolicyPreset = {
+export function defaultPolicy(): DeclarativePolicyConfig {
+  return {
+    schemaVersion: 1,
+    mode: "default",
+    description: "Developer-friendly defaults: allow local work, ask for external/destructive actions, block credential exfiltration.",
+    fallback: "allow",
+    guardrails: [
+      // ── Privilege escalation ──
+      {
+        id: "block-sudo",
+        decision: "block",
+        label: "Block sudo",
+        reason: "Prevents privilege escalation",
+        immutable: true,
+        match: { tool: "bash", executable: "sudo" },
+      },
+      {
+        id: "block-doas",
+        decision: "block",
+        label: "Block doas",
+        reason: "Prevents privilege escalation",
+        immutable: true,
+        match: { tool: "bash", executable: "doas" },
+      },
+      {
+        id: "block-su-root",
+        decision: "block",
+        label: "Block su root",
+        reason: "Prevents privilege escalation",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "su -*root*" },
+      },
+
+      // ── Credential exfiltration ──
+      {
+        id: "block-auth-json-bash",
+        decision: "block",
+        label: "Protect API keys (bash)",
+        reason: "Prevents reading auth.json via bash",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "*auth.json*" },
+      },
+      {
+        id: "block-auth-json-read",
+        decision: "block",
+        label: "Protect API keys (read)",
+        reason: "Prevents reading auth.json via read tool",
+        immutable: true,
+        match: { tool: "read", pathMatches: "**/agent/auth.json" },
+      },
+      {
+        id: "block-printenv-key",
+        decision: "block",
+        label: "Protect env secrets (_KEY)",
+        reason: "Prevents leaking API keys from env",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "*printenv*_KEY*" },
+      },
+      {
+        id: "block-printenv-secret",
+        decision: "block",
+        label: "Protect env secrets (_SECRET)",
+        reason: "Prevents leaking secrets from env",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "*printenv*_SECRET*" },
+      },
+      {
+        id: "block-printenv-token",
+        decision: "block",
+        label: "Protect env secrets (_TOKEN)",
+        reason: "Prevents leaking tokens from env",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "*printenv*_TOKEN*" },
+      },
+      {
+        id: "block-ssh-keys",
+        decision: "block",
+        label: "Block SSH private key reads",
+        reason: "Prevents reading SSH private keys",
+        immutable: true,
+        match: { tool: "read", pathMatches: "**/.ssh/id_*" },
+      },
+
+      // ── Catastrophic operations ──
+      {
+        id: "block-root-rm",
+        decision: "block",
+        label: "Block destructive root delete",
+        reason: "Prevents catastrophic filesystem deletion",
+        immutable: true,
+        match: { tool: "bash", executable: "rm", commandMatches: "rm -rf /*" },
+      },
+      {
+        id: "block-fork-bomb",
+        decision: "block",
+        label: "Block fork bomb",
+        reason: "Prevents fork bomb denial of service",
+        immutable: true,
+        match: { tool: "bash", commandMatches: "*:(){ :|:& };*" },
+      },
+    ],
+    permissions: [
+      // ── Destructive local operations → ask ──
+      {
+        id: "ask-rm-recursive",
+        decision: "ask",
+        label: "Recursive delete",
+        match: { tool: "bash", executable: "rm", commandMatches: "rm *-*r*" },
+      },
+      {
+        id: "ask-rm-force",
+        decision: "ask",
+        label: "Force delete",
+        match: { tool: "bash", executable: "rm", commandMatches: "rm *-*f*" },
+      },
+
+      // ── Git external operations → ask ──
+      {
+        id: "ask-git-push",
+        decision: "ask",
+        label: "Git push",
+        match: { tool: "bash", executable: "git", commandMatches: "git push*" },
+      },
+
+      // ── Package publishing → ask ──
+      {
+        id: "ask-npm-publish",
+        decision: "ask",
+        label: "npm publish",
+        match: { tool: "bash", executable: "npm", commandMatches: "npm publish*" },
+      },
+      {
+        id: "ask-yarn-publish",
+        decision: "ask",
+        label: "yarn publish",
+        match: { tool: "bash", executable: "yarn", commandMatches: "yarn publish*" },
+      },
+      {
+        id: "ask-pypi-upload",
+        decision: "ask",
+        label: "PyPI upload",
+        match: { tool: "bash", executable: "twine", commandMatches: "twine upload*" },
+      },
+
+      // ── Remote access → ask ──
+      {
+        id: "ask-ssh",
+        decision: "ask",
+        label: "SSH connection",
+        match: { tool: "bash", executable: "ssh" },
+      },
+      {
+        id: "ask-scp",
+        decision: "ask",
+        label: "SCP transfer",
+        match: { tool: "bash", executable: "scp" },
+      },
+      {
+        id: "ask-sftp",
+        decision: "ask",
+        label: "SFTP transfer",
+        match: { tool: "bash", executable: "sftp" },
+      },
+
+      // ── Raw sockets → ask ──
+      {
+        id: "ask-nc",
+        decision: "ask",
+        label: "Netcat connection",
+        match: { tool: "bash", executable: "nc" },
+      },
+      {
+        id: "ask-ncat",
+        decision: "ask",
+        label: "Netcat connection",
+        match: { tool: "bash", executable: "ncat" },
+      },
+      {
+        id: "ask-socat",
+        decision: "ask",
+        label: "Socket relay",
+        match: { tool: "bash", executable: "socat" },
+      },
+      {
+        id: "ask-telnet",
+        decision: "ask",
+        label: "Telnet connection",
+        match: { tool: "bash", executable: "telnet" },
+      },
+
+      // ── Local machine control → ask ──
+      {
+        id: "ask-build-install",
+        decision: "ask",
+        label: "Reinstall iOS app",
+        match: { tool: "bash", commandMatches: "*scripts/build-install.sh*" },
+      },
+      {
+        id: "ask-xcrun-install",
+        decision: "ask",
+        label: "Install app on physical device",
+        match: { tool: "bash", executable: "xcrun", commandMatches: "xcrun devicectl device install app*" },
+      },
+      {
+        id: "ask-ios-dev-up",
+        decision: "ask",
+        label: "Restart server and deploy app",
+        match: { tool: "bash", commandMatches: "*scripts/ios-dev-up.sh*" },
+      },
+    ],
+    heuristics: {
+      pipeToShell: "ask",
+      dataEgress: "ask",
+      secretEnvInUrl: "ask",
+      secretFileAccess: "block",
+      browserUnknownDomain: "ask",
+      browserEval: "ask",
+    },
+  };
+}
+
+/** Default heuristic settings (used when heuristics field is omitted from config). */
+const DEFAULT_HEURISTICS: ResolvedHeuristics = {
+  pipeToShell: "ask",
+  dataEgress: "ask",
+  secretEnvInUrl: "ask",
+  secretFileAccess: "deny",
+  browserUnknownDomain: "ask",
+  browserEval: "ask",
+};
+
+// ── Legacy: kept only for test compatibility ──
+const BUILTIN_CONTAINER_POLICY: CompiledPolicy = {
   name: "container",
   hardDeny: [
     // Privilege escalation — can't escape container, but deny on principle
-    { tool: "bash", exec: "sudo", action: "deny", label: "No sudo", risk: "critical" },
-    { tool: "bash", exec: "doas", action: "deny", label: "No doas", risk: "critical" },
-    { tool: "bash", pattern: "su -*root*", action: "deny", label: "No su root", risk: "critical" },
+    { tool: "bash", exec: "sudo", action: "deny", label: "No sudo" },
+    { tool: "bash", exec: "doas", action: "deny", label: "No doas" },
+    { tool: "bash", pattern: "su -*root*", action: "deny", label: "No su root" },
 
     // Credential exfiltration — API keys are synced into ~/.pi/agent/auth.json
     {
@@ -962,35 +1174,30 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "*auth.json*",
       action: "deny",
       label: "Protect API keys",
-      risk: "critical",
     },
     {
       tool: "read",
       pattern: "**/agent/auth.json",
       action: "deny",
       label: "Protect API keys",
-      risk: "critical",
     },
     {
       tool: "bash",
       pattern: "*printenv*_KEY*",
       action: "deny",
       label: "Protect env secrets",
-      risk: "critical",
     },
     {
       tool: "bash",
       pattern: "*printenv*_SECRET*",
       action: "deny",
       label: "Protect env secrets",
-      risk: "critical",
     },
     {
       tool: "bash",
       pattern: "*printenv*_TOKEN*",
       action: "deny",
       label: "Protect env secrets",
-      risk: "critical",
     },
 
     // Fork bomb
@@ -999,7 +1206,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "*:(){ :|:& };*",
       action: "deny",
       label: "Fork bomb",
-      risk: "critical",
     },
   ],
   rules: [
@@ -1017,7 +1223,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git push*",
       action: "ask",
       label: "Git push",
-      risk: "medium",
     },
     {
       tool: "bash",
@@ -1025,7 +1230,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git remote *add*",
       action: "ask",
       label: "Add git remote",
-      risk: "medium",
     },
     {
       tool: "bash",
@@ -1033,7 +1237,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git remote *set-url*",
       action: "ask",
       label: "Change git remote",
-      risk: "medium",
     },
 
     // Package publishing
@@ -1043,7 +1246,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "npm publish*",
       action: "ask",
       label: "npm publish",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1051,7 +1253,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "npx *publish*",
       action: "ask",
       label: "npm publish",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1059,7 +1260,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "yarn publish*",
       action: "ask",
       label: "yarn publish",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1067,7 +1267,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "pip *upload*",
       action: "ask",
       label: "pip upload",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1075,19 +1274,18 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "twine upload*",
       action: "ask",
       label: "PyPI upload",
-      risk: "high",
     },
 
     // Remote access (always external)
-    { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
-    { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
-    { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
-    { tool: "bash", exec: "rsync", action: "ask", label: "rsync transfer", risk: "medium" },
+    { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection" },
+    { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer" },
+    { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer" },
+    { tool: "bash", exec: "rsync", action: "ask", label: "rsync transfer" },
 
     // Raw sockets
-    { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection", risk: "high" },
-    { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection", risk: "high" },
-    { tool: "bash", exec: "socat", action: "ask", label: "Socket relay", risk: "high" },
+    { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection" },
+    { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection" },
+    { tool: "bash", exec: "socat", action: "ask", label: "Socket relay" },
 
     // ── Destructive operations → ask ──
     // These can damage bind-mounted workspace data
@@ -1099,7 +1297,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "rm *-*r*",
       action: "ask",
       label: "Recursive delete",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1107,7 +1304,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "rm *-*f*",
       action: "ask",
       label: "Force delete",
-      risk: "high",
     },
 
     // Git destructive operations
@@ -1117,7 +1313,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git push*--force*",
       action: "ask",
       label: "Force push",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1125,7 +1320,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git push*-f*",
       action: "ask",
       label: "Force push",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1133,7 +1327,6 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git reset --hard*",
       action: "ask",
       label: "Hard reset",
-      risk: "high",
     },
     {
       tool: "bash",
@@ -1141,11 +1334,11 @@ export const PRESET_CONTAINER: PolicyPreset = {
       pattern: "git clean*-*f*",
       action: "ask",
       label: "Git clean",
-      risk: "high",
     },
   ],
-  // Container provides isolation — allow by default
+  // Legacy preset default behavior
   defaultAction: "allow",
+  heuristics: DEFAULT_HEURISTICS,
 };
 
 const HOST_HARD_DENY: PolicyRule[] = [
@@ -1155,35 +1348,30 @@ const HOST_HARD_DENY: PolicyRule[] = [
     pattern: "*auth.json*",
     action: "deny",
     label: "Protect API keys",
-    risk: "critical",
   },
   {
     tool: "read",
     pattern: "**/agent/auth.json",
     action: "deny",
     label: "Protect API keys",
-    risk: "critical",
   },
   {
     tool: "bash",
     pattern: "*printenv*_KEY*",
     action: "deny",
     label: "Protect env secrets",
-    risk: "critical",
   },
   {
     tool: "bash",
     pattern: "*printenv*_SECRET*",
     action: "deny",
     label: "Protect env secrets",
-    risk: "critical",
   },
   {
     tool: "bash",
     pattern: "*printenv*_TOKEN*",
     action: "deny",
     label: "Protect env secrets",
-    risk: "critical",
   },
 
   // Fork bomb
@@ -1192,7 +1380,6 @@ const HOST_HARD_DENY: PolicyRule[] = [
     pattern: "*:(){ :|:& };*",
     action: "deny",
     label: "Fork bomb",
-    risk: "critical",
   },
 ];
 
@@ -1207,7 +1394,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "rm *-*r*",
     action: "ask",
     label: "Recursive delete",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1215,7 +1401,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "rm *-*f*",
     action: "ask",
     label: "Force delete",
-    risk: "high",
   },
 
   // ── External actions → ask ──
@@ -1228,7 +1413,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "git push*",
     action: "ask",
     label: "Git push",
-    risk: "medium",
   },
 
   // Package publishing
@@ -1238,7 +1422,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "npm publish*",
     action: "ask",
     label: "npm publish",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1246,7 +1429,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "yarn publish*",
     action: "ask",
     label: "yarn publish",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1254,27 +1436,25 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "twine upload*",
     action: "ask",
     label: "PyPI upload",
-    risk: "high",
   },
 
   // Remote access
-  { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection", risk: "high" },
-  { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer", risk: "high" },
-  { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer", risk: "high" },
+  { tool: "bash", exec: "ssh", action: "ask", label: "SSH connection" },
+  { tool: "bash", exec: "scp", action: "ask", label: "SCP transfer" },
+  { tool: "bash", exec: "sftp", action: "ask", label: "SFTP transfer" },
 
   // Raw sockets (can exfiltrate data to arbitrary endpoints)
-  { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection", risk: "high" },
-  { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection", risk: "high" },
-  { tool: "bash", exec: "socat", action: "ask", label: "Socket relay", risk: "high" },
-  { tool: "bash", exec: "telnet", action: "ask", label: "Telnet connection", risk: "high" },
+  { tool: "bash", exec: "nc", action: "ask", label: "Netcat connection" },
+  { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection" },
+  { tool: "bash", exec: "socat", action: "ask", label: "Socket relay" },
+  { tool: "bash", exec: "telnet", action: "ask", label: "Telnet connection" },
 
-  // Local host-control flows (explicit approval required in host mode)
+  // Local machine control flows (explicit approval required)
   {
     tool: "bash",
-    pattern: "*ios/scripts/build-install.sh*",
+    pattern: "*scripts/build-install.sh*",
     action: "ask",
     label: "Reinstall iOS app",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1282,14 +1462,12 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "xcrun devicectl device install app*",
     action: "ask",
     label: "Install app on physical device",
-    risk: "high",
   },
   {
     tool: "bash",
     pattern: "*scripts/ios-dev-up.sh*",
     action: "ask",
     label: "Restart oppi-server server and deploy app",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1297,7 +1475,6 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "npx tsx src/cli.ts serve*",
     action: "ask",
     label: "Start/restart oppi-server server",
-    risk: "high",
   },
   {
     tool: "bash",
@@ -1305,67 +1482,79 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
     pattern: "tsx src/cli.ts serve*",
     action: "ask",
     label: "Start/restart oppi-server server",
-    risk: "high",
   },
 ];
 
 /**
- * Host preset (developer trust mode) — for pi running directly on the Mac.
+ * Default local policy mode (developer trust).
  *
  * Philosophy: behave like pi CLI. Tools are mostly free-flowing.
  * The gate asks only for external/high-impact actions and denies secret exfil.
  */
-export const PRESET_HOST: PolicyPreset = {
-  name: "host",
+const BUILTIN_HOST_POLICY: CompiledPolicy = {
+  name: "default",
   hardDeny: HOST_HARD_DENY,
   rules: HOST_EXTERNAL_ASK_RULES,
   defaultAction: "allow",
+  heuristics: DEFAULT_HEURISTICS,
 };
 
-/**
- * Host preset (standard mode) — approval-first on host runtime.
- *
- * Philosophy: safer defaults for non-technical users.
- * - read-only actions in workspace bounds auto-allow
- * - external/high-impact actions ask
- * - everything else asks by default
- */
-export const PRESET_HOST_STANDARD: PolicyPreset = {
-  name: "host_standard",
-  hardDeny: HOST_HARD_DENY,
-  rules: HOST_EXTERNAL_ASK_RULES,
-  defaultAction: "ask",
-};
+function resolveBuiltInPolicy(mode: string): CompiledPolicy | undefined {
+  switch (mode) {
+    case "default":
+      return BUILTIN_HOST_POLICY;
+    case "container":
+      return BUILTIN_CONTAINER_POLICY;
+    case "host":
+      return BUILTIN_HOST_POLICY;
+    default:
+      return undefined;
+  }
+}
 
-/**
- * Host preset (locked mode) — deny unknowns on host runtime.
- *
- * Philosophy: high-control environment.
- * - read-only actions in workspace bounds auto-allow
- * - known tools ask for explicit user approval
- * - unknown tools are denied by default
- */
-export const PRESET_HOST_LOCKED: PolicyPreset = {
-  name: "host_locked",
-  hardDeny: HOST_HARD_DENY,
-  rules: [
-    ...HOST_EXTERNAL_ASK_RULES,
-    { tool: "read", action: "ask", label: "Read file", risk: "medium" },
-    { tool: "find", action: "ask", label: "Find files", risk: "medium" },
-    { tool: "ls", action: "ask", label: "List directory", risk: "medium" },
-    { tool: "write", action: "ask", label: "Write file", risk: "high" },
-    { tool: "edit", action: "ask", label: "Edit file", risk: "high" },
-    { tool: "bash", action: "ask", label: "Command execution", risk: "high" },
-  ],
-  defaultAction: "deny",
-};
+function mapDecisionToAction(decision: "allow" | "ask" | "block"): PolicyAction {
+  if (decision === "block") return "deny";
+  return decision;
+}
 
-export const PRESETS: Record<string, PolicyPreset> = {
-  container: PRESET_CONTAINER,
-  host: PRESET_HOST,
-  host_standard: PRESET_HOST_STANDARD,
-  host_locked: PRESET_HOST_LOCKED,
-};
+function mapPermissionToRule(permission: DeclarativePolicyPermission): PolicyRule {
+  const match = permission.match;
+
+  return {
+    tool: match.tool,
+    exec: match.executable,
+    pattern: match.commandMatches || match.pathMatches,
+    pathWithin: match.pathWithin,
+    domain: match.domain,
+    action: mapDecisionToAction(permission.decision),
+    label: permission.label || permission.reason,
+  };
+}
+
+function resolveHeuristics(h?: import("./types.js").PolicyHeuristics): ResolvedHeuristics {
+  if (!h) return { ...DEFAULT_HEURISTICS };
+  return {
+    pipeToShell: h.pipeToShell === false ? false : mapDecisionToAction(h.pipeToShell || "ask"),
+    dataEgress: h.dataEgress === false ? false : mapDecisionToAction(h.dataEgress || "ask"),
+    secretEnvInUrl: h.secretEnvInUrl === false ? false : mapDecisionToAction(h.secretEnvInUrl || "ask"),
+    secretFileAccess: h.secretFileAccess === false ? false : mapDecisionToAction(h.secretFileAccess || "block"),
+    browserUnknownDomain: h.browserUnknownDomain === false ? false : mapDecisionToAction(h.browserUnknownDomain || "ask"),
+    browserEval: h.browserEval === false ? false : mapDecisionToAction(h.browserEval || "ask"),
+  };
+}
+
+function compileDeclarativePolicy(policy: DeclarativePolicyConfig): CompiledPolicy {
+  return {
+    name: policy.mode || "declarative",
+    hardDeny: policy.guardrails
+      .filter((rule) => rule.immutable || rule.decision === "block")
+      .map(mapPermissionToRule)
+      .map((rule) => ({ ...rule, action: "deny" as const })),
+    rules: policy.permissions.map(mapPermissionToRule),
+    defaultAction: mapDecisionToAction(policy.fallback),
+    heuristics: resolveHeuristics(policy.heuristics),
+  };
+}
 
 // ─── Per-Session Config ───
 
@@ -1383,7 +1572,7 @@ export interface PolicyConfig {
   allowedPaths: PathAccess[];
 
   /**
-   * Extra executables to auto-allow on host.
+   * Extra executables to auto-allow for this workspace.
    * Use for dev runtimes (node, python3, make, cargo, etc.) that need
    * to run in a specific workspace but CAN execute arbitrary code.
    *
@@ -1394,24 +1583,27 @@ export interface PolicyConfig {
   allowedExecutables?: string[];
 }
 
-// Host standard/locked presets reuse the same policy engine with extra
-// constrained-host heuristics (safe read-only bash + workspace path bounds)
-// implemented in evaluate().
-
 // ─── Policy Engine ───
 
 export class PolicyEngine {
-  private preset: PolicyPreset;
+  private policy: CompiledPolicy;
   private config: PolicyConfig;
 
-  constructor(presetName: string = "container", config?: PolicyConfig) {
-    const preset = PRESETS[presetName];
-    if (!preset) {
-      throw new Error(
-        `Unknown policy preset: ${presetName}. Available: ${Object.keys(PRESETS).join(", ")}`,
-      );
+  constructor(policyOrMode: string | DeclarativePolicyConfig = "default", config?: PolicyConfig) {
+    if (typeof policyOrMode === "string") {
+      // Legacy string modes — resolve to built-in compiled policy for test compat.
+      // Production always passes DeclarativePolicyConfig from JSON.
+      const builtInPolicy = resolveBuiltInPolicy(policyOrMode);
+      if (!builtInPolicy) {
+        // Unknown mode: fall back to compiling the default policy config
+        this.policy = compileDeclarativePolicy(defaultPolicy());
+      } else {
+        this.policy = builtInPolicy;
+      }
+    } else {
+      this.policy = compileDeclarativePolicy(policyOrMode);
     }
-    this.preset = preset;
+
     this.config = config || { allowedPaths: [] };
   }
 
@@ -1421,69 +1613,46 @@ export class PolicyEngine {
    * Layered evaluation:
    * 1. Hard denies (immutable — credential exfiltration, privilege escalation)
    * 2. Rules (destructive operations on workspace data)
-   * 3. Default action (allow for container preset)
+   * 3. Default action (allow for built-in presets)
    *
-   * Pipes and subshells are NOT auto-escalated. The container is the
-   * security boundary — `grep foo | wc -l` shouldn't need phone approval.
+   * Pipes and subshells are NOT auto-escalated. Read-only command composition
+   * like `grep foo | wc -l` should not require phone approval.
    */
   evaluate(req: GateRequest): PolicyDecision {
     const { tool, input } = req;
 
     // Layer 1: Hard denies (immutable)
-    for (const rule of this.preset.hardDeny) {
+    for (const rule of this.policy.hardDeny) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: "deny",
           reason: rule.label || "Blocked by hard deny rule",
-          risk: rule.risk || "critical",
           layer: "hard_deny",
           ruleLabel: rule.label,
         };
       }
     }
 
-    // Layer 1.1: Structural hard denies (immutable)
-    const structuralHardDeny = this.evaluateStructuralHardDeny(tool, input);
-    if (structuralHardDeny) {
-      return structuralHardDeny;
-    }
-
-    // Layer 1.25: Constrained host auto-allow (safe read-only commands)
-    // Applies only to host_standard / host_locked presets.
-    if (tool === "bash") {
-      const command = (input as { command?: string }).command || "";
-      if (this.isConstrainedHostPreset() && this.isSafeReadOnlyHostBash(command)) {
-        return {
-          action: "allow",
-          reason: "Host read-only command",
-          risk: "low",
-          layer: "rule",
-          ruleLabel: "Host safe read-only",
-        };
+    // Layer 1.1: Secret file access heuristic (configurable)
+    if (this.policy.heuristics.secretFileAccess !== false) {
+      const secretDeny = this.evaluateSecretFileAccess(tool, input);
+      if (secretDeny) {
+        secretDeny.action = this.policy.heuristics.secretFileAccess;
+        return secretDeny;
       }
     }
 
-    // Layer 1.3: Constrained host path bounds (file tools)
-    // Auto-allows reads/writes only when inside configured workspace paths.
-    const constrainedPathDecision = this.evaluateConstrainedHostPathAccess(tool, input);
-    if (constrainedPathDecision) {
-      return constrainedPathDecision;
-    }
-
-    // Layer 1.5: Structural heuristics (not glob-based)
-    // These catch patterns that glob rules can't express reliably.
+    // Layer 1.5: Structural heuristics (configurable via policy.heuristics)
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {
-        // Pipe to shell — ANY content piped to sh/bash is arbitrary code execution.
-        // This catches curl|sh, base64 -d|bash, echo|sh, cat script.sh|bash, etc.
-        if (/\|\s*(ba)?sh\b/.test(segment)) {
+        // Pipe to shell
+        if (this.policy.heuristics.pipeToShell !== false && /\|\s*(ba)?sh\b/.test(segment)) {
           return {
-            action: "ask",
+            action: this.policy.heuristics.pipeToShell,
             reason: "Pipe to shell (arbitrary code execution)",
-            risk: "high",
             layer: "rule",
             ruleLabel: "Pipe to shell",
           };
@@ -1493,24 +1662,21 @@ export class PolicyEngine {
         for (const stage of stages) {
           const parsed = parseBashCommand(stage);
 
-          // Data egress — curl/wget with flags that send data externally.
-          // Catches: curl -d, curl --data, curl -F, curl --upload-file,
-          //          curl -X POST/PUT/DELETE/PATCH, wget --post-data, etc.
-          if (isDataEgress(parsed)) {
+          // Data egress
+          if (this.policy.heuristics.dataEgress !== false && isDataEgress(parsed)) {
             return {
-              action: "ask",
+              action: this.policy.heuristics.dataEgress,
               reason: "Outbound data transfer",
-              risk: "medium",
               layer: "rule",
               ruleLabel: "Data egress",
             };
           }
 
-          if (hasSecretEnvExpansionInUrl(parsed)) {
+          // Secret env expansion in URLs
+          if (this.policy.heuristics.secretEnvInUrl !== false && hasSecretEnvExpansionInUrl(parsed)) {
             return {
-              action: "ask",
+              action: this.policy.heuristics.secretEnvInUrl,
               reason: "Possible secret env exfiltration in URL",
-              risk: "high",
               layer: "rule",
               ruleLabel: "Secret env expansion in URL",
             };
@@ -1520,8 +1686,6 @@ export class PolicyEngine {
     }
 
     // Layer 1.6: Web-browser skill commands
-    // Recognize browser skill invocations and apply domain-based policy.
-    // Works on BOTH container and host presets.
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
       const browser = parseBrowserCommand(command);
@@ -1531,7 +1695,6 @@ export class PolicyEngine {
           return {
             action: "allow",
             reason: `Browser read-only: ${browser.script}`,
-            risk: "low",
             layer: "rule",
             ruleLabel: "Browser read-only",
           };
@@ -1542,39 +1705,37 @@ export class PolicyEngine {
           return {
             action: "allow",
             reason: "Launch browser",
-            risk: "low",
             layer: "rule",
             ruleLabel: "Browser start",
           };
         }
 
-        // nav.js — check shared fetch domain allowlist (~/.config/fetch/allowed_domains.txt)
+        // nav.js — check shared fetch domain allowlist
         if (browser.script === "nav.js" && browser.domain) {
           if (isInFetchAllowlist(browser.domain)) {
             return {
               action: "allow",
               reason: `Allowed domain: ${browser.domain}`,
-              risk: "low",
               layer: "rule",
               ruleLabel: "Browser domain allowlist",
             };
           }
-          // Domain not in allowlist — ask
-          return {
-            action: "ask",
-            reason: `Browser navigation to unlisted domain: ${browser.domain}`,
-            risk: "medium",
-            layer: "rule",
-            ruleLabel: "Browser unknown domain",
-          };
+          // Domain not in allowlist
+          if (this.policy.heuristics.browserUnknownDomain !== false) {
+            return {
+              action: this.policy.heuristics.browserUnknownDomain,
+              reason: `Browser navigation to unlisted domain: ${browser.domain}`,
+              layer: "rule",
+              ruleLabel: "Browser unknown domain",
+            };
+          }
         }
 
-        // eval.js — executing arbitrary JS in the browser. Always ask.
-        if (browser.script === "eval.js") {
+        // eval.js — arbitrary JS execution
+        if (browser.script === "eval.js" && this.policy.heuristics.browserEval !== false) {
           return {
-            action: "ask",
+            action: this.policy.heuristics.browserEval,
             reason: "Browser JS execution",
-            risk: "medium",
             layer: "rule",
             ruleLabel: "Browser eval",
           };
@@ -1585,7 +1746,6 @@ export class PolicyEngine {
           return {
             action: "allow",
             reason: `Browser interaction: ${browser.script}`,
-            risk: "low",
             layer: "rule",
             ruleLabel: "Browser interaction",
           };
@@ -1594,29 +1754,21 @@ export class PolicyEngine {
     }
 
     // Layer 2: Rules (external actions, destructive operations)
-    for (const rule of this.preset.rules) {
+    for (const rule of this.policy.rules) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: rule.action,
           reason: rule.label || `Matched rule for ${tool}`,
-          risk: rule.risk || "medium",
           layer: "rule",
           ruleLabel: rule.label,
         };
       }
     }
 
-    // Layer 2.5: Workspace configured executable allowlist (constrained host presets)
-    const configuredExecDecision = this.evaluateConfiguredExecutableAllow(tool, input);
-    if (configuredExecDecision) {
-      return configuredExecDecision;
-    }
-
     // Layer 3: Default
     return {
-      action: this.preset.defaultAction,
+      action: this.policy.defaultAction,
       reason: "No matching rule — using default",
-      risk: "low",
       layer: "default",
     };
   }
@@ -1708,14 +1860,14 @@ export class PolicyEngine {
    * Evaluate a tool call with learned rules layered in.
    *
    * Evaluation order:
-   *   1. Hard denies (immutable, from preset)
+   *   1. Hard denies (immutable, from policy mode)
    *   2. Learned/manual deny rules (explicit deny wins)
    *   3. Session allow rules
    *   4. Workspace allow rules
    *   5. Global allow rules
    *   6. Structural heuristics (pipe-to-shell, data egress, browser)
-   *   7. Preset rules + domain allowlist
-   *   8. Preset default
+   *   7. Built-in/declarative rules + domain allowlist
+   *   8. Policy fallback default
    */
   evaluateWithRules(
     req: GateRequest,
@@ -1729,22 +1881,24 @@ export class PolicyEngine {
     const parsed = this.parseRequestContext(req);
 
     // Layer 1: Hard denies (immutable, same as evaluate())
-    for (const rule of this.preset.hardDeny) {
+    for (const rule of this.policy.hardDeny) {
       if (this.matchesRule(rule, tool, input)) {
         return {
           action: "deny",
           reason: rule.label || "Blocked by hard deny rule",
-          risk: rule.risk || "critical",
           layer: "hard_deny",
           ruleLabel: rule.label,
         };
       }
     }
 
-    // Layer 1.1: Structural hard denies (immutable)
-    const structuralHardDeny = this.evaluateStructuralHardDeny(tool, input);
-    if (structuralHardDeny) {
-      return structuralHardDeny;
+    // Layer 1.1: Secret file access heuristic
+    if (this.policy.heuristics.secretFileAccess !== false) {
+      const secretDeny = this.evaluateSecretFileAccess(tool, input);
+      if (secretDeny) {
+        secretDeny.action = this.policy.heuristics.secretFileAccess;
+        return secretDeny;
+      }
     }
 
     // Layer 2: Learned deny rules (explicit deny always wins, but respects scope)
@@ -1761,7 +1915,6 @@ export class PolicyEngine {
         return {
           action: "deny",
           reason: rule.description,
-          risk: rule.risk,
           layer: "learned_deny",
           ruleLabel: rule.description,
           ruleId: rule.id,
@@ -1781,7 +1934,6 @@ export class PolicyEngine {
         return {
           action: "allow",
           reason: rule.description,
-          risk: rule.risk,
           layer: "session_rule",
           ruleLabel: rule.description,
           ruleId: rule.id,
@@ -1798,7 +1950,6 @@ export class PolicyEngine {
         return {
           action: "allow",
           reason: rule.description,
-          risk: rule.risk,
           layer: "workspace_rule",
           ruleLabel: rule.description,
           ruleId: rule.id,
@@ -1813,7 +1964,6 @@ export class PolicyEngine {
         return {
           action: "allow",
           reason: rule.description,
-          risk: rule.risk,
           layer: "global_rule",
           ruleLabel: rule.description,
           ruleId: rule.id,
@@ -1821,7 +1971,7 @@ export class PolicyEngine {
       }
     }
 
-    // Layer 6+: Fall through to existing evaluate() for heuristics, preset rules, default
+    // Layer 6+: Fall through to existing evaluate() for heuristics, rules, and default fallback
     return this.evaluate(req);
   }
 
@@ -1832,17 +1982,8 @@ export class PolicyEngine {
    *
    * Called when evaluate() returns "ask". Tells the phone what buttons to show.
    */
-  getResolutionOptions(req: GateRequest, decision: PolicyDecision): ResolutionOptions {
+  getResolutionOptions(req: GateRequest, _decision: PolicyDecision): ResolutionOptions {
     const parsed = this.parseRequestContext(req);
-
-    // Critical risk: no permanent allow (too dangerous to auto-allow forever)
-    if (decision.risk === "critical") {
-      return {
-        allowSession: true,
-        allowAlways: false,
-        denyAlways: true,
-      };
-    }
 
     // eval.js: session only (code changes every time, can't generalize)
     if (parsed.browserScript === "eval.js") {
@@ -1917,7 +2058,7 @@ export class PolicyEngine {
   suggestRule(
     req: GateRequest,
     scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string; risk: RiskLevel },
+    context: { sessionId: string; workspaceId: string },
   ): Omit<LearnedRule, "id" | "createdAt"> | null {
     const parsed = this.parseRequestContext(req);
 
@@ -1937,7 +2078,6 @@ export class PolicyEngine {
         ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
         source: "learned",
         description: `Allow browser navigation to ${parsed.domain}`,
-        risk: context.risk,
         createdBy: "server",
       };
     }
@@ -1957,7 +2097,6 @@ export class PolicyEngine {
         description: commandScoped
           ? `Allow ${parsed.executable} command pattern ${match.commandPattern}`
           : `Allow ${parsed.executable} operations`,
-        risk: context.risk,
         createdBy: "server",
       };
     }
@@ -1978,7 +2117,6 @@ export class PolicyEngine {
         ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
         source: "learned",
         description: `Allow ${req.tool} in ${pattern}`,
-        risk: context.risk,
         createdBy: "server",
       };
     }
@@ -1993,7 +2131,7 @@ export class PolicyEngine {
   suggestDenyRule(
     req: GateRequest,
     scope: "session" | "workspace" | "global",
-    context: { sessionId: string; workspaceId: string; risk: RiskLevel },
+    context: { sessionId: string; workspaceId: string },
   ): Omit<LearnedRule, "id" | "createdAt"> | null {
     const parsed = this.parseRequestContext(req);
 
@@ -2008,7 +2146,6 @@ export class PolicyEngine {
         ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
         source: "learned",
         description: `Deny browser navigation to ${parsed.domain}`,
-        risk: context.risk,
         createdBy: "server",
       };
     }
@@ -2024,7 +2161,6 @@ export class PolicyEngine {
         ...(scope === "workspace" ? { workspaceId: context.workspaceId } : {}),
         source: "learned",
         description: `Deny ${parsed.executable} operations`,
-        risk: context.risk,
         createdBy: "server",
       };
     }
@@ -2149,6 +2285,7 @@ export class PolicyEngine {
     }
 
     if (normalized.includes("ios/scripts/build-install.sh") ||
+        normalized.includes("scripts/build-install.sh") ||
         normalized.includes("scripts/ios-dev-up.sh") ||
         normalized.startsWith("xcrun devicectl device install app") ||
         normalized.startsWith("npx tsx src/cli.ts serve") ||
@@ -2159,7 +2296,7 @@ export class PolicyEngine {
     return false;
   }
 
-  private evaluateStructuralHardDeny(
+  private evaluateSecretFileAccess(
     tool: string,
     input: Record<string, unknown>,
   ): PolicyDecision | null {
@@ -2169,7 +2306,6 @@ export class PolicyEngine {
         return {
           action: "deny",
           reason: "Blocked access to secret credential files",
-          risk: "critical",
           layer: "hard_deny",
           ruleLabel: "Protect secret files",
         };
@@ -2189,7 +2325,6 @@ export class PolicyEngine {
             return {
               action: "deny",
               reason: "Blocked access to secret credential files",
-              risk: "critical",
               layer: "hard_deny",
               ruleLabel: "Protect secret files",
             };
@@ -2201,7 +2336,6 @@ export class PolicyEngine {
           return {
             action: "deny",
             reason: "Blocked secret file access via command substitution",
-            risk: "critical",
             layer: "hard_deny",
             ruleLabel: "Protect secret files",
           };
@@ -2261,140 +2395,8 @@ export class PolicyEngine {
     return true;
   }
 
-  private isConstrainedHostPreset(): boolean {
-    return this.preset.name === "host_standard" || this.preset.name === "host_locked";
-  }
-
-  private normalizeExecutable(exec: string): string {
-    return exec.includes("/") ? exec.split("/").pop() || exec : exec;
-  }
-
-  private isPathWithinRoot(path: string, root: string): boolean {
-    const normalizedPath = pathResolve(path);
-    const normalizedRoot = pathResolve(root);
-    return normalizedPath === normalizedRoot || normalizedPath.startsWith(normalizedRoot + "/");
-  }
-
-  /**
-   * Constrained host profile: auto-allow file tools only within configured paths.
-   */
-  private evaluateConstrainedHostPathAccess(
-    tool: string,
-    input: Record<string, unknown>,
-  ): PolicyDecision | null {
-    if (!this.isConstrainedHostPreset()) return null;
-    if (!["read", "write", "edit", "find", "ls"].includes(tool)) {
-      return null;
-    }
-
-    const path = (input as { path?: string }).path;
-    if (!path || !path.startsWith("/")) {
-      return null;
-    }
-
-    const needsWrite = tool === "write" || tool === "edit";
-    const allowed = this.config.allowedPaths.some((entry) => {
-      if (!this.isPathWithinRoot(path, entry.path)) return false;
-      if (!needsWrite) return true;
-      return entry.access === "readwrite";
-    });
-
-    if (!allowed) return null;
-
-    return {
-      action: "allow",
-      reason: "Within workspace path bounds",
-      risk: "low",
-      layer: "rule",
-      ruleLabel: "Path bounds",
-    };
-  }
-
-  /**
-   * Constrained host profile: auto-allow plain read-only bash commands.
-   *
-   * Safety requirements:
-   * - every command segment must be read-only
-   * - no pipes, redirects, or subshells
-   * - git limited to read-only subcommands
-   */
-  private isSafeReadOnlyHostBash(command: string): boolean {
-    const segments = splitBashCommandChain(command);
-    if (segments.length === 0) return false;
-
-    for (const segment of segments) {
-      // Split pipelines so `grep ... | head -10` is evaluated per-stage
-      // instead of bailing on the pipe character.
-      const stages = splitPipelineStages(segment);
-
-      for (const stage of stages) {
-        const parsed = parseBashCommand(stage);
-        const exec = this.normalizeExecutable(parsed.executable);
-        if (!exec) return false;
-
-        // Helpers are always safe for chaining.
-        if (CHAIN_HELPER_EXECUTABLES.has(exec)) continue;
-
-        // Redirects and subshells are not considered read-only-safe.
-        if (parsed.hasRedirect || parsed.hasSubshell) {
-          return false;
-        }
-
-        if (HOST_SAFE_READ_ONLY_EXECUTABLES.has(exec)) continue;
-
-        if (exec === "git") {
-          const subcommand = parsed.args[0] || "";
-          if (HOST_SAFE_GIT_SUBCOMMANDS.has(subcommand)) continue;
-        }
-
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Workspace-level executable allowlist for constrained host presets.
-   *
-   * Only applies to simple, single-segment commands. This keeps
-   * allowlist semantics predictable and avoids hidden chain escalation.
-   */
-  private evaluateConfiguredExecutableAllow(
-    tool: string,
-    input: Record<string, unknown>,
-  ): PolicyDecision | null {
-    if (!this.isConstrainedHostPreset()) return null;
-    if (tool !== "bash") return null;
-
-    const allowedExecs = this.config.allowedExecutables;
-    if (!allowedExecs || allowedExecs.length === 0) return null;
-
-    const command = (input as { command?: string }).command || "";
-    const segments = splitBashCommandChain(command);
-    if (segments.length !== 1) return null;
-
-    const parsed = parseBashCommand(segments[0]);
-    const exec = this.normalizeExecutable(parsed.executable);
-    if (!exec) return null;
-
-    if (parsed.hasPipe || parsed.hasRedirect || parsed.hasSubshell) {
-      return null;
-    }
-
-    if (!allowedExecs.includes(exec)) return null;
-
-    return {
-      action: "allow",
-      reason: `Workspace allowlist: ${exec}`,
-      risk: "low",
-      layer: "rule",
-      ruleLabel: "Workspace executable allowlist",
-    };
-  }
-
-  getPresetName(): string {
-    return this.preset.name;
+  getPolicyMode(): string {
+    return this.policy.name;
   }
 
   // ─── Internal ───
@@ -2407,6 +2409,14 @@ export class PolicyEngine {
 
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
+
+      if (rule.domain) {
+        const browser = parseBrowserCommand(command);
+        if (!browser?.domain || browser.domain !== rule.domain) {
+          return false;
+        }
+      }
+
       const segments = splitBashCommandChain(command);
 
       for (const segment of segments) {

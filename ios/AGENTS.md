@@ -48,4 +48,14 @@ Direct state updates (session metadata, extension UI) bypass the pipeline and up
 - Use `AppIdentifiers.subsystem` for all os.log subsystem strings
 - Liquid Glass for navigation chrome only (tab bar, toolbars, nav bars). Never for scrollable content.
 
+## Definition of Done
+
+An iOS task is done when all are true:
+
+1. `xcodebuild ... build` passes for the target simulator.
+2. `xcodebuild ... test` passes for impacted tests.
+3. `xcodegen generate` was run if file/project structure changed.
+4. Protocol change (if any) is mirrored in `server/src/types.ts` + protocol tests (see `../AGENTS.md`).
+5. User-visible behavior changes are documented when needed.
+
 

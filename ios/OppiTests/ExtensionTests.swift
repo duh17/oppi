@@ -87,7 +87,7 @@ struct StringPathTests {
 
     @Test func emptyString() {
         let path = ""
-        #expect(path.shortenedPath == "")
+        #expect(path.shortenedPath.isEmpty)
     }
 
     @Test func deepNestedPath() {
@@ -104,39 +104,6 @@ struct StringPathTests {
     @Test func relativePathPassthrough() {
         let path = "relative/path/file.txt"
         #expect(path.shortenedPath == "relative/path/file.txt")
-    }
-}
-
-// MARK: - RiskLevel
-
-@Suite("RiskLevel")
-struct RiskLevelTests {
-
-    @Test func allLabels() {
-        #expect(RiskLevel.low.label == "Low")
-        #expect(RiskLevel.medium.label == "Medium")
-        #expect(RiskLevel.high.label == "High")
-        #expect(RiskLevel.critical.label == "Critical")
-    }
-
-    @Test func allSystemImages() {
-        #expect(RiskLevel.low.systemImage == "checkmark.shield")
-        #expect(RiskLevel.medium.systemImage == "exclamationmark.shield")
-        #expect(RiskLevel.high.systemImage == "exclamationmark.triangle")
-        #expect(RiskLevel.critical.systemImage == "xmark.octagon")
-    }
-
-    @Test func riskColorReturnsDistinctColors() {
-        let low = Color.riskColor(.low)
-        let medium = Color.riskColor(.medium)
-        let high = Color.riskColor(.high)
-        let critical = Color.riskColor(.critical)
-
-        // Each risk level should map to a distinct color
-        #expect(low != medium)
-        #expect(medium != high)
-        #expect(high != critical)
-        #expect(low != critical)
     }
 }
 
