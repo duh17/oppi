@@ -41,6 +41,9 @@ extension ServerConnection {
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
             _ = resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId)
 
+        case .gitStatus(let workspaceId, let status):
+            gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)
+
         case .unknown, .stopRequested, .stopConfirmed, .stopFailed:
             break  // Already logged in WebSocketClient / handled earlier
 

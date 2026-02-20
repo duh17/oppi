@@ -40,6 +40,7 @@ import {
   applyMessageEndToSession,
   type TranslationContext,
 } from "./session-protocol.js";
+import { getGitStatus } from "./git-status.js";
 import {
   resolvePiExecutable,
   spawnPiHost,
@@ -390,6 +391,7 @@ export class SessionManager extends EventEmitter {
       gate: this.gate,
       piExecutable: this.piExecutable,
       globalPolicy: this.storage.getConfig().policy,
+      permissionGate: this.storage.getConfig().permissionGate,
       resolveSkillPath: this.resolveSkillPath,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
       onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
@@ -1442,6 +1444,7 @@ export class SessionManager extends EventEmitter {
 
       case "tool_execution_start":
         updateSessionChangeStats(session, event.toolName, event.args);
+        this.maybeEmitGitStatus(key, session, event.toolName);
         break;
 
       case "message_end":
@@ -1461,6 +1464,55 @@ export class SessionManager extends EventEmitter {
     this.markSessionDirty(key);
   }
 
+
+  /**
+   * After a file-mutating tool call, asynchronously fetch git status
+   * and broadcast it to connected clients. Non-blocking — errors are
+   * silently ignored (git status is best-effort).
+   *
+   * Debounced per workspace: rapid-fire edits coalesce into one git
+   * call at most every 2 seconds. This avoids spawning 60+ git
+   * processes when the agent edits 10 files in quick succession.
+   */
+  private gitStatusTimers: Map<string, NodeJS.Timeout> = new Map();
+  private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
+
+  private maybeEmitGitStatus(key: string, session: Session, toolName: unknown): void {
+    const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
+    if (name !== "edit" && name !== "write" && name !== "bash") return;
+
+    const wsId = session.workspaceId;
+    if (!wsId) return;
+
+    // Debounce per workspace — cancel any pending timer and restart
+    const existing = this.gitStatusTimers.get(wsId);
+    if (existing) clearTimeout(existing);
+
+    this.gitStatusTimers.set(
+      wsId,
+      setTimeout(() => {
+        this.gitStatusTimers.delete(wsId);
+        this.emitGitStatusNow(key, wsId);
+      }, SessionManager.GIT_STATUS_DEBOUNCE_MS),
+    );
+  }
+
+  private emitGitStatusNow(key: string, wsId: string): void {
+    const workspace = this.storage.getWorkspace(wsId);
+    if (!workspace?.hostMount) return;
+    if (workspace.gitStatusEnabled === false) return;
+
+    void getGitStatus(workspace.hostMount).then((status) => {
+      if (!status.isGitRepo) return;
+      this.broadcast(key, {
+        type: "git_status",
+        workspaceId: wsId,
+        status,
+      });
+    }).catch(() => {
+      // Silently ignore git errors
+    });
+  }
 
   private markSessionDirty(key: string): void {
     this.dirtySessions.add(key);

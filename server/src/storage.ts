@@ -83,6 +83,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     maxSessionsPerWorkspace: 3,
     maxSessionsGlobal: 5,
     approvalTimeoutMs: 120 * 1000,
+    permissionGate: true,
 
     allowedCidrs: defaultAllowedCidrs(),
     policy: defaultPolicy(),
@@ -122,6 +123,7 @@ function normalizeConfig(
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
     "approvalTimeoutMs",
+    "permissionGate",
     "allowedCidrs",
     "policy",
 
@@ -238,6 +240,10 @@ function normalizeConfig(
   const approvalTimeoutMs = readNumber("approvalTimeoutMs", { min: 0 });
   if (approvalTimeoutMs !== undefined) {
     config.approvalTimeoutMs = approvalTimeoutMs;
+  }
+
+  if (typeof raw.permissionGate === "boolean") {
+    config.permissionGate = raw.permissionGate;
   }
 
   const allowedCidrsDefaults = defaultAllowedCidrs();
@@ -542,8 +548,6 @@ function normalizeConfig(
           "dataEgress",
           "secretEnvInUrl",
           "secretFileAccess",
-          "browserUnknownDomain",
-          "browserEval",
         ]);
 
         if (strictUnknown) {
@@ -1333,6 +1337,8 @@ export class Storage {
       workspace.memoryNamespace = `ws-${workspace.id}`;
     }
     if (updates.defaultModel !== undefined) workspace.defaultModel = updates.defaultModel;
+    if (updates.gitStatusEnabled !== undefined)
+      workspace.gitStatusEnabled = updates.gitStatusEnabled;
     workspace.updatedAt = Date.now();
 
     this.saveWorkspace(workspace);

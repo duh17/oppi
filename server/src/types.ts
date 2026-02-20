@@ -37,6 +37,9 @@ export interface Workspace {
   // Extensions
   extensions?: string[]; // Extension names from ~/.pi/agent/extensions
 
+  // Git status
+  gitStatusEnabled?: boolean; // Show git status context bar (default: true)
+
   // Defaults
   defaultModel?: string; // Override server default for this workspace
   lastUsedModel?: string; // Sticky: last model used in any session (auto-updated)
@@ -146,10 +149,6 @@ export interface PolicyHeuristics {
   secretEnvInUrl?: PolicyDecision | false;
   /** Detect reads of ~/.ssh/, ~/.aws/, .env, etc. via cat/head/read. Default: "block" */
   secretFileAccess?: PolicyDecision | false;
-  /** Browser nav to domains not in fetch allowlist. Default: "ask" */
-  browserUnknownDomain?: PolicyDecision | false;
-  /** Browser eval.js (arbitrary JS execution). Default: "ask" */
-  browserEval?: PolicyDecision | false;
 }
 
 export interface PolicyConfig {
@@ -175,6 +174,8 @@ export interface ServerConfig {
   maxSessionsGlobal: number;
   /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
   approvalTimeoutMs?: number;
+  /** Set to false to disable the permission gate. All tool calls run without approval. */
+  permissionGate?: boolean;
   /** Source CIDRs allowed to connect to HTTP/WS endpoints. */
   allowedCidrs: string[];
 
@@ -210,6 +211,32 @@ export interface CreateSessionRequest {
   name?: string;
   model?: string;
   workspaceId?: string;
+  /** Resume an existing local pi session by its JSONL path. */
+  piSessionFile?: string;
+}
+
+// ─── Local Sessions ───
+
+/** A pi TUI session discovered on the host (not yet managed by oppi). */
+export interface LocalSession {
+  /** Absolute path to the JSONL file. */
+  path: string;
+  /** Pi session UUID from the JSONL header. */
+  piSessionId: string;
+  /** Working directory where the session was started. */
+  cwd: string;
+  /** User-defined display name (from /name command), if set. */
+  name?: string;
+  /** First user message preview. */
+  firstMessage?: string;
+  /** Last model used (provider/modelId format). */
+  model?: string;
+  /** Number of user+assistant messages. */
+  messageCount: number;
+  /** Session creation timestamp (ms). */
+  createdAt: number;
+  /** File last-modified timestamp (ms). */
+  lastModified: number;
 }
 
 export interface AllowedPathEntry {
@@ -229,6 +256,7 @@ export interface CreateWorkspaceRequest {
   memoryNamespace?: string;
   extensions?: string[];
   defaultModel?: string;
+  gitStatusEnabled?: boolean;
 }
 
 export interface UpdateWorkspaceRequest {
@@ -243,6 +271,7 @@ export interface UpdateWorkspaceRequest {
   memoryNamespace?: string;
   extensions?: string[];
   defaultModel?: string;
+  gitStatusEnabled?: boolean;
 }
 
 export interface CreateSessionResponse {
@@ -549,6 +578,12 @@ export type ServerMessage = // ── Connection ──
       notifyType?: string;
       statusKey?: string;
       statusText?: string;
+    }
+  // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
+  | {
+      type: "git_status";
+      workspaceId: string;
+      status: import("./git-status.js").GitStatus;
     }
 ) & {
   seq?: number;
