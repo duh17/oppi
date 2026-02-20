@@ -758,8 +758,7 @@ struct ChatTimelineCoordinatorTests {
             displaySummary: "command: rm -rf /tmp/demo",
             reason: "filesystem write",
             timeoutAt: Date().addingTimeInterval(60),
-            expires: true,
-            resolutionOptions: nil
+            expires: true
         )
 
         let rows: [ChatItem] = [
@@ -1270,6 +1269,73 @@ struct ChatTimelineCoordinatorTests {
 
         #expect(rendered.contains("Reviewing checklist for updates"))
         #expect(!rendered.contains("**"))
+    }
+
+    @MainActor
+    @Test func thinkingRowStreamingShowsLivePreviewText() throws {
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            isExpanded: false,
+            previewText: "Let me analyze this step by step",
+            fullText: nil,
+            themeID: .dark
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        let fitting = fittedSize(for: view, width: 338)
+
+        // Should have nonzero height (spinner header + preview container)
+        #expect(fitting.height > 20)
+
+        // Preview text should be rendered
+        let textView = try #require(allTextViews(in: view).first)
+        let rendered = textView.attributedText?.string ?? ""
+        #expect(rendered.contains("Let me analyze"))
+    }
+
+    @MainActor
+    @Test func thinkingRowStreamingWithEmptyPreviewHidesContainer() {
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            isExpanded: false,
+            previewText: "",
+            fullText: nil,
+            themeID: .dark
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 338)
+
+        // The text view should have no content when preview is empty
+        let textViews = allTextViews(in: view)
+        let rendered = textViews.first?.attributedText?.string ?? ""
+        #expect(rendered.isEmpty)
+    }
+
+    @MainActor
+    @Test func thinkingRowStreamingGrowsWithPreviewText() {
+        let short = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            isExpanded: false,
+            previewText: "hmm",
+            fullText: nil,
+            themeID: .dark
+        )
+        let long = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            isExpanded: false,
+            previewText: String(repeating: "thinking about this problem ", count: 15),
+            fullText: nil,
+            themeID: .dark
+        )
+
+        let shortView = ThinkingTimelineRowContentView(configuration: short)
+        let longView = ThinkingTimelineRowContentView(configuration: long)
+
+        let shortSize = fittedSize(for: shortView, width: 338)
+        let longSize = fittedSize(for: longView, width: 338)
+
+        #expect(longSize.height > shortSize.height)
     }
 
     @MainActor
