@@ -22,6 +22,8 @@ struct ChatView: View {
 
     @State private var showOutline = false
     @State private var showModelPicker = false
+    @State private var showModelSwitchWarning = false
+    @State private var pendingModelSwitch: ModelInfo?
     @State private var showComposer = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
@@ -160,6 +162,17 @@ struct ChatView: View {
         .sheet(isPresented: $showSkillPanel) { skillPanelSheet }
         .fullScreenCover(isPresented: $showComposer) { composerSheet }
         .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
+        .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
+            Button("Keep Current", role: .cancel) {
+                pendingModelSwitch = nil
+            }
+            Button("Switch Anyway") {
+                applyModelSelection(model)
+                pendingModelSwitch = nil
+            }
+        } message: { model in
+            Text("Switching to \(shortModelName(fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
+        }
         .alert("Compact Context", isPresented: $showCompactConfirmation) {
             Button("Compact", role: .destructive) {
                 actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
@@ -417,6 +430,41 @@ struct ChatView: View {
         )
     }
 
+    private func handleModelSelection(_ model: ModelInfo) {
+        guard !isCurrentModelSelection(model) else { return }
+
+        if (session?.messageCount ?? 0) > 0 {
+            pendingModelSwitch = model
+            showModelSwitchWarning = true
+            return
+        }
+
+        applyModelSelection(model)
+    }
+
+    private func applyModelSelection(_ model: ModelInfo) {
+        RecentModels.record(fullModelID(for: model))
+        actionHandler.setModel(
+            model,
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionId: sessionId
+        )
+    }
+
+    private func isCurrentModelSelection(_ model: ModelInfo) -> Bool {
+        guard let current = session?.model else { return false }
+        let fullID = fullModelID(for: model)
+        return current == fullID || current == model.id
+    }
+
+    private func fullModelID(for model: ModelInfo) -> String {
+        model.id.hasPrefix("\(model.provider)/")
+            ? model.id
+            : "\(model.provider)/\(model.id)"
+    }
+
     private func saveScrollState() {
         let nearBottom = scrollController.isCurrentlyNearBottom
         connection.scrollWasNearBottom = nearBottom
@@ -542,13 +590,7 @@ struct ChatView: View {
 
     private var modelPickerSheet: some View {
         ModelPickerSheet(currentModel: session?.model) { model in
-            actionHandler.setModel(
-                model,
-                connection: connection,
-                reducer: reducer,
-                sessionStore: sessionStore,
-                sessionId: sessionId
-            )
+            handleModelSelection(model)
         }
         .presentationDetents([.medium, .large])
     }

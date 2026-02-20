@@ -120,7 +120,6 @@ struct ModelPickerSheet: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                RecentModels.record(fullId(model))
                 onSelect(model)
                 dismiss()
             }
