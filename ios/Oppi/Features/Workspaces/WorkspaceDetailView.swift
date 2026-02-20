@@ -238,7 +238,8 @@ struct WorkspaceDetailView: View {
                     WorkspaceContextBar(
                         gitStatus: gitStatus,
                         changeStats: nil,
-                        isLoading: false
+                        isLoading: false,
+                        appliesOuterHorizontalPadding: false
                     )
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
