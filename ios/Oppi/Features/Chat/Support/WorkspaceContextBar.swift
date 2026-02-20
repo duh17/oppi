@@ -8,8 +8,21 @@ struct WorkspaceContextBar: View {
     let gitStatus: GitStatus?
     let changeStats: SessionChangeStats?
     let isLoading: Bool
+    let appliesOuterHorizontalPadding: Bool
 
     @State private var isExpanded = false
+
+    init(
+        gitStatus: GitStatus?,
+        changeStats: SessionChangeStats?,
+        isLoading: Bool,
+        appliesOuterHorizontalPadding: Bool = true
+    ) {
+        self.gitStatus = gitStatus
+        self.changeStats = changeStats
+        self.isLoading = isLoading
+        self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
+    }
 
     // MARK: - Computed
 
@@ -53,7 +66,7 @@ struct WorkspaceContextBar: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
             )
-            .padding(.horizontal, 16)
+            .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
             .padding(.top, 4)
             .padding(.bottom, 2)
         }
