@@ -33,6 +33,7 @@ struct UpdateWorkspaceRequest: Encodable {
     var skills: [String]?
     var systemPrompt: String?
     var hostMount: String?
+    var gitStatusEnabled: Bool?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
     var extensions: [String]?
@@ -91,6 +92,7 @@ struct WorkspacePolicyMutationResponse: Decodable, Sendable {
 }
 
 struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
+    /// Legacy compatibility shape still returned by some server versions.
     struct Match: Decodable, Sendable {
         let executable: String?
         let domain: String?
@@ -99,37 +101,80 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
     }
 
     let id: String
-    let effect: String
+    let decision: String
     let tool: String?
-    let match: Match?
+    let pattern: String?
+    let executable: String?
+    let label: String
     let scope: String
     let workspaceId: String?
     let sessionId: String?
     let source: String
-    let description: String
     let createdAt: Date
     let createdBy: String?
     let expiresAt: Date?
 
+    /// Legacy fields for old UI code paths.
+    let match: Match?
+
+    var effect: String { decision }
+    var description: String { label }
+
     enum CodingKeys: String, CodingKey {
-        case id, effect, tool, match, scope, workspaceId, sessionId, source
-        case description, createdAt, createdBy, expiresAt
+        case id, decision, effect, tool, pattern, executable, label, description
+        case match, scope, workspaceId, sessionId, source
+        case createdAt, createdBy, expiresAt
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+
         id = try c.decode(String.self, forKey: .id)
-        effect = try c.decode(String.self, forKey: .effect)
+
+        let rawDecision = try c.decodeIfPresent(String.self, forKey: .decision)
+            ?? (try c.decodeIfPresent(String.self, forKey: .effect))
+            ?? "ask"
+        if rawDecision == "block" {
+            decision = "deny"
+        } else {
+            decision = rawDecision
+        }
+
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         match = try c.decodeIfPresent(Match.self, forKey: .match)
+
+        executable = try c.decodeIfPresent(String.self, forKey: .executable)
+            ?? match?.executable
+
+        if let explicitPattern = try c.decodeIfPresent(String.self, forKey: .pattern) {
+            pattern = explicitPattern
+        } else if let commandPattern = match?.commandPattern {
+            pattern = commandPattern
+        } else if let pathPattern = match?.pathPattern {
+            pattern = pathPattern
+        } else if let domain = match?.domain {
+            pattern = "*\(domain)*"
+        } else {
+            pattern = nil
+        }
+
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+            ?? (try c.decodeIfPresent(String.self, forKey: .description))
+            ?? id
+
         scope = try c.decode(String.self, forKey: .scope)
         workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
-        source = try c.decode(String.self, forKey: .source)
-        description = try c.decode(String.self, forKey: .description)
-        let createdAtMs = try c.decode(Double.self, forKey: .createdAt)
-        createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
+        source = try c.decodeIfPresent(String.self, forKey: .source) ?? "manual"
+
+        if let createdAtMs = try c.decodeIfPresent(Double.self, forKey: .createdAt) {
+            createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
+        } else {
+            createdAt = Date()
+        }
+
         createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
+
         if let expiresMs = try c.decodeIfPresent(Double.self, forKey: .expiresAt) {
             expiresAt = Date(timeIntervalSince1970: expiresMs / 1000)
         } else {
@@ -139,17 +184,11 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
 }
 
 struct PolicyRulePatchRequest: Encodable, Sendable {
-    struct Match: Encodable, Sendable {
-        let executable: String?
-        let domain: String?
-        let pathPattern: String?
-        let commandPattern: String?
-    }
-
-    let effect: String?
-    let description: String?
+    let decision: String?
+    let label: String?
     let tool: String?
-    let match: Match?
+    let pattern: String?
+    let executable: String?
 }
 
 struct PolicyRuleMutationResponse: Decodable, Sendable {
@@ -373,6 +412,63 @@ extension WorkspaceGraphResponse.SessionGraph.Node {
         self.activeSessionIds = activeSessionIds
         self.sessionFile = sessionFile
         self.parentSessionFile = parentSessionFile
+    }
+}
+
+// MARK: - Local Sessions
+
+/// A pi TUI session discovered on the host (not yet managed by oppi).
+struct LocalSession: Identifiable, Sendable, Equatable {
+    let path: String
+    let piSessionId: String
+    let cwd: String
+    let name: String?
+    let firstMessage: String?
+    let model: String?
+    let messageCount: Int
+    let createdAt: Date
+    let lastModified: Date
+
+    var id: String { path }
+
+    /// Short model name for display (e.g. "claude-sonnet-4-5" from "anthropic/claude-sonnet-4-5").
+    var modelShort: String? {
+        guard let model, !model.isEmpty else { return nil }
+        return model.split(separator: "/").last.map(String.init) ?? model
+    }
+
+    /// Display title: name, first message preview, or session ID prefix.
+    var displayTitle: String {
+        if let name, !name.isEmpty { return name }
+        if let firstMessage, !firstMessage.isEmpty {
+            let trimmed = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(trimmed.prefix(80))
+        }
+        return "Session \(String(piSessionId.prefix(8)))"
+    }
+}
+
+extension LocalSession: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case path, piSessionId, cwd, name, firstMessage, model, messageCount
+        case createdAt, lastModified
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        piSessionId = try c.decode(String.self, forKey: .piSessionId)
+        cwd = try c.decode(String.self, forKey: .cwd)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        firstMessage = try c.decodeIfPresent(String.self, forKey: .firstMessage)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        messageCount = try c.decode(Int.self, forKey: .messageCount)
+
+        let createdMs = try c.decode(Double.self, forKey: .createdAt)
+        createdAt = Date(timeIntervalSince1970: createdMs / 1000)
+
+        let modifiedMs = try c.decode(Double.self, forKey: .lastModified)
+        lastModified = Date(timeIntervalSince1970: modifiedMs / 1000)
     }
 }
 

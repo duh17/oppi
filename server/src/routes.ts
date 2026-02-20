@@ -44,6 +44,12 @@ import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js"
 import { buildWorkspaceGraph } from "./graph.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
+import {
+  discoverLocalSessions,
+  validateLocalSessionPath,
+  validateCwdAlignment,
+} from "./local-sessions.js";
+import { getGitStatus } from "./git-status.js";
 import type { LearnedRule } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
@@ -147,6 +153,10 @@ export class RouteHandler {
     if (path === "/host/directories" && method === "GET")
       return this.handleListDirectories(url, res);
 
+    // Local pi sessions (TUI-started, not managed by oppi)
+    if (path === "/local-sessions" && method === "GET")
+      return this.handleListLocalSessions(res);
+
     // Workspaces
     if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(res);
     if (path === "/workspaces" && method === "POST")
@@ -174,6 +184,11 @@ export class RouteHandler {
         decodeURIComponent(wsPolicyPermissionDeleteMatch[2]),
         res,
       );
+    }
+
+    const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
+    if (wsGitStatusMatch && method === "GET") {
+      return this.handleGetWorkspaceGitStatus(wsGitStatusMatch[1], res);
     }
 
     const wsGraphMatch = path.match(/^\/workspaces\/([^/]+)\/graph$/);
@@ -545,6 +560,19 @@ export class RouteHandler {
     this.json(res, { directories: dirs });
   }
 
+  private async handleListLocalSessions(res: ServerResponse): Promise<void> {
+    // Collect piSessionFile paths already tracked by oppi to filter them out
+    const allSessions = this.ctx.storage.listSessions();
+    const knownFiles = new Set<string>();
+    for (const session of allSessions) {
+      if (session.piSessionFile) knownFiles.add(session.piSessionFile);
+      for (const f of session.piSessionFiles ?? []) knownFiles.add(f);
+    }
+
+    const localSessions = await discoverLocalSessions(knownFiles);
+    this.json(res, { sessions: localSessions });
+  }
+
   private handleListWorkspaces(res: ServerResponse): void {
     this.ctx.storage.ensureDefaultWorkspaces();
     const workspaces = this.ctx.storage.listWorkspaces();
@@ -711,6 +739,36 @@ export class RouteHandler {
   private handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
     this.ctx.storage.deleteWorkspace(wsId);
     this.json(res, { ok: true });
+  }
+
+  private async handleGetWorkspaceGitStatus(wsId: string, res: ServerResponse): Promise<void> {
+    const workspace = this.ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    if (!workspace.hostMount) {
+      this.json(res, {
+        isGitRepo: false,
+        branch: null,
+        headSha: null,
+        ahead: null,
+        behind: null,
+        dirtyCount: 0,
+        untrackedCount: 0,
+        stagedCount: 0,
+        files: [],
+        totalFiles: 0,
+        stashCount: 0,
+        lastCommitMessage: null,
+        lastCommitDate: null,
+      });
+      return;
+    }
+
+    const status = await getGitStatus(workspace.hostMount);
+    this.json(res, status as unknown as Record<string, unknown>);
   }
 
   private handleGetWorkspacePolicy(wsId: string, res: ServerResponse): void {
@@ -1168,7 +1226,52 @@ export class RouteHandler {
       return;
     }
 
-    const body = await this.parseBody<{ name?: string; model?: string }>(req);
+    const body = await this.parseBody<{ name?: string; model?: string; piSessionFile?: string }>(req);
+
+    // ── Local session import: validate path confinement + CWD alignment ──
+    if (body.piSessionFile) {
+      const validation = validateLocalSessionPath(body.piSessionFile);
+      if ("error" in validation) {
+        this.error(res, 400, `Invalid session file: ${validation.error}`);
+        return;
+      }
+
+      // Read CWD from the JSONL header for alignment check
+      const headerCwd = this.readSessionCwd(validation.path);
+      if (!headerCwd) {
+        this.error(res, 400, "Cannot read session CWD from file");
+        return;
+      }
+
+      if (!workspace.hostMount) {
+        this.error(res, 400, "Workspace has no hostMount configured");
+        return;
+      }
+
+      if (!validateCwdAlignment(headerCwd, workspace.hostMount)) {
+        this.error(
+          res,
+          400,
+          `Session CWD (${headerCwd}) is not within workspace path (${workspace.hostMount})`,
+        );
+        return;
+      }
+
+      const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
+      const session = this.ctx.storage.createSession(body.name, model);
+
+      session.workspaceId = workspace.id;
+      session.workspaceName = workspace.name;
+      session.piSessionFile = validation.path;
+      session.piSessionFiles = [validation.path];
+      this.ctx.storage.saveSession(session);
+
+      const hydrated = this.ctx.ensureSessionContextWindow(session);
+      this.json(res, { session: hydrated }, 201);
+      return;
+    }
+
+    // ── Standard new session ──
     const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
     const session = this.ctx.storage.createSession(body.name, model);
 
@@ -1178,6 +1281,19 @@ export class RouteHandler {
 
     const hydrated = this.ctx.ensureSessionContextWindow(session);
     this.json(res, { session: hydrated }, 201);
+  }
+
+  /** Read the CWD from a pi session JSONL header (first line). */
+  private readSessionCwd(filePath: string): string | null {
+    try {
+      const content = readFileSync(filePath, "utf8");
+      const firstLine = content.split("\n")[0];
+      if (!firstLine) return null;
+      const header = JSON.parse(firstLine);
+      return typeof header.cwd === "string" ? header.cwd : null;
+    } catch {
+      return null;
+    }
   }
 
   private async handleResumeWorkspaceSession(
@@ -1687,7 +1803,6 @@ export class RouteHandler {
       return;
     }
 
-    // Verify rule exists and belongs to this user
     const allRules = this.ctx.gate.ruleStore.getAll();
     const existing = allRules.find((r) => r.id === ruleId);
     if (!existing || !this.isRuleVisibleToUser(existing)) {
@@ -1695,19 +1810,17 @@ export class RouteHandler {
       return;
     }
 
-    const body = await this.parseBody<{
-      effect?: unknown;
-      description?: unknown;
-      tool?: unknown;
-      match?: unknown;
-      expiresAt?: unknown;
-    }>(req);
-
+    const body = await this.parseBody<Record<string, unknown>>(req);
     const hasField = (key: string): boolean => Object.prototype.hasOwnProperty.call(body, key);
+
     const hasPatchField =
+      hasField("decision") ||
       hasField("effect") ||
+      hasField("label") ||
       hasField("description") ||
       hasField("tool") ||
+      hasField("pattern") ||
+      hasField("executable") ||
       hasField("match") ||
       hasField("expiresAt");
 
@@ -1717,32 +1830,40 @@ export class RouteHandler {
     }
 
     const updates: {
-      effect?: LearnedRule["effect"];
-      tool?: LearnedRule["tool"] | null;
-      match?: LearnedRule["match"];
-      description?: string;
+      decision?: "allow" | "ask" | "deny";
+      tool?: string | null;
+      pattern?: string | null;
+      executable?: string | null;
+      label?: string | null;
       expiresAt?: number | null;
     } = {};
 
-    if (hasField("effect")) {
-      if (body.effect !== "allow" && body.effect !== "deny") {
-        this.error(res, 400, 'effect must be "allow" or "deny"');
+    if (hasField("decision") || hasField("effect")) {
+      const rawDecision = body.decision ?? body.effect;
+      const normalized =
+        rawDecision === "block"
+          ? "deny"
+          : rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+            ? rawDecision
+            : null;
+      if (!normalized) {
+        this.error(res, 400, 'decision/effect must be one of "allow", "ask", "deny"');
         return;
       }
-      updates.effect = body.effect;
+      updates.decision = normalized;
     }
 
-    if (hasField("description")) {
-      if (typeof body.description !== "string") {
-        this.error(res, 400, "description must be a string");
+    if (hasField("label") || hasField("description")) {
+      const rawLabel = body.label ?? body.description;
+      if (rawLabel === null) {
+        updates.label = null;
+      } else if (typeof rawLabel === "string") {
+        const trimmed = rawLabel.trim();
+        updates.label = trimmed.length > 0 ? trimmed : null;
+      } else {
+        this.error(res, 400, "label/description must be a string or null");
         return;
       }
-      const trimmed = body.description.trim();
-      if (!trimmed) {
-        this.error(res, 400, "description cannot be empty");
-        return;
-      }
-      updates.description = trimmed;
     }
 
     if (hasField("tool")) {
@@ -1761,46 +1882,69 @@ export class RouteHandler {
       }
     }
 
+    if (hasField("pattern")) {
+      if (body.pattern === null) {
+        updates.pattern = null;
+      } else if (typeof body.pattern === "string") {
+        const trimmed = body.pattern.trim();
+        updates.pattern = trimmed.length > 0 ? trimmed : null;
+      } else {
+        this.error(res, 400, "pattern must be a string or null");
+        return;
+      }
+    }
+
+    if (hasField("executable")) {
+      if (body.executable === null) {
+        updates.executable = null;
+      } else if (typeof body.executable === "string") {
+        const trimmed = body.executable.trim();
+        updates.executable = trimmed.length > 0 ? trimmed : null;
+      } else {
+        this.error(res, 400, "executable must be a string or null");
+        return;
+      }
+    }
+
+    // Backward compatibility for old { match: { commandPattern/pathPattern/executable } }
     if (hasField("match")) {
-      if (!body.match || typeof body.match !== "object" || Array.isArray(body.match)) {
+      const rawMatch = body.match;
+      if (!rawMatch || typeof rawMatch !== "object" || Array.isArray(rawMatch)) {
         this.error(res, 400, "match must be an object");
         return;
       }
 
-      const raw = body.match as Record<string, unknown>;
-      const keys = ["executable", "domain", "pathPattern", "commandPattern"] as const;
-      for (const key of keys) {
-        const value = raw[key];
-        if (value !== undefined && typeof value !== "string") {
-          this.error(res, 400, `match.${key} must be a string`);
+      const match = rawMatch as Record<string, unknown>;
+      if (match.commandPattern !== undefined) {
+        if (typeof match.commandPattern !== "string") {
+          this.error(res, 400, "match.commandPattern must be a string");
           return;
         }
+        updates.pattern = match.commandPattern.trim() || null;
       }
-
-      const normalizedMatch: NonNullable<LearnedRule["match"]> = {
-        executable: typeof raw.executable === "string" ? raw.executable.trim() || undefined : undefined,
-        domain: typeof raw.domain === "string" ? raw.domain.trim() || undefined : undefined,
-        pathPattern:
-          typeof raw.pathPattern === "string" ? raw.pathPattern.trim() || undefined : undefined,
-        commandPattern:
-          typeof raw.commandPattern === "string"
-            ? raw.commandPattern.trim() || undefined
-            : undefined,
-      };
-
-      const hasMatchCondition = Boolean(
-        normalizedMatch.executable ||
-          normalizedMatch.domain ||
-          normalizedMatch.pathPattern ||
-          normalizedMatch.commandPattern,
-      );
-
-      if (!hasMatchCondition) {
-        this.error(res, 400, "match must include at least one condition");
-        return;
+      if (match.pathPattern !== undefined) {
+        if (typeof match.pathPattern !== "string") {
+          this.error(res, 400, "match.pathPattern must be a string");
+          return;
+        }
+        updates.pattern = match.pathPattern.trim() || null;
       }
-
-      updates.match = normalizedMatch;
+      if (match.executable !== undefined) {
+        if (typeof match.executable !== "string") {
+          this.error(res, 400, "match.executable must be a string");
+          return;
+        }
+        updates.executable = match.executable.trim() || null;
+      }
+      if (match.domain !== undefined) {
+        if (typeof match.domain !== "string") {
+          this.error(res, 400, "match.domain must be a string");
+          return;
+        }
+        // Keep compatibility by converting domain matcher into a command glob.
+        const domain = match.domain.trim();
+        updates.pattern = domain.length > 0 ? `*${domain}*` : null;
+      }
     }
 
     if (hasField("expiresAt")) {
@@ -1819,28 +1963,18 @@ export class RouteHandler {
       }
     }
 
-    const finalTool =
-      updates.tool !== undefined ? (updates.tool === null ? undefined : updates.tool) : existing.tool;
-    const finalMatch = updates.match !== undefined ? updates.match : existing.match;
-    const hasFinalMatchCondition = Boolean(
-      finalMatch?.executable ||
-        finalMatch?.domain ||
-        finalMatch?.pathPattern ||
-        finalMatch?.commandPattern,
-    );
-
-    if ((!finalTool || finalTool === "*") && !hasFinalMatchCondition) {
-      this.error(res, 400, "rule must include a specific tool or match condition");
-      return;
-    }
-
     const updated = this.ctx.gate.ruleStore.update(ruleId, updates);
     if (!updated) {
       this.error(res, 500, "Failed to update rule");
       return;
     }
 
-    console.log(`[policy] Rule ${ruleId} updated: ${updated.description}`);
+    if (!updated.tool || updated.tool.trim().length === 0) {
+      this.error(res, 400, "rule.tool cannot be empty");
+      return;
+    }
+
+    console.log(`[policy] Rule ${ruleId} updated: ${updated.label || "(no label)"}`);
     this.json(res, { rule: updated });
   }
 
@@ -1871,7 +2005,7 @@ export class RouteHandler {
     }
 
     console.log(
-      `[policy] Rule ${ruleId} deleted: ${rule.description}`,
+      `[policy] Rule ${ruleId} deleted: ${rule.label || "(no label)"}`,
     );
     this.json(res, { ok: true, deleted: ruleId });
   }

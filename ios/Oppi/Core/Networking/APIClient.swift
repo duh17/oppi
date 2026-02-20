@@ -281,6 +281,14 @@ actor APIClient {
         return try JSONDecoder().decode(WorkspaceGraphResponse.self, from: data)
     }
 
+    // MARK: - Git Status
+
+    /// Fetch git status for a workspace's host directory.
+    func getGitStatus(workspaceId: String) async throws -> GitStatus {
+        let data = try await get("/workspaces/\(workspaceId)/git-status")
+        return try JSONDecoder().decode(GitStatus.self, from: data)
+    }
+
     // MARK: - Safety Policy
 
     /// Fetch merged policy for a workspace (global + workspace + effective).
@@ -422,10 +430,25 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).sessions
     }
 
+    /// Discover local pi TUI sessions not yet managed by oppi.
+    func listLocalSessions() async throws -> [LocalSession] {
+        let data = try await get("/local-sessions")
+        struct Response: Decodable { let sessions: [LocalSession] }
+        return try JSONDecoder().decode(Response.self, from: data).sessions
+    }
+
     /// Create a new session in a specific workspace.
     func createWorkspaceSession(workspaceId: String, name: String? = nil, model: String? = nil) async throws -> Session {
         struct Body: Encodable { let name: String?; let model: String? }
         let data = try await post("/workspaces/\(workspaceId)/sessions", body: Body(name: name, model: model))
+        struct Response: Decodable { let session: Session }
+        return try JSONDecoder().decode(Response.self, from: data).session
+    }
+
+    /// Create a session that resumes an existing local pi TUI session.
+    func createWorkspaceSessionFromLocal(workspaceId: String, piSessionFile: String) async throws -> Session {
+        struct Body: Encodable { let piSessionFile: String }
+        let data = try await post("/workspaces/\(workspaceId)/sessions", body: Body(piSessionFile: piSessionFile))
         struct Response: Decodable { let session: Session }
         return try JSONDecoder().decode(Response.self, from: data).session
     }
