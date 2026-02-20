@@ -479,10 +479,24 @@ final class ServerConnection {
 
     /// Respond to a permission request.
     func respondToPermission(id: String, action: PermissionAction, scope: PermissionScope = .once, expiresInMs: Int? = nil) async throws {
-        guard let wsClient else { throw WebSocketError.notConnected }
+        let tool = permissionStore.pending.first(where: { $0.id == id })?.tool ?? ""
+        let normalizedChoice = PermissionApprovalPolicy.normalizedChoice(
+            tool: tool,
+            choice: PermissionResponseChoice(action: action, scope: scope, expiresInMs: expiresInMs)
+        )
+
         // permission_response is a stream-level command — no sessionId envelope needed
-        try await wsClient.send(.permissionResponse(id: id, action: action, scope: scope == .once ? nil : scope, expiresInMs: expiresInMs, requestId: nil))
-        let outcome: PermissionOutcome = action == .allow ? .allowed : .denied
+        try await dispatchSend(
+            .permissionResponse(
+                id: id,
+                action: normalizedChoice.action,
+                scope: normalizedChoice.scope == .once ? nil : normalizedChoice.scope,
+                expiresInMs: normalizedChoice.expiresInMs,
+                requestId: nil
+            )
+        )
+
+        let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
             reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
         }
