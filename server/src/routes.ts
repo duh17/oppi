@@ -51,7 +51,7 @@ import {
   validateCwdAlignment,
 } from "./local-sessions.js";
 import { getGitStatus } from "./git-status.js";
-import type { LearnedRule } from "./rules.js";
+import type { Rule } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
   Session,
@@ -1717,7 +1717,7 @@ export class RouteHandler {
     return homedir();
   }
 
-  private isRuleVisibleToUser(rule: LearnedRule): boolean {
+  private isRuleVisibleToUser(rule: Rule): boolean {
     switch (rule.scope) {
       case "session":
         return rule.sessionId
@@ -1868,13 +1868,10 @@ export class RouteHandler {
 
     const hasPatchField =
       hasField("decision") ||
-      hasField("effect") ||
       hasField("label") ||
-      hasField("description") ||
       hasField("tool") ||
       hasField("pattern") ||
       hasField("executable") ||
-      hasField("match") ||
       hasField("expiresAt");
 
     if (!hasPatchField) {
@@ -1891,8 +1888,8 @@ export class RouteHandler {
       expiresAt?: number | null;
     } = {};
 
-    if (hasField("decision") || hasField("effect")) {
-      const rawDecision = body.decision ?? body.effect;
+    if (hasField("decision")) {
+      const rawDecision = body.decision;
       const normalized =
         rawDecision === "block"
           ? "deny"
@@ -1900,21 +1897,20 @@ export class RouteHandler {
             ? rawDecision
             : null;
       if (!normalized) {
-        this.error(res, 400, 'decision/effect must be one of "allow", "ask", "deny"');
+        this.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
         return;
       }
       updates.decision = normalized;
     }
 
-    if (hasField("label") || hasField("description")) {
-      const rawLabel = body.label ?? body.description;
-      if (rawLabel === null) {
+    if (hasField("label")) {
+      if (body.label === null) {
         updates.label = null;
-      } else if (typeof rawLabel === "string") {
-        const trimmed = rawLabel.trim();
+      } else if (typeof body.label === "string") {
+        const trimmed = body.label.trim();
         updates.label = trimmed.length > 0 ? trimmed : null;
       } else {
-        this.error(res, 400, "label/description must be a string or null");
+        this.error(res, 400, "label must be a string or null");
         return;
       }
     }
@@ -1956,47 +1952,6 @@ export class RouteHandler {
       } else {
         this.error(res, 400, "executable must be a string or null");
         return;
-      }
-    }
-
-    // Backward compatibility for old { match: { commandPattern/pathPattern/executable } }
-    if (hasField("match")) {
-      const rawMatch = body.match;
-      if (!rawMatch || typeof rawMatch !== "object" || Array.isArray(rawMatch)) {
-        this.error(res, 400, "match must be an object");
-        return;
-      }
-
-      const match = rawMatch as Record<string, unknown>;
-      if (match.commandPattern !== undefined) {
-        if (typeof match.commandPattern !== "string") {
-          this.error(res, 400, "match.commandPattern must be a string");
-          return;
-        }
-        updates.pattern = match.commandPattern.trim() || null;
-      }
-      if (match.pathPattern !== undefined) {
-        if (typeof match.pathPattern !== "string") {
-          this.error(res, 400, "match.pathPattern must be a string");
-          return;
-        }
-        updates.pattern = match.pathPattern.trim() || null;
-      }
-      if (match.executable !== undefined) {
-        if (typeof match.executable !== "string") {
-          this.error(res, 400, "match.executable must be a string");
-          return;
-        }
-        updates.executable = match.executable.trim() || null;
-      }
-      if (match.domain !== undefined) {
-        if (typeof match.domain !== "string") {
-          this.error(res, 400, "match.domain must be a string");
-          return;
-        }
-        // Keep compatibility by converting domain matcher into a command glob.
-        const domain = match.domain.trim();
-        updates.pattern = domain.length > 0 ? `*${domain}*` : null;
       }
     }
 

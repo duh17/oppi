@@ -84,20 +84,34 @@ describe("RuleStore (unified)", () => {
     expect(reloaded.getAll()[0].id).toBe(rule.id);
   });
 
-  it("accepts legacy rule input shape for backward compatibility", () => {
-    const { store } = makeStore();
-    const rule = store.add({
-      effect: "deny",
-      tool: "bash",
-      match: { commandPattern: "git push*", executable: "git" },
-      scope: "global",
-      description: "Deny pushes",
-      source: "manual",
-    } as any);
+  it("loads legacy rule format from disk", () => {
+    const { store, path } = makeStore();
 
-    expect(rule.decision).toBe("deny");
-    expect(rule.pattern).toBe("git push*");
-    expect(rule.executable).toBe("git");
+    // Write a legacy-format rule directly to disk (simulates old rules.json)
+    writeFileSync(
+      path,
+      JSON.stringify([
+        {
+          id: "legacy-1",
+          effect: "deny",
+          tool: "bash",
+          match: { commandPattern: "git push*", executable: "git" },
+          scope: "global",
+          description: "Deny pushes",
+          source: "manual",
+          createdAt: Date.now(),
+        },
+      ]),
+    );
+
+    // Force reload
+    const freshStore = new RuleStore(path);
+    const rules = freshStore.getAll();
+    expect(rules).toHaveLength(1);
+    expect(rules[0].decision).toBe("deny");
+    expect(rules[0].pattern).toBe("git push*");
+    expect(rules[0].executable).toBe("git");
+    expect(rules[0].label).toBe("Deny pushes");
   });
 
   it("keeps session rules in-memory only", () => {
@@ -156,7 +170,12 @@ describe("evaluateWithRules", () => {
       label: "Deny pushes",
     });
 
-    const decision = engine.evaluateWithRules(bash("git push origin main"), store.getAll(), "s1", "ws1");
+    const decision = engine.evaluateWithRules(
+      bash("git push origin main"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
     expect(decision.action).toBe("deny");
   });
 
@@ -246,7 +265,12 @@ describe("evaluateWithRules", () => {
       label: "Ask src",
     });
 
-    const decision = engine.evaluateWithRules(readReq("/workspace/src/main.ts"), store.getAll(), "s1", "ws1");
+    const decision = engine.evaluateWithRules(
+      readReq("/workspace/src/main.ts"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
     expect(decision.action).toBe("ask");
   });
 
@@ -296,6 +320,56 @@ describe("evaluateWithRules", () => {
 
     expect(decision.action).toBe("ask");
     expect(decision.reason).toContain("Pipe to shell");
+  });
+
+  it("matches executable rules after leading comment lines", () => {
+    const { store } = makeStore();
+
+    store.add({
+      tool: "bash",
+      decision: "allow",
+      executable: "git",
+      scope: "workspace",
+      workspaceId: "ws1",
+      source: "manual",
+      label: "Allow git",
+    });
+
+    const decision = engine.evaluateWithRules(
+      bash("# inspect\ncd /workspace && git status"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("allow");
+  });
+
+  it("auto-allows read-only inspection chains", () => {
+    const { store } = makeStore();
+
+    const decision = engine.evaluateWithRules(
+      bash('# inspect\ncd /workspace && grep -rn "rule" src | grep -E "match" | head -10'),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("allow");
+    expect(decision.reason).toContain("Read-only shell inspection");
+  });
+
+  it("does not auto-allow mutating find invocations", () => {
+    const { store } = makeStore();
+
+    const decision = engine.evaluateWithRules(
+      bash("find . -name '*.tmp' -delete"),
+      store.getAll(),
+      "s1",
+      "ws1",
+    );
+
+    expect(decision.action).toBe("ask");
   });
 });
 

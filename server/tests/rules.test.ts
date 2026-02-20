@@ -47,20 +47,22 @@ describe("RuleStore", () => {
     expect(onDisk[0].decision).toBe("allow");
   });
 
-  it("supports legacy input shape on add", () => {
+  it("adds rule with all fields", () => {
     const store = new RuleStore(rulesPath);
     const rule = store.add({
-      effect: "deny",
+      decision: "deny",
       tool: "bash",
-      match: { executable: "rm", commandPattern: "rm -rf *" },
+      executable: "rm",
+      pattern: "rm -rf *",
       scope: "global",
-      description: "deny rm -rf",
+      label: "deny rm -rf",
       source: "manual",
-    } as any);
+    });
 
     expect(rule.decision).toBe("deny");
     expect(rule.executable).toBe("rm");
     expect(rule.pattern).toBe("rm -rf *");
+    expect(rule.label).toBe("deny rm -rf");
   });
 
   it("keeps session rules in memory only", () => {
@@ -76,9 +78,10 @@ describe("RuleStore", () => {
     const rule = store.add(makeRule({ label: "before", pattern: "git *" }));
 
     const updated = store.update(rule.id, {
-      effect: "deny",
-      description: "after",
-      match: { executable: "git", commandPattern: "git push*" },
+      decision: "deny",
+      label: "after",
+      executable: "git",
+      pattern: "git push*",
     });
 
     expect(updated).toBeTruthy();
@@ -86,6 +89,46 @@ describe("RuleStore", () => {
     expect(updated?.label).toBe("after");
     expect(updated?.executable).toBe("git");
     expect(updated?.pattern).toBe("git push*");
+  });
+
+  it("clears executable with null", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ executable: "make", pattern: "make deploy*", label: "test" }));
+    expect(rule.executable).toBe("make");
+
+    const updated = store.update(rule.id, { executable: null });
+    expect(updated).toBeTruthy();
+    expect(updated?.executable).toBeUndefined();
+    expect(updated?.pattern).toBe("make deploy*");
+  });
+
+  it("clears label with null", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ label: "will be cleared" }));
+
+    const updated = store.update(rule.id, { label: null });
+    expect(updated).toBeTruthy();
+    expect(updated?.label).toBeUndefined();
+  });
+
+  it("clears pattern with null", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ executable: "git", pattern: "git push*" }));
+
+    const updated = store.update(rule.id, { pattern: null });
+    expect(updated).toBeTruthy();
+    expect(updated?.pattern).toBeUndefined();
+    expect(updated?.executable).toBe("git");
+  });
+
+  it("clears expiresAt with null", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ expiresAt: Date.now() + 60_000 }));
+    expect(rule.expiresAt).toBeGreaterThan(0);
+
+    const updated = store.update(rule.id, { expiresAt: null });
+    expect(updated).toBeTruthy();
+    expect(updated?.expiresAt).toBeUndefined();
   });
 
   it("removes persisted rule", () => {
@@ -112,7 +155,7 @@ describe("RuleStore", () => {
     expect(store.getForSession("s1")).toHaveLength(1);
   });
 
-  it("findMatching supports legacy matcher API", () => {
+  it("findMatching filters by tool, executable, and pattern", () => {
     const store = new RuleStore(rulesPath);
     store.add(makeRule({ tool: "bash", pattern: "git push*", executable: "git" }));
 
