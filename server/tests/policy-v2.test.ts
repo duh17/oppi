@@ -96,7 +96,7 @@ describe("suggestRule", () => {
   });
 
   it("git -C ... push -> command-scoped rule for git push", () => {
-    const rule = engine.suggestRule(bash("git -C /Users/chenda/workspace/oppi push origin main"), "global", ruleCtx);
+    const rule = engine.suggestRule(bash("git -C /Users/example/workspace/oppi push origin main"), "global", ruleCtx);
     expect(rule).not.toBeNull();
     expect(rule!.match?.executable).toBe("git");
     expect(rule!.match?.commandPattern).toBe("git push*");
@@ -408,7 +408,7 @@ describe("resolution options", () => {
   });
 
   it("git -C ... push: still session-only allow", () => {
-    const req = bash("git -C /Users/chenda/workspace/oppi push origin main");
+    const req = bash("git -C /Users/example/workspace/oppi push origin main");
     const opts = engine.getResolutionOptions(req, {
       action: "ask", reason: "test", layer: "rule",
     });

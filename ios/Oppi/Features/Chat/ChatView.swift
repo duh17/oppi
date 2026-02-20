@@ -87,7 +87,7 @@ struct ChatView: View {
             return .offline
         }
 
-        let ownsSession = wsClient.connectedSessionId == sessionId
+        let ownsSession = connection.activeSessionId == sessionId
 
         let isWsSyncing: Bool
         let isWsDisconnected: Bool
@@ -117,6 +117,10 @@ struct ChatView: View {
     }
 
     var body: some View {
+        chatContent
+    }
+
+    private var chatContent: some View {
         VStack(spacing: 0) {
             ChatTimelineView(
                 sessionId: sessionId,
@@ -138,61 +142,18 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button {
-                    renameText = session?.name ?? ""
-                    showRenameAlert = true
-                } label: {
-                    sessionTitleLabel
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Rename session")
-#if DEBUG
-                .contextMenu {
-                    Button("Copy Session ID", systemImage: "doc.on.doc") {
-                        copySessionID()
-                    }
-                    Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
-                        uploadClientLogs()
-                    }
-                    .disabled(uploadingClientLogs)
-                }
-#endif
+                chatPrincipalToolbarItem
             }
 
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    if !reducer.items.isEmpty {
-                        Button { showOutline = true } label: {
-                            Image(systemName: "list.bullet")
-                                .font(.subheadline)
-                        }
-                    }
-                    Button { showSkillPanel = true } label: {
-                        RuntimeStatusBadge(
-                            statusColor: session?.status.color ?? .themeComment,
-                            syncState: runtimeSyncState,
-                            icon: serverBadgeIcon,
-                            badgeColor: serverBadgeColor
-                        )
-                    }
-                }
+                chatTrailingToolbarItem
             }
         }
-        .sheet(isPresented: $showOutline) {
-            outlineSheet
-        }
-        .sheet(isPresented: $showModelPicker) {
-            modelPickerSheet
-        }
-        .sheet(isPresented: $showSkillPanel) {
-            skillPanelSheet
-        }
-        .fullScreenCover(isPresented: $showComposer) {
-            composerSheet
-        }
-        .alert("Rename Session", isPresented: $showRenameAlert) {
-            renameAlert
-        }
+        .sheet(isPresented: $showOutline) { outlineSheet }
+        .sheet(isPresented: $showModelPicker) { modelPickerSheet }
+        .sheet(isPresented: $showSkillPanel) { skillPanelSheet }
+        .fullScreenCover(isPresented: $showComposer) { composerSheet }
+        .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
         .alert("Compact Context", isPresented: $showCompactConfirmation) {
             Button("Compact", role: .destructive) {
                 actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
@@ -246,10 +207,8 @@ struct ChatView: View {
             Task {
                 await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
             }
-            // Only disconnect if WE are still the active session.
-            // A new ChatView may have already taken over the WS.
-            if connection.wsClient?.connectedSessionId == sessionId
-                || connection.wsClient?.connectedSessionId == nil {
+            if connection.activeSessionId == sessionId
+                || connection.activeSessionId == nil {
                 connection.disconnectSession()
             }
             if ReleaseFeatures.liveActivitiesEnabled {
@@ -323,6 +282,49 @@ struct ChatView: View {
                             }
                         )
                     }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chatPrincipalToolbarItem: some View {
+        Button {
+            renameText = session?.name ?? ""
+            showRenameAlert = true
+        } label: {
+            sessionTitleLabel
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Rename session")
+#if DEBUG
+        .contextMenu {
+            Button("Copy Session ID", systemImage: "doc.on.doc") {
+                copySessionID()
+            }
+            Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
+                uploadClientLogs()
+            }
+            .disabled(uploadingClientLogs)
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private var chatTrailingToolbarItem: some View {
+        HStack(spacing: 12) {
+            if !reducer.items.isEmpty {
+                Button { showOutline = true } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.subheadline)
+                }
+            }
+            Button { showSkillPanel = true } label: {
+                RuntimeStatusBadge(
+                    statusColor: session?.status.color ?? .themeComment,
+                    syncState: runtimeSyncState,
+                    icon: serverBadgeIcon,
+                    badgeColor: serverBadgeColor
                 )
             }
         }

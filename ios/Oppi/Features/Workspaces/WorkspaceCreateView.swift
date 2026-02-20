@@ -18,7 +18,7 @@ struct WorkspaceCreateView: View {
 
     /// Skills from the target server.
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skillsByServer[server.id] ?? connection.workspaceStore.skills
+        connection.workspaceStore.skillsByServer[server.id] ?? []
     }
 
     var body: some View {
@@ -102,7 +102,7 @@ struct WorkspaceCreateView: View {
                 let skills = try await api.listSkills()
                 connection.workspaceStore.skillsByServer[server.id] = skills
             } catch {
-                // Fall back to flat skills list
+                // Keep empty state; refresh will retry.
             }
         }
     }
@@ -128,8 +128,6 @@ struct WorkspaceCreateView: View {
         do {
             let workspace = try await api.createWorkspace(request)
             connection.workspaceStore.upsert(workspace, serverId: server.id)
-            // Also update flat list for backward compat
-            connection.workspaceStore.upsert(workspace)
             dismiss()
         } catch {
             self.error = error.localizedDescription

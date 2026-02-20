@@ -37,7 +37,7 @@ struct OppiApp: App {
     @State private var themeStore = ThemeStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
-    private var connection: ServerConnection { coordinator.connection }
+    private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
 #if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
@@ -55,13 +55,13 @@ struct OppiApp: App {
             } else {
                 ContentView()
                     .environment(coordinator)
-                    .environment(coordinator.connection)
-                    .environment(coordinator.connection.sessionStore)
-                    .environment(coordinator.connection.permissionStore)
-                    .environment(coordinator.connection.reducer)
-                    .environment(coordinator.connection.reducer.toolOutputStore)
-                    .environment(coordinator.connection.reducer.toolArgsStore)
-                    .environment(coordinator.connection.audioPlayer)
+                    .environment(coordinator.activeConnection)
+                    .environment(coordinator.activeConnection.sessionStore)
+                    .environment(coordinator.activeConnection.permissionStore)
+                    .environment(coordinator.activeConnection.reducer)
+                    .environment(coordinator.activeConnection.reducer.toolOutputStore)
+                    .environment(coordinator.activeConnection.reducer.toolArgsStore)
+                    .environment(coordinator.activeConnection.audioPlayer)
                     .environment(navigation)
                     .environment(coordinator.serverStore)
                     .environment(themeStore)
@@ -110,12 +110,7 @@ struct OppiApp: App {
                 existingCredentials: existingCredentials
             ) { reason in await BiometricService.shared.authenticate(reason: reason) }
 
-            connection.disconnectSession()
-            connection.reducer.reset()
-            connection.permissionStore.pending.removeAll()
-            connection.sessionStore.sessions.removeAll()
-            connection.sessionStore.activeSessionId = nil
-            // Add to ServerStore via coordinator (handles fingerprint dedup + store partitions)
+            // Add to ServerStore via coordinator (creates connection + opens /stream)
             guard let pairedServer = PairedServer(
                 from: bootstrap.effectiveCredentials,
                 sortOrder: serverStore.servers.count
@@ -124,11 +119,15 @@ struct OppiApp: App {
             }
             coordinator.addServer(
                 pairedServer,
-                switchTo: false  // We configure manually below
+                switchTo: true
             )
-            guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
-                throw InviteBootstrapError.message("Connection blocked by server transport policy")
-            }
+
+            // Reset the new connection's state
+            connection.disconnectSession()
+            connection.reducer.reset()
+            connection.permissionStore.pending.removeAll()
+            connection.sessionStore.sessions.removeAll()
+            connection.sessionStore.activeSessionId = nil
 
             connection.sessionStore.markSyncStarted()
             connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
@@ -167,7 +166,7 @@ struct OppiApp: App {
                 Task {
                     // Active server: full reconnect (WS, session metadata, lists)
                     await connection.reconnectIfNeeded()
-                    // Inactive servers: lightweight REST refresh (workspaces, sessions)
+                    // All other servers: reconnect + refresh
                     await coordinator.refreshInactiveServers()
                 }
             }
@@ -176,7 +175,10 @@ struct OppiApp: App {
 #if DEBUG
             mainThreadLagWatchdog.stop()
 #endif
-            connection.flushAndSuspend()
+            // Flush all connections on background
+            for (_, conn) in coordinator.connections {
+                conn.flushAndSuspend()
+            }
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
 
         case .inactive:
@@ -322,31 +324,38 @@ struct OppiApp: App {
         let notificationService = PermissionNotificationService.shared
         await notificationService.setup()
 
-        // Wire notification actions back to the connection.
-        // Permission responses go over WebSocket — if the permission is from
-        // a non-active server, we need to use REST fallback instead.
-        let conn = connection
-        notificationService.onPermissionResponse = { [weak conn] permissionId, action in
-            guard let conn else { return }
-            Task {
-                try? await conn.respondToPermission(id: permissionId, action: action)
+        // Wire notification actions back to the correct server's connection.
+        // Permission responses go over WebSocket — find the right connection.
+        let coord = coordinator
+        notificationService.onPermissionResponse = { [weak coord] permissionId, action in
+            guard let coord else { return }
+            Task { @MainActor in
+                // Find which server has this permission and respond via its connection
+                for (_, conn) in coord.connections {
+                    if conn.permissionStore.pending.contains(where: { $0.id == permissionId }) {
+                        try? await conn.respondToPermission(id: permissionId, action: action)
+                        return
+                    }
+                }
+                // Fallback: try active connection
+                try? await coord.activeConnection.respondToPermission(id: permissionId, action: action)
             }
         }
 
-        // Configure push registration with the connection
-        PushRegistration.shared.configure(connection: conn)
+        // Configure push registration with the active connection
+        PushRegistration.shared.configure(connection: connection)
 
         // Navigate to session when user taps a push notification body.
         // Cross-server: find which server owns the session and switch to it.
-        let coord = coordinator
-        notificationService.onNavigateToPermission = { [weak conn, weak coord] _, sessionId in
-            guard let conn, let coord, !sessionId.isEmpty else { return }
-            // Find the session across all servers
-            if let found = conn.sessionStore.findSession(id: sessionId) {
-                coord.switchToServer(found.serverId)
+        notificationService.onNavigateToPermission = { [weak coord] _, sessionId in
+            guard let coord, !sessionId.isEmpty else { return }
+            Task { @MainActor in
+                if let found = coord.findSession(id: sessionId) {
+                    coord.switchToServer(found.serverId)
+                    found.connection.sessionStore.activeSessionId = sessionId
+                }
+                navigation.selectedTab = .workspaces
             }
-            conn.sessionStore.activeSessionId = sessionId
-            navigation.selectedTab = .workspaces
         }
     }
 
@@ -414,15 +423,15 @@ struct OppiApp: App {
             return
         }
 
-        let initialCreds = server.credentials
-        coordinator.switchToServer(server)
-        let creds = initialCreds
-
-        guard connection.configure(credentials: creds) else {
+        // Switch to the target server (creates + configures its ServerConnection)
+        guard coordinator.switchToServer(server) else {
             launchOutcome = "invalid_credentials"
             navigation.showOnboarding = true
             return
         }
+
+        // Open /stream WebSocket for ALL paired servers (concurrent connections)
+        coordinator.connectAllStreams()
 
         guard let api = connection.apiClient else {
             launchOutcome = "no_api_client"

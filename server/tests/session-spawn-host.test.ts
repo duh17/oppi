@@ -144,8 +144,8 @@ describe("session-spawn spawnPiHost", () => {
       gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
       piExecutable: "/opt/homebrew/bin/pi",
       resolveSkillPath: (name: string) => {
-        if (name === "fetch") return "/Users/chenda/.pi/agent/skills/fetch";
-        if (name === "search") return "/Users/chenda/.pi/agent/skills/search";
+        if (name === "fetch") return "/Users/example/.pi/agent/skills/fetch";
+        if (name === "search") return "/Users/example/.pi/agent/skills/search";
         return undefined;
       },
     });
@@ -154,8 +154,8 @@ describe("session-spawn spawnPiHost", () => {
     const existing = new Set<string>([
       expectedCwd,
       OPPI_GATE_EXTENSION,
-      "/Users/chenda/.pi/agent/skills/fetch",
-      "/Users/chenda/.pi/agent/skills/search",
+      "/Users/example/.pi/agent/skills/fetch",
+      "/Users/example/.pi/agent/skills/search",
     ]);
     mockedExistsSync.mockImplementation((path) =>
       typeof path === "string" && existing.has(path),
@@ -169,10 +169,10 @@ describe("session-spawn spawnPiHost", () => {
     const [, args] = mockedSpawn.mock.calls[0];
     expect(args).toContain("--no-skills");
     expect(args).toContain("--skill");
-    expect(args).toContain("/Users/chenda/.pi/agent/skills/fetch");
-    expect(args).toContain("/Users/chenda/.pi/agent/skills/search");
+    expect(args).toContain("/Users/example/.pi/agent/skills/fetch");
+    expect(args).toContain("/Users/example/.pi/agent/skills/search");
     expect(
-      args.filter((arg) => arg === "/Users/chenda/.pi/agent/skills/fetch").length,
+      args.filter((arg) => arg === "/Users/example/.pi/agent/skills/fetch").length,
     ).toBe(1);
     expect(args).not.toContain("missing");
   });

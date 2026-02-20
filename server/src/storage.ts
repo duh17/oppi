@@ -77,7 +77,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     port: 7749,
     host: "0.0.0.0",
     dataDir,
-    defaultModel: "anthropic/claude-sonnet-4-0",
+    defaultModel: "openai-codex/gpt-5.3-codex",
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 3,

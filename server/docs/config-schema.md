@@ -21,7 +21,7 @@ Current schema version: **3**
   "port": 7749,
   "host": "0.0.0.0",
   "dataDir": "~/.config/oppi",
-  "defaultModel": "anthropic/claude-sonnet-4-20250514",
+  "defaultModel": "openai-codex/gpt-5.3-codex",
   "sessionIdleTimeoutMs": 600000,
   "workspaceIdleTimeoutMs": 1800000,
   "maxSessionsPerWorkspace": 3,
@@ -59,7 +59,7 @@ Current schema version: **3**
 | `port` | number | `7749` | HTTP + WS port |
 | `host` | string | `"0.0.0.0"` | Bind address |
 | `dataDir` | string | `~/.config/oppi` | State root |
-| `defaultModel` | string | `"anthropic/claude-sonnet-4-20250514"` | Default model |
+| `defaultModel` | string | `"openai-codex/gpt-5.3-codex"` | Default model |
 | `sessionIdleTimeoutMs` | number | `600000` | Session idle timeout |
 | `workspaceIdleTimeoutMs` | number | `1800000` | Workspace idle timeout |
 | `maxSessionsPerWorkspace` | number | `3` | Per-workspace session cap |

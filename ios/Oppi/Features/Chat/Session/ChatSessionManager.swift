@@ -733,8 +733,8 @@ final class ChatSessionManager {
         // Without this check, when session B takes over the WS,
         // session A's cleanup would kill session B's connection,
         // causing a connect/disconnect ping-pong loop.
-        guard connection.wsClient?.connectedSessionId == sessionId
-              || connection.wsClient?.connectedSessionId == nil else { return }
+        guard connection.activeSessionId == sessionId
+              || connection.activeSessionId == nil else { return }
         connection.disconnectSession()
     }
 }

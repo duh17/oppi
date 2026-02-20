@@ -9,7 +9,10 @@
   },
   "files": [
     "dist/",
-    "LICENSE"
+    "extensions/",
+    "themes/",
+    "LICENSE",
+    "README.md"
   ],
   "engines": {
     "node": ">=20.0.0"

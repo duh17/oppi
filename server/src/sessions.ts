@@ -235,10 +235,10 @@ export class SessionManager extends EventEmitter {
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
     this.piExecutable = resolvePiExecutable();
 
-    // Load extension sidecar mobile renderers (async, fire-and-forget at startup).
-    this.mobileRenderers.loadAllSidecars().then(({ loaded, errors }) => {
+    // Load user-provided mobile renderers (async, fire-and-forget at startup).
+    this.mobileRenderers.loadAllRenderers().then(({ loaded, errors }) => {
       if (loaded.length > 0) {
-        console.log(`${ts()} [mobile-renderer] loaded sidecars: ${loaded.join(", ")}`);
+        console.log(`${ts()} [mobile-renderer] loaded: ${loaded.join(", ")}`);
       }
       for (const err of errors) {
         console.error(`${ts()} [mobile-renderer] ${err}`);

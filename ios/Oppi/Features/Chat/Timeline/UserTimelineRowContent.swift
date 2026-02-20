@@ -241,8 +241,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
     private func presentFullScreenImage(_ image: UIImage) {
         guard let vc = findViewController() else { return }
-        let zoomVC = NativeZoomableImageViewController(image: image)
-        zoomVC.modalPresentationStyle = .fullScreen
+        let zoomVC = FullScreenImageViewController(image: image)
+        // Use .overFullScreen to prevent SwiftUI lifecycle churn (onDisappear/onAppear).
+        zoomVC.modalPresentationStyle = .overFullScreen
         vc.present(zoomVC, animated: true)
     }
 
@@ -318,104 +319,5 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             self?.contextMenu()
         }
-    }
-}
-
-// MARK: - Native Zoomable Image Viewer
-
-/// Full-screen image viewer with pinch-to-zoom and double-tap.
-///
-/// Full-screen image viewer with pinch-to-zoom and double-tap.
-final class NativeZoomableImageViewController: UIViewController {
-    private let image: UIImage
-    private var scrollView: UIScrollView!
-    private var imageView: UIImageView!
-
-    init(image: UIImage) {
-        self.image = image
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .black
-
-        scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.minimumZoomScale = 1.0
-        scrollView.maximumZoomScale = 5.0
-        scrollView.delegate = self
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        view.addSubview(scrollView)
-
-        imageView = UIImageView(image: image)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFit
-        scrollView.addSubview(imageView)
-
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            // Pin all edges so contentLayoutGuide gets a deterministic content size
-            // (equal to the viewport at zoomScale = 1). Center-only constraints can
-            // leave content geometry underconstrained, causing the image to render
-            // offset (top-left clipped) on first presentation.
-            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-        ])
-
-        // Double-tap to toggle zoom.
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
-
-        // Done button.
-        let done = UIButton(type: .system)
-        done.setTitle("Done", for: .normal)
-        done.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        done.setTitleColor(.white, for: .normal)
-        done.translatesAutoresizingMaskIntoConstraints = false
-        done.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
-        view.addSubview(done)
-
-        NSLayoutConstraint.activate([
-            done.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            done.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-        ])
-    }
-
-    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        if scrollView.zoomScale > 1.0 {
-            scrollView.setZoomScale(1.0, animated: true)
-        } else {
-            let point = gesture.location(in: imageView)
-            let size = CGSize(
-                width: scrollView.bounds.width / 2.5,
-                height: scrollView.bounds.height / 2.5
-            )
-            let origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
-            scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
-        }
-    }
-
-    @objc private func dismissTapped() {
-        dismiss(animated: true)
-    }
-}
-
-extension NativeZoomableImageViewController: UIScrollViewDelegate {
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        imageView
     }
 }

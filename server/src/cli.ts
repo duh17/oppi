@@ -535,7 +535,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   if (nonInteractive) {
     // Non-interactive: use flags or defaults
     port = parseInt(flags.port || "7749") || 7749;
-    defaultModel = flags.model || "anthropic/claude-sonnet-4-20250514";
+    defaultModel = flags.model || "openai-codex/gpt-5.3-codex";
     maxSessionsGlobal = parseInt(flags["max-sessions"] || "5") || 5;
 
     console.log(c.dim(`  Port:         ${port}`));
@@ -549,11 +549,11 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
     console.log("");
     console.log(c.dim("  Popular models:"));
-    console.log(c.dim("    anthropic/claude-sonnet-4-20250514"));
+    console.log(c.dim("    openai-codex/gpt-5.3-codex"));
     console.log(c.dim("    anthropic/claude-opus-4-6"));
-    console.log(c.dim("    anthropic/claude-haiku-3.5"));
+    console.log(c.dim("    anthropic/claude-sonnet-4-20250514"));
     console.log("");
-    defaultModel = await prompt("Default model", "anthropic/claude-sonnet-4-20250514");
+    defaultModel = await prompt("Default model", "openai-codex/gpt-5.3-codex");
 
     const maxSessionsStr = await prompt("Max concurrent sessions", "5");
     maxSessionsGlobal = parseInt(maxSessionsStr) || 5;
@@ -809,7 +809,7 @@ function cmdHelp(): void {
   console.log("");
   console.log(`    ${c.dim("oppi init")}`);
   console.log(`    ${c.dim("oppi serve")}`);
-  console.log(`    ${c.dim('oppi config set defaultModel "anthropic/claude-opus-4-6"')}`);
+  console.log(`    ${c.dim('oppi config set defaultModel "openai-codex/gpt-5.3-codex"')}`);
   console.log(`    ${c.dim("oppi config set port 8080")}`);
   console.log(`    ${c.dim("oppi env init   # run from fish/zsh/bash")}`);
   console.log("");

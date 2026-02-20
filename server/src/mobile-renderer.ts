@@ -6,13 +6,16 @@
  * serializable StyledSegment[] instead of TUI Component objects.
  *
  * Sources (load order, later overrides earlier):
- * 1. Built-in renderers (bash, read, edit, write, grep, find, ls)
- * 2. Extension sidecars (~/.pi/agent/extensions/*.mobile.ts)
+ * 1. Built-in renderers (bash, read, edit, write, grep, find, ls, todo)
+ * 2. User renderers (~/.pi/agent/mobile-renderers/*.ts)
+ *
+ * User renderers live in a dedicated directory separate from pi extensions
+ * so the pi CLI doesn't try to load them as extensions.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { HOST_EXTENSIONS_DIR } from "./extension-loader.js";
 
 // ─── Types ───
 
@@ -296,55 +299,33 @@ export class MobileRendererRegistry {
     return this.renderers.has(toolName);
   }
 
+  /** Default directory for user-provided mobile renderers. */
+  static readonly RENDERERS_DIR = join(homedir(), ".pi", "agent", "mobile-renderers");
+
   /**
-   * Discover sidecar files in the extensions directory.
+   * Discover renderer files in the mobile-renderers directory.
    *
-   * Convention:
-   * - File extensions: `memory.mobile.ts` alongside `memory.ts`
-   * - Directory extensions: `my-ext/mobile.ts` alongside `my-ext/index.ts`
-   *
-   * Returns absolute paths to discovered sidecars.
+   * Every .ts/.js file in the directory is treated as a renderer module.
+   * Returns absolute paths to discovered files.
    */
-  static discoverSidecars(extensionsDir: string = HOST_EXTENSIONS_DIR): string[] {
-    if (!existsSync(extensionsDir)) return [];
+  static discoverRenderers(renderersDir: string = MobileRendererRegistry.RENDERERS_DIR): string[] {
+    if (!existsSync(renderersDir)) return [];
 
-    const sidecars: string[] = [];
-
-    for (const entry of readdirSync(extensionsDir)) {
+    const files: string[] = [];
+    for (const entry of readdirSync(renderersDir)) {
       if (entry.startsWith(".")) continue;
-
-      const absPath = join(extensionsDir, entry);
-
-      // File sidecar: *.mobile.ts or *.mobile.js
-      if (entry.endsWith(".mobile.ts") || entry.endsWith(".mobile.js")) {
-        sidecars.push(absPath);
-        continue;
-      }
-
-      // Directory sidecar: dir/mobile.ts or dir/mobile.js
-      try {
-        if (statSync(absPath).isDirectory()) {
-          for (const suffix of ["mobile.ts", "mobile.js"]) {
-            const candidate = join(absPath, suffix);
-            if (existsSync(candidate)) {
-              sidecars.push(candidate);
-              break;
-            }
-          }
-        }
-      } catch {
-        // stat failed — skip
+      if (entry.endsWith(".ts") || entry.endsWith(".js")) {
+        files.push(join(renderersDir, entry));
       }
     }
-
-    return sidecars;
+    return files;
   }
 
   /**
-   * Load a single sidecar module and register its renderers.
+   * Load a single renderer module and register its tools.
    *
-   * Sidecar modules export a default object keyed by tool name:
-   * ```
+   * Renderer modules export a default object keyed by tool name:
+   * ```ts
    * export default {
    *   remember: { renderCall(args) {...}, renderResult(details, isError) {...} },
    *   recall:   { renderCall(args) {...}, renderResult(details, isError) {...} },
@@ -353,17 +334,16 @@ export class MobileRendererRegistry {
    *
    * Node 25+ natively imports .ts files (type stripping).
    */
-  async loadSidecar(sidecarPath: string): Promise<{ loaded: string[]; errors: string[] }> {
+  async loadRenderer(filePath: string): Promise<{ loaded: string[]; errors: string[] }> {
     const loaded: string[] = [];
     const errors: string[] = [];
 
     try {
-      // Dynamic import works for both .ts and .js on Node 25+
-      const mod = await import(sidecarPath);
+      const mod = await import(filePath);
       const renderers = mod.default ?? mod;
 
       if (typeof renderers !== "object" || renderers === null) {
-        errors.push(`${sidecarPath}: default export is not an object`);
+        errors.push(`${filePath}: default export is not an object`);
         return { loaded, errors };
       }
 
@@ -373,27 +353,27 @@ export class MobileRendererRegistry {
           this.renderers.set(toolName, r);
           loaded.push(toolName);
         } else {
-          errors.push(`${sidecarPath}: "${toolName}" missing renderCall or renderResult`);
+          errors.push(`${filePath}: "${toolName}" missing renderCall or renderResult`);
         }
       }
     } catch (err: any) {
-      errors.push(`${sidecarPath}: ${err?.message || String(err)}`);
+      errors.push(`${filePath}: ${err?.message || String(err)}`);
     }
 
     return { loaded, errors };
   }
 
   /**
-   * Discover and load all sidecar files.
+   * Discover and load all renderer files from the mobile-renderers directory.
    * Returns summary of what was loaded and any errors.
    */
-  async loadAllSidecars(extensionsDir?: string): Promise<{ loaded: string[]; errors: string[] }> {
-    const sidecars = MobileRendererRegistry.discoverSidecars(extensionsDir);
+  async loadAllRenderers(renderersDir?: string): Promise<{ loaded: string[]; errors: string[] }> {
+    const files = MobileRendererRegistry.discoverRenderers(renderersDir);
     const allLoaded: string[] = [];
     const allErrors: string[] = [];
 
-    for (const sidecarPath of sidecars) {
-      const { loaded, errors } = await this.loadSidecar(sidecarPath);
+    for (const filePath of files) {
+      const { loaded, errors } = await this.loadRenderer(filePath);
       allLoaded.push(...loaded);
       allErrors.push(...errors);
     }

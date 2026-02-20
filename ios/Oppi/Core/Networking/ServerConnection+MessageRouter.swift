@@ -19,6 +19,10 @@ extension ServerConnection {
         }
 
         switch message {
+        // Stream lifecycle (handled at WebSocket level, not per-session)
+        case .streamConnected:
+            break
+
         // Direct state updates (not timeline events)
         case .connected(let session):
             handleConnected(session)

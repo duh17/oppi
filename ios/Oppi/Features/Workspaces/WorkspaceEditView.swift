@@ -34,7 +34,7 @@ struct WorkspaceEditView: View {
            let scoped = connection.workspaceStore.skillsByServer[activeServerId] {
             return scoped
         }
-        return connection.workspaceStore.skills
+        return []
     }
 
     private var workspaceForEditing: Workspace {
@@ -42,10 +42,6 @@ struct WorkspaceEditView: View {
            let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
             .first(where: { $0.id == workspace.id }) {
             return scoped
-        }
-
-        if let cached = connection.workspaceStore.workspaces.first(where: { $0.id == workspace.id }) {
-            return cached
         }
 
         return workspace
@@ -345,7 +341,6 @@ struct WorkspaceEditView: View {
             if let activeServerId {
                 connection.workspaceStore.upsert(updated, serverId: activeServerId)
             }
-            connection.workspaceStore.upsert(updated)
             dismiss()
         } catch {
             self.error = error.localizedDescription

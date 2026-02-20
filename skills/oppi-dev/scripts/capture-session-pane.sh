@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/chenda/workspace/oppi"
+ROOT_DIR="$HOME/workspace/oppi"
 SESSION_ID=""
 LAST="25m"
 TMUX_SESSION=""
@@ -19,7 +19,7 @@ Options:
   -s, --session <id>         Session id for capture-session.sh (required)
       --last <duration>      Lookback window (default: 25m)
       --root <path>          Repo root containing scripts/capture-session.sh
-                             (default: /Users/chenda/workspace/oppi)
+                             (default: ~/workspace/oppi)
       --tmux-session <name>  Override target tmux session
       --tmux-window <index>  Override target window index
       --dry-run              Print selected pane + command, do not execute

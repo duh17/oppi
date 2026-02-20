@@ -14,7 +14,7 @@ struct WorkspaceListView: View {
         List {
             ForEach(serverStore.servers) { server in
                 Section(server.name) {
-                    let workspaces = connection.workspaceStore.workspacesByServer[server.id] ?? []
+                    let workspaces = coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
                     if workspaces.isEmpty {
                         Text("No workspaces")
                             .font(.subheadline)
@@ -47,7 +47,7 @@ struct WorkspaceListView: View {
             await coordinator.refreshAllServers()
         }
         .overlay {
-            if serverStore.servers.allSatisfy({ (connection.workspaceStore.workspacesByServer[$0.id] ?? []).isEmpty }) {
+            if serverStore.servers.allSatisfy({ (coordinator.connection(for: $0.id)?.workspaceStore.workspaces ?? []).isEmpty }) {
                 ContentUnavailableView(
                     "No Workspaces",
                     systemImage: "square.grid.2x2",
@@ -58,14 +58,14 @@ struct WorkspaceListView: View {
     }
 
     private func deleteWorkspaces(at offsets: IndexSet, serverId: String) async {
-        let workspaces = connection.workspaceStore.workspacesByServer[serverId] ?? []
-        guard let api = coordinator.apiClient(for: serverId) else { return }
+        guard let conn = coordinator.connection(for: serverId) else { return }
+        let workspaces = conn.workspaceStore.workspaces
+        guard let api = conn.apiClient else { return }
         let toDelete = offsets.map { workspaces[$0] }
 
         // Optimistic removal
         for workspace in toDelete {
-            connection.workspaceStore.remove(id: workspace.id, serverId: serverId)
-            connection.workspaceStore.remove(id: workspace.id)
+            conn.workspaceStore.remove(id: workspace.id, serverId: serverId)
         }
 
         // Server-side delete

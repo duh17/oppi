@@ -73,8 +73,9 @@ struct WorkspaceHomeView: View {
     private func serverSection(for server: PairedServer) -> some View {
         let serverId = server.id
         let workspaces = sortedWorkspaces(for: serverId)
-        let freshness = connection.workspaceStore.freshnessState(forServer: serverId)
-        let freshnessLabel = connection.workspaceStore.freshnessLabel(forServer: serverId)
+        let serverConn = coordinator.connection(for: serverId)
+        let freshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
+        let freshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
         let isUnreachable = freshness == .offline
 
         Section {
@@ -126,11 +127,13 @@ struct WorkspaceHomeView: View {
     // MARK: - Data
 
     private var allWorkspacesEmpty: Bool {
-        connection.workspaceStore.workspacesByServer.values.allSatisfy { $0.isEmpty }
+        coordinator.connections.values.allSatisfy { conn in
+            conn.workspaceStore.workspaces.isEmpty
+        }
     }
 
     private func workspacesForServer(_ serverId: String) -> [Workspace] {
-        connection.workspaceStore.workspacesByServer[serverId] ?? []
+        coordinator.connection(for: serverId)?.workspaceStore.workspaces ?? []
     }
 
     private func sortedWorkspaces(for serverId: String) -> [Workspace] {
@@ -150,10 +153,10 @@ struct WorkspaceHomeView: View {
 
     /// Sessions for a workspace on a specific server.
     ///
-    /// Uses per-server session query so non-active servers show correct counts
-    /// instead of always reading from the active partition.
+    /// Routes to the server's own SessionStore (per-server connections).
     private func sessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
-        sessionStore.sessions(forServer: serverId).filter { $0.workspaceId == workspaceId }
+        let conn = coordinator.connection(for: serverId)
+        return (conn?.sessionStore.sessions ?? []).filter { $0.workspaceId == workspaceId }
     }
 
     private func activeCount(for workspaceId: String, serverId: String) -> Int {
@@ -165,7 +168,8 @@ struct WorkspaceHomeView: View {
     }
 
     private func hasAttention(for workspaceId: String, serverId: String) -> Bool {
-        let serverPermissions = permissionStore.pending(forServer: serverId)
+        let conn = coordinator.connection(for: serverId)
+        let serverPermissions = conn?.permissionStore.pending ?? []
         return sessionsFor(workspaceId, serverId: serverId).contains { session in
             serverPermissions.contains { $0.sessionId == session.id }
             || session.status == .error

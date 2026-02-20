@@ -49,7 +49,7 @@ Each line in the JSONL file is a trace event. Types:
 
 | Runtime | Path |
 |---------|------|
-| Host | `~/.pi/agent/sessions/--Users-chenda--/<timestamp>_<uuid>.jsonl` |
+| Host | `~/.pi/agent/sessions/--Users-example--/<timestamp>_<uuid>.jsonl` |
 | Container | `~/.config/oppi/sandboxes/<userId>/<sessionId>/agent/sessions/<workspace>/<timestamp>_<uuid>.jsonl` |
 
 ## REST API Endpoints

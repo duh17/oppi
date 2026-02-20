@@ -1,234 +1,96 @@
-# Oppi — Mobile-Supervised Coding Agent
+# Oppi
 
-Control a local [pi](https://github.com/badlogic/pi-mono) coding agent from your iPhone. Your Mac runs the server, your phone supervises.
+Oppi is a mobile client + self-hosted server for supervising local [pi](https://github.com/badlogic/pi-mono) coding sessions on your own machine.
 
-```
-iPhone (Oppi app)  ←— Local network / VPN —→  Your Mac (oppi server)
-                                                 ↕
-                                            pi (coding agent)
-                                                 ↕
-                                            Your code
-```
+All agent execution happens on your own machine.
 
-All code stays on your machine. The agent can't run dangerous commands without your approval. Sessions are isolated per workspace.
+## Current Status
 
-## Features
-
-- **Permission gate** — Every risky tool call (writes, deletes, installs, network access) routes to your phone for approval. Tap Allow or Deny from anywhere.
-- **Policy engine** — Layered rules auto-allow safe operations and block dangerous ones. Learns from your decisions over time.
-- **Workspaces** — Isolated environments with their own skills, policies, and project mounts.
-- **Local process execution** — Sessions run directly on your Mac for fast startup and full toolchain access.
-- **Push notifications** — Permission requests and session events pushed via APNs. No need to keep the app open.
-- **Multi-server** — Pair your phone with multiple Mac servers. Browse all workspaces from one screen.
-- **Skills** — Curate what your agent can do. Built-in skill registry with compatibility hints.
-- **Session traces** — Full conversation history with tool calls, diffs, and branching rendered as a timeline.
-- **Streaming** — Real-time text, thinking, and tool output streamed over WebSocket.
+- iOS app: TestFlight beta
+- Server: in this repo under `server/`
 
 ## Quick Start
 
-### Prerequisites
+### Requirements
 
-- **macOS 15+** (Sequoia)
-- **Node.js 22+** — `brew install node`
-- **pi CLI** — `npm install -g @mariozechner/pi-coding-agent`
-- **LLM provider account** — Anthropic or OpenAI (via `pi login`)
-- **iPhone** with the **Oppi** app (free on the App Store, or build from source)
+- Host machine with Node.js 22+ (macOS or Linux)
+- `pi` CLI installed: `npm install -g @mariozechner/pi-coding-agent`
+- `pi` provider login completed (`pi` then `/login`)
+- iPhone with Oppi installed (TestFlight)
 
-### 1. Install and set up
+### 1) Start the server (from source)
 
 ```bash
 git clone https://github.com/duh17/oppi.git
 cd oppi/server
 npm install
-```
-
-First-time interactive setup:
-
-```bash
+npm run build
 npx oppi init
-```
-
-This creates `~/.config/oppi/`, generates an Ed25519 server identity, and walks you through port, model, and session limit configuration.
-
-### 2. Set up pi credentials
-
-```bash
-pi
-# Then type /login to authenticate with Anthropic, OpenAI, or another provider
-```
-
-### 3. Start the server
-
-```bash
 npx oppi serve
 ```
 
-Listens on port **7749** by default. Auto-detects Tailscale and local network hostnames.
+> Once `oppi-server` is published to npm, global install is:
+> `npm install -g oppi-server`
 
-### 4. Pair your iPhone
+### 2) Pair your iPhone
 
 In a second terminal:
 
 ```bash
+cd oppi/server
 npx oppi pair
 ```
 
-Scan the QR code in the Oppi app. The pairing uses a signed, time-limited Ed25519 envelope — no passwords to type.
+Scan the QR in the Oppi app.
 
-### 5. Start coding
+### 3) Run your first session
 
-1. Tap **+** in the app to create a workspace (pick a project directory)
-2. Start a session — type a message
-3. Permission requests appear as push notifications — tap to approve or deny
+In Oppi:
+1. Create a workspace
+2. Start a session
+3. Send a prompt
+4. Approve/deny risky actions in the app when prompted
 
-## Execution Model
+## Remote Access (optional)
 
-Oppi currently runs sessions as local processes on your Mac. Access is controlled by workspace scoping, policy rules, and explicit phone approvals for risky operations.
+If phone and server host are not on the same Wi-Fi, use Tailscale/WireGuard/etc.
 
-## Architecture
-
-```
-┌──────────────────┐         ┌──────────────────────────────────────┐
-│  iPhone           │         │  Your Mac                             │
-│                   │         │                                       │
-│  Oppi iOS app    │◄──WS──►│  oppi server (Node.js)                │
-│  - Chat timeline  │         │  ├── Session manager                  │
-│  - Permission UI  │         │  ├── Policy engine (layered rules)    │
-│  - Workspace mgmt │  REST   │  ├── Permission gate (TCP per-session)│
-│  - Push notifs    │◄──────►│  ├── Auth proxy (credential isolation) │
-│  - Multi-server   │         │  ├── Runtime manager (locks/limits)    │
-│                   │         │  └── Skill registry + push client      │
-└──────────────────┘         │                                        │
-                              │  pi (coding agent, RPC over stdio)     │
-                              │  └── runs as a local process on macOS   │
-                              └──────────────────────────────────────┘
-```
-
-## Networking
-
-Your phone and Mac just need to reach each other over the network.
-
-**Same WiFi (simplest):** Works automatically. The pairing QR uses your Mac's local IP or `.local` hostname.
-
-**VPN / overlay network:** For remote access, use any VPN or overlay network (Tailscale, WireGuard, ZeroTier, etc.) that puts both devices on the same network. The server auto-detects Tailscale hostnames if available.
+You can force a hostname/IP into the pairing QR:
 
 ```bash
-# Force a specific hostname in the pairing QR
 npx oppi pair --host my-mac.example.com
 ```
 
-## CLI Reference
-
-```
-oppi init                          Interactive first-time setup
-oppi serve                         Start the server
-oppi serve --port 8080             Custom port
-oppi pair                          Show pairing QR
-oppi pair --host <host>            Force hostname in QR
-oppi pair --save qr.png            Save QR as image
-oppi status                        Server status
-oppi token rotate                  Rotate auth token (forces re-pair)
-oppi config show                   Show effective config
-oppi config set <key> <value>      Update a config value
-oppi config get <key>              Get a config value
-oppi config validate               Validate config file
-oppi env init                      Capture shell PATH for local sessions
-oppi env show                      Show resolved local PATH
-```
-
-## Security
-
-- **Credential isolation** — API keys stay on your Mac. The auth proxy injects credentials only into outbound provider requests.
-- **Signed pairing** — Ed25519 signed, time-limited, single-use pairing envelopes. No shared passwords.
-- **Permission gate** — Every tool call evaluated against a layered policy engine. Dangerous operations require explicit phone approval. Fail-closed: if the phone is unreachable, risky operations are denied.
-- **Workspace scoping** — Sessions are created inside selected workspace roots and governed by policy + permission gates.
-- **Timing-safe auth** — Bearer token comparison uses `timingSafeEqual` to prevent timing attacks.
-- **Hard denies** — Immutable rules block the most dangerous operations (e.g., `rm -rf /`, modifying system files) regardless of user policy.
-
-See `server/docs/` for detailed security documentation including the [threat model](server/docs/security-prompt-injection-residual-risk.md) and [policy engine design](server/docs/policy-engine-v2.md).
-
-## Project Structure
-
-```
-oppi/
-├── server/                 Server runtime (TypeScript)
-│   ├── src/
-│   │   ├── index.ts        CLI entrypoint
-│   │   ├── server.ts       HTTP + WebSocket server
-│   │   ├── sessions.ts     Pi process lifecycle + RPC bridge
-│   │   ├── policy.ts       Layered policy engine
-│   │   ├── gate.ts         Permission gate (TCP)
-│   │   ├── workspace-runtime.ts Session/workspace lock + limit manager
-│   │   ├── auth-proxy.ts   Credential-isolating reverse proxy
-│   │   ├── push.ts         APNs push notification client
-│   │   ├── storage.ts      Persistent config + session storage
-│   │   ├── stream.ts       Multiplexed WebSocket streams
-│   │   ├── skills.ts       Skill registry + user skills
-│   │   └── types.ts        Protocol types (shared with iOS)
-│   ├── extensions/
-│   │   └── permission-gate/ Pi extension for tool call interception
-│   ├── tests/              vitest test suite
-│   └── docs/               Design documents
-├── ios/                    Oppi iOS app (SwiftUI, iOS 26+)
-│   ├── Oppi/               Main app target
-│   │   ├── App/            App entry point
-│   │   ├── Core/           Networking, services, models, formatting
-│   │   └── Features/       Chat, workspaces, permissions, skills, settings
-│   ├── OppiTests/          Swift Testing unit tests
-│   └── scripts/            Build, deploy, and debug scripts
-└── skills/                 Agent skills for oppi development
-```
-
-## Development
-
-### Server
+## Useful Commands
 
 ```bash
-cd server
-npm install
-npm test          # vitest test suite
-npm run build     # TypeScript compile
-npm run check     # typecheck + lint + format check
-npm start         # Start server (from compiled dist/)
-npm run dev       # Start with tsx watch (auto-reload)
+oppi init
+oppi serve
+oppi pair --host <host>
+oppi status
+oppi doctor
+oppi config show
+oppi env init
 ```
 
-### iOS
+## Configuration and Docs
 
-Requires **Xcode 26.2+** with the iOS 26 SDK.
+- Server setup/config: [`server/README.md`](server/README.md)
+- Config schema: [`server/docs/config-schema.md`](server/docs/config-schema.md)
+- Security docs: [`server/docs/`](server/docs)
+- Theme system: [`docs/theme-system.md`](docs/theme-system.md)
 
-```bash
-cd ios
-# Install XcodeGen if needed: brew install xcodegen
-xcodegen generate
-open Oppi.xcodeproj
-# Or build from command line:
-xcodebuild build -scheme Oppi -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-xcodebuild test -scheme Oppi -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-```
+## Privacy (current TestFlight build)
 
-> **Fork setup:** Update `bundleIdPrefix` and `DEVELOPMENT_TEAM` in `ios/project.yml` to your own Apple Developer values.
+- No third-party analytics or crash telemetry is enabled.
+- Sentry integration exists for development diagnostics, but TestFlight uploads disable `SENTRY_DSN`.
+- Oppi session/workspace data stays on your self-hosted server.
 
-## Troubleshooting
+## Demo Videos (coming soon)
 
-**"pi not found"** — Install globally: `npm install -g @mariozechner/pi-coding-agent`. Or set `OPPI_PI_BIN=/path/to/pi`.
-
-**"auth.json not found"** — Run `pi` then `/login` to authenticate with your LLM provider.
-
-**Can't connect from phone** — Verify both devices are on the same network. Check `curl http://<your-mac>:7749/health`. Check firewall allows port 7749.
-
-**Session start feels slow** — Verify `pi` is installed and authenticated (`pi` then `/login`). You can also run `oppi env init` to capture your shell PATH for spawned sessions.
-
-**Everything needs approval** — Expected! The server defaults to asking. As you approve commands, learned rules accumulate and common operations auto-allow.
-
-## Current Limitations
-
-- **Single user** — one owner per server instance
-- **macOS only** — production usage is currently validated on macOS
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
+- Setup from zero to first prompt
+- Pairing + approval flow
+- Theme import/customization
 
 ## License
 

@@ -31,18 +31,14 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(server.name)
                                     .font(.subheadline.weight(.medium))
-                                Text("\(server.host):\(server.port)")
+                                Text(verbatim: "\(server.host):\(server.port)")
                                     .font(.caption)
                                     .foregroundStyle(.themeComment)
                             }
 
                             Spacer()
 
-                            if server.id == connection.currentServerId {
-                                Text("Active")
-                                    .font(.caption2)
-                                    .foregroundStyle(.themeGreen)
-                            }
+                            serverStatusBadge(for: server)
                         }
                     }
                     .contextMenu {
@@ -203,6 +199,31 @@ struct SettingsView: View {
             } else {
                 Text("All permissions can be approved with a simple tap.")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func serverStatusBadge(for server: PairedServer) -> some View {
+        let conn = coordinator.connection(for: server.id)
+        let wsStatus = conn?.wsClient?.status
+
+        switch wsStatus {
+        case .connected:
+            Text("Connected")
+                .font(.caption2)
+                .foregroundStyle(.themeGreen)
+        case .connecting:
+            Text("Connecting…")
+                .font(.caption2)
+                .foregroundStyle(.themeYellow)
+        case .reconnecting:
+            Text("Reconnecting…")
+                .font(.caption2)
+                .foregroundStyle(.themeYellow)
+        default:
+            Text("Offline")
+                .font(.caption2)
+                .foregroundStyle(.themeComment)
         }
     }
 

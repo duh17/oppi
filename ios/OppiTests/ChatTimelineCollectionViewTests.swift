@@ -1975,7 +1975,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func dollarPrefixRendersToolIconCenteredWithTitleRow() throws {
         let config = makeToolConfiguration(
-            title: "cd /Users/chenda/workspace/oppi",
+            title: "cd /Users/example/workspace/oppi",
             trailing: nil,
             isExpanded: false
         )
@@ -1985,7 +1985,7 @@ struct ToolTimelineRowContentViewTests {
 
         let labels = allLabels(in: view)
         let titleLabel = try #require(labels.first {
-            renderedText(of: $0).contains("cd /Users/chenda/workspace/oppi")
+            renderedText(of: $0).contains("cd /Users/example/workspace/oppi")
         })
         let titleRect = titleLabel.convert(titleLabel.bounds, to: view)
 

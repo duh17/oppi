@@ -8,7 +8,7 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("fullscreen image viewer pins image to content-layout edges")
     func fullscreenViewerPinsImageToContentEdges() throws {
-        let viewController = NativeZoomableImageViewController(image: makeTestImage())
+        let viewController = FullScreenImageViewController(image: makeTestImage())
         viewController.loadViewIfNeeded()
         viewController.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         viewController.view.setNeedsLayout()
@@ -80,7 +80,7 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("fullscreen image viewer starts with viewport-sized content at zoom 1")
     func fullscreenViewerInitialLayoutMatchesViewport() throws {
-        let viewController = NativeZoomableImageViewController(image: makeTestImage())
+        let viewController = FullScreenImageViewController(image: makeTestImage())
         viewController.loadViewIfNeeded()
         viewController.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         viewController.view.setNeedsLayout()

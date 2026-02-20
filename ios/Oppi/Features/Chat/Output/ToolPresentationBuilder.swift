@@ -271,9 +271,9 @@ enum ToolPresentationBuilder {
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md, remember)
         case markdown(text: String)
-        /// Rich todo card via UIHostingConfiguration
+        /// Rich todo card rendered natively
         case todoCard(output: String)
-        /// Media renderer via UIHostingConfiguration (images, etc.)
+        /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
         /// Plain/ANSI text with optional syntax highlighting
         case text(text: String, language: SyntaxLanguage?)

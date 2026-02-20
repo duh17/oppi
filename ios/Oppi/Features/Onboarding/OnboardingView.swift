@@ -12,6 +12,7 @@ enum OnboardingMode {
 struct OnboardingView: View {
     var mode: OnboardingMode = .initial
 
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
@@ -144,10 +145,16 @@ struct OnboardingView: View {
 
             let effectiveCreds = bootstrap.effectiveCredentials
 
-            // Add to ServerStore (handles fingerprint dedup via addOrUpdate)
-            serverStore.addOrUpdate(from: effectiveCreds)
+            guard let pairedServer = PairedServer(
+                from: effectiveCreds,
+                sortOrder: serverStore.servers.count
+            ) else {
+                connectionTest = .failed("Missing server fingerprint")
+                return
+            }
 
-            guard connection.configure(credentials: effectiveCreds) else {
+            coordinator.addServer(pairedServer, switchTo: false)
+            guard coordinator.switchToServer(pairedServer) else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }

@@ -358,7 +358,11 @@ export class RouteHandler {
   }
 
   private handleGetMe(res: ServerResponse): void {
-    this.json(res, { name: this.ctx.storage.getOwnerName() });
+    // Keep a stable single-user identifier for iOS decode compatibility.
+    this.json(res, {
+      user: "owner",
+      name: this.ctx.storage.getOwnerName(),
+    });
   }
 
   private handleGetServerInfo(res: ServerResponse): void {

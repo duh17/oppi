@@ -102,6 +102,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         case command
         case output
         case expanded
+        case imagePreview
     }
 
     private let statusImageView = UIImageView()
@@ -548,16 +549,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         filePath: String?,
         startLine: Int
     ) {
-        if HotPathRenderGates.enableSwiftUIHotPathFallbacks {
-            installExpandedReadMediaViewLegacy(
-                output: output,
-                isError: isError,
-                filePath: filePath,
-                startLine: startLine
-            )
-            return
-        }
-
         let native: NativeExpandedReadMediaView
         if let existing = expandedReadMediaContentView as? NativeExpandedReadMediaView {
             native = existing
@@ -577,11 +568,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func installExpandedTodoView(output: String) {
-        if HotPathRenderGates.enableSwiftUIHotPathFallbacks {
-            installExpandedTodoViewLegacy(output: output)
-            return
-        }
-
         let native: NativeExpandedTodoView
         if let existing = expandedReadMediaContentView as? NativeExpandedTodoView {
             native = existing
@@ -592,40 +578,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
 
         native.apply(output: output, themeID: ThemeRuntimeState.currentThemeID())
-    }
-
-    private func installExpandedReadMediaViewLegacy(
-        output: String,
-        isError: Bool,
-        filePath: String?,
-        startLine: Int
-    ) {
-        clearExpandedReadMediaView()
-
-        let hosted = UIHostingConfiguration {
-            AsyncToolOutput(
-                output: output,
-                isError: isError,
-                filePath: filePath,
-                startLine: startLine
-            )
-        }
-        .margins(.all, 0)
-        .makeContentView()
-
-        installExpandedEmbeddedView(hosted)
-    }
-
-    private func installExpandedTodoViewLegacy(output: String) {
-        clearExpandedReadMediaView()
-
-        let hosted = UIHostingConfiguration {
-            TodoToolOutputView(output: output)
-        }
-        .margins(.all, 0)
-        .makeContentView()
-
-        installExpandedEmbeddedView(hosted)
     }
 
     private func installExpandedEmbeddedView(_ view: UIView) {
@@ -881,6 +833,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         imagePreviewContainer.layer.cornerRadius = 6
         imagePreviewContainer.layer.masksToBounds = true
         imagePreviewContainer.isHidden = true
+        imagePreviewContainer.isUserInteractionEnabled = true
+        imagePreviewContainer.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(handleImagePreviewTap))
+        )
+        imagePreviewContainer.addInteraction(UIContextMenuInteraction(delegate: self))
 
         imagePreviewImageView.translatesAutoresizingMaskIntoConstraints = false
         imagePreviewImageView.contentMode = .scaleAspectFit
@@ -1623,6 +1580,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showFullScreenContent()
     }
 
+    @objc private func handleImagePreviewTap() {
+        guard let image = imagePreviewImageView.image else { return }
+        presentFullScreenImage(image)
+    }
+
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
         guard canShowFullScreenContent else { return }
 
@@ -1719,11 +1681,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return
         }
 
-        let view = FullScreenCodeView(content: content)
-        let controller = UIHostingController(rootView: view)
-        controller.modalPresentationStyle = .fullScreen
+        let controller = FullScreenCodeViewController(content: content)
+        // Use .overFullScreen to keep the presenting VC in the window hierarchy.
+        // .fullScreen removes the presenter's view, which triggers SwiftUI
+        // onDisappear/onAppear on the ChatView — causing a full session
+        // disconnect + reconnect cycle and potential session routing bugs.
+        controller.modalPresentationStyle = .overFullScreen
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
-        controller.view.backgroundColor = UIColor(Color.themeBgDark)
+        presenter.present(controller, animated: true)
+    }
+
+    private func presentFullScreenImage(_ image: UIImage) {
+        guard let presenter = nearestViewController() else { return }
+        let controller = FullScreenImageViewController(image: image)
+        // Use .overFullScreen — see showFullScreenContent() comment.
+        controller.modalPresentationStyle = .overFullScreen
         presenter.present(controller, animated: true)
     }
 
@@ -1740,8 +1712,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Walk up the view hierarchy to find the enclosing UICollectionView and
     /// invalidate its layout so self-sizing cells get re-measured.
-    /// Used after UIHostingConfiguration views complete their first SwiftUI
-    /// layout pass and report a different intrinsic size.
     private func invalidateEnclosingCollectionViewLayout() {
         var view: UIView? = superview
         while let current = view {
@@ -1773,6 +1743,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return .expanded
         }
 
+        if interactionView === imagePreviewContainer {
+            return .imagePreview
+        }
+
         return nil
     }
 
@@ -1784,6 +1758,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputContainer
         case .expanded:
             expandedContainer
+        case .imagePreview:
+            imagePreviewContainer
         }
     }
 
@@ -1845,6 +1821,27 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     }
                 )
             }
+
+        case .imagePreview:
+            guard let image = imagePreviewImageView.image else { return nil }
+            actions.append(
+                UIAction(
+                    title: "View Full Screen",
+                    image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+                ) { [weak self] _ in
+                    self?.presentFullScreenImage(image)
+                }
+            )
+            actions.append(
+                UIAction(title: "Copy Image", image: UIImage(systemName: "doc.on.doc")) { _ in
+                    UIPasteboard.general.image = image
+                }
+            )
+            actions.append(
+                UIAction(title: "Save to Photos", image: UIImage(systemName: "square.and.arrow.down")) { _ in
+                    PhotoLibrarySaver.save(image)
+                }
+            )
         }
 
         guard !actions.isEmpty else {
@@ -2532,37 +2529,18 @@ private final class NativeExpandedReadMediaView: UIView {
     }
 
     private func makeImageCard(image: ImageExtractor.ExtractedImage, palette: ThemePalette) -> UIView {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.cornerRadius = 8
-        container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-
-        let imageView = UIImageView()
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFit
-        imageView.clipsToBounds = true
-        container.addSubview(imageView)
-
-        let placeholder = UILabel()
-        placeholder.translatesAutoresizingMaskIntoConstraints = false
-        placeholder.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        placeholder.textColor = UIColor(palette.comment)
-        placeholder.text = "Decoding image…"
-        container.addSubview(placeholder)
+        let card = TappableImageCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor(palette.bgDark)
+        card.layer.cornerRadius = 8
+        card.layer.borderWidth = 1
+        card.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
 
         NSLayoutConstraint.activate([
-            container.heightAnchor.constraint(equalToConstant: 180),
-
-            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-
-            placeholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            card.heightAnchor.constraint(equalToConstant: 180),
         ])
+
+        card.configure(placeholderColor: UIColor(palette.comment))
 
         let generation = renderGeneration
         let base64 = image.base64
@@ -2577,17 +2555,11 @@ private final class NativeExpandedReadMediaView: UIView {
                 return
             }
 
-            if let decoded {
-                imageView.image = decoded
-                placeholder.isHidden = true
-            } else {
-                placeholder.text = "Image preview unavailable"
-                placeholder.isHidden = false
-            }
+            card.setDecodedImage(decoded)
         }
 
         decodeTasks.append(task)
-        return container
+        return card
     }
 
     private func clearRows() {
@@ -2603,6 +2575,114 @@ private final class NativeExpandedReadMediaView: UIView {
             task.cancel()
         }
         decodeTasks.removeAll(keepingCapacity: false)
+    }
+}
+
+/// Interactive image card with tap-to-fullscreen and context menu (Copy/Save/Share).
+///
+/// Used by `NativeExpandedReadMediaView` for expanded image cards and designed
+/// to be self-contained — handles its own gestures and modal presentation.
+private final class TappableImageCard: UIView, UIContextMenuInteractionDelegate {
+    private let cardImageView = UIImageView()
+    private let placeholderLabel = UILabel()
+    private(set) var decodedImage: UIImage?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
+        addInteraction(UIContextMenuInteraction(delegate: self))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(placeholderColor: UIColor) {
+        cardImageView.translatesAutoresizingMaskIntoConstraints = false
+        cardImageView.contentMode = .scaleAspectFit
+        cardImageView.clipsToBounds = true
+        addSubview(cardImageView)
+
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        placeholderLabel.textColor = placeholderColor
+        placeholderLabel.text = "Decoding image…"
+        addSubview(placeholderLabel)
+
+        NSLayoutConstraint.activate([
+            cardImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            cardImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            cardImageView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            cardImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+
+            placeholderLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            placeholderLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @MainActor
+    func setDecodedImage(_ image: UIImage?) {
+        decodedImage = image
+        if let image {
+            cardImageView.image = image
+            placeholderLabel.isHidden = true
+        } else {
+            placeholderLabel.text = "Image preview unavailable"
+            placeholderLabel.isHidden = false
+        }
+    }
+
+    @objc private func handleTap() {
+        guard let image = decodedImage else { return }
+        presentFullScreenImage(image)
+    }
+
+    private func presentFullScreenImage(_ image: UIImage) {
+        guard let presenter = nearestViewController() else { return }
+        let controller = FullScreenImageViewController(image: image)
+        // Use .overFullScreen — see ToolTimelineRowContentView.showFullScreenContent() comment.
+        controller.modalPresentationStyle = .overFullScreen
+        presenter.present(controller, animated: true)
+    }
+
+    private func nearestViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let vc = current as? UIViewController { return vc }
+            responder = current.next
+        }
+        return nil
+    }
+
+    // MARK: - UIContextMenuInteractionDelegate
+
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let image = decodedImage else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            UIMenu(title: "", children: [
+                UIAction(
+                    title: "View Full Screen",
+                    image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+                ) { _ in
+                    self?.presentFullScreenImage(image)
+                },
+                UIAction(
+                    title: "Copy Image",
+                    image: UIImage(systemName: "doc.on.doc")
+                ) { _ in
+                    UIPasteboard.general.image = image
+                },
+                UIAction(
+                    title: "Save to Photos",
+                    image: UIImage(systemName: "square.and.arrow.down")
+                ) { _ in
+                    PhotoLibrarySaver.save(image)
+                },
+            ])
+        }
     }
 }
 

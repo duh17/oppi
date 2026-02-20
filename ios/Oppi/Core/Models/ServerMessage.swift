@@ -6,6 +6,7 @@ import Foundation
 /// `.unknown` instead of throwing — forward-compatible with server additions.
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
+    case streamConnected(userName: String)
     case connected(session: Session)
     case state(session: Session)
     case sessionEnded(reason: String)
@@ -94,6 +95,8 @@ enum StopLifecycleSource: String, Codable, Sendable {
 extension ServerMessage: Decodable {
     enum CodingKeys: String, CodingKey {
         case type
+        // stream_connected
+        case userName
         // connected / state
         case session
         // session_ended / stop lifecycle
@@ -127,6 +130,10 @@ extension ServerMessage: Decodable {
         let type = try c.decode(String.self, forKey: .type)
 
         switch type {
+        case "stream_connected":
+            let userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? ""
+            self = .streamConnected(userName: userName)
+
         case "connected":
             let session = try c.decode(Session.self, forKey: .session)
             self = .connected(session: session)
@@ -297,11 +304,46 @@ extension ServerMessage: Decodable {
     }
 }
 
+// MARK: - Stream Message Wrapper
+
+/// Wraps a `ServerMessage` with the `sessionId` from the multiplexed `/stream` endpoint.
+///
+/// On the per-session WebSocket, `sessionId` is implicit (the URL determines it).
+/// On `/stream`, every message includes `sessionId` at the top level.
+struct StreamMessage: Sendable, Equatable {
+    let sessionId: String?
+    let streamSeq: Int?
+    let message: ServerMessage
+}
+
+extension StreamMessage: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case sessionId, streamSeq
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        streamSeq = try c.decodeIfPresent(Int.self, forKey: .streamSeq)
+        message = try ServerMessage(from: decoder)
+    }
+
+    static func decode(from text: String) throws -> StreamMessage {
+        guard let data = text.data(using: .utf8) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "Invalid UTF-8 in WebSocket message")
+            )
+        }
+        return try JSONDecoder().decode(StreamMessage.self, from: data)
+    }
+}
+
 // MARK: - Decode from raw WebSocket data
 
 extension ServerMessage {
     var typeLabel: String {
         switch self {
+        case .streamConnected: "streamConnected"
         case .connected: "connected"
         case .state: "state"
         case .sessionEnded: "sessionEnded"

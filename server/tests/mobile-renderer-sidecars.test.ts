@@ -1,8 +1,10 @@
 /**
- * Tests for sidecar discovery and loading in MobileRendererRegistry.
+ * Tests for renderer discovery and loading in MobileRendererRegistry.
+ *
+ * Renderers live in ~/.pi/agent/mobile-renderers/ (separate from extensions).
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
@@ -10,85 +12,61 @@ import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "oppi-sidecar-test-"));
+  tempDir = mkdtempSync(join(tmpdir(), "oppi-renderer-test-"));
 });
 
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-describe("discoverSidecars", () => {
-  it("finds file sidecars (.mobile.ts)", () => {
-    writeFileSync(join(tempDir, "memory.ts"), "// extension");
-    writeFileSync(join(tempDir, "memory.mobile.ts"), "export default {}");
+describe("discoverRenderers", () => {
+  it("finds .ts files", () => {
+    writeFileSync(join(tempDir, "memory.ts"), "export default {}");
+    writeFileSync(join(tempDir, "weather.ts"), "export default {}");
 
-    const sidecars = MobileRendererRegistry.discoverSidecars(tempDir);
-    expect(sidecars).toHaveLength(1);
-    expect(sidecars[0]).toContain("memory.mobile.ts");
+    const files = MobileRendererRegistry.discoverRenderers(tempDir);
+    expect(files).toHaveLength(2);
+    expect(files[0]).toContain("memory.ts");
+    expect(files[1]).toContain("weather.ts");
   });
 
-  it("finds file sidecars (.mobile.js)", () => {
-    writeFileSync(join(tempDir, "weather.js"), "// extension");
-    writeFileSync(join(tempDir, "weather.mobile.js"), "module.exports = {}");
+  it("finds .js files", () => {
+    writeFileSync(join(tempDir, "custom.js"), "module.exports = {}");
 
-    const sidecars = MobileRendererRegistry.discoverSidecars(tempDir);
-    expect(sidecars).toHaveLength(1);
-    expect(sidecars[0]).toContain("weather.mobile.js");
-  });
-
-  it("finds directory sidecars (dir/mobile.ts)", () => {
-    const extDir = join(tempDir, "my-ext");
-    mkdirSync(extDir);
-    writeFileSync(join(extDir, "index.ts"), "// extension");
-    writeFileSync(join(extDir, "mobile.ts"), "export default {}");
-
-    const sidecars = MobileRendererRegistry.discoverSidecars(tempDir);
-    expect(sidecars).toHaveLength(1);
-    expect(sidecars[0]).toContain("my-ext/mobile.ts");
-  });
-
-  it("prefers mobile.ts over mobile.js in directories", () => {
-    const extDir = join(tempDir, "my-ext");
-    mkdirSync(extDir);
-    writeFileSync(join(extDir, "mobile.ts"), "export default {}");
-    writeFileSync(join(extDir, "mobile.js"), "module.exports = {}");
-
-    const sidecars = MobileRendererRegistry.discoverSidecars(tempDir);
-    expect(sidecars).toHaveLength(1);
-    expect(sidecars[0]).toMatch(/mobile\.ts$/);
+    const files = MobileRendererRegistry.discoverRenderers(tempDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("custom.js");
   });
 
   it("returns empty for non-existent directory", () => {
-    expect(MobileRendererRegistry.discoverSidecars("/non/existent")).toEqual([]);
+    expect(MobileRendererRegistry.discoverRenderers("/non/existent")).toEqual([]);
   });
 
   it("ignores dotfiles", () => {
-    writeFileSync(join(tempDir, ".hidden.mobile.ts"), "export default {}");
-    expect(MobileRendererRegistry.discoverSidecars(tempDir)).toEqual([]);
+    writeFileSync(join(tempDir, ".hidden.ts"), "export default {}");
+    expect(MobileRendererRegistry.discoverRenderers(tempDir)).toEqual([]);
   });
 
-  it("ignores non-mobile files", () => {
-    writeFileSync(join(tempDir, "memory.ts"), "// extension only");
+  it("ignores non-ts/js files", () => {
     writeFileSync(join(tempDir, "README.md"), "# Docs");
-    expect(MobileRendererRegistry.discoverSidecars(tempDir)).toEqual([]);
+    writeFileSync(join(tempDir, "config.json"), "{}");
+    expect(MobileRendererRegistry.discoverRenderers(tempDir)).toEqual([]);
   });
 
-  it("finds multiple sidecars", () => {
-    writeFileSync(join(tempDir, "memory.mobile.ts"), "export default {}");
-    writeFileSync(join(tempDir, "weather.mobile.js"), "module.exports = {}");
-    const extDir = join(tempDir, "my-ext");
-    mkdirSync(extDir);
-    writeFileSync(join(extDir, "mobile.ts"), "export default {}");
+  it("finds multiple renderer files", () => {
+    writeFileSync(join(tempDir, "memory.ts"), "export default {}");
+    writeFileSync(join(tempDir, "weather.js"), "module.exports = {}");
+    writeFileSync(join(tempDir, "todos.ts"), "export default {}");
 
-    const sidecars = MobileRendererRegistry.discoverSidecars(tempDir);
-    expect(sidecars).toHaveLength(3);
+    const files = MobileRendererRegistry.discoverRenderers(tempDir);
+    expect(files).toHaveLength(3);
   });
 });
 
-describe("loadSidecar", () => {
-  it("loads a valid .mobile.ts sidecar with typed renderers", async () => {
-    const sidecarPath = join(tempDir, "test.mobile.ts");
-    writeFileSync(sidecarPath, `
+describe("loadRenderer", () => {
+  it("loads a valid .ts renderer with typed renderers", async () => {
+    const filePath = join(tempDir, "test.ts");
+    writeFileSync(filePath, `
       interface Seg { text: string; style?: string; }
       const renderers: Record<string, { renderCall(args: Record<string, unknown>): Seg[]; renderResult(d: unknown, e: boolean): Seg[] }> = {
         my_tool: {
@@ -104,7 +82,7 @@ describe("loadSidecar", () => {
     `);
 
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadSidecar(sidecarPath);
+    const { loaded, errors } = await reg.loadRenderer(filePath);
 
     expect(errors).toEqual([]);
     expect(loaded).toEqual(["my_tool"]);
@@ -115,9 +93,9 @@ describe("loadSidecar", () => {
     expect(segs!.map((s) => s.text).join("")).toBe("my_tool test");
   });
 
-  it("loads a valid .mobile.js sidecar (CommonJS)", async () => {
-    const sidecarPath = join(tempDir, "test.mobile.js");
-    writeFileSync(sidecarPath, `
+  it("loads a valid .js renderer (CommonJS)", async () => {
+    const filePath = join(tempDir, "test.js");
+    writeFileSync(filePath, `
       module.exports = {
         js_tool: {
           renderCall(args) { return [{ text: "js " + (args.x || "") }]; },
@@ -127,15 +105,15 @@ describe("loadSidecar", () => {
     `);
 
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadSidecar(sidecarPath);
+    const { loaded, errors } = await reg.loadRenderer(filePath);
 
     expect(errors).toEqual([]);
     expect(loaded).toEqual(["js_tool"]);
   });
 
   it("skips entries missing renderCall/renderResult", async () => {
-    const sidecarPath = join(tempDir, "bad.mobile.ts");
-    writeFileSync(sidecarPath, `
+    const filePath = join(tempDir, "bad.ts");
+    writeFileSync(filePath, `
       export default {
         good: {
           renderCall() { return [{ text: "ok" }]; },
@@ -149,7 +127,7 @@ describe("loadSidecar", () => {
     `);
 
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadSidecar(sidecarPath);
+    const { loaded, errors } = await reg.loadRenderer(filePath);
 
     expect(loaded).toEqual(["good"]);
     expect(errors).toHaveLength(1);
@@ -157,11 +135,11 @@ describe("loadSidecar", () => {
   });
 
   it("handles import error gracefully", async () => {
-    const sidecarPath = join(tempDir, "broken.mobile.ts");
-    writeFileSync(sidecarPath, "throw new Error('compilation failed');");
+    const filePath = join(tempDir, "broken.ts");
+    writeFileSync(filePath, "throw new Error('compilation failed');");
 
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadSidecar(sidecarPath);
+    const { loaded, errors } = await reg.loadRenderer(filePath);
 
     expect(loaded).toEqual([]);
     expect(errors).toHaveLength(1);
@@ -169,9 +147,9 @@ describe("loadSidecar", () => {
   });
 });
 
-describe("loadAllSidecars", () => {
-  it("discovers and loads all sidecars from a directory", async () => {
-    writeFileSync(join(tempDir, "ext1.mobile.ts"), `
+describe("loadAllRenderers", () => {
+  it("discovers and loads all renderers from a directory", async () => {
+    writeFileSync(join(tempDir, "memory.ts"), `
       export default {
         tool_a: {
           renderCall() { return [{ text: "a" }]; },
@@ -179,7 +157,7 @@ describe("loadAllSidecars", () => {
         },
       };
     `);
-    writeFileSync(join(tempDir, "ext2.mobile.ts"), `
+    writeFileSync(join(tempDir, "todos.ts"), `
       export default {
         tool_b: {
           renderCall() { return [{ text: "b" }]; },
@@ -189,7 +167,7 @@ describe("loadAllSidecars", () => {
     `);
 
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadAllSidecars(tempDir);
+    const { loaded, errors } = await reg.loadAllRenderers(tempDir);
 
     expect(errors).toEqual([]);
     expect(loaded.sort()).toEqual(["tool_a", "tool_b"]);
@@ -197,8 +175,8 @@ describe("loadAllSidecars", () => {
     expect(reg.has("tool_b")).toBe(true);
   });
 
-  it("extension sidecars can override built-in renderers", async () => {
-    writeFileSync(join(tempDir, "custom-bash.mobile.ts"), `
+  it("user renderers can override built-in renderers", async () => {
+    writeFileSync(join(tempDir, "custom-bash.ts"), `
       export default {
         bash: {
           renderCall() { return [{ text: "custom bash" }]; },
@@ -210,15 +188,15 @@ describe("loadAllSidecars", () => {
     const reg = new MobileRendererRegistry();
     expect(reg.has("bash")).toBe(true); // built-in
 
-    await reg.loadAllSidecars(tempDir);
+    await reg.loadAllRenderers(tempDir);
 
     const segs = reg.renderCall("bash", { command: "test" });
     expect(segs!.map((s) => s.text).join("")).toBe("custom bash"); // overridden
   });
 
-  it("handles empty extensions directory", async () => {
+  it("handles empty directory", async () => {
     const reg = new MobileRendererRegistry();
-    const { loaded, errors } = await reg.loadAllSidecars(tempDir);
+    const { loaded, errors } = await reg.loadAllRenderers(tempDir);
 
     expect(loaded).toEqual([]);
     expect(errors).toEqual([]);

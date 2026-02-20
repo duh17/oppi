@@ -70,7 +70,7 @@
       "label": "Allow read-only workspace inspection",
       "match": {
         "tool": "read",
-        "pathWithin": "/Users/chenda/workspace/oppi"
+        "pathWithin": "/Users/example/workspace/oppi"
       }
     },
     {

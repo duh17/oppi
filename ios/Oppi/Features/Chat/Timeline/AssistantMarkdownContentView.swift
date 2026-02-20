@@ -613,6 +613,18 @@ final class NativeCodeBlockView: UIView {
 /// columns. Much tighter and better-looking than a stack-of-stacks approach.
 final class NativeTableBlockView: UIView {
 
+    /// Inner card that wraps the scroll view. Carries the background, border,
+    /// and corner radius so it shrink-wraps to content width while the outer
+    /// view (sized by SwiftUI) can be full-width and transparent.
+    private let cardView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.layer.cornerRadius = 8
+        v.layer.borderWidth = 1
+        v.clipsToBounds = true
+        return v
+    }()
+
     private let scrollView: UIScrollView = {
         let sv = UIScrollView()
         sv.showsHorizontalScrollIndicator = false
@@ -634,6 +646,10 @@ final class NativeTableBlockView: UIView {
     /// the frame and enables horizontal scrolling.
     private var tableLabelWidthConstraint: NSLayoutConstraint?
 
+    /// Card width constraint — shrinks to content or expands to parent width,
+    /// whichever is smaller.
+    private var cardWidthConstraint: NSLayoutConstraint?
+
     /// Stored for long-press copy — rebuilt as markdown table text.
     private var currentHeaders: [String] = []
     private var currentRows: [[String]] = []
@@ -647,25 +663,37 @@ final class NativeTableBlockView: UIView {
     required init?(coder: NSCoder) { nil }
 
     private func setupViews() {
-        layer.cornerRadius = 8
-        layer.borderWidth = 1
-        clipsToBounds = true
+        // Outer view is transparent — card handles all visual styling
+        backgroundColor = .clear
 
-        addSubview(scrollView)
+        addSubview(cardView)
+        cardView.addSubview(scrollView)
         scrollView.addSubview(tableLabel)
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
         scrollView.addGestureRecognizer(longPress)
 
-        let widthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
-        tableLabelWidthConstraint = widthConstraint
+        let labelWidthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
+        tableLabelWidthConstraint = labelWidthConstraint
+
+        // Card: pin top/bottom/leading, width set dynamically
+        let cardWidth = cardView.widthAnchor.constraint(equalTo: widthAnchor)
+        cardWidthConstraint = cardWidth
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Card pinned to leading edge, top/bottom flush
+            cardView.topAnchor.constraint(equalTo: topAnchor),
+            cardView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            cardView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            cardWidth,
 
+            // Scroll view fills card
+            scrollView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
+
+            // Label is the scroll content
             tableLabel.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             tableLabel.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             tableLabel.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -676,16 +704,53 @@ final class NativeTableBlockView: UIView {
 
             // Width: set explicitly from measured content so scroll view
             // knows content extends beyond its frame.
-            widthConstraint,
+            labelWidthConstraint,
         ])
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateCardWidth()
+    }
+
+    /// Update card width to min(contentWidth, boundsWidth).
+    private func updateCardWidth() {
+        guard let constraint = cardWidthConstraint else { return }
+        let contentWidth = tableLabelWidthConstraint?.constant ?? 0
+        let parentWidth = bounds.width
+
+        if contentWidth > 0, contentWidth < parentWidth {
+            // Content is narrower than parent — shrink card to content
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                // Currently relative constraint, swap to constant
+                constraint.isActive = false
+                let absolute = cardView.widthAnchor.constraint(equalToConstant: contentWidth)
+                cardWidthConstraint = absolute
+                absolute.isActive = true
+            } else {
+                constraint.constant = contentWidth
+            }
+        } else {
+            // Content is wider or zero — card fills parent (scroll handles overflow)
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                // Already relative, good
+            } else {
+                constraint.isActive = false
+                let relative = cardView.widthAnchor.constraint(equalTo: widthAnchor)
+                cardWidthConstraint = relative
+                relative.isActive = true
+            }
+        }
     }
 
     func apply(headers: [String], rows: [[String]], palette: ThemePalette) {
         currentHeaders = headers
         currentRows = rows
 
-        backgroundColor = UIColor(palette.bgDark)
-        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
+        cardView.backgroundColor = UIColor(palette.bgDark)
+        cardView.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
         let attrText = Self.makeTableAttributedText(
             headers: headers, rows: rows, palette: palette
         )
@@ -694,7 +759,9 @@ final class NativeTableBlockView: UIView {
         // Measure content width so the scroll view can scroll horizontally.
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
-        tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
+        let contentWidth = ceil(boundingRect.width)
+        tableLabelWidthConstraint?.constant = contentWidth
+        setNeedsLayout()
     }
 
     /// Monospaced column width of a string — counts emoji/CJK as 2 columns.
@@ -865,7 +932,7 @@ final class NativeTableBlockView: UIView {
     }
 
     private func showCopiedFlash() {
-        showCopiedOverlay(on: self)
+        showCopiedOverlay(on: cardView)
     }
 }
 
