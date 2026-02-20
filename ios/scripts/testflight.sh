@@ -73,6 +73,15 @@ restore_caller_env "ASC_KEY_PATH" "$CALLER_HAS_ASC_KEY_PATH" "$CALLER_ASC_KEY_PA
 restore_caller_env "OPPI_TEAM_ID" "$CALLER_HAS_OPPI_TEAM_ID" "$CALLER_OPPI_TEAM_ID" "${OPPI_TEAM_ID-}"
 
 TEAM_ID="${OPPI_TEAM_ID:-AZAQMY4SPZ}"
+LOCAL_ENV_FILE="$IOS_DIR/.env.testflight.local"
+
+# Optional local env file (gitignored) for developer-specific TestFlight config.
+if [[ -f "$LOCAL_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$LOCAL_ENV_FILE"
+  set +a
+fi
 
 BUILD_ONLY=0
 BUMP=0
