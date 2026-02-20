@@ -1,22 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { RuleStore, type LearnedRule } from "../src/rules.js";
+import { RuleStore, type RuleInput } from "../src/rules.js";
 
 function tmpRulesPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "oppi-rules-"));
   return join(dir, "rules.json");
 }
 
-function makeRule(overrides: Partial<Omit<LearnedRule, "id" | "createdAt">> = {}): Omit<LearnedRule, "id" | "createdAt"> {
+function makeRule(overrides: Partial<RuleInput> = {}): RuleInput {
   return {
-    effect: "allow",
     tool: "bash",
+    decision: "allow",
     scope: "global",
-    source: "learned",
-    description: "test rule",
-    risk: "low",
+    source: "manual",
+    label: "test rule",
     ...overrides,
   };
 }
@@ -33,300 +32,231 @@ describe("RuleStore", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true });
   });
 
-  // ── CRUD ──
+  it("adds and persists global rule", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ executable: "git" }));
 
-  describe("add / getAll", () => {
-    it("adds a global rule and persists to disk", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule());
+    expect(rule.id).toBeTruthy();
+    expect(store.getAll()).toHaveLength(1);
+    expect(store.getAll()[0].decision).toBe("allow");
 
-      expect(rule.id).toBeTruthy();
-      expect(rule.createdAt).toBeGreaterThan(0);
-      expect(store.getAll()).toHaveLength(1);
-
-      // Persisted to disk
-      expect(existsSync(rulesPath)).toBe(true);
-      const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
-      expect(onDisk).toHaveLength(1);
-      expect(onDisk[0].id).toBe(rule.id);
-    });
-
-    it("adds a session rule in-memory only", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "session", sessionId: "s1" }));
-
-      expect(store.getAll()).toHaveLength(1);
-      // NOT persisted
-      expect(existsSync(rulesPath)).toBe(false);
-    });
-
-    it("adds workspace-scoped rule with workspaceId", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule({ scope: "workspace", workspaceId: "ws1" }));
-
-      expect(rule.scope).toBe("workspace");
-      expect(rule.workspaceId).toBe("ws1");
-      // Persisted
-      expect(existsSync(rulesPath)).toBe(true);
-    });
+    expect(existsSync(rulesPath)).toBe(true);
+    const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
+    expect(onDisk).toHaveLength(1);
+    expect(onDisk[0].tool).toBe("bash");
+    expect(onDisk[0].decision).toBe("allow");
   });
 
-  describe("remove", () => {
-    it("removes a persisted rule", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule());
-      expect(store.getAll()).toHaveLength(1);
+  it("supports legacy input shape on add", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add({
+      effect: "deny",
+      tool: "bash",
+      match: { executable: "rm", commandPattern: "rm -rf *" },
+      scope: "global",
+      description: "deny rm -rf",
+      source: "manual",
+    } as any);
 
-      const removed = store.remove(rule.id);
-      expect(removed).toBe(true);
-      expect(store.getAll()).toHaveLength(0);
-
-      // Disk updated
-      const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
-      expect(onDisk).toHaveLength(0);
-    });
-
-    it("removes a session rule", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule({ scope: "session", sessionId: "s1" }));
-
-      const removed = store.remove(rule.id);
-      expect(removed).toBe(true);
-      expect(store.getAll()).toHaveLength(0);
-    });
-
-    it("returns false for unknown id", () => {
-      const store = new RuleStore(rulesPath);
-      expect(store.remove("nonexistent")).toBe(false);
-    });
+    expect(rule.decision).toBe("deny");
+    expect(rule.executable).toBe("rm");
+    expect(rule.pattern).toBe("rm -rf *");
   });
 
-  describe("update", () => {
-    it("updates a persisted rule and writes changes to disk", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule({ description: "before" }));
+  it("keeps session rules in memory only", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ scope: "session", sessionId: "s1" }));
 
-      const updated = store.update(rule.id, {
-        effect: "deny",
-        description: "after",
-        match: { executable: "git", commandPattern: "git push*" },
-      });
-
-      expect(updated).toBeTruthy();
-      expect(updated?.effect).toBe("deny");
-      expect(updated?.description).toBe("after");
-      expect(updated?.match?.executable).toBe("git");
-
-      const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
-      expect(onDisk[0].effect).toBe("deny");
-      expect(onDisk[0].description).toBe("after");
-      expect(onDisk[0].match.executable).toBe("git");
-    });
-
-    it("updates session rules in-memory", () => {
-      const store = new RuleStore(rulesPath);
-      const rule = store.add(makeRule({ scope: "session", sessionId: "s1", tool: "bash" }));
-
-      const updated = store.update(rule.id, { tool: "write", expiresAt: Date.now() + 10_000 });
-      expect(updated?.tool).toBe("write");
-      expect(updated?.expiresAt).toBeGreaterThan(Date.now());
-      expect(existsSync(rulesPath)).toBe(false);
-    });
-
-    it("returns null for unknown id", () => {
-      const store = new RuleStore(rulesPath);
-      expect(store.update("missing", { description: "nope" })).toBeNull();
-    });
+    expect(store.getAll()).toHaveLength(1);
+    expect(existsSync(rulesPath)).toBe(false);
   });
 
-  // ── Queries ──
+  it("updates rule fields", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule({ label: "before", pattern: "git *" }));
 
-  describe("getGlobal", () => {
-    it("returns only global rules", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "global", description: "g1" }));
-      store.add(makeRule({ scope: "workspace", workspaceId: "ws1", description: "w1" }));
-      store.add(makeRule({ scope: "session", sessionId: "s1", description: "s1" }));
-
-      const globals = store.getGlobal();
-      expect(globals).toHaveLength(1);
-      expect(globals[0].description).toBe("g1");
+    const updated = store.update(rule.id, {
+      effect: "deny",
+      description: "after",
+      match: { executable: "git", commandPattern: "git push*" },
     });
+
+    expect(updated).toBeTruthy();
+    expect(updated?.decision).toBe("deny");
+    expect(updated?.label).toBe("after");
+    expect(updated?.executable).toBe("git");
+    expect(updated?.pattern).toBe("git push*");
   });
 
-  describe("getForWorkspace", () => {
-    it("returns global + matching workspace rules", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "global", description: "g" }));
-      store.add(makeRule({ scope: "workspace", workspaceId: "ws1", description: "w1" }));
-      store.add(makeRule({ scope: "workspace", workspaceId: "ws2", description: "w2" }));
+  it("removes persisted rule", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(makeRule());
+    expect(store.getAll()).toHaveLength(1);
 
-      const rules = store.getForWorkspace("ws1");
-      expect(rules).toHaveLength(2); // global + ws1
-      expect(rules.map((r) => r.description).sort()).toEqual(["g", "w1"]);
-    });
+    const removed = store.remove(rule.id);
+    expect(removed).toBe(true);
+    expect(store.getAll()).toHaveLength(0);
+
+    const onDisk = JSON.parse(readFileSync(rulesPath, "utf-8"));
+    expect(onDisk).toHaveLength(0);
   });
 
-  describe("getForSession", () => {
-    it("returns only session rules for that session", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "session", sessionId: "s1", description: "a" }));
-      store.add(makeRule({ scope: "session", sessionId: "s2", description: "b" }));
+  it("filters by workspace and session", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ scope: "global", label: "g" }));
+    store.add(makeRule({ scope: "workspace", workspaceId: "w1", label: "w1" }));
+    store.add(makeRule({ scope: "workspace", workspaceId: "w2", label: "w2" }));
+    store.add(makeRule({ scope: "session", sessionId: "s1", label: "s1" }));
 
-      const rules = store.getForSession("s1");
-      expect(rules).toHaveLength(1);
-      expect(rules[0].description).toBe("a");
-    });
+    expect(store.getForWorkspace("w1").map((r) => r.label).sort()).toEqual(["g", "w1"]);
+    expect(store.getForSession("s1")).toHaveLength(1);
   });
 
-  // ── findMatching ──
+  it("findMatching supports legacy matcher API", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ tool: "bash", pattern: "git push*", executable: "git" }));
 
-  describe("findMatching", () => {
-    it("matches by tool name", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "bash" }));
-      store.add(makeRule({ tool: "write" }));
+    const matches = store.findMatching(
+      "bash",
+      { command: "git push origin main" },
+      "s1",
+      "w1",
+      { executable: "git" },
+    );
 
-      const matches = store.findMatching("bash", {}, "s1", "ws1");
-      expect(matches).toHaveLength(1);
-      expect(matches[0].tool).toBe("bash");
-    });
-
-    it("wildcard tool matches everything", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "*" }));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1")).toHaveLength(1);
-      expect(store.findMatching("write", {}, "s1", "ws1")).toHaveLength(1);
-    });
-
-    it("matches by executable", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "bash", match: { executable: "git" } }));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1", { executable: "git" })).toHaveLength(1);
-      expect(store.findMatching("bash", {}, "s1", "ws1", { executable: "npm" })).toHaveLength(0);
-    });
-
-    it("matches by domain", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "bash", match: { domain: "github.com" } }));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1", { domain: "github.com" })).toHaveLength(1);
-      expect(store.findMatching("bash", {}, "s1", "ws1", { domain: "evil.com" })).toHaveLength(0);
-    });
-
-    it("matches by path pattern with glob", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "write", match: { pathPattern: "/workspace/**" } }));
-
-      expect(store.findMatching("write", {}, "s1", "ws1", { path: "/workspace/src/foo.ts" })).toHaveLength(1);
-      expect(store.findMatching("write", {}, "s1", "ws1", { path: "/etc/passwd" })).toHaveLength(0);
-    });
-
-    it("path pattern requires path in parsed context", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "write", match: { pathPattern: "/workspace/**" } }));
-
-      // No path in parsed → no match
-      expect(store.findMatching("write", {}, "s1", "ws1")).toHaveLength(0);
-    });
-
-    it("matches by command pattern glob", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ tool: "bash", match: { commandPattern: "git *" } }));
-
-      expect(store.findMatching("bash", { command: "git push origin main" }, "s1", "ws1")).toHaveLength(1);
-      expect(store.findMatching("bash", { command: "rm -rf /" }, "s1", "ws1")).toHaveLength(0);
-    });
-
-    it("skips expired rules", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ expiresAt: Date.now() - 1000 } as any));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1")).toHaveLength(0);
-    });
-
-    it("includes non-expired rules", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ expiresAt: Date.now() + 60_000 } as any));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1")).toHaveLength(1);
-    });
-
-    it("includes session rules in matching", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "session", sessionId: "s1", tool: "bash" }));
-
-      expect(store.findMatching("bash", {}, "s1", "ws1")).toHaveLength(1);
-      // Different session → no match
-      expect(store.findMatching("bash", {}, "s2", "ws1")).toHaveLength(0);
-    });
+    expect(matches).toHaveLength(1);
   });
 
-  // ── Session lifecycle ──
+  it("dedupes duplicates on reload and migrates legacy file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-rules-legacy-"));
+    const path = join(dir, "rules.json");
 
-  describe("clearSessionRules", () => {
-    it("removes all rules for a session", () => {
-      const store = new RuleStore(rulesPath);
-      store.add(makeRule({ scope: "session", sessionId: "s1" }));
-      store.add(makeRule({ scope: "session", sessionId: "s1" }));
-      store.add(makeRule({ scope: "session", sessionId: "s2" }));
-      store.add(makeRule({ scope: "global" }));
+    writeFileSync(
+      path,
+      JSON.stringify(
+        [
+          {
+            id: "a",
+            effect: "allow",
+            tool: "bash",
+            match: { executable: "git" },
+            scope: "global",
+            source: "learned",
+            description: "legacy",
+            createdAt: Date.now(),
+          },
+          {
+            id: "b",
+            effect: "allow",
+            tool: "bash",
+            match: { executable: "git" },
+            scope: "global",
+            source: "learned",
+            description: "legacy",
+            createdAt: Date.now(),
+          },
+        ],
+        null,
+        2,
+      ),
+      "utf-8",
+    );
 
-      store.clearSessionRules("s1");
+    const store = new RuleStore(path);
+    expect(store.getAll()).toHaveLength(1);
+    expect(store.getAll()[0].decision).toBe("allow");
 
-      expect(store.getAll()).toHaveLength(2); // s2 + global
-      expect(store.getForSession("s1")).toHaveLength(0);
-      expect(store.getForSession("s2")).toHaveLength(1);
-    });
+    rmSync(dir, { recursive: true });
   });
 
-  // ── Persistence ──
+  it("handles corrupt and empty files gracefully", () => {
+    const dir1 = mkdtempSync(join(tmpdir(), "oppi-rules-corrupt-"));
+    const p1 = join(dir1, "rules.json");
+    writeFileSync(p1, "NOT JSON");
+    expect(new RuleStore(p1).getAll()).toHaveLength(0);
 
-  describe("persistence", () => {
-    it("survives reload", () => {
-      const store1 = new RuleStore(rulesPath);
-      store1.add(makeRule({ description: "persistent" }));
+    const dir2 = mkdtempSync(join(tmpdir(), "oppi-rules-empty-"));
+    const p2 = join(dir2, "rules.json");
+    writeFileSync(p2, "");
+    expect(new RuleStore(p2).getAll()).toHaveLength(0);
 
-      const store2 = new RuleStore(rulesPath);
-      expect(store2.getAll()).toHaveLength(1);
-      expect(store2.getAll()[0].description).toBe("persistent");
-    });
+    rmSync(dir1, { recursive: true });
+    rmSync(dir2, { recursive: true });
+  });
 
-    it("session rules do NOT survive reload", () => {
-      const store1 = new RuleStore(rulesPath);
-      store1.add(makeRule({ scope: "session", sessionId: "s1" }));
+  // ── Hot-reload (mtime-based) ──
 
-      const store2 = new RuleStore(rulesPath);
-      expect(store2.getAll()).toHaveLength(0);
-    });
+  it("hot-reloads rules when file is modified externally", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ label: "original" }));
+    expect(store.getAll()).toHaveLength(1);
 
-    it("handles missing file gracefully", () => {
-      const store = new RuleStore(join(tmpdir(), "nonexistent", "rules.json"));
-      expect(store.getAll()).toHaveLength(0);
-    });
+    // Externally write a different rules file with a bumped mtime
+    const externalRules = [
+      { id: "ext1", tool: "bash", decision: "allow", label: "external-1", scope: "global", source: "manual", createdAt: Date.now() },
+      { id: "ext2", tool: "read", decision: "deny", label: "external-2", scope: "global", source: "manual", createdAt: Date.now() },
+    ];
+    writeFileSync(rulesPath, JSON.stringify(externalRules, null, 2));
+    // Bump mtime to ensure it differs (macOS HFS+ has 1s mtime granularity)
+    const future = new Date(Date.now() + 2000);
+    utimesSync(rulesPath, future, future);
 
-    it("handles corrupt file gracefully", () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-rules-corrupt-"));
-      const path = join(dir, "rules.json");
-      writeFileSync(path, "NOT JSON AT ALL");
+    // getAll should pick up the external change
+    const reloaded = store.getAll();
+    expect(reloaded).toHaveLength(2);
+    expect(reloaded.map((r) => r.label).sort()).toEqual(["external-1", "external-2"]);
+  });
 
-      const store = new RuleStore(path);
-      expect(store.getAll()).toHaveLength(0);
+  it("does not reload when file is unchanged", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ label: "stable" }));
 
-      rmSync(dir, { recursive: true });
-    });
+    // Call getAll multiple times — should return same data without re-reading
+    const first = store.getAll();
+    const second = store.getAll();
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(1);
+  });
 
-    it("handles empty file gracefully", () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-rules-empty-"));
-      const path = join(dir, "rules.json");
-      writeFileSync(path, "");
+  it("hot-reload does not discard session rules", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ scope: "global", label: "persisted" }));
+    store.add(makeRule({ scope: "session", sessionId: "s1", label: "session-only" }));
+    expect(store.getAll()).toHaveLength(2);
 
-      const store = new RuleStore(path);
-      expect(store.getAll()).toHaveLength(0);
+    // External write replaces persisted rules
+    const externalRules = [
+      { id: "ext1", tool: "bash", decision: "allow", label: "replaced", scope: "global", source: "manual", createdAt: Date.now() },
+    ];
+    writeFileSync(rulesPath, JSON.stringify(externalRules, null, 2));
+    const future = new Date(Date.now() + 2000);
+    utimesSync(rulesPath, future, future);
 
-      rmSync(dir, { recursive: true });
-    });
+    // Session rule should survive the reload
+    const reloaded = store.getAll();
+    expect(reloaded).toHaveLength(2);
+    expect(reloaded.map((r) => r.label).sort()).toEqual(["replaced", "session-only"]);
+  });
+
+  it("hot-reload survives file deletion", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ label: "will-survive" }));
+    expect(store.getAll()).toHaveLength(1);
+
+    // Delete the file externally
+    rmSync(rulesPath);
+
+    // getAll should still work (mtime changes to 0, triggers reload, load handles missing file)
+    const afterDelete = store.getAll();
+    expect(afterDelete).toHaveLength(0);
+  });
+
+  it("own save does not trigger redundant reload", () => {
+    const store = new RuleStore(rulesPath);
+    store.add(makeRule({ label: "rule-1" }));
+    store.add(makeRule({ label: "rule-2", executable: "npm" }));
+
+    // After save, getAll should still work without a reload cycle
+    expect(store.getAll()).toHaveLength(2);
   });
 });

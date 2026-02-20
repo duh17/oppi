@@ -71,7 +71,7 @@ struct WorkspaceContextBar: View {
                 // Branch
                 if let branch = gitStatus?.branch {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.branch")
+                        Image(systemName: "arrow.branch")
                             .font(.caption2.weight(.semibold))
                         Text(branch)
                             .font(.caption.monospaced().weight(.medium))

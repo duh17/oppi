@@ -1,66 +1,379 @@
 /**
- * RuleStore — persistent learned + manual policy rules.
+ * RuleStore — unified policy rule storage.
  *
  * Storage:
- *   ~/.config/oppi/rules.json  — global + workspace rules (persisted)
- *   In-memory only                  — session-scoped rules (ephemeral)
- *
- * Rules are evaluated by PolicyEngine.evaluateWithRules().
- * Created by GateServer when user approves with scope != "once".
+ *   ~/.config/oppi/rules.json       global + workspace rules (persisted)
+ *   in-memory only                  session-scoped rules (ephemeral)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname, normalize, resolve } from "node:path";
+import { homedir } from "node:os";
 import { generateId } from "./id.js";
 
-
-// ─── Types ───
+export type RuleDecision = "allow" | "ask" | "deny";
+export type RuleScope = "session" | "workspace" | "global";
+export type RuleSource = "preset" | "learned" | "manual";
 
 export interface RuleMatch {
-  executable?: string; // "git", "npm", "python3"
-  domain?: string; // "github.com" (browser nav)
-  pathPattern?: string; // "/workspace/**" (file ops)
-  commandPattern?: string; // "git push *" (glob against full command)
+  executable?: string;
+  domain?: string;
+  pathPattern?: string;
+  commandPattern?: string;
 }
 
-export interface LearnedRule {
+export interface Rule {
   id: string;
-  effect: "allow" | "deny";
+  tool: string;
+  decision: RuleDecision;
+  pattern?: string;
+  executable?: string;
+  label?: string;
 
-  // What to match (all non-null fields must match)
-  tool?: string; // "bash", "write", "edit", "*"
-  match?: RuleMatch;
-
-  // Scope
-  scope: "session" | "workspace" | "global";
-  workspaceId?: string; // Required for workspace scope
-  sessionId?: string; // Required for session scope
-
-  // Metadata
-  source: "learned" | "manual";
-  description: string;
+  scope: RuleScope;
+  sessionId?: string;
+  workspaceId?: string;
+  expiresAt?: number;
+  source?: RuleSource;
   createdAt: number;
-  createdBy?: string; // userId who created/approved
-  expiresAt?: number; // Optional TTL (ms since epoch)
+
+  // Legacy compatibility fields (derived)
+  effect?: "allow" | "deny";
+  description?: string;
+  match?: RuleMatch;
 }
 
-// ─── RuleStore ───
+export type LearnedRule = Rule;
+
+export interface RuleInput {
+  tool?: string;
+  decision?: RuleDecision;
+  effect?: "allow" | "deny" | "block";
+  pattern?: string;
+  executable?: string;
+  label?: string;
+  description?: string;
+  match?: RuleMatch;
+  scope?: RuleScope;
+  sessionId?: string;
+  workspaceId?: string;
+  expiresAt?: number;
+  source?: RuleSource;
+}
+
+export interface RulePatch {
+  tool?: string | null;
+  decision?: RuleDecision;
+  effect?: "allow" | "deny" | "block";
+  pattern?: string | null;
+  executable?: string | null;
+  label?: string | null;
+  description?: string | null;
+  match?: RuleMatch | null;
+  expiresAt?: number | null;
+}
+
+const FILE_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
+
+function firstGlobIndex(value: string): number {
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === "*" || value[i] === "?" || value[i] === "[" || value[i] === "{") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function expandHome(value: string): string {
+  return value.replace(/^~(?=$|\/)/, homedir());
+}
+
+function normalizePathPattern(pattern: string): string {
+  const expanded = expandHome(pattern.trim());
+  const idx = firstGlobIndex(expanded);
+
+  if (idx === -1) {
+    return normalize(resolve(expanded));
+  }
+
+  const prefix = expanded.slice(0, idx);
+  const suffix = expanded.slice(idx);
+
+  if (!prefix) return expanded;
+
+  const normalizedPrefix = normalize(resolve(prefix));
+  return `${normalizedPrefix}${suffix}`;
+}
+
+interface NormalizedRuleInput {
+  tool: string;
+  decision: RuleDecision;
+  pattern?: string;
+  executable?: string;
+  label?: string;
+  scope: RuleScope;
+  sessionId?: string;
+  workspaceId?: string;
+  expiresAt?: number;
+  source?: RuleSource;
+}
+
+function normalizeRuleInput(input: RuleInput): NormalizedRuleInput {
+  const decision = parseDecision(input.decision ?? input.effect) || "allow";
+  const scope: RuleScope =
+    input.scope === "session" || input.scope === "workspace" || input.scope === "global"
+      ? input.scope
+      : "global";
+
+  const tool = typeof input.tool === "string" && input.tool.trim().length > 0
+    ? input.tool.trim()
+    : "*";
+
+  const executableRaw =
+    typeof input.executable === "string"
+      ? input.executable
+      : typeof input.match?.executable === "string"
+        ? input.match.executable
+        : undefined;
+
+  const labelRaw =
+    typeof input.label === "string"
+      ? input.label
+      : typeof input.description === "string"
+        ? input.description
+        : undefined;
+
+  const patternRaw =
+    typeof input.pattern === "string"
+      ? input.pattern
+      : typeof input.match?.commandPattern === "string"
+        ? input.match.commandPattern
+        : typeof input.match?.pathPattern === "string"
+          ? input.match.pathPattern
+          : typeof input.match?.domain === "string"
+            ? `*${input.match.domain}*`
+            : undefined;
+
+  const normalized: NormalizedRuleInput = {
+    tool,
+    decision,
+    scope,
+    sessionId: typeof input.sessionId === "string" ? input.sessionId : undefined,
+    workspaceId: typeof input.workspaceId === "string" ? input.workspaceId : undefined,
+    expiresAt: typeof input.expiresAt === "number" ? input.expiresAt : undefined,
+    source: input.source,
+  };
+
+  if (executableRaw && executableRaw.trim().length > 0) {
+    normalized.executable = executableRaw.trim();
+  }
+
+  if (labelRaw && labelRaw.trim().length > 0) {
+    normalized.label = labelRaw.trim();
+  }
+
+  if (patternRaw && patternRaw.trim().length > 0) {
+    const trimmed = patternRaw.trim();
+    normalized.pattern = FILE_TOOLS.has(tool) ? normalizePathPattern(trimmed) : trimmed;
+  }
+
+  return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseDecision(value: unknown): RuleDecision | null {
+  if (value === "allow" || value === "ask" || value === "deny") return value;
+  if (value === "block") return "deny";
+  return null;
+}
+
+function migrateLegacyRule(raw: unknown): Rule | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.id !== "string") return null;
+
+  const normalized = normalizeRuleInput(raw as RuleInput);
+
+  return {
+    id: raw.id,
+    tool: normalized.tool,
+    decision: normalized.decision,
+    pattern: normalized.pattern,
+    executable: normalized.executable,
+    label: normalized.label,
+    scope: normalized.scope,
+    sessionId: normalized.sessionId,
+    workspaceId: normalized.workspaceId,
+    expiresAt: normalized.expiresAt,
+    source: normalized.source,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+  };
+}
+
+function ruleSignature(rule: NormalizedRuleInput): string {
+  return JSON.stringify({
+    tool: rule.tool,
+    decision: rule.decision,
+    pattern: rule.pattern || "",
+    executable: rule.executable || "",
+    label: rule.label || "",
+    scope: rule.scope,
+    sessionId: rule.sessionId || "",
+    workspaceId: rule.workspaceId || "",
+    source: rule.source || "",
+    expiresAt: rule.expiresAt || 0,
+  });
+}
+
+function withLegacyFields(rule: Rule): Rule {
+  const effect =
+    rule.decision === "allow" ? "allow" : rule.decision === "deny" ? "deny" : undefined;
+
+  const match: RuleMatch = {};
+  if (rule.executable) match.executable = rule.executable;
+  if (rule.pattern) {
+    if (FILE_TOOLS.has(rule.tool)) {
+      match.pathPattern = rule.pattern;
+    } else {
+      match.commandPattern = rule.pattern;
+    }
+  }
+
+  const hasMatch = Boolean(match.executable || match.pathPattern || match.commandPattern || match.domain);
+
+  return {
+    ...rule,
+    ...(effect ? { effect } : {}),
+    ...(rule.label ? { description: rule.label } : {}),
+    ...(hasMatch ? { match } : {}),
+  };
+}
 
 export class RuleStore {
   private path: string;
-  private persisted: LearnedRule[] = []; // global + workspace (on disk)
-  private sessionRules: LearnedRule[] = []; // session-scoped (in-memory only)
+  private persisted: Rule[] = [];
+  private sessionRules: Rule[] = [];
+  private _lastMtimeMs = 0;
 
   constructor(path: string) {
     this.path = path;
     this.load();
+    this._lastMtimeMs = this.fileMtime();
   }
 
-  // ── CRUD ──
+  seedIfEmpty(seedRules: RuleInput[]): void {
+    const signatures = new Set(
+      this.persisted.map((rule) =>
+        ruleSignature(
+          normalizeRuleInput({
+            tool: rule.tool,
+            decision: rule.decision,
+            pattern: rule.pattern,
+            executable: rule.executable,
+            label: rule.label,
+            scope: rule.scope,
+            sessionId: rule.sessionId,
+            workspaceId: rule.workspaceId,
+            expiresAt: rule.expiresAt,
+            source: rule.source,
+          }),
+        ),
+      ),
+    );
 
-  add(input: Omit<LearnedRule, "id" | "createdAt">): LearnedRule {
-    const rule: LearnedRule = {
-      ...input,
+    let added = 0;
+
+    for (const input of seedRules) {
+      const normalized = normalizeRuleInput(input);
+      const signature = ruleSignature(normalized);
+      if (signatures.has(signature)) continue;
+
+      this.persisted.push({
+        ...normalized,
+        id: generateId(12),
+        createdAt: Date.now(),
+      });
+      signatures.add(signature);
+      added += 1;
+    }
+
+    if (added > 0) {
+      this.save();
+    }
+  }
+
+  ensureWorkspaceDefaults(workspaceId: string, workspaceRoot: string): Rule[] {
+    const base = normalize(resolve(expandHome(workspaceRoot)));
+    const pattern = `${base}/**`;
+
+    const seeds: RuleInput[] = [
+      {
+        tool: "read",
+        decision: "allow",
+        pattern,
+        scope: "workspace",
+        workspaceId,
+        source: "preset",
+        label: "Workspace read access",
+      },
+      {
+        tool: "write",
+        decision: "allow",
+        pattern,
+        scope: "workspace",
+        workspaceId,
+        source: "preset",
+        label: "Workspace write access",
+      },
+      {
+        tool: "edit",
+        decision: "allow",
+        pattern,
+        scope: "workspace",
+        workspaceId,
+        source: "preset",
+        label: "Workspace edit access",
+      },
+    ];
+
+    const added: Rule[] = [];
+
+    for (const seed of seeds) {
+      const normalized = normalizeRuleInput(seed);
+      const exists = this.persisted.some(
+        (rule) =>
+          rule.scope === normalized.scope &&
+          rule.workspaceId === normalized.workspaceId &&
+          rule.tool === normalized.tool &&
+          rule.pattern === normalized.pattern &&
+          rule.decision === normalized.decision,
+      );
+
+      if (exists) continue;
+
+      const created: Rule = {
+        ...normalized,
+        id: generateId(12),
+        createdAt: Date.now(),
+      };
+
+      this.persisted.push(created);
+      added.push(created);
+    }
+
+    if (added.length > 0) {
+      this.save();
+    }
+
+    return added;
+  }
+
+  add(input: RuleInput): Rule {
+    const normalized = normalizeRuleInput(input);
+    const rule: Rule = {
+      ...normalized,
       id: generateId(12),
       createdAt: Date.now(),
     };
@@ -72,18 +385,16 @@ export class RuleStore {
       this.save();
     }
 
-    return rule;
+    return withLegacyFields(rule);
   }
 
   remove(id: string): boolean {
-    // Try session rules first
     const sessionIdx = this.sessionRules.findIndex((r) => r.id === id);
     if (sessionIdx >= 0) {
       this.sessionRules.splice(sessionIdx, 1);
       return true;
     }
 
-    // Then persisted
     const idx = this.persisted.findIndex((r) => r.id === id);
     if (idx >= 0) {
       this.persisted.splice(idx, 1);
@@ -94,96 +405,127 @@ export class RuleStore {
     return false;
   }
 
-  update(
-    id: string,
-    updates: {
-      effect?: LearnedRule["effect"];
-      tool?: LearnedRule["tool"] | null;
-      match?: LearnedRule["match"];
-      description?: string;
-      expiresAt?: number | null;
-    },
-  ): LearnedRule | null {
-    const applyUpdates = (rule: LearnedRule): LearnedRule => {
-      const next: LearnedRule = { ...rule };
+  update(id: string, patch: RulePatch): Rule | null {
+    const applyPatch = (rule: Rule): Rule => {
+      const next: Rule = { ...rule };
 
-      if (updates.effect !== undefined) {
-        next.effect = updates.effect;
+      const patchedDecision = parseDecision(patch.decision ?? patch.effect);
+      if (patchedDecision) next.decision = patchedDecision;
+
+      if (patch.tool !== undefined) {
+        if (patch.tool === null) next.tool = "*";
+        else next.tool = patch.tool.trim();
       }
-      if (updates.description !== undefined) {
-        next.description = updates.description;
-      }
-      if (updates.match !== undefined) {
-        next.match = updates.match;
-      }
-      if (updates.tool !== undefined) {
-        if (updates.tool === null) {
-          delete next.tool;
+
+      if (patch.pattern !== undefined) {
+        if (patch.pattern === null || patch.pattern.trim().length === 0) {
+          delete next.pattern;
         } else {
-          next.tool = updates.tool;
-        }
-      }
-      if (updates.expiresAt !== undefined) {
-        if (updates.expiresAt === null) {
-          delete next.expiresAt;
-        } else {
-          next.expiresAt = updates.expiresAt;
+          next.pattern = patch.pattern.trim();
         }
       }
 
-      return next;
+      if (patch.executable !== undefined) {
+        if (patch.executable === null || patch.executable.trim().length === 0) {
+          delete next.executable;
+        } else {
+          next.executable = patch.executable.trim();
+        }
+      }
+
+      const patchedLabel = patch.label ?? patch.description;
+      if (patchedLabel !== undefined) {
+        if (patchedLabel === null || patchedLabel.trim().length === 0) {
+          delete next.label;
+        } else {
+          next.label = patchedLabel.trim();
+        }
+      }
+
+      if (patch.match !== undefined) {
+        if (patch.match === null) {
+          delete next.pattern;
+          delete next.executable;
+        } else {
+          if (typeof patch.match.executable === "string") {
+            next.executable = patch.match.executable.trim() || undefined;
+          }
+          if (typeof patch.match.commandPattern === "string") {
+            next.pattern = patch.match.commandPattern.trim() || undefined;
+          } else if (typeof patch.match.pathPattern === "string") {
+            next.pattern = patch.match.pathPattern.trim() || undefined;
+          } else if (typeof patch.match.domain === "string") {
+            const domain = patch.match.domain.trim();
+            next.pattern = domain ? `*${domain}*` : undefined;
+          }
+        }
+      }
+
+      if (patch.expiresAt !== undefined) {
+        if (patch.expiresAt === null) delete next.expiresAt;
+        else next.expiresAt = patch.expiresAt;
+      }
+
+      const normalized = normalizeRuleInput({
+        tool: next.tool,
+        decision: next.decision,
+        pattern: next.pattern,
+        executable: next.executable,
+        label: next.label,
+        scope: next.scope,
+        sessionId: next.sessionId,
+        workspaceId: next.workspaceId,
+        expiresAt: next.expiresAt,
+        source: next.source,
+      });
+
+      return {
+        ...next,
+        ...normalized,
+      };
     };
 
     const sessionIdx = this.sessionRules.findIndex((r) => r.id === id);
     if (sessionIdx >= 0) {
-      const updated = applyUpdates(this.sessionRules[sessionIdx]);
+      const updated = applyPatch(this.sessionRules[sessionIdx]);
       this.sessionRules[sessionIdx] = updated;
-      return updated;
+      return withLegacyFields(updated);
     }
 
     const persistedIdx = this.persisted.findIndex((r) => r.id === id);
     if (persistedIdx >= 0) {
-      const updated = applyUpdates(this.persisted[persistedIdx]);
+      const updated = applyPatch(this.persisted[persistedIdx]);
       this.persisted[persistedIdx] = updated;
       this.save();
-      return updated;
+      return withLegacyFields(updated);
     }
 
     return null;
   }
 
-  // ── Queries ──
-
-  /** All rules (persisted + session). */
-  getAll(): LearnedRule[] {
-    return [...this.persisted, ...this.sessionRules];
+  getAll(): Rule[] {
+    this.reloadIfChanged();
+    return [...this.persisted, ...this.sessionRules].map(withLegacyFields);
   }
 
-  /** Global rules only. */
-  getGlobal(): LearnedRule[] {
-    return this.persisted.filter((r) => r.scope === "global");
+  getGlobal(): Rule[] {
+    this.reloadIfChanged();
+    return this.persisted.filter((r) => r.scope === "global").map(withLegacyFields);
   }
 
-  /** Rules for a specific workspace (includes global rules). */
-  getForWorkspace(workspaceId: string): LearnedRule[] {
-    return this.persisted.filter(
-      (r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId),
-    );
+  getForWorkspace(workspaceId: string): Rule[] {
+    this.reloadIfChanged();
+    return this.persisted
+      .filter((r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId))
+      .map(withLegacyFields);
   }
 
-  /** Rules for a specific session (session-scoped only). */
-  getForSession(sessionId: string): LearnedRule[] {
-    return this.sessionRules.filter((r) => r.sessionId === sessionId);
+  getForSession(sessionId: string): Rule[] {
+    return this.sessionRules.filter((r) => r.sessionId === sessionId).map(withLegacyFields);
   }
 
   /**
-   * Find rules that match a given request in a specific context.
-   *
-   * Returns matching rules from all applicable scopes:
-   *   1. Session rules for this session
-   *   2. Workspace rules for this workspace + global rules
-   *
-   * Caller (PolicyEngine) handles evaluation order and deny-wins logic.
+   * Legacy compatibility helper used by older tests/callers.
    */
   findMatching(
     tool: string,
@@ -191,55 +533,72 @@ export class RuleStore {
     sessionId: string,
     workspaceId: string,
     parsed?: { executable?: string; domain?: string; path?: string },
-  ): LearnedRule[] {
+  ): Rule[] {
     const now = Date.now();
-    const candidates = [...this.getForSession(sessionId), ...this.getForWorkspace(workspaceId)];
+    const candidates = [
+      ...this.sessionRules.filter((r) => r.scope === "session" && r.sessionId === sessionId),
+      ...this.persisted.filter(
+        (r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId),
+      ),
+    ];
 
-    return candidates.filter((rule) => {
-      // Skip expired
+    const command = (input as { command?: string }).command || "";
+
+    const matched = candidates.filter((rule) => {
       if (rule.expiresAt && rule.expiresAt < now) return false;
+      if (rule.tool !== "*" && rule.tool !== tool) return false;
 
-      // Tool must match (or rule.tool is "*")
-      if (rule.tool && rule.tool !== "*" && rule.tool !== tool) return false;
+      if (rule.executable) {
+        if (parsed?.executable !== rule.executable) return false;
+      }
 
-      // Match conditions — ALL non-null fields must match
-      if (rule.match) {
-        if (rule.match.executable && parsed?.executable !== rule.match.executable) return false;
-        if (rule.match.domain && parsed?.domain !== rule.match.domain) return false;
-
-        if (rule.match.pathPattern && parsed?.path) {
-          // Simple glob: "/workspace/**" matches "/workspace/src/foo.ts"
-          const pattern = rule.match.pathPattern;
-          if (pattern.endsWith("/**")) {
-            const prefix = pattern.slice(0, -3);
+      if (rule.pattern) {
+        if (tool === "bash") {
+          const re = new RegExp("^" + rule.pattern.replace(/\*/g, ".*") + "$");
+          if (!re.test(command)) return false;
+        } else if (parsed?.path) {
+          if (rule.pattern.endsWith("/**")) {
+            const prefix = rule.pattern.slice(0, -3);
             if (!parsed.path.startsWith(prefix)) return false;
-          } else if (pattern !== parsed.path) {
+          } else if (rule.pattern !== parsed.path) {
             return false;
           }
-        } else if (rule.match.pathPattern && !parsed?.path) {
-          return false; // Rule requires path but request has none
+        } else {
+          return false;
         }
+      }
 
-        if (rule.match.commandPattern) {
-          const command = (input as { command?: string }).command || "";
-          // Simple glob matching: "git *" matches "git push origin main"
-          const re = new RegExp("^" + rule.match.commandPattern.replace(/\*/g, ".*") + "$");
-          if (!re.test(command)) return false;
-        }
+      if (parsed?.domain && rule.match?.domain && parsed.domain !== rule.match.domain) {
+        return false;
       }
 
       return true;
     });
+
+    return matched.map(withLegacyFields);
   }
 
-  // ── Session lifecycle ──
-
-  /** Remove all session-scoped rules for a session. */
   clearSessionRules(sessionId: string): void {
     this.sessionRules = this.sessionRules.filter((r) => r.sessionId !== sessionId);
   }
 
-  // ── Persistence ──
+  /** Get file mtime in ms, or 0 if missing. */
+  private fileMtime(): number {
+    try {
+      return statSync(this.path).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Re-read rules.json if it was modified externally (e.g. manual edit). */
+  private reloadIfChanged(): void {
+    const mtime = this.fileMtime();
+    if (mtime !== this._lastMtimeMs) {
+      this.load();
+      this._lastMtimeMs = mtime;
+    }
+  }
 
   private load(): void {
     if (!existsSync(this.path)) {
@@ -253,14 +612,45 @@ export class RuleStore {
         this.persisted = [];
         return;
       }
-      const data = JSON.parse(content);
-      if (Array.isArray(data)) {
-        this.persisted = data;
-      } else {
+
+      const parsed = JSON.parse(content);
+      if (!Array.isArray(parsed)) {
         this.persisted = [];
+        return;
       }
+
+      const seen = new Set<string>();
+      const next: Rule[] = [];
+
+      for (const entry of parsed) {
+        const migrated = migrateLegacyRule(entry);
+        if (!migrated) continue;
+
+        const normalizedInput = normalizeRuleInput({
+          tool: migrated.tool,
+          decision: migrated.decision,
+          pattern: migrated.pattern,
+          executable: migrated.executable,
+          label: migrated.label,
+          scope: migrated.scope,
+          sessionId: migrated.sessionId,
+          workspaceId: migrated.workspaceId,
+          expiresAt: migrated.expiresAt,
+          source: migrated.source,
+        });
+
+        const signature = ruleSignature(normalizedInput);
+        if (seen.has(signature)) continue;
+        seen.add(signature);
+
+        next.push({
+          ...migrated,
+          ...normalizedInput,
+        });
+      }
+
+      this.persisted = next;
     } catch {
-      // Corrupted file — start fresh, don't crash
       console.warn(`[rules] Failed to load ${this.path}, starting fresh`);
       this.persisted = [];
     }
@@ -272,5 +662,6 @@ export class RuleStore {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     writeFileSync(this.path, JSON.stringify(this.persisted, null, 2), { mode: 0o600 });
+    this._lastMtimeMs = this.fileMtime();
   }
 }

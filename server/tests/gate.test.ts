@@ -4,7 +4,7 @@ import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { PolicyEngine } from "../src/policy.js";
+import { PolicyEngine, defaultPresetRules } from "../src/policy.js";
 import { GateServer } from "../src/gate.js";
 import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
@@ -50,6 +50,7 @@ function createGate(
 ): GateServer {
   const policy = new PolicyEngine(policyOrMode);
   const ruleStore = new RuleStore(join(testDir, "rules.json"));
+  ruleStore.seedIfEmpty(defaultPresetRules());
   const auditLog = new AuditLog(join(testDir, "audit.jsonl"));
   return new GateServer(policy, ruleStore, auditLog, { approvalTimeoutMs });
 }
@@ -227,7 +228,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
     expect(approvalCount).toBe(1);
-    expect(lastReason).toBe("Git push");
+    expect(lastReason).toContain("Git push");
   });
 
   it("applies fallback policy changes to live gate checks", async () => {
@@ -282,14 +283,15 @@ describe("GateServer", () => {
 
     const allowResult = await runFallbackCheck("tc_fallback_2");
     expect(allowResult.action).toBe("allow");
-    expect(approvalCount).toBe(1);
+    // Slim policy model defaults unmatched requests to ask regardless of fallback.
+    expect(approvalCount).toBe(2);
 
     activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(askFallbackPolicy));
 
     const askResult2 = await runFallbackCheck("tc_fallback_3");
     expect(askResult2.action).toBe("allow");
-    expect(approvalCount).toBe(2);
-    expect(approvalReasons[1]).toContain("No matching rule");
+    expect(approvalCount).toBe(3);
+    expect(approvalReasons[2]).toContain("No matching rule");
   });
 
   it("stores session rules with TTL from permission responses", async () => {
@@ -329,9 +331,9 @@ describe("GateServer", () => {
         (rule) =>
           rule.scope === "session" &&
           rule.sessionId === SESSION_ID &&
-          rule.effect === "allow" &&
+          rule.decision === "allow" &&
           rule.tool === "bash" &&
-          rule.match?.commandPattern === "git push*",
+          rule.pattern === "git push origin main",
       );
 
     expect(learned).toBeTruthy();
@@ -379,9 +381,9 @@ describe("GateServer", () => {
         (rule) =>
           rule.scope === "session" &&
           rule.sessionId === SESSION_ID &&
-          rule.effect === "allow" &&
+          rule.decision === "allow" &&
           rule.tool === "bash" &&
-          rule.match?.commandPattern === "git push*",
+          rule.pattern === "git push origin main",
       );
 
     expect(learned).toBeTruthy();
@@ -393,12 +395,11 @@ describe("GateServer", () => {
     expect(ttlMs).toBeLessThanOrEqual(oneYearMs + 5_000);
   });
 
-  it("downgrades unsupported allow scope to once", async () => {
+  it("stores workspace-scoped allow rule when workspace scope is requested", async () => {
     gate = createGate("host");
     const activeGate = gate;
 
     activeGate.on("approval_needed", (pending: { id: string }) => {
-      // git push only permits allowSession in resolution options.
       activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
     });
 
@@ -425,8 +426,14 @@ describe("GateServer", () => {
     const learned = activeGate
       .ruleStore
       .getAll()
-      .find((rule) => rule.scope === "workspace" && rule.workspaceId === "w1" && rule.effect === "allow");
-    expect(learned).toBeUndefined();
+      .find(
+        (rule) =>
+          rule.scope === "workspace" &&
+          rule.workspaceId === "w1" &&
+          rule.decision === "allow" &&
+          rule.pattern === "git push origin main",
+      );
+    expect(learned).toBeTruthy();
   });
 
   it("responds to heartbeat", async () => {

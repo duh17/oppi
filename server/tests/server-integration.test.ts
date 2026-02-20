@@ -422,7 +422,8 @@ describe("policy API", () => {
         toolCallId: "tc-hot-reload-2",
       });
       expect(secondDecision.action).toBe("allow");
-      expect(approvals).toBe(1);
+      // Slim policy defaults unmatched requests to ask regardless of fallback.
+      expect(approvals).toBe(2);
     } finally {
       gate.off("approval_needed", approvalListener);
       if (!gateSocket.destroyed) {
@@ -431,6 +432,200 @@ describe("policy API", () => {
       gate.destroySessionSocket(session.id);
       sessionsManager.isActive = originalIsActive;
     }
+  });
+
+  // ── Rules CRUD ──
+
+  it("GET /policy/rules includes seeded preset rules", async () => {
+    const res = await get("/policy/rules");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const presets = body.rules.filter((r: { source: string }) => r.source === "preset");
+    expect(presets.length).toBeGreaterThan(0);
+  });
+
+  it("GET /policy/rules filters by scope", async () => {
+    const res = await get("/policy/rules?scope=global");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rules.every((r: { scope: string }) => r.scope === "global")).toBe(true);
+  });
+
+  it("GET /policy/rules rejects invalid scope", async () => {
+    const res = await get("/policy/rules?scope=invalid");
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /policy/rules filters by workspaceId", async () => {
+    // Create a workspace so it has workspace-scoped rules
+    const wsRes = await post("/workspaces", { name: "rules-filter-ws", skills: [] });
+    expect(wsRes.status).toBe(201);
+    const wsBody = await wsRes.json();
+    const workspaceId = wsBody.workspace.id;
+
+    const res = await get(`/policy/rules?workspaceId=${workspaceId}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Should include globals + workspace-scoped rules for this workspace
+    for (const rule of body.rules) {
+      expect(["global", "workspace"].includes(rule.scope)).toBe(true);
+      if (rule.scope === "workspace") {
+        expect(rule.workspaceId).toBe(workspaceId);
+      }
+    }
+  });
+
+  it("GET /policy/rules rejects non-existent workspaceId", async () => {
+    const res = await get("/policy/rules?workspaceId=NONEXISTENT");
+    expect(res.status).toBe(404);
+  });
+
+  it("PATCH /policy/rules/:id updates decision and label", async () => {
+    // Find a preset rule to update
+    const listRes = await get("/policy/rules?scope=global");
+    const listBody = await listRes.json();
+    const target = listBody.rules.find((r: { source: string; decision: string }) =>
+      r.source === "preset" && r.decision === "ask",
+    );
+    expect(target).toBeTruthy();
+
+    const res = await patch(`/policy/rules/${target.id}`, {
+      decision: "deny",
+      label: "patched-label",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rule.decision).toBe("deny");
+    expect(body.rule.label).toBe("patched-label");
+
+    // Restore original
+    await patch(`/policy/rules/${target.id}`, {
+      decision: target.decision,
+      label: target.label,
+    });
+  });
+
+  it("PATCH /policy/rules/:id supports legacy effect/description fields", async () => {
+    const listRes = await get("/policy/rules?scope=global");
+    const listBody = await listRes.json();
+    const target = listBody.rules[0];
+
+    const originalLabel = target.label;
+    const res = await patch(`/policy/rules/${target.id}`, {
+      effect: "ask",
+      description: "legacy-desc",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rule.decision).toBe("ask");
+    expect(body.rule.label).toBe("legacy-desc");
+
+    // Restore
+    await patch(`/policy/rules/${target.id}`, {
+      decision: target.decision,
+      label: originalLabel,
+    });
+  });
+
+  it("PATCH /policy/rules/:id validates decision values", async () => {
+    const listRes = await get("/policy/rules?scope=global");
+    const listBody = await listRes.json();
+    const ruleId = listBody.rules[0].id;
+
+    const res = await patch(`/policy/rules/${ruleId}`, { decision: "yolo" });
+    expect(res.status).toBe(400);
+  });
+
+  it("PATCH /policy/rules/:id requires at least one patch field", async () => {
+    const listRes = await get("/policy/rules?scope=global");
+    const listBody = await listRes.json();
+    const ruleId = listBody.rules[0].id;
+
+    const res = await patch(`/policy/rules/${ruleId}`, {});
+    expect(res.status).toBe(400);
+  });
+
+  it("PATCH /policy/rules/:id updates pattern and executable", async () => {
+    const listRes = await get("/policy/rules?scope=global");
+    const listBody = await listRes.json();
+    const target = listBody.rules.find((r: { tool: string }) => r.tool === "bash");
+    expect(target).toBeTruthy();
+
+    const res = await patch(`/policy/rules/${target.id}`, {
+      pattern: "npm run build*",
+      executable: "npm",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rule.pattern).toBe("npm run build*");
+    expect(body.rule.executable).toBe("npm");
+
+    // Restore
+    await patch(`/policy/rules/${target.id}`, {
+      pattern: target.pattern || null,
+      executable: target.executable || null,
+    });
+  });
+
+  it("PATCH /policy/rules/:id clears fields with null", async () => {
+    // Create a dedicated rule so we don't disturb shared presets
+    const internals = server as unknown as {
+      gate: { ruleStore: { add: (input: unknown) => { id: string } } };
+    };
+    const rule = internals.gate.ruleStore.add({
+      tool: "bash",
+      decision: "ask",
+      executable: "make",
+      pattern: "make deploy*",
+      label: "Clear test rule",
+      scope: "global",
+      source: "manual",
+    });
+
+    const res = await patch(`/policy/rules/${rule.id}`, {
+      executable: null,
+      label: null,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rule.executable).toBeUndefined();
+    expect(body.rule.label).toBeUndefined();
+    // Pattern should be preserved
+    expect(body.rule.pattern).toBe("make deploy*");
+
+    // Clean up
+    await del(`/policy/rules/${rule.id}`);
+  });
+
+  it("DELETE /policy/rules/:id removes a rule", async () => {
+    // Add a throwaway rule via the store directly, then delete via API
+    const internals = server as unknown as {
+      gate: { ruleStore: { add: (input: unknown) => { id: string } } };
+    };
+    const rule = internals.gate.ruleStore.add({
+      tool: "bash",
+      decision: "ask",
+      pattern: "throwaway-delete-test*",
+      label: "Delete me",
+      scope: "global",
+      source: "manual",
+    });
+
+    const res = await del(`/policy/rules/${rule.id}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.deleted).toBe(rule.id);
+
+    // Verify it's gone
+    const listRes = await get("/policy/rules");
+    const listBody = await listRes.json();
+    expect(listBody.rules.find((r: { id: string }) => r.id === rule.id)).toBeUndefined();
+  });
+
+  it("DELETE /policy/rules/:id returns 404 for missing rule", async () => {
+    const res = await del("/policy/rules/does-not-exist");
+    expect(res.status).toBe(404);
   });
 
   it("GET /policy/audit returns audit entries", async () => {
