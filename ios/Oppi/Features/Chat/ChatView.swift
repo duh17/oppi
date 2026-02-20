@@ -171,7 +171,7 @@ struct ChatView: View {
                 pendingModelSwitch = nil
             }
         } message: { model in
-            Text("Switching to \(shortModelName(fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
+            Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
         }
         .alert("Compact Context", isPresented: $showCompactConfirmation) {
             Button("Compact", role: .destructive) {
@@ -431,19 +431,23 @@ struct ChatView: View {
     }
 
     private func handleModelSelection(_ model: ModelInfo) {
-        guard !isCurrentModelSelection(model) else { return }
-
-        if (session?.messageCount ?? 0) > 0 {
+        switch ModelSwitchPolicy.decision(
+            currentModel: session?.model,
+            selectedModel: model,
+            messageCount: session?.messageCount ?? 0
+        ) {
+        case .unchanged:
+            return
+        case .requireConfirmation:
             pendingModelSwitch = model
             showModelSwitchWarning = true
-            return
+        case .applyImmediately:
+            applyModelSelection(model)
         }
-
-        applyModelSelection(model)
     }
 
     private func applyModelSelection(_ model: ModelInfo) {
-        RecentModels.record(fullModelID(for: model))
+        RecentModels.record(ModelSwitchPolicy.fullModelID(for: model))
         actionHandler.setModel(
             model,
             connection: connection,
@@ -451,18 +455,6 @@ struct ChatView: View {
             sessionStore: sessionStore,
             sessionId: sessionId
         )
-    }
-
-    private func isCurrentModelSelection(_ model: ModelInfo) -> Bool {
-        guard let current = session?.model else { return false }
-        let fullID = fullModelID(for: model)
-        return current == fullID || current == model.id
-    }
-
-    private func fullModelID(for model: ModelInfo) -> String {
-        model.id.hasPrefix("\(model.provider)/")
-            ? model.id
-            : "\(model.provider)/\(model.id)"
     }
 
     private func saveScrollState() {
