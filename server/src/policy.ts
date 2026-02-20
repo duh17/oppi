@@ -5,11 +5,19 @@
  * 1. Reserved guards (policy.* always ask)
  * 2. Heuristics-as-code
  * 3. User rules (deny-first, then most-specific)
- * 4. Default ask
+ * 4. Read-only bash auto-allow (no matching rule)
+ * 5. Default ask
  */
 
 import { globMatch } from "./glob.js";
-import { readFileSync, writeFileSync, statSync, appendFileSync, existsSync, realpathSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  statSync,
+  appendFileSync,
+  existsSync,
+  realpathSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as pathResolve, normalize as pathNormalize } from "node:path";
 import type { Rule, RuleInput } from "./rules.js";
@@ -311,8 +319,34 @@ export function splitBashCommandChain(command: string): string[] {
   return segments.length > 0 ? segments : [command.trim()].filter(Boolean);
 }
 
-const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":"]);
+const CHAIN_HELPER_EXECUTABLES = new Set(["cd", "echo", "pwd", "true", "false", ":", "#"]);
 const FILE_PATH_TOOLS = new Set(["read", "write", "edit", "find", "ls"]);
+
+const READ_ONLY_INSPECTION_EXECUTABLES = new Set([
+  "cat",
+  "grep",
+  "rg",
+  "find",
+  "ls",
+  "head",
+  "tail",
+  "wc",
+]);
+
+const FIND_MUTATING_FLAGS = new Set([
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-fprint",
+  "-fprintf",
+  "-fls",
+]);
+
+function executableName(raw: string): string {
+  return raw.includes("/") ? raw.split("/").pop() || raw : raw;
+}
 
 function normalizePathInput(rawPath: string): { rawNormalized: string; resolvedRealpath?: string } {
   const expanded = rawPath.replace(/^~(?=$|\/)/, homedir());
@@ -925,7 +959,8 @@ export function defaultPolicy(): DeclarativePolicyConfig {
   return {
     schemaVersion: 1,
     mode: "default",
-    description: "Developer-friendly defaults: allow local work, ask for external/destructive actions, block credential exfiltration.",
+    description:
+      "Developer-friendly defaults: allow local work, ask for external/destructive actions, block credential exfiltration.",
     fallback: "allow",
     guardrails: [
       // ── Privilege escalation ──
@@ -1122,7 +1157,11 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         id: "ask-xcrun-install",
         decision: "ask",
         label: "Install app on physical device",
-        match: { tool: "bash", executable: "xcrun", commandMatches: "xcrun devicectl device install app*" },
+        match: {
+          tool: "bash",
+          executable: "xcrun",
+          commandMatches: "xcrun devicectl device install app*",
+        },
       },
       {
         id: "ask-ios-dev-up",
@@ -1525,8 +1564,10 @@ function resolveHeuristics(h?: import("./types.js").PolicyHeuristics): ResolvedH
   return {
     pipeToShell: h.pipeToShell === false ? false : mapDecisionToAction(h.pipeToShell || "ask"),
     dataEgress: h.dataEgress === false ? false : mapDecisionToAction(h.dataEgress || "ask"),
-    secretEnvInUrl: h.secretEnvInUrl === false ? false : mapDecisionToAction(h.secretEnvInUrl || "ask"),
-    secretFileAccess: h.secretFileAccess === false ? false : mapDecisionToAction(h.secretFileAccess || "block"),
+    secretEnvInUrl:
+      h.secretEnvInUrl === false ? false : mapDecisionToAction(h.secretEnvInUrl || "ask"),
+    secretFileAccess:
+      h.secretFileAccess === false ? false : mapDecisionToAction(h.secretFileAccess || "block"),
   };
 }
 
@@ -1660,7 +1701,10 @@ export class PolicyEngine {
           }
 
           // Secret env expansion in URLs
-          if (this.policy.heuristics.secretEnvInUrl !== false && hasSecretEnvExpansionInUrl(parsed)) {
+          if (
+            this.policy.heuristics.secretEnvInUrl !== false &&
+            hasSecretEnvExpansionInUrl(parsed)
+          ) {
             return {
               action: this.policy.heuristics.secretEnvInUrl,
               reason: "Possible secret env exfiltration in URL",
@@ -1729,7 +1773,8 @@ export class PolicyEngine {
    *   1. Reserved guards (policy.* tools always ask)
    *   2. Heuristics (structural detection)
    *   3. User rules (deny wins, then most specific non-deny)
-   *   4. Default ask
+   *   4. Read-only bash auto-allow (when no rule matches)
+   *   5. Default ask
    */
   evaluateWithRules(
     req: GateRequest,
@@ -1756,6 +1801,11 @@ export class PolicyEngine {
     const matching = applicable.filter((rule) => this.matchesUserRule(rule, req, parsed));
 
     if (matching.length === 0) {
+      const readOnlyAllow = this.evaluateReadOnlyShellInspection(req);
+      if (readOnlyAllow) {
+        return readOnlyAllow;
+      }
+
       return {
         action: "ask",
         reason: "No matching rule — using default ask",
@@ -1823,7 +1873,10 @@ export class PolicyEngine {
             };
           }
 
-          if (this.policy.heuristics.secretEnvInUrl !== false && hasSecretEnvExpansionInUrl(parsed)) {
+          if (
+            this.policy.heuristics.secretEnvInUrl !== false &&
+            hasSecretEnvExpansionInUrl(parsed)
+          ) {
             return {
               action: this.policy.heuristics.secretEnvInUrl,
               reason: "Possible secret env exfiltration in URL",
@@ -1833,10 +1886,59 @@ export class PolicyEngine {
           }
         }
       }
-
     }
 
     return null;
+  }
+
+  private evaluateReadOnlyShellInspection(req: GateRequest): PolicyDecision | null {
+    if (req.tool !== "bash") return null;
+
+    const command = (req.input as { command?: string }).command || "";
+    if (command.trim().length === 0) return null;
+
+    const segments = splitBashCommandChain(command);
+    let sawReadOnlyCommand = false;
+
+    for (const segment of segments) {
+      const trimmedSegment = segment.trim();
+      if (!trimmedSegment || trimmedSegment.startsWith("#")) continue;
+
+      const stages = splitPipelineStages(trimmedSegment);
+      for (const stage of stages) {
+        const parsed = parseBashCommand(stage);
+        const execName = executableName(parsed.executable);
+
+        if (!execName) continue;
+
+        if (CHAIN_HELPER_EXECUTABLES.has(execName)) continue;
+
+        if (parsed.hasRedirect || parsed.hasSubshell) {
+          return null;
+        }
+
+        if (!READ_ONLY_INSPECTION_EXECUTABLES.has(execName)) {
+          return null;
+        }
+
+        if (execName === "find" && parsed.args.some((arg) => FIND_MUTATING_FLAGS.has(arg))) {
+          return null;
+        }
+
+        sawReadOnlyCommand = true;
+      }
+    }
+
+    if (!sawReadOnlyCommand) {
+      return null;
+    }
+
+    return {
+      action: "allow",
+      reason: "Read-only shell inspection",
+      layer: "rule",
+      ruleLabel: "Read-only shell inspection",
+    };
   }
 
   // ─── v2: Rule matching helpers ───
@@ -1858,12 +1960,11 @@ export class PolicyEngine {
         .filter((parsed) => parsed.executable.length > 0);
 
       const primary =
-        parsedSegments.find((parsed) => !CHAIN_HELPER_EXECUTABLES.has(parsed.executable)) ||
-        parsedSegments[0];
+        parsedSegments.find(
+          (parsed) => !CHAIN_HELPER_EXECUTABLES.has(executableName(parsed.executable)),
+        ) || parsedSegments[0];
 
-      const executable = primary?.executable.includes("/")
-        ? primary.executable.split("/").pop() || primary.executable
-        : primary?.executable;
+      const executable = primary ? executableName(primary.executable) : undefined;
 
       return { executable, command };
     }

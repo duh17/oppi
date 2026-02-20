@@ -15,13 +15,6 @@ export type RuleDecision = "allow" | "ask" | "deny";
 export type RuleScope = "session" | "workspace" | "global";
 export type RuleSource = "preset" | "learned" | "manual";
 
-export interface RuleMatch {
-  executable?: string;
-  domain?: string;
-  pathPattern?: string;
-  commandPattern?: string;
-}
-
 export interface Rule {
   id: string;
   tool: string;
@@ -36,24 +29,14 @@ export interface Rule {
   expiresAt?: number;
   source?: RuleSource;
   createdAt: number;
-
-  // Legacy compatibility fields (derived)
-  effect?: "allow" | "deny";
-  description?: string;
-  match?: RuleMatch;
 }
-
-export type LearnedRule = Rule;
 
 export interface RuleInput {
   tool?: string;
   decision?: RuleDecision;
-  effect?: "allow" | "deny" | "block";
   pattern?: string;
   executable?: string;
   label?: string;
-  description?: string;
-  match?: RuleMatch;
   scope?: RuleScope;
   sessionId?: string;
   workspaceId?: string;
@@ -64,12 +47,9 @@ export interface RuleInput {
 export interface RulePatch {
   tool?: string | null;
   decision?: RuleDecision;
-  effect?: "allow" | "deny" | "block";
   pattern?: string | null;
   executable?: string | null;
   label?: string | null;
-  description?: string | null;
-  match?: RuleMatch | null;
   expiresAt?: number | null;
 }
 
@@ -119,7 +99,7 @@ interface NormalizedRuleInput {
 }
 
 function normalizeRuleInput(input: RuleInput): NormalizedRuleInput {
-  const decision = parseDecision(input.decision ?? input.effect) || "allow";
+  const decision = parseDecision(input.decision) || "allow";
   const scope: RuleScope =
     input.scope === "session" || input.scope === "workspace" || input.scope === "global"
       ? input.scope
@@ -128,31 +108,6 @@ function normalizeRuleInput(input: RuleInput): NormalizedRuleInput {
   const tool = typeof input.tool === "string" && input.tool.trim().length > 0
     ? input.tool.trim()
     : "*";
-
-  const executableRaw =
-    typeof input.executable === "string"
-      ? input.executable
-      : typeof input.match?.executable === "string"
-        ? input.match.executable
-        : undefined;
-
-  const labelRaw =
-    typeof input.label === "string"
-      ? input.label
-      : typeof input.description === "string"
-        ? input.description
-        : undefined;
-
-  const patternRaw =
-    typeof input.pattern === "string"
-      ? input.pattern
-      : typeof input.match?.commandPattern === "string"
-        ? input.match.commandPattern
-        : typeof input.match?.pathPattern === "string"
-          ? input.match.pathPattern
-          : typeof input.match?.domain === "string"
-            ? `*${input.match.domain}*`
-            : undefined;
 
   const normalized: NormalizedRuleInput = {
     tool,
@@ -164,16 +119,16 @@ function normalizeRuleInput(input: RuleInput): NormalizedRuleInput {
     source: input.source,
   };
 
-  if (executableRaw && executableRaw.trim().length > 0) {
-    normalized.executable = executableRaw.trim();
+  if (typeof input.executable === "string" && input.executable.trim().length > 0) {
+    normalized.executable = input.executable.trim();
   }
 
-  if (labelRaw && labelRaw.trim().length > 0) {
-    normalized.label = labelRaw.trim();
+  if (typeof input.label === "string" && input.label.trim().length > 0) {
+    normalized.label = input.label.trim();
   }
 
-  if (patternRaw && patternRaw.trim().length > 0) {
-    const trimmed = patternRaw.trim();
+  if (typeof input.pattern === "string" && input.pattern.trim().length > 0) {
+    const trimmed = input.pattern.trim();
     normalized.pattern = FILE_TOOLS.has(tool) ? normalizePathPattern(trimmed) : trimmed;
   }
 
@@ -190,24 +145,54 @@ function parseDecision(value: unknown): RuleDecision | null {
   return null;
 }
 
-function migrateLegacyRule(raw: unknown): Rule | null {
+/**
+ * Parse a rule from disk. Handles both current and legacy formats:
+ * - Legacy: effect/description/match fields → normalized to decision/label/executable/pattern
+ * - Current: decision/label/executable/pattern fields used directly
+ */
+function parseRuleFromDisk(raw: unknown): Rule | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.id !== "string") return null;
 
-  const normalized = normalizeRuleInput(raw as RuleInput);
+  // Build a RuleInput, preferring current fields with legacy fallbacks for migration
+  const input: RuleInput = {};
+
+  // tool
+  if (typeof raw.tool === "string") input.tool = raw.tool;
+
+  // decision (current) or effect (legacy)
+  if (typeof raw.decision === "string") input.decision = parseDecision(raw.decision) ?? undefined;
+  else if (typeof raw.effect === "string") input.decision = parseDecision(raw.effect) ?? undefined;
+
+  // label (current) or description (legacy)
+  if (typeof raw.label === "string") input.label = raw.label;
+  else if (typeof raw.description === "string") input.label = raw.description;
+
+  // executable (current) or match.executable (legacy)
+  if (typeof raw.executable === "string") input.executable = raw.executable;
+  else if (isRecord(raw.match) && typeof raw.match.executable === "string") input.executable = raw.match.executable;
+
+  // pattern (current) or match.commandPattern/pathPattern/domain (legacy)
+  if (typeof raw.pattern === "string") {
+    input.pattern = raw.pattern;
+  } else if (isRecord(raw.match)) {
+    if (typeof raw.match.commandPattern === "string") input.pattern = raw.match.commandPattern;
+    else if (typeof raw.match.pathPattern === "string") input.pattern = raw.match.pathPattern;
+    else if (typeof raw.match.domain === "string") input.pattern = `*${raw.match.domain}*`;
+  }
+
+  // scope/metadata
+  if (typeof raw.scope === "string") input.scope = raw.scope as RuleScope;
+  if (typeof raw.sessionId === "string") input.sessionId = raw.sessionId;
+  if (typeof raw.workspaceId === "string") input.workspaceId = raw.workspaceId;
+  if (typeof raw.expiresAt === "number") input.expiresAt = raw.expiresAt;
+  if (typeof raw.source === "string") input.source = raw.source as RuleSource;
+
+  const normalized = normalizeRuleInput(input);
 
   return {
     id: raw.id,
-    tool: normalized.tool,
-    decision: normalized.decision,
-    pattern: normalized.pattern,
-    executable: normalized.executable,
-    label: normalized.label,
-    scope: normalized.scope,
-    sessionId: normalized.sessionId,
-    workspaceId: normalized.workspaceId,
-    expiresAt: normalized.expiresAt,
-    source: normalized.source,
+    ...normalized,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };
 }
@@ -225,30 +210,6 @@ function ruleSignature(rule: NormalizedRuleInput): string {
     source: rule.source || "",
     expiresAt: rule.expiresAt || 0,
   });
-}
-
-function withLegacyFields(rule: Rule): Rule {
-  const effect =
-    rule.decision === "allow" ? "allow" : rule.decision === "deny" ? "deny" : undefined;
-
-  const match: RuleMatch = {};
-  if (rule.executable) match.executable = rule.executable;
-  if (rule.pattern) {
-    if (FILE_TOOLS.has(rule.tool)) {
-      match.pathPattern = rule.pattern;
-    } else {
-      match.commandPattern = rule.pattern;
-    }
-  }
-
-  const hasMatch = Boolean(match.executable || match.pathPattern || match.commandPattern || match.domain);
-
-  return {
-    ...rule,
-    ...(effect ? { effect } : {}),
-    ...(rule.label ? { description: rule.label } : {}),
-    ...(hasMatch ? { match } : {}),
-  };
 }
 
 export class RuleStore {
@@ -385,7 +346,7 @@ export class RuleStore {
       this.save();
     }
 
-    return withLegacyFields(rule);
+    return rule;
   }
 
   remove(id: string): boolean {
@@ -409,7 +370,7 @@ export class RuleStore {
     const applyPatch = (rule: Rule): Rule => {
       const next: Rule = { ...rule };
 
-      const patchedDecision = parseDecision(patch.decision ?? patch.effect);
+      const patchedDecision = parseDecision(patch.decision);
       if (patchedDecision) next.decision = patchedDecision;
 
       if (patch.tool !== undefined) {
@@ -433,31 +394,11 @@ export class RuleStore {
         }
       }
 
-      const patchedLabel = patch.label ?? patch.description;
-      if (patchedLabel !== undefined) {
-        if (patchedLabel === null || patchedLabel.trim().length === 0) {
+      if (patch.label !== undefined) {
+        if (patch.label === null || patch.label.trim().length === 0) {
           delete next.label;
         } else {
-          next.label = patchedLabel.trim();
-        }
-      }
-
-      if (patch.match !== undefined) {
-        if (patch.match === null) {
-          delete next.pattern;
-          delete next.executable;
-        } else {
-          if (typeof patch.match.executable === "string") {
-            next.executable = patch.match.executable.trim() || undefined;
-          }
-          if (typeof patch.match.commandPattern === "string") {
-            next.pattern = patch.match.commandPattern.trim() || undefined;
-          } else if (typeof patch.match.pathPattern === "string") {
-            next.pattern = patch.match.pathPattern.trim() || undefined;
-          } else if (typeof patch.match.domain === "string") {
-            const domain = patch.match.domain.trim();
-            next.pattern = domain ? `*${domain}*` : undefined;
-          }
+          next.label = patch.label.trim();
         }
       }
 
@@ -489,7 +430,7 @@ export class RuleStore {
     if (sessionIdx >= 0) {
       const updated = applyPatch(this.sessionRules[sessionIdx]);
       this.sessionRules[sessionIdx] = updated;
-      return withLegacyFields(updated);
+      return updated;
     }
 
     const persistedIdx = this.persisted.findIndex((r) => r.id === id);
@@ -497,7 +438,7 @@ export class RuleStore {
       const updated = applyPatch(this.persisted[persistedIdx]);
       this.persisted[persistedIdx] = updated;
       this.save();
-      return withLegacyFields(updated);
+      return updated;
     }
 
     return null;
@@ -505,27 +446,32 @@ export class RuleStore {
 
   getAll(): Rule[] {
     this.reloadIfChanged();
-    return [...this.persisted, ...this.sessionRules].map(withLegacyFields);
+    return [...this.persisted, ...this.sessionRules];
   }
 
   getGlobal(): Rule[] {
     this.reloadIfChanged();
-    return this.persisted.filter((r) => r.scope === "global").map(withLegacyFields);
+    return this.persisted.filter((r) => r.scope === "global");
   }
 
   getForWorkspace(workspaceId: string): Rule[] {
     this.reloadIfChanged();
     return this.persisted
-      .filter((r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId))
-      .map(withLegacyFields);
+      .filter((r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId));
   }
 
   getForSession(sessionId: string): Rule[] {
-    return this.sessionRules.filter((r) => r.sessionId === sessionId).map(withLegacyFields);
+    return this.sessionRules.filter((r) => r.sessionId === sessionId);
   }
 
   /**
-   * Legacy compatibility helper used by older tests/callers.
+   * Find rules that match a given request context.
+   *
+   * Returns matching rules from all applicable scopes:
+   *   1. Session rules for this session
+   *   2. Workspace rules for this workspace + global rules
+   *
+   * Caller (PolicyEngine) handles evaluation order and deny-wins logic.
    */
   findMatching(
     tool: string,
@@ -544,7 +490,7 @@ export class RuleStore {
 
     const command = (input as { command?: string }).command || "";
 
-    const matched = candidates.filter((rule) => {
+    return candidates.filter((rule) => {
       if (rule.expiresAt && rule.expiresAt < now) return false;
       if (rule.tool !== "*" && rule.tool !== tool) return false;
 
@@ -568,14 +514,8 @@ export class RuleStore {
         }
       }
 
-      if (parsed?.domain && rule.match?.domain && parsed.domain !== rule.match.domain) {
-        return false;
-      }
-
       return true;
     });
-
-    return matched.map(withLegacyFields);
   }
 
   clearSessionRules(sessionId: string): void {
@@ -623,20 +563,20 @@ export class RuleStore {
       const next: Rule[] = [];
 
       for (const entry of parsed) {
-        const migrated = migrateLegacyRule(entry);
-        if (!migrated) continue;
+        const rule = parseRuleFromDisk(entry);
+        if (!rule) continue;
 
         const normalizedInput = normalizeRuleInput({
-          tool: migrated.tool,
-          decision: migrated.decision,
-          pattern: migrated.pattern,
-          executable: migrated.executable,
-          label: migrated.label,
-          scope: migrated.scope,
-          sessionId: migrated.sessionId,
-          workspaceId: migrated.workspaceId,
-          expiresAt: migrated.expiresAt,
-          source: migrated.source,
+          tool: rule.tool,
+          decision: rule.decision,
+          pattern: rule.pattern,
+          executable: rule.executable,
+          label: rule.label,
+          scope: rule.scope,
+          sessionId: rule.sessionId,
+          workspaceId: rule.workspaceId,
+          expiresAt: rule.expiresAt,
+          source: rule.source,
         });
 
         const signature = ruleSignature(normalizedInput);
@@ -644,7 +584,7 @@ export class RuleStore {
         seen.add(signature);
 
         next.push({
-          ...migrated,
+          ...rule,
           ...normalizedInput,
         });
       }
