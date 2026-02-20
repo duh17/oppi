@@ -2,7 +2,15 @@
  * Core types for oppi-server.
  */
 
+import type { StyledSegment } from "./mobile-renderer.js";
+
 // ─── Workspaces ───
+
+export interface WorkspacePolicyConfig {
+  /** Optional workspace fallback override. If omitted, global fallback is used. */
+  fallback?: PolicyDecision;
+  permissions: PolicyPermission[];
+}
 
 export interface Workspace {
   id: string;
@@ -10,16 +18,13 @@ export interface Workspace {
   description?: string; // shown in workspace picker
   icon?: string; // SF Symbol name or emoji
 
-  // Runtime — where pi runs
-  runtime: "host" | "container"; // "host" = directly on Mac, "container" = Apple container
-
   // Skills — which skills to sync into the session
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policyPreset: string; // "container" | "host" | "host_standard" | "host_locked"
+  policy?: WorkspacePolicyConfig; // workspace additive permissions (merged onto global policy)
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
-  allowedExecutables?: string[]; // Dev runtimes auto-allowed in host mode (e.g. ["node", "python3"])
+  allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
   // Context
   systemPrompt?: string; // Additional instructions appended to base prompt
@@ -80,13 +85,12 @@ export interface Session {
   lastMessage?: string;
 
   // Health
-  warnings?: string[]; // bootstrap/runtime warnings surfaced to iOS
+  warnings?: string[]; // bootstrap/session warnings surfaced to iOS
 
   // Agent config state (synced from pi get_state)
   thinkingLevel?: string; // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
-  // Runtime metadata (used for trace recovery/replay)
-  runtime?: "host" | "container";
+  // Trace metadata (used for trace recovery/replay)
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
   piSessionId?: string; // pi internal session UUID reported by get_state
@@ -107,28 +111,56 @@ export interface SessionMessage {
 
 // ─── Server Config ───
 
-export type SecurityProfile = "tailscale-permissive" | "strict";
+export type PolicyDecision = "allow" | "ask" | "block";
 
-export interface ServerSecurityConfig {
-  profile: SecurityProfile;
-  requireTlsOutsideTailnet: boolean;
-  allowInsecureHttpInTailnet: boolean;
-  requirePinnedServerIdentity: boolean;
+export interface PolicyMatch {
+  tool?: string;
+  executable?: string;
+  commandMatches?: string;
+  pathMatches?: string;
+  pathWithin?: string;
+  domain?: string;
 }
 
-export interface ServerIdentityConfig {
-  enabled: boolean;
-  algorithm: "ed25519";
-  keyId: string;
-  privateKeyPath: string;
-  publicKeyPath: string;
-  fingerprint: string;
+export interface PolicyPermission {
+  id: string;
+  decision: PolicyDecision;
+
+  label?: string;
+  reason?: string;
+  immutable?: boolean;
+  match: PolicyMatch;
 }
 
-export interface ServerInviteConfig {
-  format: "v2-signed";
-  maxAgeSeconds: number;
-  singleUse: boolean;
+/**
+ * Named heuristics — complex detection logic that can't be expressed as globs.
+ * Each key maps to the action taken when the heuristic triggers.
+ * Set to `false` to disable a heuristic entirely.
+ */
+export interface PolicyHeuristics {
+  /** Detect `| sh`, `| bash` — arbitrary code execution via pipe. Default: "ask" */
+  pipeToShell?: PolicyDecision | false;
+  /** Detect curl -d, wget --post-data, etc. — outbound data transfer. Default: "ask" */
+  dataEgress?: PolicyDecision | false;
+  /** Detect $API_KEY, $SECRET in curl URLs — credential leakage. Default: "ask" */
+  secretEnvInUrl?: PolicyDecision | false;
+  /** Detect reads of ~/.ssh/, ~/.aws/, .env, etc. via cat/head/read. Default: "block" */
+  secretFileAccess?: PolicyDecision | false;
+  /** Browser nav to domains not in fetch allowlist. Default: "ask" */
+  browserUnknownDomain?: PolicyDecision | false;
+  /** Browser eval.js (arbitrary JS execution). Default: "ask" */
+  browserEval?: PolicyDecision | false;
+}
+
+export interface PolicyConfig {
+  schemaVersion: 1;
+  mode?: string;
+  description?: string;
+  fallback: PolicyDecision;
+  guardrails: PolicyPermission[];
+  permissions: PolicyPermission[];
+  /** Named heuristics for complex pattern detection. Omit to use defaults. */
+  heuristics?: PolicyHeuristics;
 }
 
 export interface ServerConfig {
@@ -143,16 +175,24 @@ export interface ServerConfig {
   maxSessionsGlobal: number;
   /** Permission approval timeout in milliseconds. Set to 0 to disable expiry. */
   approvalTimeoutMs?: number;
-  // v2 security contract
-  security?: ServerSecurityConfig;
-  identity?: ServerIdentityConfig;
-  invite?: ServerInviteConfig;
+  /** Source CIDRs allowed to connect to HTTP/WS endpoints. */
+  allowedCidrs: string[];
 
-  // Pairing token — the single bearer token for client auth
+  /** Declarative global policy config (guardrails + permissions). */
+  policy?: PolicyConfig;
+
+  // Owner/admin bearer token
   token?: string;
 
+  // One-time pairing token bootstrap state
+  pairingToken?: string;
+  pairingTokenExpiresAt?: number;
+
+  // Device auth state (issued during pairing)
+  authDeviceTokens?: string[];
+
   // Push notification state (written by iOS client registration)
-  deviceTokens?: string[];
+  pushDeviceTokens?: string[];
   liveActivityToken?: string;
 
   // Per-model thinking preferences (synced from iOS)
@@ -181,9 +221,8 @@ export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
   icon?: string;
-  runtime?: "host" | "container";
   skills: string[];
-  policyPreset?: string;
+  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -196,9 +235,8 @@ export interface UpdateWorkspaceRequest {
   name?: string;
   description?: string;
   icon?: string;
-  runtime?: "host" | "container";
   skills?: string[];
-  policyPreset?: string;
+  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -432,9 +470,9 @@ export type ServerMessage = // ── Connection ──
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
   // ── Tool execution ──
-  | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string }
+  | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string; callSegments?: StyledSegment[] }
   | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
-  | { type: "tool_end"; tool: string; toolCallId?: string }
+  | { type: "tool_end"; tool: string; toolCallId?: string; details?: unknown; isError?: boolean; resultSegments?: StyledSegment[] }
   // ── Turn delivery acknowledgements (idempotent send contract) ──
   | {
       type: "turn_ack";
@@ -479,7 +517,6 @@ export type ServerMessage = // ── Connection ──
       tool: string;
       input: Record<string, unknown>;
       displaySummary: string;
-      risk: "low" | "medium" | "high" | "critical";
       reason: string;
       timeoutAt: number;
       expires?: boolean;
@@ -535,11 +572,26 @@ export interface RegisterDeviceTokenRequest {
   tokenType?: "apns" | "liveactivity";
 }
 
-// ─── Invite ───
+// ─── Pairing / Invite ───
+
+export interface PairDeviceRequest {
+  pairingToken: string;
+  deviceName?: string;
+}
+
+export interface PairDeviceResponse {
+  deviceToken: string;
+}
 
 export interface InviteData {
   host: string;
   port: number;
   token: string;
+  pairingToken?: string;
   name: string;
+}
+
+export interface InvitePayloadV3 extends InviteData {
+  v: 3;
+  fingerprint?: string;
 }

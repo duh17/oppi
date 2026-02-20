@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Single pending: swipe right to allow, left to deny.
 /// Multiple pending: swipe disabled, shows "+N more" badge. Tap to open sheet.
-/// Critical risk: swipe-to-allow disabled (must use detail sheet).
+/// When biometric is enabled, swipe-to-allow is disabled (must use detail sheet).
 struct PermissionPill: View {
     let request: PermissionRequest
     let totalCount: Int
@@ -22,11 +22,9 @@ struct PermissionPill: View {
     /// Swipe-to-allow disabled when biometric is required (must use sheet → Face ID).
     private var canSwipeAllow: Bool {
         isSinglePending
-        && request.risk != .critical
-        && !BiometricService.shared.requiresBiometric(for: request.risk)
+        && !BiometricService.shared.requiresBiometric
     }
     private var canSwipeDeny: Bool { isSinglePending }
-    private var riskColor: Color { Color.riskColor(request.risk) }
 
     private var biometricPillIcon: String {
         switch LAContext().biometryType {
@@ -93,26 +91,26 @@ struct PermissionPill: View {
             if canSwipeDeny && dragOffset < -hintThreshold {
                 Text("Deny")
                     .font(.caption.bold())
-                    .foregroundStyle(.tokyoRed)
+                    .foregroundStyle(.themeRed)
                     .transition(.opacity)
             }
 
-            // Risk icon
-            Image(systemName: request.risk.systemImage)
+            // Tool icon
+            Image(systemName: "exclamationmark.shield")
                 .font(.subheadline.bold())
-                .foregroundStyle(riskColor)
+                .foregroundStyle(.themeOrange)
 
             // Tool context icon (browser gets a globe, others skip)
             if isBrowserCommand {
                 Image(systemName: browserIcon)
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Command summary
             Text(request.displaySummary)
                 .font(.caption.monospaced())
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .lineLimit(1)
 
             Spacer(minLength: 4)
@@ -121,36 +119,36 @@ struct PermissionPill: View {
             if request.hasExpiry {
                 Text(request.timeoutAt, style: .timer)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             } else {
                 Label("No expiry", systemImage: "infinity")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Multi-pending badge
             if totalCount > 1 {
                 Text("+\(totalCount - 1)")
                     .font(.caption2.bold())
-                    .foregroundStyle(.tokyoFg)
+                    .foregroundStyle(.themeFg)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.tokyoComment.opacity(0.3))
+                    .background(.themeComment.opacity(0.3))
                     .clipShape(Capsule())
             }
 
-            // Biometric lock icon (no swipe-to-allow for gated risks)
-            if BiometricService.shared.requiresBiometric(for: request.risk) && isSinglePending {
+            // Biometric lock icon
+            if BiometricService.shared.requiresBiometric && isSinglePending {
                 Image(systemName: biometricPillIcon)
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             // Allow hint
             if canSwipeAllow && dragOffset > hintThreshold {
                 Text("Allow")
                     .font(.caption.bold())
-                    .foregroundStyle(.tokyoGreen)
+                    .foregroundStyle(.themeGreen)
                     .transition(.opacity)
             }
         }
@@ -166,20 +164,20 @@ struct PermissionPill: View {
 
         RoundedRectangle(cornerRadius: 26)
             .fill(
-                Color.tokyoBgHighlight
+                Color.themeBgHighlight
                     .opacity(1 - greenBlend * 0.3 - redBlend * 0.3)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 26)
-                    .fill(Color.tokyoGreen.opacity(greenBlend * 0.25))
+                    .fill(Color.themeGreen.opacity(greenBlend * 0.25))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 26)
-                    .fill(Color.tokyoRed.opacity(redBlend * 0.25))
+                    .fill(Color.themeRed.opacity(redBlend * 0.25))
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .strokeBorder(riskColor.opacity(0.4), lineWidth: 1)
+                    .strokeBorder(Color.themeOrange.opacity(0.4), lineWidth: 1)
             )
     }
 
@@ -203,9 +201,9 @@ struct PermissionPill: View {
                 guard !reduceMotion else { return }
                 let dx = value.translation.width
                 if dx > swipeThreshold && canSwipeAllow {
-                    resolveWithFlash(.tokyoGreen, slideRight: true, action: onAllow)
+                    resolveWithFlash(.themeGreen, slideRight: true, action: onAllow)
                 } else if dx < -swipeThreshold && canSwipeDeny {
-                    resolveWithFlash(.tokyoRed, slideRight: false, action: onDeny)
+                    resolveWithFlash(.themeRed, slideRight: false, action: onDeny)
                 }
             }
     }
@@ -238,7 +236,7 @@ struct PermissionPill: View {
     }
 
     private var accessibilityHint: String {
-        if isSinglePending && request.risk != .critical {
+        if isSinglePending {
             "Swipe right to allow, left to deny, or double tap for details"
         } else {
             "Double tap for details"

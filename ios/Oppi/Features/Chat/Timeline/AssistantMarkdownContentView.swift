@@ -45,8 +45,6 @@ final class AssistantMarkdownContentView: UIView {
     /// Very large responses fall back to plain text to avoid expensive layout.
     private static let plainTextFallbackThreshold = 20_000
 
-
-
     // MARK: - State
 
     private var currentConfig: Configuration?
@@ -339,7 +337,6 @@ final class AssistantMarkdownContentView: UIView {
         }
     }
 
-
 }
 
 // MARK: - UITextViewDelegate (deep link routing)
@@ -506,6 +503,9 @@ final class NativeCodeBlockView: UIView {
 
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
 
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
+        codeScrollView.addGestureRecognizer(longPress)
+
         let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
         codeLabelWidthConstraint = widthConstraint
 
@@ -578,16 +578,30 @@ final class NativeCodeBlockView: UIView {
     }
 
     @objc private func copyTapped() {
+        copyCodeAndShowFeedback()
+    }
+
+    @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        copyCodeAndShowFeedback()
+        showCopiedFlash()
+    }
+
+    private func copyCodeAndShowFeedback() {
         UIPasteboard.general.string = currentCode
         let feedback = UIImpactFeedbackGenerator(style: .light)
         feedback.impactOccurred(intensity: 0.7)
 
-        // Brief "Copied" feedback.
+        // Brief "Copied" feedback on the copy button.
         copyButton.configuration?.image = UIImage(systemName: "checkmark")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             self.copyButton.configuration?.image = UIImage(systemName: "doc.on.doc")
         }
+    }
+
+    private func showCopiedFlash() {
+        showCopiedOverlay(on: self)
     }
 }
 
@@ -598,6 +612,18 @@ final class NativeCodeBlockView: UIView {
 /// Uses monospaced column alignment (like the diff view) for pixel-perfect
 /// columns. Much tighter and better-looking than a stack-of-stacks approach.
 final class NativeTableBlockView: UIView {
+
+    /// Inner card that wraps the scroll view. Carries the background, border,
+    /// and corner radius so it shrink-wraps to content width while the outer
+    /// view (sized by SwiftUI) can be full-width and transparent.
+    private let cardView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.layer.cornerRadius = 8
+        v.layer.borderWidth = 1
+        v.clipsToBounds = true
+        return v
+    }()
 
     private let scrollView: UIScrollView = {
         let sv = UIScrollView()
@@ -620,6 +646,14 @@ final class NativeTableBlockView: UIView {
     /// the frame and enables horizontal scrolling.
     private var tableLabelWidthConstraint: NSLayoutConstraint?
 
+    /// Card width constraint — shrinks to content or expands to parent width,
+    /// whichever is smaller.
+    private var cardWidthConstraint: NSLayoutConstraint?
+
+    /// Stored for long-press copy — rebuilt as markdown table text.
+    private var currentHeaders: [String] = []
+    private var currentRows: [[String]] = []
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
@@ -629,22 +663,37 @@ final class NativeTableBlockView: UIView {
     required init?(coder: NSCoder) { nil }
 
     private func setupViews() {
-        layer.cornerRadius = 8
-        layer.borderWidth = 1
-        clipsToBounds = true
+        // Outer view is transparent — card handles all visual styling
+        backgroundColor = .clear
 
-        addSubview(scrollView)
+        addSubview(cardView)
+        cardView.addSubview(scrollView)
         scrollView.addSubview(tableLabel)
 
-        let widthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
-        tableLabelWidthConstraint = widthConstraint
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
+        scrollView.addGestureRecognizer(longPress)
+
+        let labelWidthConstraint = tableLabel.widthAnchor.constraint(equalToConstant: 0)
+        tableLabelWidthConstraint = labelWidthConstraint
+
+        // Card: pin top/bottom/leading, width set dynamically
+        let cardWidth = cardView.widthAnchor.constraint(equalTo: widthAnchor)
+        cardWidthConstraint = cardWidth
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Card pinned to leading edge, top/bottom flush
+            cardView.topAnchor.constraint(equalTo: topAnchor),
+            cardView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            cardView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            cardWidth,
 
+            // Scroll view fills card
+            scrollView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
+
+            // Label is the scroll content
             tableLabel.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             tableLabel.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             tableLabel.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -655,13 +704,53 @@ final class NativeTableBlockView: UIView {
 
             // Width: set explicitly from measured content so scroll view
             // knows content extends beyond its frame.
-            widthConstraint,
+            labelWidthConstraint,
         ])
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateCardWidth()
+    }
+
+    /// Update card width to min(contentWidth, boundsWidth).
+    private func updateCardWidth() {
+        guard let constraint = cardWidthConstraint else { return }
+        let contentWidth = tableLabelWidthConstraint?.constant ?? 0
+        let parentWidth = bounds.width
+
+        if contentWidth > 0, contentWidth < parentWidth {
+            // Content is narrower than parent — shrink card to content
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                // Currently relative constraint, swap to constant
+                constraint.isActive = false
+                let absolute = cardView.widthAnchor.constraint(equalToConstant: contentWidth)
+                cardWidthConstraint = absolute
+                absolute.isActive = true
+            } else {
+                constraint.constant = contentWidth
+            }
+        } else {
+            // Content is wider or zero — card fills parent (scroll handles overflow)
+            if constraint.firstAnchor === cardView.widthAnchor,
+               constraint.secondAnchor === widthAnchor {
+                // Already relative, good
+            } else {
+                constraint.isActive = false
+                let relative = cardView.widthAnchor.constraint(equalTo: widthAnchor)
+                cardWidthConstraint = relative
+                relative.isActive = true
+            }
+        }
+    }
+
     func apply(headers: [String], rows: [[String]], palette: ThemePalette) {
-        backgroundColor = UIColor(palette.bgDark)
-        layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
+        currentHeaders = headers
+        currentRows = rows
+
+        cardView.backgroundColor = UIColor(palette.bgDark)
+        cardView.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
         let attrText = Self.makeTableAttributedText(
             headers: headers, rows: rows, palette: palette
         )
@@ -670,7 +759,9 @@ final class NativeTableBlockView: UIView {
         // Measure content width so the scroll view can scroll horizontally.
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
-        tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
+        let contentWidth = ceil(boundingRect.width)
+        tableLabelWidthConstraint?.constant = contentWidth
+        setNeedsLayout()
     }
 
     /// Monospaced column width of a string — counts emoji/CJK as 2 columns.
@@ -745,7 +836,7 @@ final class NativeTableBlockView: UIView {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byClipping
-        paragraph.lineSpacing = 0
+        paragraph.lineSpacing = 3
 
         let headerFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
         let cellFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -753,7 +844,7 @@ final class NativeTableBlockView: UIView {
         let cellColor = UIColor(palette.fg)
         let dimColor = UIColor(palette.comment).withAlphaComponent(0.4)
         let headerBgColor = UIColor(palette.bgHighlight)
-        let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.3)
+        let altRowBgColor = UIColor(palette.bgHighlight).withAlphaComponent(0.45)
 
         // Header row.
         let headerStart = result.length
@@ -808,4 +899,119 @@ final class NativeTableBlockView: UIView {
 
         return result
     }
+
+    // MARK: - Long press to copy
+
+    @objc private func longPressCopy(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+
+        UIPasteboard.general.string = markdownTableText()
+
+        let feedback = UIImpactFeedbackGenerator(style: .light)
+        feedback.impactOccurred(intensity: 0.7)
+
+        showCopiedFlash()
+    }
+
+    /// Reconstruct a markdown-formatted table for clipboard.
+    private func markdownTableText() -> String {
+        var lines: [String] = []
+
+        let headerLine = "| " + currentHeaders.joined(separator: " | ") + " |"
+        lines.append(headerLine)
+
+        let separatorLine = "| " + currentHeaders.map { _ in "---" }.joined(separator: " | ") + " |"
+        lines.append(separatorLine)
+
+        for row in currentRows {
+            let rowLine = "| " + row.joined(separator: " | ") + " |"
+            lines.append(rowLine)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func showCopiedFlash() {
+        showCopiedOverlay(on: cardView)
+    }
+}
+
+// MARK: - Shared Copied Feedback
+
+/// Show a flash overlay + floating "Copied" pill centered on the given view.
+///
+/// Used by `NativeCodeBlockView` and `NativeTableBlockView` for long-press copy.
+private func showCopiedOverlay(on view: UIView) {
+    let overlay = UIView()
+    overlay.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+    overlay.frame = view.bounds
+    overlay.layer.cornerRadius = view.layer.cornerRadius
+    overlay.isUserInteractionEnabled = false
+    view.addSubview(overlay)
+
+    let pill = CopiedPillView()
+    pill.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(pill)
+    NSLayoutConstraint.activate([
+        pill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        pill.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+    ])
+    pill.alpha = 0
+    pill.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+
+    UIView.animate(withDuration: 0.15) {
+        pill.alpha = 1
+        pill.transform = .identity
+    }
+
+    UIView.animate(withDuration: 0.3, delay: 0.8, options: .curveEaseOut) {
+        pill.alpha = 0
+        pill.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+        overlay.alpha = 0
+    } completion: { _ in
+        pill.removeFromSuperview()
+        overlay.removeFromSuperview()
+    }
+}
+
+/// Small floating "Copied" badge for long-press feedback.
+private final class CopiedPillView: UIView {
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        let icon = UIImageView(image: UIImage(systemName: "checkmark"))
+        icon.tintColor = .white
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            pointSize: 11, weight: .semibold
+        )
+
+        let label = UILabel()
+        label.text = "Copied"
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = UIStackView(arrangedSubviews: [icon, label])
+        stack.axis = .horizontal
+        stack.spacing = 5
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        backgroundColor = UIColor.black.withAlphaComponent(0.75)
+        layer.cornerRadius = 16
+        isUserInteractionEnabled = false
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 }

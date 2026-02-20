@@ -116,8 +116,10 @@ final class ServerConnection {
         coalescer.onFlush = { [weak self] events in
             guard let self else { return }
             self.reducer.processBatch(events)
-            for event in events {
-                LiveActivityManager.shared.updateFromEvent(event)
+            if ReleaseFeatures.liveActivitiesEnabled {
+                for event in events {
+                    LiveActivityManager.shared.updateFromEvent(event)
+                }
             }
         }
     }
@@ -135,6 +137,7 @@ final class ServerConnection {
     func switchServer(to server: PairedServer) -> Bool {
         guard server.id != currentServerId else { return true } // Already targeting this server
         disconnectSession()
+        disconnectStream()
         reducer.reset()
         return configure(credentials: server.credentials)
     }
@@ -143,11 +146,6 @@ final class ServerConnection {
     /// Returns `false` if the credentials contain a malformed host.
     @discardableResult
     func configure(credentials: ServerCredentials) -> Bool {
-        if let violation = ConnectionSecurityPolicy.evaluate(credentials: credentials) {
-            logger.error("Connection policy violation for host=\(credentials.host): \(violation.localizedDescription)")
-            return false
-        }
-
         guard let baseURL = credentials.baseURL else {
             logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
             return false
@@ -159,17 +157,171 @@ final class ServerConnection {
         return true
     }
 
+    // MARK: - Stream Lifecycle
+
+    /// Background task consuming the multiplexed `/stream` WebSocket.
+    internal var streamConsumptionTask: Task<Void, Never>?
+
+    /// Per-session continuations for routing multiplexed messages.
+    internal var sessionContinuations: [String: AsyncStream<ServerMessage>.Continuation] = [:]
+
+    /// Connect the persistent `/stream` WebSocket.
+    ///
+    /// Opens the WS and starts a consumption task that routes messages
+    /// to per-session streams. Safe to call multiple times (idempotent
+    /// if already connected). If the previous consumption task finished
+    /// (e.g., WS gave up after max reconnect attempts), a new one is created.
+    func connectStream() {
+        guard let wsClient else { return }
+
+        // If consumption task is still running, nothing to do
+        if let task = streamConsumptionTask, !task.isCancelled {
+            // Check if the WS is in a terminal state (disconnected after max retries)
+            if wsClient.status != .disconnected {
+                return
+            }
+            // WS is dead but task is waiting on a finished stream — clean up
+            task.cancel()
+            streamConsumptionTask = nil
+        }
+
+        let stream = wsClient.connect()
+
+        streamConsumptionTask = Task { [weak self] in
+            for await streamMessage in stream {
+                guard let self, !Task.isCancelled else { break }
+                self.routeStreamMessage(streamMessage)
+            }
+            // Stream ended (WS disconnected or max reconnect attempts).
+            // Nil out so future connectStream() calls can restart.
+            await MainActor.run { [weak self] in
+                self?.streamConsumptionTask = nil
+            }
+        }
+    }
+
+    /// Disconnect the persistent `/stream` WebSocket.
+    func disconnectStream() {
+        streamConsumptionTask?.cancel()
+        streamConsumptionTask = nil
+        for (_, cont) in sessionContinuations {
+            cont.finish()
+        }
+        sessionContinuations.removeAll()
+        wsClient?.disconnect()
+    }
+
+    /// Route a message from the multiplexed stream to the appropriate session.
+    func routeStreamMessage(_ streamMessage: StreamMessage) {
+        let sessionId = streamMessage.sessionId
+        let message = streamMessage.message
+
+        // Handle stream-level events (no sessionId)
+        if case .streamConnected = message {
+            handleStreamReconnected()
+            return
+        }
+
+        // Route to per-session continuation if active
+        if let sessionId, let cont = sessionContinuations[sessionId] {
+            cont.yield(message)
+        }
+
+        // Also route notification-level events to the active session handler
+        // (permissions from other sessions still need processing)
+        if let sessionId, sessionId != activeSessionId {
+            handleCrossSessionMessage(message, sessionId: sessionId)
+        }
+    }
+
+    /// Handle `/stream` (re)connection — re-subscribe all tracked sessions.
+    private func handleStreamReconnected() {
+        guard let wsClient else { return }
+
+        // Re-subscribe active session at full level
+        if let activeSessionId {
+            Task {
+                try? await wsClient.send(.subscribe(
+                    sessionId: activeSessionId,
+                    level: .full,
+                    requestId: UUID().uuidString
+                ))
+            }
+        }
+
+        // Re-subscribe notification-level sessions
+        for (sessionId, _) in sessionContinuations where sessionId != activeSessionId {
+            Task {
+                try? await wsClient.send(.subscribe(
+                    sessionId: sessionId,
+                    level: .notifications,
+                    requestId: UUID().uuidString
+                ))
+            }
+        }
+    }
+
+    /// Handle notification-level events from non-active sessions
+    /// (e.g., permissions from other sessions on this server).
+    private func handleCrossSessionMessage(_ message: ServerMessage, sessionId: String) {
+        switch message {
+        case .permissionRequest(let perm):
+            permissionStore.add(perm)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.notifyIfNeeded(
+                    perm,
+                    activeSessionId: sessionStore.activeSessionId
+                )
+            }
+            syncLiveActivityPermissions()
+
+        case .permissionExpired(let id, _):
+            if let request = permissionStore.take(id: id) {
+                // Don't add to reducer timeline (not the active session)
+                _ = request
+            }
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            }
+            syncLiveActivityPermissions()
+
+        case .permissionCancelled(let id):
+            permissionStore.remove(id: id)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: id)
+            }
+            syncLiveActivityPermissions()
+
+        case .state(let session):
+            sessionStore.upsert(session)
+
+        case .sessionEnded(let reason):
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                current.status = .stopped
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            _ = reason
+
+        default:
+            break
+        }
+    }
+
     // MARK: - Session Streaming
 
-    /// Open a WebSocket stream for one session.
+    /// Subscribe to a session at full streaming level.
     ///
+    /// Returns an `AsyncStream<ServerMessage>` that yields events for this session.
+    /// The `/stream` WebSocket is opened if not already connected.
     /// The caller owns stream consumption and task lifecycle.
-    /// On stream termination, `WebSocketClient` disconnects via `onTermination`.
     func streamSession(_ sessionId: String, workspaceId: String) -> AsyncStream<ServerMessage>? {
         guard let wsClient else { return nil }
 
-        // v1 one-stream policy
-        disconnectSession()
+        // Unsubscribe previous full session (if any)
+        if let previousSessionId = activeSessionId, previousSessionId != sessionId {
+            unsubscribeSession(previousSessionId)
+        }
 
         activeSessionId = sessionId
         toolMapper.reset()
@@ -177,7 +329,44 @@ final class ServerConnection {
         Task {
             await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
         }
-        return wsClient.connect(sessionId: sessionId, workspaceId: workspaceId)
+
+        // Ensure /stream is connected
+        connectStream()
+
+        // Create per-session stream
+        let perSessionStream = AsyncStream<ServerMessage> { continuation in
+            self.sessionContinuations[sessionId] = continuation
+
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    self?.sessionContinuations.removeValue(forKey: sessionId)
+                }
+            }
+        }
+
+        // Subscribe at full level
+        Task {
+            try? await wsClient.send(.subscribe(
+                sessionId: sessionId,
+                level: .full,
+                requestId: UUID().uuidString
+            ))
+        }
+
+        return perSessionStream
+    }
+
+    /// Unsubscribe from a specific session.
+    private func unsubscribeSession(_ sessionId: String) {
+        sessionContinuations[sessionId]?.finish()
+        sessionContinuations.removeValue(forKey: sessionId)
+
+        Task {
+            try? await wsClient?.send(.unsubscribe(
+                sessionId: sessionId,
+                requestId: UUID().uuidString
+            ))
+        }
     }
 
     /// Disconnect from the current session stream.
@@ -185,7 +374,11 @@ final class ServerConnection {
         coalescer.flushNow()
         failPendingSendAcks(error: WebSocketError.notConnected)
         failPendingRPCRequests(error: WebSocketError.notConnected)
-        wsClient?.disconnect()
+
+        if let activeSessionId {
+            unsubscribeSession(activeSessionId)
+        }
+
         activeSessionId = nil
         Task {
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
@@ -202,6 +395,7 @@ final class ServerConnection {
         slashCommands = []
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
+        // Don't disconnect /stream WS — it stays open for other subscriptions.
     }
 
     /// Flush pending deltas on background transition.
@@ -273,31 +467,34 @@ final class ServerConnection {
     /// Abort the current turn. The session stays alive for the next prompt.
     func sendStop() async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stop())
+        try await wsClient.send(.stop(), sessionId: activeSessionId)
     }
 
     /// Kill the session process entirely. Requires explicit user action.
     func sendStopSession() async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.stopSession())
+        try await wsClient.send(.stopSession(), sessionId: activeSessionId)
     }
 
     /// Respond to a permission request.
     func respondToPermission(id: String, action: PermissionAction, scope: PermissionScope = .once, expiresInMs: Int? = nil) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
+        // permission_response is a stream-level command — no sessionId envelope needed
         try await wsClient.send(.permissionResponse(id: id, action: action, scope: scope == .once ? nil : scope, expiresInMs: expiresInMs, requestId: nil))
         let outcome: PermissionOutcome = action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
             reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
         }
-        PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        if ReleaseFeatures.pushNotificationsEnabled {
+            PermissionNotificationService.shared.cancelNotification(permissionId: id)
+        }
         syncLiveActivityPermissions()
     }
 
     /// Respond to an extension UI dialog.
     func respondToExtensionUI(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil) async throws {
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled))
+        try await wsClient.send(.extensionUIResponse(id: id, value: value, confirmed: confirmed, cancelled: cancelled), sessionId: activeSessionId)
         activeExtensionDialog = nil
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
@@ -325,7 +522,7 @@ final class ServerConnection {
         }
 
         guard let wsClient else { throw WebSocketError.notConnected }
-        try await wsClient.send(message)
+        try await wsClient.send(message, sessionId: activeSessionId)
     }
 
     private func sendTurnWithAck(
@@ -595,4 +792,3 @@ final class ServerConnection {
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
 }
-

@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping
+
 // MARK: - PairedServer Model
 
 @Suite("PairedServer")
@@ -62,13 +64,7 @@ struct PairedServerTests {
             port: 8080,
             token: "sk_abc",
             name: "mac-mini",
-            serverFingerprint: "sha256:minifp",
-            securityProfile: "strict",
-            inviteVersion: 2,
-            inviteKeyId: "srv-1",
-            requireTlsOutsideTailnet: true,
-            allowInsecureHttpInTailnet: false,
-            requirePinnedServerIdentity: true
+            serverFingerprint: "sha256:minifp"
         )
 
         let server = PairedServer(from: creds)!
@@ -79,12 +75,6 @@ struct PairedServerTests {
         #expect(derived.token == "sk_abc")
         #expect(derived.name == "mac-mini")
         #expect(derived.serverFingerprint == "sha256:minifp")
-        #expect(derived.securityProfile == "strict")
-        #expect(derived.inviteVersion == 2)
-        #expect(derived.inviteKeyId == "srv-1")
-        #expect(derived.requireTlsOutsideTailnet == true)
-        #expect(derived.allowInsecureHttpInTailnet == false)
-        #expect(derived.requirePinnedServerIdentity == true)
     }
 
     @Test("Update credentials preserves identity and metadata")
@@ -105,8 +95,7 @@ struct PairedServerTests {
             port: 9999,
             token: "sk_new",
             name: "renamed-studio",
-            serverFingerprint: "sha256:fp1",
-            securityProfile: "strict"
+            serverFingerprint: "sha256:fp1"
         )
 
         server.updateCredentials(from: newCreds)
@@ -116,7 +105,6 @@ struct PairedServerTests {
         #expect(server.port == 9999)
         #expect(server.token == "sk_new")
         #expect(server.name == "renamed-studio")
-        #expect(server.securityProfile == "strict")
 
         // Preserved fields
         #expect(server.id == "sha256:fp1")
@@ -132,10 +120,7 @@ struct PairedServerTests {
             port: 7749,
             token: "sk_roundtrip",
             name: "test-server",
-            serverFingerprint: "sha256:roundtrip",
-            securityProfile: "tailscale-permissive",
-            inviteVersion: 2,
-            inviteKeyId: "srv-rt"
+            serverFingerprint: "sha256:roundtrip"
         )
 
         let original = PairedServer(from: creds, sortOrder: 3)!
@@ -148,12 +133,34 @@ struct PairedServerTests {
         #expect(decoded.port == original.port)
         #expect(decoded.token == original.token)
         #expect(decoded.fingerprint == original.fingerprint)
-        #expect(decoded.securityProfile == original.securityProfile)
-        #expect(decoded.inviteVersion == original.inviteVersion)
-        #expect(decoded.inviteKeyId == original.inviteKeyId)
         #expect(decoded.sortOrder == original.sortOrder)
         // Date precision: within 1 second is fine
         #expect(abs(decoded.addedAt.timeIntervalSince(original.addedAt)) < 1)
+    }
+
+    @Test("Decodes legacy payload without badge customization")
+    func decodesLegacyPayloadWithoutBadgeFields() throws {
+        let json = """
+        {
+          "id": "sha256:legacy",
+          "name": "legacy-server",
+          "host": "legacy.local",
+          "port": 7749,
+          "token": "sk_legacy",
+          "fingerprint": "sha256:legacy",
+          "addedAt": "2026-02-01T00:00:00Z",
+          "sortOrder": 0
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PairedServer.self, from: Data(json.utf8))
+
+        #expect(decoded.badgeIcon == nil)
+        #expect(decoded.badgeColor == nil)
+        #expect(decoded.resolvedBadgeIcon == .defaultValue)
+        #expect(decoded.resolvedBadgeColor == .defaultValue)
     }
 
     @Test("Equatable compares all fields, not just ID")

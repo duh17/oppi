@@ -10,7 +10,6 @@ struct ImageBlobView: View {
 
     @State private var decoded: UIImage?
     @State private var decodeFailed = false
-    @State private var showFullScreen = false
 
     var body: some View {
         Group {
@@ -20,9 +19,9 @@ struct ImageBlobView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onTapGesture { showFullScreen = true }
+                    .onTapGesture { FullScreenImageViewController.present(image: decoded) }
                     .contextMenu {
-                        Button("Copy Image", systemImage: "doc.on.doc") {
+                        Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = decoded
                         }
                         Button("Save to Photos", systemImage: "square.and.arrow.down") {
@@ -30,31 +29,28 @@ struct ImageBlobView: View {
                         }
                         ShareLink(item: Image(uiImage: decoded), preview: SharePreview("Image"))
                     }
-                    .fullScreenCover(isPresented: $showFullScreen) {
-                        ZoomableImageView(image: decoded)
-                    }
             } else if decodeFailed {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         VStack(spacing: 4) {
                             Image(systemName: "photo.badge.exclamationmark")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             Text("Image preview unavailable")
                                 .font(.caption2)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                             if let mimeType {
                                 Text(mimeType)
                                     .font(.caption2.monospaced())
-                                    .foregroundStyle(.tokyoComment.opacity(0.7))
+                                    .foregroundStyle(.themeComment.opacity(0.7))
                             }
                         }
                     }
             } else {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.tokyoBgHighlight)
+                    .fill(Color.themeBgHighlight)
                     .frame(height: 100)
                     .overlay {
                         ProgressView()
@@ -69,61 +65,6 @@ struct ImageBlobView: View {
             }.value
             if decoded == nil {
                 decodeFailed = true
-            }
-        }
-    }
-}
-
-/// Full-screen zoomable image viewer with save/share options.
-struct ZoomableImageView: View {
-    let image: UIImage
-    @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1.0
-    @State private var savedToPhotos = false
-
-    var body: some View {
-        NavigationStack {
-            GeometryReader { geo in
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .scaleEffect(scale)
-                    .gesture(
-                        MagnifyGesture()
-                            .onChanged { value in scale = value.magnification }
-                            .onEnded { _ in withAnimation { scale = max(1.0, scale) } }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation { scale = scale > 1.0 ? 1.0 : 2.0 }
-                    }
-            }
-            .ignoresSafeArea()
-            .background(Color.black)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    ShareLink(
-                        item: Image(uiImage: image),
-                        preview: SharePreview("Image")
-                    )
-                    Spacer()
-                    Button {
-                        PhotoLibrarySaver.save(image)
-                        withAnimation { savedToPhotos = true }
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            withAnimation { savedToPhotos = false }
-                        }
-                    } label: {
-                        Label(
-                            savedToPhotos ? "Saved!" : "Save to Photos",
-                            systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down"
-                        )
-                    }
-                }
             }
         }
     }

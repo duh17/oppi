@@ -172,7 +172,7 @@ struct MarkdownText: View {
 
         if content.count > Self.plainTextFallbackThreshold {
             Text(content)
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
         } else if let segments = cachedSegments, cachedThemeID == themeID {
             FlatMarkdownView(segments: segments, themeID: themeID)
         } else if let cached = synchronousCacheLookup(themeID: themeID) {
@@ -251,7 +251,7 @@ struct MarkdownText: View {
                 switch block {
                 case .markdown(let text):
                     Text(text)
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
 
                 case .codeBlock(let language, let code, let isComplete):
                     if !isComplete {
@@ -305,7 +305,7 @@ private struct FlatMarkdownView: View {
                     TableBlockView(headers: headers, rows: rows)
                 case .thematicBreak:
                     Rectangle()
-                        .fill(Color.tokyoComment.opacity(0.4))
+                        .fill(Color.themeComment.opacity(0.4))
                         .frame(height: 1)
                         .padding(.vertical, 4)
                 }
@@ -493,8 +493,8 @@ enum FlatSegment: Sendable {
     static func build(
         from blocks: [MarkdownBlock],
         themeID: ThemeID = ThemeRuntimeState.currentThemeID()
-    ) -> [FlatSegment] {
-        var result: [FlatSegment] = []
+    ) -> [Self] {
+        var result: [Self] = []
         result.reserveCapacity(blocks.count)
 
         var pendingText = AttributedString()
@@ -695,7 +695,7 @@ private struct CodeBlockChrome<Content: View>: View {
             HStack {
                 Text(language ?? "code")
                     .font(.caption2)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeMdCodeBlockBorder)
                 Spacer()
                 if let onExpand {
                     Button {
@@ -705,7 +705,7 @@ private struct CodeBlockChrome<Content: View>: View {
                             .font(.caption2)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.tokyoFgDim)
+                    .foregroundStyle(.themeFgDim)
                 }
                 Button {
                     UIPasteboard.general.string = code
@@ -722,22 +722,22 @@ private struct CodeBlockChrome<Content: View>: View {
                     .font(.caption2)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tokyoFgDim)
+                .foregroundStyle(.themeFgDim)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color.tokyoBgHighlight)
+            .background(Color.themeBgHighlight)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 content()
                     .padding(12)
             }
         }
-        .background(Color.tokyoBgDark)
+        .background(Color.themeBgDark)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.tokyoComment.opacity(0.35), lineWidth: 1)
+                .stroke(Color.themeMdCodeBlockBorder.opacity(0.35), lineWidth: 1)
         )
     }
 }
@@ -755,18 +755,23 @@ struct CodeBlockView: View {
     @State private var showFullScreen = false
 
     var body: some View {
-        CodeBlockChrome(language: language, code: code, onExpand: { showFullScreen = true }) {
-            if let highlighted {
-                Text(highlighted)
-                    .font(.system(.caption, design: .monospaced))
-                    .fixedSize(horizontal: true, vertical: false)
-            } else {
-                Text(code)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.tokyoFg)
-                    .fixedSize(horizontal: true, vertical: false)
+        CodeBlockChrome(
+            language: language,
+            code: code,
+            onExpand: { showFullScreen = true },
+            content: {
+                if let highlighted {
+                    Text(highlighted)
+                        .font(.system(.caption, design: .monospaced))
+                        .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text(code)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.themeFg)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
-        }
+        )
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: code, language: language, filePath: nil, startLine: 1
@@ -796,7 +801,7 @@ private struct StreamingCodeBlockView: View {
         CodeBlockChrome(language: language, code: code) {
             Text(code)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .fixedSize(horizontal: true, vertical: false)
         }
     }

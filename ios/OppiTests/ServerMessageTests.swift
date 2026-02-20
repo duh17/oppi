@@ -137,7 +137,7 @@ struct ServerMessageTests {
         {"type":"tool_start","tool":"bash","args":{"command":"ls -la"}}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args, let toolCallId) = msg else {
+        guard case .toolStart(let tool, let args, let toolCallId, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -151,7 +151,7 @@ struct ServerMessageTests {
         {"type":"tool_start","tool":"bash","args":{"command":"ls"},"toolCallId":"tc-42"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, _, let toolCallId) = msg else {
+        guard case .toolStart(let tool, _, let toolCallId, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -199,22 +199,58 @@ struct ServerMessageTests {
 
     @Test func decodesToolEnd() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"bash"}"#)
-        guard case .toolEnd(let tool, let toolCallId) = msg else {
+        guard case .toolEnd(let tool, let toolCallId, let details, let isError, _) = msg else {
             Issue.record("Expected .toolEnd")
             return
         }
         #expect(tool == "bash")
         #expect(toolCallId == nil)
+        #expect(details == nil)
+        #expect(isError == false)
     }
 
     @Test func decodesToolEndWithToolCallId() throws {
         let msg = try ServerMessage.decode(from: #"{"type":"tool_end","tool":"bash","toolCallId":"tc-42"}"#)
-        guard case .toolEnd(let tool, let toolCallId) = msg else {
+        guard case .toolEnd(let tool, let toolCallId, _, _, _) = msg else {
             Issue.record("Expected .toolEnd")
             return
         }
         #expect(tool == "bash")
         #expect(toolCallId == "tc-42")
+    }
+
+    @Test func decodesToolEndWithDetails() throws {
+        let json = #"{"type":"tool_end","tool":"remember","toolCallId":"tc-ext","details":{"file":"2026-02-18.md","redacted":false},"isError":false}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .toolEnd(let tool, let toolCallId, let details, let isError, _) = msg else {
+            Issue.record("Expected .toolEnd")
+            return
+        }
+        #expect(tool == "remember")
+        #expect(toolCallId == "tc-ext")
+        #expect(isError == false)
+        // Verify details structure
+        guard case .object(let dict) = details else {
+            Issue.record("Expected object details")
+            return
+        }
+        #expect(dict["file"] == .string("2026-02-18.md"))
+        #expect(dict["redacted"] == .bool(false))
+    }
+
+    @Test func decodesToolEndWithIsError() throws {
+        let json = #"{"type":"tool_end","tool":"bash","toolCallId":"tc-err","details":{"exitCode":127},"isError":true}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .toolEnd(_, _, let details, let isError, _) = msg else {
+            Issue.record("Expected .toolEnd")
+            return
+        }
+        #expect(isError == true)
+        guard case .object(let dict) = details else {
+            Issue.record("Expected object details")
+            return
+        }
+        #expect(dict["exitCode"] == .number(127))
     }
 
     @Test func decodesTurnAck() throws {
@@ -235,7 +271,7 @@ struct ServerMessageTests {
 
     @Test func decodesPermissionRequest() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"rm -rf /"},"displaySummary":"bash: rm -rf /","risk":"critical","reason":"Destructive command","timeoutAt":1700000120000}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"rm -rf /"},"displaySummary":"bash: rm -rf /","reason":"Destructive command","timeoutAt":1700000120000}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -244,14 +280,13 @@ struct ServerMessageTests {
         }
         #expect(perm.id == "perm1")
         #expect(perm.tool == "bash")
-        #expect(perm.risk == .critical)
         #expect(perm.displaySummary == "bash: rm -rf /")
         #expect(perm.expires)
     }
 
     @Test func decodesPermissionRequestWithoutExpiry() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"expires":false}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","reason":"Git push","timeoutAt":1700000120000,"expires":false}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -264,7 +299,7 @@ struct ServerMessageTests {
 
     @Test func decodesPermissionRequestResolutionOptions() throws {
         let json = """
-        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","risk":"high","reason":"Git push","timeoutAt":1700000120000,"resolutionOptions":{"allowSession":true,"allowAlways":true,"alwaysDescription":"Allow all git commands","denyAlways":true}}
+        {"type":"permission_request","id":"perm1","sessionId":"s1","tool":"bash","input":{"command":"git push"},"displaySummary":"bash: git push","reason":"Git push","timeoutAt":1700000120000,"resolutionOptions":{"allowSession":true,"allowAlways":true,"alwaysDescription":"Allow all git commands","denyAlways":true}}
         """
         let msg = try ServerMessage.decode(from: json)
         guard case .permissionRequest(let perm) = msg else {
@@ -394,7 +429,7 @@ struct ServerMessageTests {
     @Test func toolStartWithNullArgsDefaultsToEmpty() throws {
         let json = #"{"type":"tool_start","tool":"read"}"#
         let msg = try ServerMessage.decode(from: json)
-        guard case .toolStart(let tool, let args, _) = msg else {
+        guard case .toolStart(let tool, let args, _, _) = msg else {
             Issue.record("Expected .toolStart")
             return
         }
@@ -434,7 +469,7 @@ struct ServerMessageTests {
     }
 
     @Test func permissionRequestMissingFieldsThrows() {
-        // Missing required fields like tool, risk, etc.
+        // Missing required fields like tool, etc.
         let json = #"{"type":"permission_request","id":"p1","sessionId":"s1"}"#
         #expect(throws: DecodingError.self) {
             try ServerMessage.decode(from: json)

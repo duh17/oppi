@@ -8,6 +8,7 @@ import UIKit
 struct WorkspacePickerView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(ServerStore.self) private var serverStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var isCreating = false
@@ -16,6 +17,22 @@ struct WorkspacePickerView: View {
 
     private var workspaces: [Workspace] {
         connection.workspaceStore.workspaces
+    }
+
+    private var activeServerBadgeIcon: ServerBadgeIcon {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeIcon
+    }
+
+    private var activeServerBadgeColor: ServerBadgeColor {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeColor
     }
 
     private let columns = [
@@ -36,7 +53,11 @@ struct WorkspacePickerView: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(workspaces) { workspace in
-                            WorkspaceCard(workspace: workspace) {
+                            WorkspaceCard(
+                                workspace: workspace,
+                                badgeIcon: activeServerBadgeIcon,
+                                badgeColor: activeServerBadgeColor
+                            ) {
                                 Task { await createSession(workspace: workspace) }
                             }
                             .contextMenu {
@@ -55,7 +76,7 @@ struct WorkspacePickerView: View {
                 if let error {
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.themeRed)
                         .padding(.horizontal)
                 }
             }
@@ -75,7 +96,9 @@ struct WorkspacePickerView: View {
                 }
             }
             .sheet(item: $editingWorkspace) { workspace in
-                WorkspaceEditView(workspace: workspace)
+                NavigationStack {
+                    WorkspaceEditView(workspace: workspace)
+                }
             }
             .task { await loadWorkspaces() }
             .overlay {
@@ -112,6 +135,8 @@ struct WorkspacePickerView: View {
 
 private struct WorkspaceCard: View {
     let workspace: Workspace
+    let badgeIcon: ServerBadgeIcon
+    let badgeColor: ServerBadgeColor
     let action: () -> Void
 
     var body: some View {
@@ -123,12 +148,12 @@ private struct WorkspaceCard: View {
                     .font(.headline)
                     .lineLimit(1)
 
-                RuntimeBadge(runtime: workspace.runtime)
+                RuntimeBadge(icon: badgeIcon, badgeColor: badgeColor)
 
                 if let description = workspace.description {
                     Text(description)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                 }
@@ -150,15 +175,11 @@ private struct WorkspaceCard: View {
         .buttonStyle(.plain)
     }
     private var backgroundFill: Color {
-        workspace.isContainerRuntime
-            ? Color.tokyoGreen.opacity(0.12)
-            : Color.tokyoOrange.opacity(0.14)
+        Color.themeOrange.opacity(0.14)
     }
 
     private var borderColor: Color {
-        workspace.isContainerRuntime
-            ? Color.tokyoGreen.opacity(0.55)
-            : Color.tokyoOrange.opacity(0.65)
+        Color.themeOrange.opacity(0.65)
     }
 }
 
@@ -183,7 +204,7 @@ struct WorkspaceIcon: View {
             if isSFSymbol {
                 Image(systemName: icon)
                     .font(.system(size: size))
-                    .foregroundStyle(.tokyoBlue)
+                    .foregroundStyle(.themeBlue)
             } else {
                 Text(icon)
                     .font(.system(size: size))
@@ -191,67 +212,25 @@ struct WorkspaceIcon: View {
         } else {
             Image(systemName: "square.grid.2x2")
                 .font(.system(size: size))
-                .foregroundStyle(.tokyoBlue)
+                .foregroundStyle(.themeBlue)
         }
     }
 }
 
 struct RuntimeBadge: View {
-    let runtime: String?
     var compact: Bool = false
+    var icon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
-    private var normalizedRuntime: String {
-        switch runtime {
-        case "container": return "container"
-        case "host": return "host"
-        default: return "unknown"
+    private var resolvedSymbolName: String {
+        if UIImage(systemName: icon.symbolName) != nil {
+            return icon.symbolName
         }
+        return "desktopcomputer"
     }
 
-    private var icon: String {
-        switch normalizedRuntime {
-        case "container":
-            return "shippingbox.fill"
-        case "host":
-            if UIImage(systemName: "macstudio.fill") != nil {
-                return "macstudio.fill"
-            }
-            return "desktopcomputer"
-        default:
-            return "questionmark.circle.fill"
-        }
-    }
-
-    private var accessibilityLabel: String {
-        switch normalizedRuntime {
-        case "container": return "Container runtime"
-        case "host": return "Host runtime"
-        default: return "Unknown runtime"
-        }
-    }
-
-    private var fg: Color {
-        switch normalizedRuntime {
-        case "container": return .tokyoGreen
-        case "host": return .tokyoOrange
-        default: return .tokyoComment
-        }
-    }
-
-    private var bg: Color {
-        switch normalizedRuntime {
-        case "container": return .tokyoGreen.opacity(0.18)
-        case "host": return .tokyoOrange.opacity(0.22)
-        default: return .tokyoComment.opacity(0.18)
-        }
-    }
-
-    private var border: Color {
-        switch normalizedRuntime {
-        case "container": return .tokyoGreen.opacity(0.72)
-        case "host": return .tokyoOrange.opacity(0.78)
-        default: return .tokyoComment.opacity(0.5)
-        }
+    private var tint: Color {
+        badgeColor.themeColor
     }
 
     private var badgeSize: CGFloat {
@@ -265,33 +244,38 @@ struct RuntimeBadge: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(bg)
+                .fill(tint.opacity(0.22))
 
             Circle()
-                .stroke(border, lineWidth: 1)
+                .stroke(tint.opacity(0.78), lineWidth: 1)
 
-            if normalizedRuntime == "container" {
-                Circle()
-                    .stroke(Color.tokyoGreen.opacity(0.35), lineWidth: 1)
-                    .padding(2)
-            }
-
-            Image(systemName: icon)
+            Image(systemName: resolvedSymbolName)
                 .font(.system(size: symbolSize, weight: .bold))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(fg)
+                .foregroundStyle(tint)
         }
         .frame(width: badgeSize, height: badgeSize)
-        .shadow(
-            color: normalizedRuntime == "container" ? Color.tokyoGreen.opacity(0.35) : .clear,
-            radius: normalizedRuntime == "container" ? 4 : 0
-        )
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel("Local session environment")
     }
 }
 
-/// Runtime icon with a small status dot overlay in the bottom-trailing corner.
-/// Used in the ChatView navigation bar to show runtime + session + sync state.
+private extension ServerBadgeColor {
+    var themeColor: Color {
+        switch self {
+        case .orange: return .themeOrange
+        case .blue: return .themeBlue
+        case .cyan: return .themeCyan
+        case .green: return .themeGreen
+        case .purple: return .themePurple
+        case .red: return .themeRed
+        case .yellow: return .themeYellow
+        case .neutral: return .themeComment
+        }
+    }
+}
+
+/// Environment icon with a small status dot overlay in the bottom-trailing corner.
+/// Used in the ChatView navigation bar to show session + sync state.
 struct RuntimeStatusBadge: View {
     enum SyncState {
         case live
@@ -309,26 +293,27 @@ struct RuntimeStatusBadge: View {
         }
     }
 
-    let runtime: String?
     let statusColor: Color
     var syncState: SyncState = .live
+    var icon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
     private var dotFillColor: Color {
-        syncState == .offline ? .tokyoComment : statusColor
+        syncState == .offline ? .themeComment : statusColor
     }
 
     private var dotRingColor: Color {
         switch syncState {
-        case .live: return .tokyoBg
-        case .syncing: return .tokyoBlue
-        case .offline: return .tokyoRed
-        case .stale: return .tokyoOrange
+        case .live: return .themeBg
+        case .syncing: return .themeBlue
+        case .offline: return .themeRed
+        case .stale: return .themeOrange
         }
     }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            RuntimeBadge(runtime: runtime, compact: true)
+            RuntimeBadge(compact: true, icon: icon, badgeColor: badgeColor)
 
             Circle()
                 .fill(dotFillColor)
@@ -340,7 +325,7 @@ struct RuntimeStatusBadge: View {
                 .offset(x: 2, y: 2)
         }
         .frame(width: 24, height: 24)
-        .accessibilityLabel("\(syncState.accessibilityText) runtime status")
+        .accessibilityLabel("\(syncState.accessibilityText) session status")
     }
 }
 
@@ -366,7 +351,7 @@ private struct SkillCountBadge: View {
     var body: some View {
         Text("\(count) skill\(count == 1 ? "" : "s")")
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.themeComment)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(.quaternary, in: Capsule())

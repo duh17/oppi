@@ -3,37 +3,11 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
-  sign as signBytes,
-  verify as verifyBytes,
-  type KeyObject,
   type JsonWebKey,
 } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
-import { generateId } from "./id.js";
-import type { SecurityProfile, ServerIdentityConfig } from "./types.js";
-
-export interface InviteV2Payload {
-  host: string;
-  port: number;
-  token: string;
-  name: string;
-  fingerprint: string;
-  securityProfile: SecurityProfile;
-}
-
-export interface InviteV2Envelope {
-  v: 2;
-  alg: "Ed25519";
-  kid: string;
-  iat: number;
-  exp: number;
-  nonce: string;
-  publicKey: string; // base64url raw Ed25519 public key (32 bytes)
-  payload: InviteV2Payload;
-  sig: string; // base64url signature over invite signing input
-}
+import { dirname, join } from "node:path";
 
 export interface IdentityMaterial {
   keyId: string;
@@ -42,6 +16,20 @@ export interface IdentityMaterial {
   publicKeyPem: string;
   publicKeyRaw: string;
   fingerprint: string;
+}
+
+export interface IdentityConfig {
+  keyId: string;
+  privateKeyPath: string;
+  publicKeyPath: string;
+}
+
+export function identityConfigForDataDir(dataDir: string): IdentityConfig {
+  return {
+    keyId: "srv-default",
+    privateKeyPath: join(dataDir, "identity_ed25519"),
+    publicKeyPath: join(dataDir, "identity_ed25519.pub"),
+  };
 }
 
 function expandHome(path: string): string {
@@ -91,14 +79,7 @@ function readExistingIdentity(privatePath: string, publicPath: string): Identity
   };
 }
 
-export function ensureIdentityMaterial(identity: ServerIdentityConfig): IdentityMaterial {
-  if (!identity.enabled) {
-    throw new Error("Server identity is disabled; cannot sign invite v2");
-  }
-  if (identity.algorithm !== "ed25519") {
-    throw new Error(`Unsupported identity algorithm: ${identity.algorithm}`);
-  }
-
+export function ensureIdentityMaterial(identity: IdentityConfig): IdentityMaterial {
   const privatePath = expandHome(identity.privateKeyPath);
   const publicPath = expandHome(identity.publicKeyPath);
 
@@ -130,91 +111,4 @@ export function ensureIdentityMaterial(identity: ServerIdentityConfig): Identity
     publicKeyRaw,
     fingerprint: fingerprintForPublicKeyRaw(publicKeyRaw),
   };
-}
-
-export function buildInviteSigningInput(
-  envelope: Omit<InviteV2Envelope, "sig">,
-): string {
-  const p = envelope.payload;
-  return [
-    `v=${envelope.v}`,
-    `alg=${envelope.alg}`,
-    `kid=${envelope.kid}`,
-    `iat=${envelope.iat}`,
-    `exp=${envelope.exp}`,
-    `nonce=${envelope.nonce}`,
-    `publicKey=${envelope.publicKey}`,
-    `host=${p.host}`,
-    `port=${p.port}`,
-    `token=${p.token}`,
-    `name=${p.name}`,
-    `fingerprint=${p.fingerprint}`,
-    `securityProfile=${p.securityProfile}`,
-  ].join("\n");
-}
-
-function signInviteInput(signingInput: string, privateKey: KeyObject): string {
-  const signature = signBytes(null, Buffer.from(signingInput, "utf-8"), privateKey);
-  return signature.toString("base64url");
-}
-
-export function createSignedInviteV2(
-  identity: IdentityMaterial,
-  payload: InviteV2Payload,
-  maxAgeSeconds: number,
-  nowMs: number = Date.now(),
-): InviteV2Envelope {
-  const iat = Math.floor(nowMs / 1000);
-  const exp = iat + maxAgeSeconds;
-
-  const unsigned: Omit<InviteV2Envelope, "sig"> = {
-    v: 2,
-    alg: "Ed25519",
-    kid: identity.keyId,
-    iat,
-    exp,
-    nonce: generateId(16),
-    publicKey: identity.publicKeyRaw,
-    payload,
-  };
-
-  const signingInput = buildInviteSigningInput(unsigned);
-  const privateKey = createPrivateKey(identity.privateKeyPem);
-  const sig = signInviteInput(signingInput, privateKey);
-
-  return {
-    ...unsigned,
-    sig,
-  };
-}
-
-export function verifyInviteV2(envelope: InviteV2Envelope): boolean {
-  try {
-    const unsigned: Omit<InviteV2Envelope, "sig"> = {
-      v: envelope.v,
-      alg: envelope.alg,
-      kid: envelope.kid,
-      iat: envelope.iat,
-      exp: envelope.exp,
-      nonce: envelope.nonce,
-      publicKey: envelope.publicKey,
-      payload: envelope.payload,
-    };
-
-    const signingInput = buildInviteSigningInput(unsigned);
-    const publicJwk: JsonWebKey = {
-      kty: "OKP",
-      crv: "Ed25519",
-      x: envelope.publicKey,
-    };
-    const publicKey = createPublicKey({ key: publicJwk, format: "jwk" });
-    return verifyBytes(
-      null,
-      Buffer.from(signingInput, "utf-8"),
-      publicKey,
-      Buffer.from(envelope.sig, "base64url"),
-    );
-  } catch {
-    return false;
-  }
 }

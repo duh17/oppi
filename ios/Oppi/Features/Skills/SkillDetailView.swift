@@ -41,28 +41,6 @@ struct SkillDetailView: View {
         }
         .navigationTitle(skillName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let detail {
-                ToolbarItem(placement: .primaryAction) {
-                    NavigationLink(value: SkillEditorDestination(
-                        skillName: skillName,
-                        filePath: "SKILL.md",
-                        content: detail.content,
-                        isNew: false
-                    )) {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                }
-            }
-        }
-        .navigationDestination(for: SkillEditorDestination.self) { dest in
-            SkillEditorView(
-                skillName: dest.skillName,
-                filePath: dest.filePath,
-                initialContent: dest.content,
-                isNew: dest.isNew
-            )
-        }
         .task { await load() }
     }
 
@@ -73,21 +51,21 @@ struct SkillDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(skill.description)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
 
             HStack(spacing: 8) {
                 badge(
-                    skill.containerSafe ? "Container Safe" : "Host Only",
+                    skill.containerSafe ? "Portable" : "Needs Local Tools",
                     icon: skill.containerSafe ? "checkmark.shield" : "desktopcomputer",
-                    color: skill.containerSafe ? .tokyoGreen : .tokyoOrange
+                    color: skill.containerSafe ? .themeGreen : .themeOrange
                 )
 
                 if skill.hasScripts {
-                    badge("Scripts", icon: "terminal", color: .tokyoBlue)
+                    badge("Scripts", icon: "terminal", color: .themeBlue)
                 }
 
                 if let detail, detail.files.count > 1 {
-                    badge("\(detail.files.count) files", icon: "doc.on.doc", color: .secondary)
+                    badge("\(detail.files.count) files", icon: "doc.on.doc", color: .themeComment)
                 }
             }
         }
@@ -124,12 +102,12 @@ struct SkillDetailView: View {
                     HStack(spacing: 6) {
                         Image(systemName: fileIcon(for: file))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .frame(width: 16)
 
                         Text(file)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
 
                         Spacer()
                     }
@@ -185,8 +163,10 @@ struct SkillDetailView: View {
 }
 
 /// Navigation destination for viewing a skill's detail page.
-struct SkillDetailDestination: Hashable {
+struct SkillDetailDestination: Hashable, Identifiable {
     let skillName: String
+
+    var id: String { skillName }
 }
 
 /// Navigation destination for viewing a file inside a skill.

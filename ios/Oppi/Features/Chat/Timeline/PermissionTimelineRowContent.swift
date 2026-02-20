@@ -31,6 +31,13 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
 
     private var currentConfiguration: PermissionTimelineRowConfiguration
 
+    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleContainerDoubleTapCopy))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }()
+
     init(configuration: PermissionTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
@@ -56,6 +63,7 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
 
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.layer.cornerRadius = 8
+        containerView.addGestureRecognizer(copyDoubleTapGesture)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .horizontal
@@ -136,6 +144,34 @@ final class PermissionTimelineRowContentView: UIView, UIContentView {
         if cleaned.count <= 60 { return cleaned }
         return String(cleaned.prefix(59)) + "…"
     }
+
+    private func copyValue() -> String? {
+        let value = "\(currentConfiguration.tool): \(currentConfiguration.summary)"
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    @objc private func handleContainerDoubleTapCopy() {
+        guard let value = copyValue() else {
+            return
+        }
+
+        TimelineCopyFeedback.copy(value, feedbackView: containerView)
+    }
+
+    func contextMenu() -> UIMenu? {
+        guard let value = copyValue() else {
+            return nil
+        }
+
+        return UIMenu(title: "", children: [
+            UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                TimelineCopyFeedback.copy(value, feedbackView: self?.containerView)
+            },
+        ])
+    }
 }
 
 extension PermissionTimelineRowContentView: UIContextMenuInteractionDelegate {
@@ -143,18 +179,12 @@ extension PermissionTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let value = "\(currentConfiguration.tool): \(currentConfiguration.summary)"
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard contextMenu() != nil else {
             return nil
         }
 
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            UIMenu(title: "", children: [
-                UIAction(title: "Copy Command", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.string = value
-                },
-            ])
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            self?.contextMenu()
         }
     }
 }
-

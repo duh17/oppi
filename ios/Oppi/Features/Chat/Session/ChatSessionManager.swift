@@ -196,8 +196,10 @@ final class ChatSessionManager {
         sessionStore.activeSessionId = sessionId
         markSyncStarted()
 
-        let sessionName = sessionStore.sessions.first(where: { $0.id == sessionId })?.name ?? "Session"
-        LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
+        if ReleaseFeatures.liveActivitiesEnabled {
+            let sessionName = sessionStore.sessions.first(where: { $0.id == sessionId })?.name ?? "Session"
+            LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
+        }
 
         // Show cached timeline immediately (before network).
         let cached = await TimelineCache.shared.loadTrace(sessionId)
@@ -731,8 +733,8 @@ final class ChatSessionManager {
         // Without this check, when session B takes over the WS,
         // session A's cleanup would kill session B's connection,
         // causing a connect/disconnect ping-pong loop.
-        guard connection.wsClient?.connectedSessionId == sessionId
-              || connection.wsClient?.connectedSessionId == nil else { return }
+        guard connection.activeSessionId == sessionId
+              || connection.activeSessionId == nil else { return }
         connection.disconnectSession()
     }
 }

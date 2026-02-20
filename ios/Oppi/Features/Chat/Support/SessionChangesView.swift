@@ -125,23 +125,23 @@ struct SessionChangesView: View {
                 Section("Summary") {
                     LabeledContent("Files Changed") {
                         Text("\(totalFilesChanged)")
-                            .foregroundStyle(.tokyoFg)
+                            .foregroundStyle(.themeFg)
                     }
                     LabeledContent("Total Changes") {
                         Text("\(totalChangeCount)")
-                            .foregroundStyle(.tokyoFg)
+                            .foregroundStyle(.themeFg)
                     }
                     if totalAddedLines > 0 || totalRemovedLines > 0 {
                         HStack(spacing: 10) {
                             if totalAddedLines > 0 {
                                 Text("+\(totalAddedLines)")
                                     .font(.caption.monospaced().bold())
-                                    .foregroundStyle(.tokyoGreen)
+                                    .foregroundStyle(.themeDiffAdded)
                             }
                             if totalRemovedLines > 0 {
                                 Text("-\(totalRemovedLines)")
                                     .font(.caption.monospaced().bold())
-                                    .foregroundStyle(.tokyoRed)
+                                    .foregroundStyle(.themeDiffRemoved)
                             }
                         }
                     }
@@ -163,7 +163,7 @@ struct SessionChangesView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
         }
     }
 
@@ -251,36 +251,36 @@ private struct FileChangeGroupRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(group.path.shortenedPath)
                 .font(.subheadline.monospaced())
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .lineLimit(1)
 
             HStack(spacing: 10) {
                 Text("\(group.entries.count) changes")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
 
                 if group.editCount > 0 {
                     Text("edit \(group.editCount)")
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.tokyoCyan)
+                        .foregroundStyle(.themeCyan)
                 }
 
                 if group.writeCount > 0 {
                     Text("write \(group.writeCount)")
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                 }
 
                 if group.totalAddedLines > 0 {
                     Text("+\(group.totalAddedLines)")
                         .font(.caption2.monospaced().bold())
-                        .foregroundStyle(.tokyoGreen)
+                        .foregroundStyle(.themeDiffAdded)
                 }
 
                 if group.totalRemovedLines > 0 {
                     Text("-\(group.totalRemovedLines)")
                         .font(.caption2.monospaced().bold())
-                        .foregroundStyle(.tokyoRed)
+                        .foregroundStyle(.themeDiffRemoved)
                 }
             }
         }
@@ -344,11 +344,11 @@ private struct FileChangeGroupView: View {
                 LabeledContent("Path") {
                     Text(group.path.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
                 LabeledContent("Revisions") {
                     Text("\(group.entries.count)")
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
 
                 if let stats = overallDiffStats {
@@ -356,17 +356,17 @@ private struct FileChangeGroupView: View {
                         if stats.added > 0 {
                             Text("+\(stats.added)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoGreen)
+                                .foregroundStyle(.themeDiffAdded)
                         }
                         if stats.removed > 0 {
                             Text("-\(stats.removed)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoRed)
+                                .foregroundStyle(.themeDiffRemoved)
                         }
                         if stats.added == 0 && stats.removed == 0 {
                             Text("no net change")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoComment)
+                                .foregroundStyle(.themeComment)
                         }
                     }
                 } else if group.totalAddedLines > 0 || group.totalRemovedLines > 0 {
@@ -374,12 +374,12 @@ private struct FileChangeGroupView: View {
                         if group.totalAddedLines > 0 {
                             Text("+\(group.totalAddedLines)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoGreen)
+                                .foregroundStyle(.themeDiffAdded)
                         }
                         if group.totalRemovedLines > 0 {
                             Text("-\(group.totalRemovedLines)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoRed)
+                                .foregroundStyle(.themeDiffRemoved)
                         }
                     }
                 }
@@ -397,16 +397,16 @@ private struct FileChangeGroupView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "square.stack.3d.up")
                                 .font(.caption)
-                                .foregroundStyle(.tokyoPurple)
+                                .foregroundStyle(.themePurple)
                                 .frame(width: 16)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Overall Diff")
                                     .font(.subheadline)
-                                    .foregroundStyle(.tokyoFg)
+                                    .foregroundStyle(.themeFg)
                                 Text("Revision 1 → Revision \(remoteDiff?.revisionCount ?? group.entries.count)")
                                     .font(.caption2)
-                                    .foregroundStyle(.tokyoComment)
+                                    .foregroundStyle(.themeComment)
                             }
                         }
                         .padding(.vertical, 2)
@@ -417,13 +417,13 @@ private struct FileChangeGroupView: View {
             } else if loadingRemoteDiff {
                 Section("Overview") {
                     ProgressView("Loading overall diff…")
-                        .tint(.tokyoPurple)
+                        .tint(.themePurple)
                 }
             } else if let remoteError {
                 Section("Overview") {
                     Text(remoteError)
                         .font(.caption)
-                        .foregroundStyle(.tokyoComment)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
@@ -440,7 +440,7 @@ private struct FileChangeGroupView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.tokyoBg)
+        .background(Color.themeBg)
         .navigationTitle(group.path.shortenedPath)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: cacheKey) {
@@ -491,29 +491,29 @@ private struct FileChangeEntryRow: View {
         HStack(spacing: 10) {
             Image(systemName: entry.kind.icon)
                 .font(.caption)
-                .foregroundStyle(entry.kind == .edit ? .tokyoCyan : .tokyoBlue)
+                .foregroundStyle(entry.kind == .edit ? .themeCyan : .themeBlue)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(entry.kind.label) #\(ordinal)")
                     .font(.subheadline)
-                    .foregroundStyle(.tokyoFg)
+                    .foregroundStyle(.themeFg)
 
                 HStack(spacing: 8) {
                     if entry.addedLines > 0 {
                         Text("+\(entry.addedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoGreen)
+                            .foregroundStyle(.themeDiffAdded)
                     }
                     if entry.removedLines > 0 {
                         Text("-\(entry.removedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoRed)
+                            .foregroundStyle(.themeDiffRemoved)
                     }
                     if entry.addedLines == 0 && entry.removedLines == 0 {
                         Text("modified")
                             .font(.caption2)
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                     }
                 }
             }
@@ -533,11 +533,11 @@ private struct OverallFileDiffDetailView: View {
                 LabeledContent("Path") {
                     Text(filePath.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
                 LabeledContent("Range") {
                     Text("Revision 1 → Revision \(revisionCount)")
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
             }
 
@@ -553,7 +553,7 @@ private struct OverallFileDiffDetailView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.tokyoBg)
+        .background(Color.themeBg)
         .navigationTitle("Overall Diff")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -568,24 +568,24 @@ private struct FileChangeEntryDetailView: View {
             Section("Change") {
                 LabeledContent("Action") {
                     Text(entry.kind.detailActionLabel)
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
                 LabeledContent("Path") {
                     Text(filePath.shortenedPath)
                         .font(.caption.monospaced())
-                        .foregroundStyle(.tokyoFg)
+                        .foregroundStyle(.themeFg)
                 }
                 if entry.addedLines > 0 || entry.removedLines > 0 {
                     HStack(spacing: 10) {
                         if entry.addedLines > 0 {
                             Text("+\(entry.addedLines)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoGreen)
+                                .foregroundStyle(.themeDiffAdded)
                         }
                         if entry.removedLines > 0 {
                             Text("-\(entry.removedLines)")
                                 .font(.caption.monospaced().bold())
-                                .foregroundStyle(.tokyoRed)
+                                .foregroundStyle(.themeDiffRemoved)
                         }
                     }
                 }
@@ -597,7 +597,7 @@ private struct FileChangeEntryDetailView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.tokyoBg)
+        .background(Color.themeBg)
         .navigationTitle(entry.kind == .edit ? "Change Detail" : "Write Detail")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -616,7 +616,7 @@ private struct FileChangeEntryDetailView: View {
             } else {
                 Text("Diff unavailable for this change.")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
         case .write:
@@ -625,7 +625,7 @@ private struct FileChangeEntryDetailView: View {
             } else {
                 Text("Write content unavailable for this change.")
                     .font(.caption)
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
         }
     }

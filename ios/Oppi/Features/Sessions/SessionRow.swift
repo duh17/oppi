@@ -33,7 +33,7 @@ struct SessionRow: View {
         HStack(spacing: 12) {
             // Status dot
             Circle()
-                .fill(session.status.nativeColor)
+                .fill(session.status.color)
                 .frame(width: 10, height: 10)
                 .opacity(session.status == .busy || session.status == .stopping ? 0.8 : 1)
                 .animation(
@@ -49,13 +49,14 @@ struct SessionRow: View {
                 Text(title)
                     .font(.body)
                     .fontWeight(pendingCount > 0 ? .semibold : .regular)
+                    .foregroundStyle(.themeFg)
                     .lineLimit(1)
 
                 // Row 2: lineage hint
                 if let lineageHint, !lineageHint.isEmpty {
                     Text(lineageHint)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeFgDim)
                         .lineLimit(1)
                 }
 
@@ -67,11 +68,11 @@ struct SessionRow: View {
 
                         Text("+\(stats.addedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoGreen)
+                            .foregroundStyle(.themeGreen)
 
                         Text("-\(stats.removedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.tokyoRed)
+                            .foregroundStyle(.themeRed)
                     }
                     .font(.caption2)
                     .lineLimit(1)
@@ -96,7 +97,7 @@ struct SessionRow: View {
                     }
                 }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeFgDim)
                 .lineLimit(1)
             }
 
@@ -106,15 +107,15 @@ struct SessionRow: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Text(session.lastActivity.relativeString())
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.themeComment)
 
                 if pendingCount > 0 {
                     Text("\(pendingCount)")
                         .font(.caption2.bold())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.themeBg)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.orange, in: Capsule())
+                        .background(.themeOrange, in: Capsule())
                 }
             }
         }
@@ -133,34 +134,34 @@ struct SessionRow: View {
 
     private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {
         if stats.filesChanged >= 25 || stats.mutatingToolCalls >= 80 {
-            return .tokyoRed
+            return .themeRed
         }
         if stats.filesChanged >= 10 || stats.mutatingToolCalls >= 30 {
-            return .tokyoOrange
+            return .themeOrange
         }
-        return .tokyoGreen
+        return .themeGreen
     }
 }
 
 // MARK: - Context Gauge
 
-/// Compact context usage indicator using system colors.
+/// Compact context usage indicator using app theme colors.
 private struct NativeContextGauge: View {
     let percent: Double
 
     private var clamped: Double { min(max(percent, 0), 1) }
 
     private var tint: Color {
-        if clamped > 0.9 { return .red }
-        if clamped > 0.7 { return .orange }
-        return .green
+        if clamped > 0.9 { return .themeRed }
+        if clamped > 0.7 { return .themeOrange }
+        return .themeGreen
     }
 
     var body: some View {
         HStack(spacing: 4) {
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(.quaternary)
+                    .fill(.themeBgHighlight)
                 Capsule()
                     .fill(tint)
                     .frame(width: 24 * clamped)
@@ -169,22 +170,7 @@ private struct NativeContextGauge: View {
 
             Text("\(Int((clamped * 100).rounded()))%")
                 .monospacedDigit()
-        }
-    }
-}
-
-// MARK: - Native Status Colors
-
-extension SessionStatus {
-    /// System-compatible status colors (not Tokyo Night).
-    var nativeColor: Color {
-        switch self {
-        case .starting: return .blue
-        case .ready: return .green
-        case .busy: return .yellow
-        case .stopping: return .orange
-        case .stopped: return .secondary
-        case .error: return .red
+                .foregroundStyle(.themeComment)
         }
     }
 }

@@ -43,9 +43,7 @@ function makeWorkspace(): Workspace {
   return {
     id: "w1",
     name: "Workspace",
-    runtime: "host",
     skills: [],
-    policyPreset: "host",
     createdAt: now,
     updatedAt: now,
   };
@@ -62,7 +60,6 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    runtime: "host",
     ...overrides,
   };
 }

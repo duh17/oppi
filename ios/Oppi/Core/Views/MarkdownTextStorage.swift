@@ -131,12 +131,12 @@ final class MarkdownTextStorage: NSTextStorage {
             if trimmed == "---" {
                 if pos == 0 {
                     inFrontmatter = true
-                    styleLine(lineRange, color: palette.comment, font: bodyFont)
+                    styleLine(lineRange, color: palette.mdHr, font: bodyFont)
                     pos = NSMaxRange(lineRange)
                     continue
                 } else if inFrontmatter {
                     inFrontmatter = false
-                    styleLine(lineRange, color: palette.comment, font: bodyFont)
+                    styleLine(lineRange, color: palette.mdHr, font: bodyFont)
                     pos = NSMaxRange(lineRange)
                     continue
                 }
@@ -151,13 +151,13 @@ final class MarkdownTextStorage: NSTextStorage {
             // --- Code fence ---
             if trimmed.hasPrefix("```") {
                 inFence.toggle()
-                styleLine(lineRange, color: palette.comment, font: bodyFont)
+                styleLine(lineRange, color: palette.mdCodeBlockBorder, font: bodyFont)
                 pos = NSMaxRange(lineRange)
                 continue
             }
 
             if inFence {
-                styleLine(lineRange, color: palette.green, font: bodyFont)
+                styleLine(lineRange, color: palette.mdCodeBlock, font: bodyFont)
                 pos = NSMaxRange(lineRange)
                 continue
             }
@@ -165,25 +165,24 @@ final class MarkdownTextStorage: NSTextStorage {
             // --- Heading ---
             if let headingLevel = headingLevel(trimmed) {
                 let headingFont = fontForHeading(headingLevel)
-                let headingColor = headingLevel <= 2 ? palette.blue : palette.cyan
-                styleLine(lineRange, color: headingColor, font: headingFont)
+                styleLine(lineRange, color: palette.mdHeading, font: headingFont)
                 pos = NSMaxRange(lineRange)
                 continue
             }
 
             // --- Horizontal rule ---
             if isHorizontalRule(trimmed) {
-                styleLine(lineRange, color: palette.comment, font: bodyFont)
+                styleLine(lineRange, color: palette.mdHr, font: bodyFont)
                 pos = NSMaxRange(lineRange)
                 continue
             }
 
             // --- Blockquote ---
             if trimmed.hasPrefix(">") {
-                styleLine(lineRange, color: palette.fgDim, font: italicBodyFont())
+                styleLine(lineRange, color: palette.mdQuote, font: italicBodyFont())
                 // Highlight the > marker
                 if let markerRange = rangeOfPrefix(">", in: line, lineStart: lineRange.location) {
-                    backing.addAttribute(.foregroundColor, value: UIColor(palette.purple), range: markerRange)
+                    backing.addAttribute(.foregroundColor, value: UIColor(palette.mdQuoteBorder), range: markerRange)
                 }
                 pos = NSMaxRange(lineRange)
                 continue
@@ -210,7 +209,7 @@ final class MarkdownTextStorage: NSTextStorage {
             "`([^`]+)`",
             in: line,
             lineOffset: lineRange.location,
-            fullMatchColor: nil,
+            fullMatchColor: UIColor(palette.mdCode),
             fullMatchFont: .monospacedSystemFont(ofSize: bodyFont.pointSize - 1, weight: .regular),
             fullMatchBg: UIColor(palette.bgHighlight)
         )
@@ -264,7 +263,7 @@ final class MarkdownTextStorage: NSTextStorage {
             "!\\[([^\\]]*)\\]\\([^)]+\\)",
             in: line,
             lineOffset: lineRange.location,
-            fullMatchColor: UIColor(palette.purple),
+            fullMatchColor: UIColor(palette.mdLink),
             fullMatchFont: nil,
             fullMatchBg: nil
         )
@@ -278,8 +277,8 @@ final class MarkdownTextStorage: NSTextStorage {
 
         for match in matches {
             let fullRange = NSRange(location: match.range.location + lineOffset, length: match.range.length)
-            // Color the whole match
-            backing.addAttribute(.foregroundColor, value: UIColor(palette.blue), range: fullRange)
+            // Link text color
+            backing.addAttribute(.foregroundColor, value: UIColor(palette.mdLink), range: fullRange)
             // Underline just the text part
             if match.numberOfRanges > 1 {
                 let textRange = NSRange(
@@ -287,6 +286,14 @@ final class MarkdownTextStorage: NSTextStorage {
                     length: match.range(at: 1).length
                 )
                 backing.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: textRange)
+            }
+            // URL part dimmer
+            if match.numberOfRanges > 2 {
+                let urlRange = NSRange(
+                    location: match.range(at: 2).location + lineOffset,
+                    length: match.range(at: 2).length
+                )
+                backing.addAttribute(.foregroundColor, value: UIColor(palette.mdLinkUrl), range: urlRange)
             }
         }
     }
@@ -326,7 +333,7 @@ final class MarkdownTextStorage: NSTextStorage {
     // MARK: - Frontmatter
 
     private func highlightFrontmatterLine(_ lineRange: NSRange, line: String, palette: ThemePalette) {
-        // YAML key: value
+        // YAML key: value — use syntax tokens (keys as types, values as strings)
         if let colonIdx = line.firstIndex(of: ":") {
             let keyLength = line.distance(from: line.startIndex, to: colonIdx)
             let keyRange = NSRange(location: lineRange.location, length: keyLength)
@@ -335,15 +342,15 @@ final class MarkdownTextStorage: NSTextStorage {
                 length: lineRange.length - keyLength
             )
             backing.addAttributes([
-                .foregroundColor: UIColor(palette.cyan),
+                .foregroundColor: UIColor(palette.syntaxType),
                 .font: bodyFont,
             ], range: keyRange)
             backing.addAttributes([
-                .foregroundColor: UIColor(palette.green),
+                .foregroundColor: UIColor(palette.syntaxString),
                 .font: bodyFont,
             ], range: valueRange)
         } else {
-            styleLine(lineRange, color: palette.comment, font: bodyFont)
+            styleLine(lineRange, color: palette.mdHr, font: bodyFont)
         }
     }
 
@@ -360,9 +367,7 @@ final class MarkdownTextStorage: NSTextStorage {
         guard trimmed.hasPrefix("#") else { return nil }
         var level = 0
         for ch in trimmed {
-            if ch == "#" { level += 1 }
-            else if ch == " " { break }
-            else { return nil }
+            if ch == "#" { level += 1 } else if ch == " " { break } else { return nil }
         }
         return (level >= 1 && level <= 6) ? level : nil
     }
@@ -381,7 +386,7 @@ final class MarkdownTextStorage: NSTextStorage {
         // Unordered: - or * or +
         if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
             if let r = rangeOfListMarker(line, lineStart: lineRange.location) {
-                backing.addAttribute(.foregroundColor, value: UIColor(palette.orange), range: r)
+                backing.addAttribute(.foregroundColor, value: UIColor(palette.mdListBullet), range: r)
             }
             return
         }
@@ -394,14 +399,14 @@ final class MarkdownTextStorage: NSTextStorage {
             let prefixLen = trimmed.distance(from: trimmed.startIndex, to: trimmed.index(after: dotIdx))
             let leadingSpaces = line.prefix(while: { $0.isWhitespace }).count
             let markerRange = NSRange(location: lineRange.location + leadingSpaces, length: prefixLen)
-            backing.addAttribute(.foregroundColor, value: UIColor(palette.orange), range: markerRange)
+            backing.addAttribute(.foregroundColor, value: UIColor(palette.mdListBullet), range: markerRange)
         }
 
         // Checkbox: - [ ] or - [x]
         if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") || trimmed.hasPrefix("- [X] ") {
             let leadingSpaces = line.prefix(while: { $0.isWhitespace }).count
             let checkRange = NSRange(location: lineRange.location + leadingSpaces, length: 6)
-            backing.addAttribute(.foregroundColor, value: UIColor(palette.orange), range: checkRange)
+            backing.addAttribute(.foregroundColor, value: UIColor(palette.mdListBullet), range: checkRange)
         }
     }
 

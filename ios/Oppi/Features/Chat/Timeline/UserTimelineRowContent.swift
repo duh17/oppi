@@ -33,6 +33,13 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
 
+    private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }()
+
     init(configuration: UserTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
@@ -84,6 +91,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = 10
         bubbleContainer.clipsToBounds = true
+        bubbleContainer.addGestureRecognizer(bubbleDoubleTapGesture)
 
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
@@ -173,7 +181,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         let borderColor = UIColor(palette.comment).withAlphaComponent(0.3).cgColor
 
-        for attachment in images {
+        for (index, attachment) in images.enumerated() {
             let container = UIView()
             container.translatesAutoresizingMaskIntoConstraints = false
             container.layer.cornerRadius = Self.thumbnailCornerRadius
@@ -181,6 +189,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             container.layer.borderColor = borderColor
             container.clipsToBounds = true
             container.backgroundColor = UIColor(palette.bgHighlight)
+            container.isAccessibilityElement = true
+            container.accessibilityIdentifier = "chat.user.thumbnail.\(index)"
+            container.accessibilityLabel = "Attached image \(index + 1)"
 
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -230,8 +241,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
     private func presentFullScreenImage(_ image: UIImage) {
         guard let vc = findViewController() else { return }
-        let zoomVC = NativeZoomableImageViewController(image: image)
-        zoomVC.modalPresentationStyle = .fullScreen
+        let zoomVC = FullScreenImageViewController(image: image)
+        // Use .overFullScreen to prevent SwiftUI lifecycle churn (onDisappear/onAppear).
+        zoomVC.modalPresentationStyle = .overFullScreen
         vc.present(zoomVC, animated: true)
     }
 
@@ -243,6 +255,54 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
         return nil
     }
+
+    @objc private func handleBubbleDoubleTapCopy() {
+        let text = currentConfiguration.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        TimelineCopyFeedback.copy(
+            text,
+            feedbackView: bubbleContainer,
+            trimWhitespaceAndNewlines: true
+        )
+    }
+
+    func contextMenu() -> UIMenu? {
+        let text = currentConfiguration.text
+        let images = currentConfiguration.images
+        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
+
+        guard hasCopyText || hasForkAction || !images.isEmpty else {
+            return nil
+        }
+
+        var actions: [UIMenuElement] = []
+
+        if hasCopyText {
+            actions.append(
+                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                    self?.copyToPasteboard(text)
+                }
+            )
+        }
+
+        if hasForkAction, let onFork = currentConfiguration.onFork {
+            actions.append(
+                UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
+                    onFork()
+                }
+            )
+        }
+
+        return UIMenu(title: "", children: actions)
+    }
 }
 
 // MARK: - Context Menu
@@ -252,128 +312,12 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let text = currentConfiguration.text
-        let images = currentConfiguration.images
-        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
-
-        guard hasCopyText || hasForkAction || !images.isEmpty else { return nil }
+        guard contextMenu() != nil else {
+            return nil
+        }
 
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self else { return nil }
-
-            var actions: [UIMenuElement] = []
-
-            if hasCopyText {
-                actions.append(
-                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
-                        UIPasteboard.general.string = text
-                    }
-                )
-            }
-
-            if hasForkAction, let onFork = self.currentConfiguration.onFork {
-                actions.append(
-                    UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
-                        onFork()
-                    }
-                )
-            }
-
-            return UIMenu(title: "", children: actions)
+            self?.contextMenu()
         }
-    }
-}
-
-// MARK: - Native Zoomable Image Viewer
-
-/// Full-screen image viewer with pinch-to-zoom and double-tap.
-///
-/// Full-screen image viewer with pinch-to-zoom and double-tap.
-final class NativeZoomableImageViewController: UIViewController {
-    private let image: UIImage
-    private var scrollView: UIScrollView!
-    private var imageView: UIImageView!
-
-    init(image: UIImage) {
-        self.image = image
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .black
-
-        scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.minimumZoomScale = 1.0
-        scrollView.maximumZoomScale = 5.0
-        scrollView.delegate = self
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        view.addSubview(scrollView)
-
-        imageView = UIImageView(image: image)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFit
-        scrollView.addSubview(imageView)
-
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-            imageView.centerXAnchor.constraint(equalTo: scrollView.contentLayoutGuide.centerXAnchor),
-            imageView.centerYAnchor.constraint(equalTo: scrollView.contentLayoutGuide.centerYAnchor),
-        ])
-
-        // Double-tap to toggle zoom.
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
-
-        // Done button.
-        let done = UIButton(type: .system)
-        done.setTitle("Done", for: .normal)
-        done.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        done.setTitleColor(.white, for: .normal)
-        done.translatesAutoresizingMaskIntoConstraints = false
-        done.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
-        view.addSubview(done)
-
-        NSLayoutConstraint.activate([
-            done.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            done.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-        ])
-    }
-
-    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        if scrollView.zoomScale > 1.0 {
-            scrollView.setZoomScale(1.0, animated: true)
-        } else {
-            let point = gesture.location(in: imageView)
-            let size = CGSize(
-                width: scrollView.bounds.width / 2.5,
-                height: scrollView.bounds.height / 2.5
-            )
-            let origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
-            scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
-        }
-    }
-
-    @objc private func dismissTapped() {
-        dismiss(animated: true)
-    }
-}
-
-extension NativeZoomableImageViewController: UIScrollViewDelegate {
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        imageView
     }
 }

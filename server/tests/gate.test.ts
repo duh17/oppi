@@ -8,6 +8,7 @@ import { PolicyEngine } from "../src/policy.js";
 import { GateServer } from "../src/gate.js";
 import { RuleStore } from "../src/rules.js";
 import { AuditLog } from "../src/audit.js";
+import type { PolicyConfig } from "../src/types.js";
 
 const SESSION_ID = "test-session-1";
 
@@ -43,8 +44,11 @@ function sendAndWait(sock: Socket, msg: Record<string, unknown>): Promise<Record
   });
 }
 
-function createGate(preset: string = "container", approvalTimeoutMs?: number): GateServer {
-  const policy = new PolicyEngine(preset);
+function createGate(
+  policyOrMode: string | PolicyConfig = "container",
+  approvalTimeoutMs?: number,
+): GateServer {
+  const policy = new PolicyEngine(policyOrMode);
   const ruleStore = new RuleStore(join(testDir, "rules.json"));
   const auditLog = new AuditLog(join(testDir, "audit.jsonl"));
   return new GateServer(policy, ruleStore, auditLog, { approvalTimeoutMs });
@@ -190,7 +194,7 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
   });
 
-  it("asks for chained git push in host mode", async () => {
+  it("asks for chained git push in local execution", async () => {
     gate = createGate("host");
     const activeGate = gate;
     let approvalCount = 0;
@@ -224,6 +228,68 @@ describe("GateServer", () => {
     expect(result.action).toBe("allow");
     expect(approvalCount).toBe(1);
     expect(lastReason).toBe("Git push");
+  });
+
+  it("applies fallback policy changes to live gate checks", async () => {
+    const askFallbackPolicy: PolicyConfig = {
+      schemaVersion: 1,
+      fallback: "ask",
+      guardrails: [],
+      permissions: [],
+    };
+    const allowFallbackPolicy: PolicyConfig = {
+      ...askFallbackPolicy,
+      fallback: "allow",
+    };
+
+    gate = createGate(askFallbackPolicy);
+    const activeGate = gate;
+
+    let approvalCount = 0;
+    const approvalReasons: string[] = [];
+
+    activeGate.on("approval_needed", (pending: { id: string; reason: string }) => {
+      approvalCount += 1;
+      approvalReasons.push(pending.reason);
+      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 10);
+    });
+
+    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
+    await new Promise((r) => setTimeout(r, 50));
+    client = await connect(port);
+
+    const ack = await sendAndWait(client, {
+      type: "guard_ready",
+      sessionId: SESSION_ID,
+      extensionVersion: "1.0.0",
+    });
+    expect(ack.type).toBe("guard_ack");
+
+    const runFallbackCheck = (toolCallId: string) =>
+      sendAndWait(client, {
+        type: "gate_check",
+        tool: "bash",
+        input: { command: "echo fallback-toggle-check" },
+        toolCallId,
+      });
+
+    const askResult1 = await runFallbackCheck("tc_fallback_1");
+    expect(askResult1.action).toBe("allow");
+    expect(approvalCount).toBe(1);
+    expect(approvalReasons[0]).toContain("No matching rule");
+
+    activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(allowFallbackPolicy));
+
+    const allowResult = await runFallbackCheck("tc_fallback_2");
+    expect(allowResult.action).toBe("allow");
+    expect(approvalCount).toBe(1);
+
+    activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(askFallbackPolicy));
+
+    const askResult2 = await runFallbackCheck("tc_fallback_3");
+    expect(askResult2.action).toBe("allow");
+    expect(approvalCount).toBe(2);
+    expect(approvalReasons[1]).toContain("No matching rule");
   });
 
   it("stores session rules with TTL from permission responses", async () => {

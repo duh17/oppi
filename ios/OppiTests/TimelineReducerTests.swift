@@ -1,4 +1,3 @@
-// swiftlint:disable file_length type_body_length
 import Testing
 import Foundation
 @testable import Oppi
@@ -230,13 +229,13 @@ struct TimelineReducerTests {
             id: "p1", sessionId: "s1", tool: "bash",
             input: ["command": "rm -rf /"],
             displaySummary: "bash: rm -rf /",
-            risk: .critical, reason: "Destructive",
+            reason: "Destructive",
             timeoutAt: Date().addingTimeInterval(120)
         )
 
         // New flow: permissionRequest does NOT add to timeline
         reducer.process(.permissionRequest(perm))
-        #expect(reducer.items.count == 0, "Pending permissions should not appear in timeline")
+        #expect(reducer.items.isEmpty, "Pending permissions should not appear in timeline")
 
         // Resolve appends a marker since the permission was never inline
         reducer.resolvePermission(id: "p1", outcome: .denied, tool: "bash", summary: "bash: rm -rf /")
@@ -495,11 +494,11 @@ struct TimelineReducerTests {
         defer { cache.clearAll() }
 
         let content = "same-content"
-        cache.set(content, themeID: .tokyoNight, segments: [.text(AttributedString("night"))])
-        cache.set(content, themeID: .tokyoNightDay, segments: [.text(AttributedString("day"))])
+        cache.set(content, themeID: .dark, segments: [.text(AttributedString("dark"))])
+        cache.set(content, themeID: .light, segments: [.text(AttributedString("light"))])
 
-        #expect(cache.get(content, themeID: .tokyoNight) != nil)
-        #expect(cache.get(content, themeID: .tokyoNightDay) != nil)
+        #expect(cache.get(content, themeID: .dark) != nil)
+        #expect(cache.get(content, themeID: .light) != nil)
 
         let stats = cache.snapshot()
         #expect(stats.entries == 2)
@@ -620,7 +619,7 @@ struct TimelineReducerTests {
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: ls",
-            risk: .low, reason: "Read",
+            reason: "Read",
             timeoutAt: Date().addingTimeInterval(60)
         )
 
@@ -628,7 +627,7 @@ struct TimelineReducerTests {
         reducer.process(.permissionExpired(id: "p1"))
 
         // Neither event should add to the timeline
-        #expect(reducer.items.count == 0, "Reducer should ignore permission events (handled by ServerConnection)")
+        #expect(reducer.items.isEmpty, "Reducer should ignore permission events (handled by ServerConnection)")
     }
 
     // MARK: - loadSession
@@ -1099,7 +1098,7 @@ struct TimelineReducerTests {
         let perm = ChatItem.permission(PermissionRequest(
             id: "5", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "x",
-            risk: .low, reason: "r",
+            reason: "r",
             timeoutAt: Date()
         ))
         #expect(perm.timestamp == nil)
@@ -1430,5 +1429,3 @@ struct TimelineReducerTests {
         ]
     }
 }
-
-

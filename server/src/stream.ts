@@ -304,7 +304,6 @@ export class UserStreamMux {
             tool: pending.tool,
             input: pending.input,
             displaySummary: pending.displaySummary,
-            risk: pending.risk,
             reason: pending.reason,
             timeoutAt: pending.timeoutAt,
             expires: pending.expires ?? true,

@@ -12,6 +12,7 @@ struct AppTheme: Sendable {
     let diff: DiffColors
     let syntax: SyntaxColors
     let thinking: ThinkingColors
+    let markdown: MarkdownColors
     let code: CodeMetrics
 
     // MARK: - Color Groups
@@ -32,9 +33,13 @@ struct AppTheme: Sendable {
         let secondary: Color
         /// Tertiary/muted text (comments, timestamps, placeholders).
         let tertiary: Color
+        /// Thinking block text.
+        let thinking: Color
     }
 
     struct AccentColors: Sendable {
+        /// Primary accent (pi's `accent` token).
+        let primary: Color
         let blue: Color
         let cyan: Color
         let green: Color
@@ -65,9 +70,14 @@ struct AppTheme: Sendable {
         let comment: Color
         let number: Color
         let type: Color
+        let function: Color
+        let variable: Color
+        let `operator`: Color
+        let punctuation: Color
+        let plain: Color
+        // iOS-specific extras (no pi TUI equivalent)
         let decorator: Color
         let preprocessor: Color
-        let plain: Color
         let jsonKey: Color
         let jsonDim: Color
     }
@@ -92,124 +102,104 @@ struct AppTheme: Sendable {
         }
     }
 
+    struct MarkdownColors: Sendable {
+        let heading: Color
+        let link: Color
+        let linkUrl: Color
+        let code: Color
+        let codeBlock: Color
+        let codeBlockBorder: Color
+        let quote: Color
+        let quoteBorder: Color
+        let hr: Color
+        let listBullet: Color
+    }
+
     struct CodeMetrics: Sendable {
         let fontSize: CGFloat
         let gutterWidthPerDigit: CGFloat
     }
 }
 
-// MARK: - Theme Variants
+// MARK: - Factory
 
 extension AppTheme {
-    // Thinking-level colors sourced from pi TUI dark.json (gray → blue → purple ramp).
-    private static let piTUIDarkThinking = ThinkingColors(
-        off:     Color(red: 0x50 / 255.0, green: 0x50 / 255.0, blue: 0x50 / 255.0), // #505050
-        minimal: Color(red: 0x6E / 255.0, green: 0x6E / 255.0, blue: 0x6E / 255.0), // #6E6E6E
-        low:     Color(red: 0x5F / 255.0, green: 0x87 / 255.0, blue: 0xAF / 255.0), // #5F87AF
-        medium:  Color(red: 0x81 / 255.0, green: 0xA2 / 255.0, blue: 0xBE / 255.0), // #81A2BE
-        high:    Color(red: 0xB2 / 255.0, green: 0x94 / 255.0, blue: 0xBB / 255.0), // #B294BB
-        xhigh:   Color(red: 0xD1 / 255.0, green: 0x83 / 255.0, blue: 0xE8 / 255.0)  // #D183E8
-    )
-
-    // Light variant — darker / more saturated so colors read on white backgrounds.
-    private static let piTUILightThinking = ThinkingColors(
-        off:     Color(red: 0x90 / 255.0, green: 0x90 / 255.0, blue: 0x90 / 255.0), // #909090
-        minimal: Color(red: 0x70 / 255.0, green: 0x70 / 255.0, blue: 0x70 / 255.0), // #707070
-        low:     Color(red: 0x3D / 255.0, green: 0x6B / 255.0, blue: 0x8F / 255.0), // #3D6B8F
-        medium:  Color(red: 0x4A / 255.0, green: 0x78 / 255.0, blue: 0x9A / 255.0), // #4A789A
-        high:    Color(red: 0x7E / 255.0, green: 0x57 / 255.0, blue: 0x9A / 255.0), // #7E579A
-        xhigh:   Color(red: 0x9B / 255.0, green: 0x40 / 255.0, blue: 0xC8 / 255.0)  // #9B40C8
-    )
-
-    /// Tokyo Night (Night variant) — default app palette.
-    static let tokyoNight = makeTheme(
-        palette: ThemePalettes.tokyoNight,
-        diffAddedBg: Color(red: 30.0 / 255.0, green: 50.0 / 255.0, blue: 40.0 / 255.0),
-        diffRemovedBg: Color(red: 58.0 / 255.0, green: 30.0 / 255.0, blue: 40.0 / 255.0),
-        diffContextFg: ThemePalettes.tokyoNight.fgDim,
-        diffHunkFg: ThemePalettes.tokyoNight.purple,
-        thinking: piTUIDarkThinking
-    )
-
-    /// Tokyo Night Day (light variant).
-    static let tokyoNightDay = makeTheme(
-        palette: ThemePalettes.tokyoNightDay,
-        diffAddedBg: Color(red: 213.0 / 255.0, green: 232.0 / 255.0, blue: 213.0 / 255.0),
-        diffRemovedBg: Color(red: 232.0 / 255.0, green: 213.0 / 255.0, blue: 213.0 / 255.0),
-        diffContextFg: ThemePalettes.tokyoNightDay.fgDim,
-        diffHunkFg: ThemePalettes.tokyoNightDay.purple,
-        thinking: piTUILightThinking
-    )
-
-    // Apple Liquid Glass — monochromatic gray → subtle tint progression.
-    private static let appleLiquidGlassThinking = ThinkingColors(
-        off:     Color(uiColor: .systemGray3),                                           // #48484A
-        minimal: Color(uiColor: .systemGray2),                                           // #636366
-        low:     Color(red: 110.0 / 255, green: 135.0 / 255, blue: 160.0 / 255),        // #6E87A0
-        medium:  Color(red: 130.0 / 255, green: 150.0 / 255, blue: 180.0 / 255),        // #8296B4
-        high:    Color(red: 155.0 / 255, green: 145.0 / 255, blue: 185.0 / 255),        // #9B91B9
-        xhigh:   Color(red: 175.0 / 255, green: 150.0 / 255, blue: 205.0 / 255)         // #AF96CD
-    )
-
-    /// Apple Liquid Glass dark palette — muted, frosted accents.
-    static let appleDark = makeTheme(
-        palette: ThemePalettes.appleDark,
-        diffAddedBg: Color(red: 115.0 / 255, green: 185.0 / 255, blue: 135.0 / 255).opacity(0.12),
-        diffRemovedBg: Color(red: 220.0 / 255, green: 110.0 / 255, blue: 115.0 / 255).opacity(0.10),
-        diffContextFg: ThemePalettes.appleDark.fgDim,
-        diffHunkFg: ThemePalettes.appleDark.purple,
-        thinking: appleLiquidGlassThinking
-    )
-
-    private static func makeTheme(
-        palette: ThemePalette,
-        diffAddedBg: Color,
-        diffRemovedBg: Color,
-        diffContextFg: Color,
-        diffHunkFg: Color,
-        thinking: ThinkingColors
+    /// Build an `AppTheme` from a `ThemePalette`.
+    /// `diffAddedBg`/`diffRemovedBg` are line-level diff backgrounds
+    /// (distinct from `toolDiffAdded`/`toolDiffRemoved` which are the accent/text colors).
+    static func from(
+        palette p: ThemePalette,
+        diffAddedBg: Color? = nil,
+        diffRemovedBg: Color? = nil
     ) -> AppTheme {
-        AppTheme(
+        let resolvedAddedBg = diffAddedBg ?? p.toolDiffAdded.opacity(0.15)
+        let resolvedRemovedBg = diffRemovedBg ?? p.toolDiffRemoved.opacity(0.15)
+        return AppTheme(
             bg: BgColors(
-                primary: palette.bg,
-                secondary: palette.bgDark,
-                highlight: palette.bgHighlight
+                primary: p.bg,
+                secondary: p.bgDark,
+                highlight: p.bgHighlight
             ),
             text: TextColors(
-                primary: palette.fg,
-                secondary: palette.fgDim,
-                tertiary: palette.comment
+                primary: p.fg,
+                secondary: p.fgDim,
+                tertiary: p.comment,
+                thinking: p.thinkingText
             ),
             accent: AccentColors(
-                blue: palette.blue,
-                cyan: palette.cyan,
-                green: palette.green,
-                orange: palette.orange,
-                purple: palette.purple,
-                red: palette.red,
-                yellow: palette.yellow
+                primary: p.cyan,
+                blue: p.blue,
+                cyan: p.cyan,
+                green: p.green,
+                orange: p.orange,
+                purple: p.purple,
+                red: p.red,
+                yellow: p.yellow
             ),
             diff: DiffColors(
-                addedBg: diffAddedBg,
-                removedBg: diffRemovedBg,
-                addedAccent: palette.green,
-                removedAccent: palette.red,
-                contextFg: diffContextFg,
-                hunkFg: diffHunkFg
+                addedBg: resolvedAddedBg,
+                removedBg: resolvedRemovedBg,
+                addedAccent: p.toolDiffAdded,
+                removedAccent: p.toolDiffRemoved,
+                contextFg: p.toolDiffContext,
+                hunkFg: p.purple
             ),
             syntax: SyntaxColors(
-                keyword: palette.purple,
-                string: palette.green,
-                comment: palette.comment,
-                number: palette.orange,
-                type: palette.cyan,
-                decorator: palette.yellow,
-                preprocessor: palette.purple,
-                plain: palette.fg,
-                jsonKey: palette.cyan,
-                jsonDim: palette.fgDim
+                keyword: p.syntaxKeyword,
+                string: p.syntaxString,
+                comment: p.syntaxComment,
+                number: p.syntaxNumber,
+                type: p.syntaxType,
+                function: p.syntaxFunction,
+                variable: p.syntaxVariable,
+                operator: p.syntaxOperator,
+                punctuation: p.syntaxPunctuation,
+                plain: p.fg,
+                decorator: p.yellow,
+                preprocessor: p.purple,
+                jsonKey: p.cyan,
+                jsonDim: p.fgDim
             ),
-            thinking: thinking,
+            thinking: ThinkingColors(
+                off: p.thinkingOff,
+                minimal: p.thinkingMinimal,
+                low: p.thinkingLow,
+                medium: p.thinkingMedium,
+                high: p.thinkingHigh,
+                xhigh: p.thinkingXhigh
+            ),
+            markdown: MarkdownColors(
+                heading: p.mdHeading,
+                link: p.mdLink,
+                linkUrl: p.mdLinkUrl,
+                code: p.mdCode,
+                codeBlock: p.mdCodeBlock,
+                codeBlockBorder: p.mdCodeBlockBorder,
+                quote: p.mdQuote,
+                quoteBorder: p.mdQuoteBorder,
+                hr: p.mdHr,
+                listBullet: p.mdListBullet
+            ),
             code: CodeMetrics(
                 fontSize: 11,
                 gutterWidthPerDigit: 7.5
@@ -218,15 +208,47 @@ extension AppTheme {
     }
 }
 
+// MARK: - Theme Variants
+
+extension AppTheme {
+    // Helper for hex color literals
+    private static func c(_ hex: UInt32) -> Color {
+        Color(
+            red: Double((hex >> 16) & 0xFF) / 255.0,
+            green: Double((hex >> 8) & 0xFF) / 255.0,
+            blue: Double(hex & 0xFF) / 255.0
+        )
+    }
+
+    /// Dark — frosted glass accents on dark system backgrounds.
+    static let dark = AppTheme.from(
+        palette: ThemePalettes.dark,
+        diffAddedBg: c(0x73B987).opacity(0.12),
+        diffRemovedBg: c(0xDC6E73).opacity(0.10)
+    )
+
+    /// Light — clean, understated accents on white.
+    static let light = AppTheme.from(
+        palette: ThemePalettes.light,
+        diffAddedBg: c(0x3A8550).opacity(0.10),
+        diffRemovedBg: c(0xC44E54).opacity(0.08)
+    )
+}
+
 extension ThemeID {
     var appTheme: AppTheme {
         switch self {
-        case .tokyoNight, .tokyoNightStorm, .custom:
-            return .tokyoNight
-        case .tokyoNightDay:
-            return .tokyoNightDay
-        case .appleDark:
-            return .appleDark
+        case .dark:
+            return .dark
+        case .light:
+            return .light
+        case .custom(let name):
+            // Build from imported palette if available
+            if let remote = CustomThemeStore.load(name: name),
+               let palette = remote.toPalette() {
+                return AppTheme.from(palette: palette)
+            }
+            return .dark
         }
     }
 }

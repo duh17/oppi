@@ -14,6 +14,24 @@ enum ToolPresentationBuilder {
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
+        let callSegments: [StyledSegment]?
+        let resultSegments: [StyledSegment]?
+
+        init(
+            args: [String: JSONValue]?,
+            expandedItemIDs: Set<String>,
+            fullOutput: String,
+            isLoadingOutput: Bool,
+            callSegments: [StyledSegment]? = nil,
+            resultSegments: [StyledSegment]? = nil
+        ) {
+            self.args = args
+            self.expandedItemIDs = expandedItemIDs
+            self.fullOutput = fullOutput
+            self.isLoadingOutput = isLoadingOutput
+            self.callSegments = callSegments
+            self.resultSegments = resultSegments
+        }
     }
 
     // MARK: - Build
@@ -32,13 +50,6 @@ enum ToolPresentationBuilder {
         let outputForFormatting = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
         let args = context.args
 
-        let todoMutationDiff = normalizedTool == "todo"
-            ? ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: argsSummary)
-            : nil
-        let todoPresentation = normalizedTool == "todo"
-            ? ToolCallFormatting.todoOutputPresentation(args: args, argsSummary: argsSummary, output: outputForFormatting)
-            : nil
-
         let hasInlineMediaDataURI = shouldWarnInlineMediaForToolOutput(
             normalizedTool: normalizedTool,
             outputPreview: outputPreview,
@@ -53,14 +64,16 @@ enum ToolPresentationBuilder {
             argsSummary: argsSummary,
             isExpanded: isExpanded,
             isError: isError,
-            outputPreview: outputPreview,
-            todoMutationDiff: todoMutationDiff,
-            todoPresentation: todoPresentation
+            outputPreview: outputPreview
         )
 
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded {
+            let todoMutationDiff = normalizedTool == "todo"
+                ? ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: argsSummary)
+                : nil
+
             expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 args: args,
@@ -70,26 +83,16 @@ enum ToolPresentationBuilder {
                 isError: isError,
                 isDone: isDone,
                 isLoadingOutput: context.isLoadingOutput,
-                todoMutationDiff: todoMutationDiff,
-                todoPresentation: todoPresentation
+                todoMutationDiff: todoMutationDiff
             )
         } else {
             expanded = ExpandedPresentation()
         }
 
-        // Trailing
+        // Trailing (built-in tools only; extension tools use resultSegments)
         let trailing: String?
         if let editTrailingFallback = collapsed.editTrailingFallback {
             trailing = editTrailingFallback
-        } else if normalizedTool == "todo",
-                  todoMutationDiff == nil,
-                  let todoTrailing = todoPresentation?.trailing,
-                  !todoTrailing.isEmpty {
-            trailing = todoTrailing
-        } else if normalizedTool == "remember" {
-            trailing = ToolCallFormatting.rememberTrailing(args: args)
-        } else if normalizedTool == "recall" {
-            trailing = ToolCallFormatting.recallTrailing(output: outputForFormatting)
         } else {
             trailing = nil
         }
@@ -117,6 +120,35 @@ enum ToolPresentationBuilder {
             output: outputForFormatting
         )
 
+        // Server-rendered segments: build attributed title and trailing.
+        // For tools with SF Symbol icons (read, write, edit, bash), the first
+        // bold segment is the tool name — strip it since the icon already
+        // represents the tool. Other tools (todo, remember, recall, extensions)
+        // keep the name in the title per their non-segment fallback behavior.
+        //
+        // Expanded bash rows render a dedicated command panel, so we suppress
+        // segment title commands there to avoid duplicate command text.
+        let segmentAttributedTitle: NSAttributedString?
+        if isExpanded && normalizedTool == "bash" {
+            segmentAttributedTitle = nil
+        } else if let callSegs = context.callSegments, !callSegs.isEmpty {
+            let prefix = SegmentRenderer.toolNamePrefix(from: callSegs)
+            if Self.toolPrefixIconReplacesName(prefix) {
+                segmentAttributedTitle = SegmentRenderer.attributedStringStrippingPrefix(from: callSegs)
+            } else {
+                segmentAttributedTitle = SegmentRenderer.attributedString(from: callSegs)
+            }
+        } else {
+            segmentAttributedTitle = nil
+        }
+
+        let segmentAttributedTrailing: NSAttributedString?
+        if let resultSegs = context.resultSegments, !resultSegs.isEmpty {
+            segmentAttributedTrailing = SegmentRenderer.trailingAttributedString(from: resultSegs)
+        } else {
+            segmentAttributedTrailing = nil
+        }
+
         return ToolTimelineRowConfiguration(
             title: title,
             preview: nil, // collapsed tool rows single-line
@@ -124,17 +156,23 @@ enum ToolPresentationBuilder {
             copyCommandText: expanded.copyCommandText,
             copyOutputText: expanded.copyOutputText,
             languageBadge: languageBadge,
-            trailing: trailing,
-            titleLineBreakMode: collapsed.titleLineBreakMode,
-            toolNamePrefix: collapsed.toolNamePrefix,
-            toolNameColor: collapsed.toolNameColor,
+            trailing: segmentAttributedTrailing != nil ? nil : trailing,
+            titleLineBreakMode: segmentAttributedTitle != nil ? .byTruncatingTail : collapsed.titleLineBreakMode,
+            toolNamePrefix: segmentAttributedTitle != nil
+                ? SegmentRenderer.toolNamePrefix(from: context.callSegments ?? [])
+                : collapsed.toolNamePrefix,
+            toolNameColor: segmentAttributedTitle != nil
+                ? (SegmentRenderer.toolNameColor(from: context.callSegments ?? []) ?? collapsed.toolNameColor)
+                : collapsed.toolNameColor,
             editAdded: collapsed.editAdded,
             editRemoved: collapsed.editRemoved,
             collapsedImageBase64: imagePreview?.base64,
             collapsedImageMimeType: imagePreview?.mimeType,
             isExpanded: isExpanded,
             isDone: isDone,
-            isError: isError
+            isError: isError,
+            segmentAttributedTitle: segmentAttributedTitle,
+            segmentAttributedTrailing: segmentAttributedTrailing
         )
     }
 
@@ -143,7 +181,7 @@ enum ToolPresentationBuilder {
     private struct CollapsedPresentation {
         var title: String
         var toolNamePrefix: String?
-        var toolNameColor: UIColor = UIColor(Color.tokyoCyan)
+        var toolNameColor = UIColor(Color.themeCyan)
         var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
         var languageBadge: String?
         var editAdded: Int?
@@ -158,9 +196,7 @@ enum ToolPresentationBuilder {
         argsSummary: String,
         isExpanded: Bool,
         isError: Bool,
-        outputPreview: String,
-        todoMutationDiff: ToolCallFormatting.TodoMutationDiffPresentation?,
-        todoPresentation: ToolCallFormatting.TodoOutputPresentation?
+        outputPreview: String
     ) -> CollapsedPresentation {
         var result = CollapsedPresentation(title: tool)
 
@@ -170,13 +206,16 @@ enum ToolPresentationBuilder {
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if isExpanded {
-                result.title = "bash"
+                // Expanded bash rows already have a dedicated command panel.
+                // Keep the header icon-only ("$" symbol) and reserve line
+                // height with a single space so body content doesn't shift up.
+                result.title = " "
             } else {
                 result.title = compactCommand.isEmpty ? "bash" : compactCommand
                 result.titleLineBreakMode = .byTruncatingMiddle
             }
             result.toolNamePrefix = "$"
-            result.toolNameColor = UIColor(Color.tokyoGreen)
+            result.toolNameColor = UIColor(Color.themeGreen)
 
         case "read", "write", "edit":
             let displayPath = ToolCallFormatting.displayFilePath(
@@ -184,7 +223,7 @@ enum ToolPresentationBuilder {
             )
             result.title = displayPath.isEmpty ? normalizedTool : displayPath
             result.toolNamePrefix = normalizedTool
-            result.toolNameColor = UIColor(Color.tokyoCyan)
+            result.toolNameColor = UIColor(Color.themeCyan)
             result.titleLineBreakMode = .byTruncatingMiddle
 
             if normalizedTool == "read" || normalizedTool == "write" {
@@ -205,32 +244,13 @@ enum ToolPresentationBuilder {
                 }
             }
 
-        case "todo":
-            let summary = ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
-            result.title = summary.isEmpty ? "todo" : summary
-            result.toolNamePrefix = "todo"
-            result.toolNameColor = UIColor(Color.tokyoPurple)
-            if let todoMutationDiff {
-                result.editAdded = todoMutationDiff.addedLineCount
-                result.editRemoved = todoMutationDiff.removedLineCount
-            }
-
-        case "remember":
-            let summary = ToolCallFormatting.rememberSummary(args: args, argsSummary: argsSummary)
-            result.title = summary
-            result.toolNamePrefix = "remember"
-            result.toolNameColor = UIColor(Color.tokyoYellow)
-
-        case "recall":
-            let summary = ToolCallFormatting.recallSummary(args: args, argsSummary: argsSummary)
-            result.title = summary
-            result.toolNamePrefix = "recall"
-            result.toolNameColor = UIColor(Color.tokyoYellow)
-
         default:
+            // Extension tools (todo, remember, recall, etc.) are rendered via
+            // server-provided StyledSegments. This default case is the fallback
+            // when segments aren't available.
             result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
             result.toolNamePrefix = tool
-            result.toolNameColor = UIColor(Color.tokyoCyan)
+            result.toolNameColor = UIColor(Color.themeCyan)
         }
 
         return result
@@ -251,9 +271,9 @@ enum ToolPresentationBuilder {
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md, remember)
         case markdown(text: String)
-        /// Rich todo card via UIHostingConfiguration
+        /// Rich todo card rendered natively
         case todoCard(output: String)
-        /// Media renderer via UIHostingConfiguration (images, etc.)
+        /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
         /// Plain/ANSI text with optional syntax highlighting
         case text(text: String, language: SyntaxLanguage?)
@@ -274,8 +294,7 @@ enum ToolPresentationBuilder {
         isError: Bool,
         isDone: Bool,
         isLoadingOutput: Bool,
-        todoMutationDiff: ToolCallFormatting.TodoMutationDiffPresentation?,
-        todoPresentation: ToolCallFormatting.TodoOutputPresentation?
+        todoMutationDiff: ToolCallFormatting.TodoMutationDiffPresentation?
     ) -> ExpandedPresentation {
         let output = fullOutput.isEmpty ? outputPreview : fullOutput
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -407,6 +426,19 @@ enum ToolPresentationBuilder {
     }
 
     // MARK: - Helpers (moved from Coordinator)
+
+    /// Tools where the SF Symbol icon fully replaces the tool name in the title.
+    /// These tools' non-segment `buildCollapsed` path sets `title` to the path/command
+    /// (without the tool name), so the segment title should match by stripping the prefix.
+    /// Tools like todo/remember/recall keep the name in the title alongside their icon.
+    private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
+        switch prefix {
+        case "$", "read", "write", "edit":
+            return true
+        default:
+            return false
+        }
+    }
 
     static func shouldWarnInlineMediaForToolOutput(
         normalizedTool: String,

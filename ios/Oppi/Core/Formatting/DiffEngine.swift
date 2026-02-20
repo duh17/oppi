@@ -134,7 +134,7 @@ enum DiffEngine {
         if text.isEmpty { return [] }
         var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         // Trailing newline produces a spurious empty last element — trim it
-        if lines.count > 1, lines.last == "" {
+        if lines.count > 1, lines.last?.isEmpty == true {
             lines.removeLast()
         }
         return lines

@@ -119,4 +119,10 @@ describe("listHostExtensions", () => {
     const extensions = listHostExtensions();
     expect(extensions.find((e) => e.name === "permission-gate")).toBeUndefined();
   });
+
+  it("does not list mobile renderers (they live in ~/.pi/agent/mobile-renderers/)", () => {
+    const extensions = listHostExtensions();
+    // Mobile renderers are in a separate directory, so they should never appear here
+    expect(extensions.every((e) => !e.name.includes("mobile"))).toBe(true);
+  });
 });

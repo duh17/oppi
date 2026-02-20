@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
+// swiftlint:disable force_unwrapping
+
 @Suite("WorkspaceStore Offline", .serialized)
 struct WorkspaceStoreOfflineTests {
     @MainActor
@@ -75,9 +77,7 @@ struct WorkspaceStoreOfflineTests {
             name: name,
             description: nil,
             icon: nil,
-            runtime: "container",
             skills: [],
-            policyPreset: "container",
             systemPrompt: nil,
             hostMount: nil,
             memoryEnabled: nil,
@@ -101,7 +101,7 @@ struct WorkspaceStoreOfflineTests {
     }
 }
 
-final class WorkspaceStoreMockURLProtocol: URLProtocol, @unchecked Sendable {
+class WorkspaceStoreMockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, HTTPURLResponse))?
 
     override class func canInit(with request: URLRequest) -> Bool { true }

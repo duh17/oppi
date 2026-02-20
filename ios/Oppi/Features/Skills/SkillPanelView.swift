@@ -3,7 +3,7 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillPanel")
 
-/// Quick skill browser shown from the runtime badge in ChatView.
+/// Quick skill browser shown from the session status badge in ChatView.
 ///
 /// Shows the skills enabled for the current workspace, with tappable
 /// rows that navigate to skill detail. Also lists available-but-disabled
@@ -70,14 +70,6 @@ struct SkillPanelView: View {
         .navigationDestination(for: SkillFileDestination.self) { dest in
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
-        .navigationDestination(for: SkillEditorDestination.self) { dest in
-            SkillEditorView(
-                skillName: dest.skillName,
-                filePath: dest.filePath,
-                initialContent: dest.content,
-                isNew: dest.isNew
-            )
-        }
     }
 }
 
@@ -92,24 +84,25 @@ private struct SkillRow: View {
             HStack(spacing: 6) {
                 Text(skill.name)
                     .font(.system(.body, design: .monospaced, weight: .medium))
-                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                    .foregroundStyle(isEnabled ? .themeFg : .themeComment)
 
                 if skill.hasScripts {
                     Image(systemName: "terminal")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                 }
 
                 if !skill.containerSafe {
                     Image(systemName: "desktopcomputer")
                         .font(.caption2)
-                        .foregroundStyle(.tokyoOrange)
+                        .foregroundStyle(.themeOrange)
+                        .accessibilityLabel("Needs local tools")
                 }
             }
 
             Text(skill.description)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
                 .lineLimit(2)
         }
         .padding(.vertical, 2)

@@ -66,6 +66,18 @@ enum ClientMessage: Sendable {
 
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
+
+    // ── Stream multiplexing (/stream protocol) ──
+    case subscribe(sessionId: String, level: StreamSubscriptionLevel = .full, sinceSeq: Int? = nil, requestId: String? = nil)
+    case unsubscribe(sessionId: String, requestId: String? = nil)
+}
+
+/// Subscription level for the `/stream` multiplexed WebSocket.
+enum StreamSubscriptionLevel: String, Codable, Sendable {
+    /// Full event streaming (text deltas, tool output, etc.). One session per connection.
+    case full
+    /// Notification-level events only (permissions, state, agent start/end).
+    case notifications
 }
 
 // MARK: - Supporting Types
@@ -92,7 +104,7 @@ enum ThinkingLevel: String, Codable, Sendable {
     case off, minimal, low, medium, high, xhigh
 
     /// Next level in the standard cycle: off → low → medium → high → off.
-    var next: ThinkingLevel {
+    var next: Self {
         switch self {
         case .off: return .low
         case .minimal: return .low
@@ -276,6 +288,19 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(confirmed, forKey: .confirmed)
             try c.encodeIfPresent(cancelled, forKey: .cancelled)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        // ── Stream multiplexing ──
+        case .subscribe(let sessionId, let level, let sinceSeq, let reqId):
+            try c.encode("subscribe", forKey: .type)
+            try c.encode(sessionId, forKey: .sessionId)
+            try c.encode(level, forKey: .level)
+            try c.encodeIfPresent(sinceSeq, forKey: .sinceSeq)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        case .unsubscribe(let sessionId, let reqId):
+            try c.encode("unsubscribe", forKey: .type)
+            try c.encode(sessionId, forKey: .sessionId)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
         }
     }
 
@@ -284,6 +309,42 @@ extension ClientMessage: Encodable {
         case id, action, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command
+        case sessionId, sinceSeq
+    }
+}
+
+// MARK: - Stream Envelope
+
+/// Wraps a `ClientMessage` with a `sessionId` for the `/stream` multiplexed protocol.
+///
+/// On the legacy per-session WebSocket, the session is implicit in the URL.
+/// On `/stream`, session-scoped commands must include `sessionId` at the top level.
+struct SessionScopedMessage: Encodable, Sendable {
+    let sessionId: String
+    let message: ClientMessage
+
+    func encode(to encoder: Encoder) throws {
+        // Encode the inner message first (creates the keyed container)
+        try message.encode(to: encoder)
+        // Then add sessionId to the same container
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sessionId, forKey: .sessionId)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId
+    }
+
+    func jsonData() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+
+    func jsonString() throws -> String {
+        let data = try jsonData()
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(data, .init(codingPath: [], debugDescription: "JSON data is not valid UTF-8"))
+        }
+        return string
     }
 }
 
@@ -323,6 +384,8 @@ extension ClientMessage {
         case .getCommands: return "get_commands"
         case .permissionResponse: return "permission_response"
         case .extensionUIResponse: return "extension_ui_response"
+        case .subscribe: return "subscribe"
+        case .unsubscribe: return "unsubscribe"
         }
     }
 

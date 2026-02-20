@@ -726,7 +726,7 @@ struct FlatSegmentTextTests {
     }
 
     @Test func deepLinkMarkdownPreservesTapTarget() {
-        let markdown = "Migrate via [invite](pi://connect?v=2&invite=test-payload).\n"
+        let markdown = "Migrate via [invite](pi://connect?v=3&invite=test-payload).\n"
         let blocks = parseCommonMark(markdown)
         let segments = FlatSegment.build(from: blocks)
 
@@ -738,7 +738,7 @@ struct FlatSegmentTextTests {
 
         let links = attributed.runs.compactMap(\.link)
         #expect(links.count == 1)
-        #expect(links.first?.absoluteString == "pi://connect?v=2&invite=test-payload")
+        #expect(links.first?.absoluteString == "pi://connect?v=3&invite=test-payload")
     }
 
     @Test func adjacentTextBlocksMergeForCrossBlockSelection() {

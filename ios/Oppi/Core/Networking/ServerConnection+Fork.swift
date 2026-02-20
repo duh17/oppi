@@ -59,7 +59,12 @@ extension ServerConnection {
             .name?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackName = "Session \(sourceSessionId.prefix(8))"
-        let baseName = (sourceName?.isEmpty == false ? sourceName! : fallbackName)
+        let baseName = {
+            guard let sourceName, !sourceName.isEmpty else {
+                return fallbackName
+            }
+            return sourceName
+        }()
         let forkName = "Fork: \(baseName)"
 
         let forkedSession = try await apiClient.forkWorkspaceSession(

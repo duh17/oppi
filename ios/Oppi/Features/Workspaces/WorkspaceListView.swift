@@ -14,7 +14,7 @@ struct WorkspaceListView: View {
         List {
             ForEach(serverStore.servers) { server in
                 Section(server.name) {
-                    let workspaces = connection.workspaceStore.workspacesByServer[server.id] ?? []
+                    let workspaces = coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
                     if workspaces.isEmpty {
                         Text("No workspaces")
                             .font(.subheadline)
@@ -25,7 +25,11 @@ struct WorkspaceListView: View {
                                 WorkspaceEditView(workspace: workspace)
                                     .onAppear { coordinator.switchToServer(server) }
                             } label: {
-                                WorkspaceRowView(workspace: workspace)
+                                WorkspaceRowView(
+                                    workspace: workspace,
+                                    badgeIcon: server.resolvedBadgeIcon,
+                                    badgeColor: server.resolvedBadgeColor
+                                )
                             }
                         }
                         .onDelete { offsets in
@@ -43,7 +47,7 @@ struct WorkspaceListView: View {
             await coordinator.refreshAllServers()
         }
         .overlay {
-            if serverStore.servers.allSatisfy({ (connection.workspaceStore.workspacesByServer[$0.id] ?? []).isEmpty }) {
+            if serverStore.servers.allSatisfy({ (coordinator.connection(for: $0.id)?.workspaceStore.workspaces ?? []).isEmpty }) {
                 ContentUnavailableView(
                     "No Workspaces",
                     systemImage: "square.grid.2x2",
@@ -54,14 +58,14 @@ struct WorkspaceListView: View {
     }
 
     private func deleteWorkspaces(at offsets: IndexSet, serverId: String) async {
-        let workspaces = connection.workspaceStore.workspacesByServer[serverId] ?? []
-        guard let api = coordinator.apiClient(for: serverId) else { return }
+        guard let conn = coordinator.connection(for: serverId) else { return }
+        let workspaces = conn.workspaceStore.workspaces
+        guard let api = conn.apiClient else { return }
         let toDelete = offsets.map { workspaces[$0] }
 
         // Optimistic removal
         for workspace in toDelete {
-            connection.workspaceStore.remove(id: workspace.id, serverId: serverId)
-            connection.workspaceStore.remove(id: workspace.id)
+            conn.workspaceStore.remove(id: workspace.id, serverId: serverId)
         }
 
         // Server-side delete
@@ -80,6 +84,8 @@ struct WorkspaceListView: View {
 
 private struct WorkspaceRowView: View {
     let workspace: Workspace
+    var badgeIcon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
         HStack(spacing: 12) {
@@ -90,28 +96,19 @@ private struct WorkspaceRowView: View {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
-                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
                 }
 
                 if let description = workspace.description {
                     Text(description)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 4) {
-                    Text("\(workspace.skills.count) skills")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-
-                    Text("•")
-                        .foregroundStyle(.tertiary)
-
-                    Text(workspace.policyPresetLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                Text("\(workspace.skills.count) skills")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)

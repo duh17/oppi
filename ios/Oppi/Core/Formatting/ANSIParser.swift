@@ -24,7 +24,7 @@ enum ANSIParser {
     static func attributedString(
         from input: String,
         baseFont: Font = .caption.monospaced(),
-        baseForeground: Color = .tokyoFg
+        baseForeground: Color = .themeFg
     ) -> AttributedString {
         var result = AttributedString()
         var state = SGRState()
@@ -54,7 +54,7 @@ enum ANSIParser {
     // MARK: - Regex
 
     /// Matches any ANSI escape sequence: ESC [ ... final-byte
-    fileprivate nonisolated(unsafe) static let escapePattern: Regex<Substring> = /\x1B\[[0-9;]*[A-Za-z]/
+    nonisolated(unsafe) fileprivate static let escapePattern: Regex<Substring> = /\x1B\[[0-9;]*[A-Za-z]/
 }
 
 // MARK: - Scanner
@@ -147,24 +147,24 @@ private struct SGRState {
             case 39: foreground = nil // default fg
 
             // Standard colors (30-37)
-            case 30: foreground = .tokyoFgDim       // black → dim
-            case 31: foreground = .tokyoRed
-            case 32: foreground = .tokyoGreen
-            case 33: foreground = .tokyoYellow
-            case 34: foreground = .tokyoBlue
-            case 35: foreground = .tokyoPurple
-            case 36: foreground = .tokyoCyan
-            case 37: foreground = .tokyoFg           // white → fg
+            case 30: foreground = .themeFgDim       // black → dim
+            case 31: foreground = .themeRed
+            case 32: foreground = .themeGreen
+            case 33: foreground = .themeYellow
+            case 34: foreground = .themeBlue
+            case 35: foreground = .themePurple
+            case 36: foreground = .themeCyan
+            case 37: foreground = .themeFg           // white → fg
 
             // Bright colors (90-97)
-            case 90: foreground = .tokyoComment      // bright black → comment
-            case 91: foreground = .tokyoRed
-            case 92: foreground = .tokyoGreen
-            case 93: foreground = .tokyoYellow
-            case 94: foreground = .tokyoBlue
-            case 95: foreground = .tokyoPurple
-            case 96: foreground = .tokyoCyan
-            case 97: foreground = .tokyoFg
+            case 90: foreground = .themeComment      // bright black → comment
+            case 91: foreground = .themeRed
+            case 92: foreground = .themeGreen
+            case 93: foreground = .themeYellow
+            case 94: foreground = .themeBlue
+            case 95: foreground = .themePurple
+            case 96: foreground = .themeCyan
+            case 97: foreground = .themeFg
 
             // 256-color: 38;5;n
             case 38:
@@ -190,14 +190,14 @@ private struct SGRState {
     /// Map 256-color palette to Tokyo Night approximations.
     private func color256(_ n: Int) -> Color {
         switch n {
-        case 0: return .tokyoFgDim
-        case 1: return .tokyoRed
-        case 2: return .tokyoGreen
-        case 3: return .tokyoYellow
-        case 4: return .tokyoBlue
-        case 5: return .tokyoPurple
-        case 6: return .tokyoCyan
-        case 7: return .tokyoFg
+        case 0: return .themeFgDim
+        case 1: return .themeRed
+        case 2: return .themeGreen
+        case 3: return .themeYellow
+        case 4: return .themeBlue
+        case 5: return .themePurple
+        case 6: return .themeCyan
+        case 7: return .themeFg
         case 8...15: return color256(n - 8) // bright = same mapping
         case 232...255: // grayscale ramp
             let gray = Double(n - 232) / 23.0

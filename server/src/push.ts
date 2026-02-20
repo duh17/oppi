@@ -34,7 +34,6 @@ export interface PermissionPushPayload {
   sessionName?: string;
   tool: string;
   displaySummary: string;
-  risk: string;
   reason: string;
   timeoutAt: number;
   expires?: boolean;
@@ -85,32 +84,28 @@ export class APNsClient {
    * Time-sensitive, with Allow/Deny actions.
    */
   async sendPermissionPush(deviceToken: string, payload: PermissionPushPayload): Promise<boolean> {
-    const isHighRisk = payload.risk === "high" || payload.risk === "critical";
-    const redactedSummary = isHighRisk ? "Open app to review full command details" : payload.displaySummary;
-
     const apnsPayload = {
       aps: {
         alert: {
           title: "Permission Request",
           subtitle: payload.sessionName || payload.sessionId,
-          body: `${payload.tool}: ${redactedSummary}`,
+          body: `${payload.tool}: ${payload.displaySummary}`,
         },
         category: "PERMISSION_REQUEST",
-        "interruption-level": riskToInterruptionLevel(payload.risk),
-        "relevance-score": riskToRelevanceScore(payload.risk),
-        sound: payload.risk === "low" ? undefined : "default",
+        "interruption-level": "time-sensitive",
+        "relevance-score": 0.9,
+        sound: "default",
       },
       permissionId: payload.permissionId,
       sessionId: payload.sessionId,
-      risk: payload.risk,
       tool: payload.tool,
-      summary: redactedSummary,
+      summary: payload.displaySummary,
       timeoutAt: payload.timeoutAt,
     };
 
     return this.send(deviceToken, apnsPayload, {
       pushType: "alert",
-      priority: payload.risk === "low" ? 5 : 10,
+      priority: 10,
       expiration: payload.expires === false ? undefined : Math.floor(payload.timeoutAt / 1000),
     });
   }
@@ -402,33 +397,4 @@ export function createPushClient(config?: APNsConfig): PushClient {
   }
 }
 
-// ─── Helpers ───
 
-function riskToInterruptionLevel(risk: string): string {
-  switch (risk) {
-    case "critical":
-    case "high":
-      return "time-sensitive";
-    case "medium":
-      return "active";
-    case "low":
-      return "passive";
-    default:
-      return "active";
-  }
-}
-
-function riskToRelevanceScore(risk: string): number {
-  switch (risk) {
-    case "critical":
-      return 1.0;
-    case "high":
-      return 0.9;
-    case "medium":
-      return 0.7;
-    case "low":
-      return 0.4;
-    default:
-      return 0.5;
-  }
-}

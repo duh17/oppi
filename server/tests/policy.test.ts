@@ -265,3 +265,50 @@ describe("formatDisplaySummary", () => {
     expect(s).toBe("Read src/index.ts");
   });
 });
+
+describe("PolicyEngine (declarative config)", () => {
+  const declarative = new PolicyEngine({
+    schemaVersion: 1,
+    mode: "balanced",
+    fallback: "ask",
+    guardrails: [
+      {
+        id: "block-secret-read",
+        decision: "block",
+        risk: "critical",
+        immutable: true,
+        match: { tool: "read", pathMatches: "*identity_ed25519*" },
+      },
+    ],
+    permissions: [
+      {
+        id: "allow-npm-test",
+        decision: "allow",
+        risk: "low",
+        label: "Allow npm test",
+        match: { tool: "bash", executable: "npm", commandMatches: "npm test*" },
+      },
+      {
+        id: "ask-unlisted-browser-domain",
+        decision: "ask",
+        risk: "medium",
+        match: { tool: "bash", domain: "example.com" },
+      },
+    ],
+  });
+
+  it("maps block decision to deny for guardrails", () => {
+    const d = declarative.evaluate({ tool: "read", input: { path: "identity_ed25519" }, toolCallId: "d1" });
+    expect(d.action).toBe("deny");
+  });
+
+  it("applies declarative allow permission", () => {
+    const d = declarative.evaluate({ tool: "bash", input: { command: "npm test" }, toolCallId: "d2" });
+    expect(d.action).toBe("allow");
+  });
+
+  it("falls back to declarative fallback when unmatched", () => {
+    const d = declarative.evaluate({ tool: "bash", input: { command: "echo hi" }, toolCallId: "d3" });
+    expect(d.action).toBe("ask");
+  });
+});

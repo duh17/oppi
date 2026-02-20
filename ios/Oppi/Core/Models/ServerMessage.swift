@@ -6,6 +6,7 @@ import Foundation
 /// `.unknown` instead of throwing — forward-compatible with server additions.
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
+    case streamConnected(userName: String)
     case connected(session: Session)
     case state(session: Session)
     case sessionEnded(reason: String)
@@ -21,9 +22,9 @@ enum ServerMessage: Sendable, Equatable {
     case thinkingDelta(delta: String)
 
     // Tool execution
-    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?)
+    case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?)
     case toolOutput(output: String, isError: Bool, toolCallId: String?)
-    case toolEnd(tool: String, toolCallId: String?)
+    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
     // Turn delivery acknowledgements
     case turnAck(command: String, clientTurnId: String, stage: TurnAckStage, requestId: String?, duplicate: Bool)
@@ -94,6 +95,8 @@ enum StopLifecycleSource: String, Codable, Sendable {
 extension ServerMessage: Decodable {
     enum CodingKeys: String, CodingKey {
         case type
+        // stream_connected
+        case userName
         // connected / state
         case session
         // session_ended / stop lifecycle
@@ -101,7 +104,7 @@ extension ServerMessage: Decodable {
         // message_end / text_delta / thinking_delta
         case role, content, delta
         // tool_start / tool_end
-        case tool, args, toolCallId
+        case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
         case output, isError
         // turn_ack
@@ -109,7 +112,7 @@ extension ServerMessage: Decodable {
         // error
         case error, code, fatal
         // permission_request
-        case id, sessionId, input, displaySummary, risk, timeoutAt, expires, resolutionOptions
+        case id, sessionId, input, displaySummary, timeoutAt, expires, resolutionOptions
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // extension_ui_notification
@@ -127,6 +130,10 @@ extension ServerMessage: Decodable {
         let type = try c.decode(String.self, forKey: .type)
 
         switch type {
+        case "stream_connected":
+            let userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? ""
+            self = .streamConnected(userName: userName)
+
         case "connected":
             let session = try c.decode(Session.self, forKey: .session)
             self = .connected(session: session)
@@ -177,7 +184,8 @@ extension ServerMessage: Decodable {
             let tool = try c.decode(String.self, forKey: .tool)
             let args = try c.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
-            self = .toolStart(tool: tool, args: args, toolCallId: tcId)
+            let callSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .callSegments)
+            self = .toolStart(tool: tool, args: args, toolCallId: tcId, callSegments: callSegs)
 
         case "tool_output":
             let output = try c.decode(String.self, forKey: .output)
@@ -188,7 +196,10 @@ extension ServerMessage: Decodable {
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)
             let tcId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
-            self = .toolEnd(tool: tool, toolCallId: tcId)
+            let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
+            let isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+            let resultSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .resultSegments)
+            self = .toolEnd(tool: tool, toolCallId: tcId, details: details, isError: isError, resultSegments: resultSegs)
 
         case "turn_ack":
             let command = try c.decode(String.self, forKey: .command)
@@ -249,7 +260,6 @@ extension ServerMessage: Decodable {
                 tool: try c.decode(String.self, forKey: .tool),
                 input: try c.decode([String: JSONValue].self, forKey: .input),
                 displaySummary: try c.decode(String.self, forKey: .displaySummary),
-                risk: try c.decode(RiskLevel.self, forKey: .risk),
                 reason: try c.decode(String.self, forKey: .reason),
                 timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000),
                 expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true,
@@ -294,11 +304,46 @@ extension ServerMessage: Decodable {
     }
 }
 
+// MARK: - Stream Message Wrapper
+
+/// Wraps a `ServerMessage` with the `sessionId` from the multiplexed `/stream` endpoint.
+///
+/// On the per-session WebSocket, `sessionId` is implicit (the URL determines it).
+/// On `/stream`, every message includes `sessionId` at the top level.
+struct StreamMessage: Sendable, Equatable {
+    let sessionId: String?
+    let streamSeq: Int?
+    let message: ServerMessage
+}
+
+extension StreamMessage: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case sessionId, streamSeq
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        streamSeq = try c.decodeIfPresent(Int.self, forKey: .streamSeq)
+        message = try ServerMessage(from: decoder)
+    }
+
+    static func decode(from text: String) throws -> StreamMessage {
+        guard let data = text.data(using: .utf8) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "Invalid UTF-8 in WebSocket message")
+            )
+        }
+        return try JSONDecoder().decode(StreamMessage.self, from: data)
+    }
+}
+
 // MARK: - Decode from raw WebSocket data
 
 extension ServerMessage {
     var typeLabel: String {
         switch self {
+        case .streamConnected: "streamConnected"
         case .connected: "connected"
         case .state: "state"
         case .sessionEnded: "sessionEnded"

@@ -7,8 +7,7 @@
  * Coverage:
  * - Storage: create, get, list, update, delete, ensureDefaultWorkspaces
  * - HTTP: GET/POST /workspaces, GET/PUT/DELETE /workspaces/:id
- * - Validation: name, skills, memoryNamespace, policyPreset
- * - Strict runtime requirement (legacy no-runtime records are rejected)
+ * - Validation: name, skills, memoryNamespace
  * - Edge cases: corrupt files, nonexistent workspaces, empty updates
  */
 
@@ -45,7 +44,6 @@ function createReq(overrides?: Partial<CreateWorkspaceRequest>): CreateWorkspace
   return {
     name: "test-workspace",
     skills: ["searxng", "fetch"],
-    policyPreset: "container",
     ...overrides,
   };
 }
@@ -60,7 +58,6 @@ describe("Storage.createWorkspace", () => {
     expect(ws.id.length).toBe(8);
     expect(ws.name).toBe("test-workspace");
     expect(ws.skills).toEqual(["searxng", "fetch"]);
-    expect(ws.policyPreset).toBe("container");
     expect(ws.createdAt).toBeGreaterThan(0);
     expect(ws.updatedAt).toBe(ws.createdAt);
   });
@@ -74,7 +71,6 @@ describe("Storage.createWorkspace", () => {
     const ws = storage.createWorkspace(createReq({
         description: "A coding workspace",
         icon: "terminal",
-        runtime: "host",
         systemPrompt: "Be helpful",
         hostMount: "~/workspace/oppi",
         memoryEnabled: true,
@@ -86,7 +82,7 @@ describe("Storage.createWorkspace", () => {
 
     expect(ws.description).toBe("A coding workspace");
     expect(ws.icon).toBe("terminal");
-    expect(ws.runtime).toBe("host");
+    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.hostMount).toBe("~/workspace/oppi");
     expect(ws.memoryEnabled).toBe(true);
@@ -113,29 +109,13 @@ describe("Storage.createWorkspace", () => {
     expect(ids.size).toBe(3);
   });
 
-  it("defaults policyPreset to 'container'", () => {
+  it("does not expose deprecated runtime field", () => {
     const ws = storage.createWorkspace({
-      name: "no-preset",
+      name: "no-runtime",
       skills: [],
     });
 
-    expect(ws.policyPreset).toBe("container");
-  });
-
-  it("infers runtime=container when policyPreset is container and no hostMount", () => {
-    const ws = storage.createWorkspace(createReq({ policyPreset: "container" }));
-    expect(ws.runtime).toBe("container");
-  });
-
-  it("infers runtime=host when hostMount is set", () => {
-    const ws = storage.createWorkspace(createReq({ hostMount: "~/workspace" }));
-    expect(ws.runtime).toBe("host");
-  });
-
-  it("respects explicit runtime override", () => {
-    const ws = storage.createWorkspace(createReq({ runtime: "host", policyPreset: "container" }),
-    );
-    expect(ws.runtime).toBe("host");
+    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
   });
 
   it("auto-generates memoryNamespace when memoryEnabled but no namespace given", () => {
@@ -197,16 +177,17 @@ describe("Storage.getWorkspace", () => {
     expect(storage.getWorkspace(ws.id)).toBeUndefined();
   });
 
-  it("rejects records missing runtime", () => {
-    const ws = storage.createWorkspace(createReq({ policyPreset: "container" }));
+  it("loads legacy records that still include runtime metadata", () => {
+    const ws = storage.createWorkspace(createReq());
     const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
-    // Simulate removed legacy fallback: runtime is now required.
     const raw = JSON.parse(readFileSync(path, "utf-8"));
-    delete raw.runtime;
+    raw.runtime = "container";
     writeFileSync(path, JSON.stringify(raw));
 
-    expect(storage.getWorkspace(ws.id)).toBeUndefined();
+    const loaded = storage.getWorkspace(ws.id);
+    expect(loaded).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(loaded!, "runtime")).toBe(false);
   });
 });
 
@@ -308,13 +289,6 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.icon).toBe("magnifyingglass");
   });
 
-  it("updates runtime", () => {
-    const ws = storage.createWorkspace(createReq({ runtime: "container" }));
-    const updated = storage.updateWorkspace(ws.id, { runtime: "host" });
-
-    expect(updated!.runtime).toBe("host");
-  });
-
   it("updates skills", () => {
     const ws = storage.createWorkspace(createReq({ skills: ["fetch"] }));
     const updated = storage.updateWorkspace(ws.id, { skills: ["fetch", "web-browser"] });
@@ -322,11 +296,22 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.skills).toEqual(["fetch", "web-browser"]);
   });
 
-  it("updates policyPreset", () => {
-    const ws = storage.createWorkspace(createReq({ policyPreset: "container" }));
-    const updated = storage.updateWorkspace(ws.id, { policyPreset: "host" });
+  it("updates policy permissions", () => {
+    const ws = storage.createWorkspace(createReq());
+    const updated = storage.updateWorkspace(ws.id, {
+      policy: {
+        permissions: [
+          {
+            id: "allow-npm-test",
+            decision: "allow",
+            match: { tool: "bash", executable: "npm", commandMatches: "npm test*" },
+          },
+        ],
+      },
+    });
 
-    expect(updated!.policyPreset).toBe("host");
+    expect(updated!.policy?.permissions).toHaveLength(1);
+    expect(updated!.policy?.permissions[0]?.id).toBe("allow-npm-test");
   });
 
   it("updates systemPrompt", () => {
@@ -402,13 +387,11 @@ describe("Storage.updateWorkspace", () => {
       name: "new",
       description: "updated",
       skills: ["web-browser"],
-      policyPreset: "host",
     });
 
     expect(updated!.name).toBe("new");
     expect(updated!.description).toBe("updated");
     expect(updated!.skills).toEqual(["web-browser"]);
-    expect(updated!.policyPreset).toBe("host");
   });
 
   it("bumps updatedAt timestamp", () => {
@@ -551,7 +534,7 @@ describe("Storage.ensureDefaultWorkspaces", () => {
     for (const ws of list) {
       expect(ws.id.length).toBe(8);
       expect(ws.skills).toBeInstanceOf(Array);
-      expect(ws.policyPreset).toBeTruthy();
+      expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
       expect(ws.createdAt).toBeGreaterThan(0);
     }
   });
@@ -566,44 +549,22 @@ describe("Storage.ensureDefaultWorkspaces", () => {
   });
 });
 
-// ─── Storage: runtime validation ───
+// ─── Storage: legacy workspace compatibility ───
 
-describe("Storage runtime validation", () => {
-  it("preserves explicit runtime=host", () => {
-    const ws = storage.createWorkspace(createReq({ runtime: "host" }));
-    const got = storage.getWorkspace(ws.id);
-    expect(got!.runtime).toBe("host");
-  });
-
-  it("preserves explicit runtime=container", () => {
-    const ws = storage.createWorkspace(createReq({ runtime: "container" }));
-    const got = storage.getWorkspace(ws.id);
-    expect(got!.runtime).toBe("container");
-  });
-
-  it("rejects legacy records missing runtime", () => {
-    const ws = storage.createWorkspace(createReq({ policyPreset: "container" }));
-    const path = join(dataDir, "workspaces", `${ws.id}.json`);
-
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    delete raw.runtime;
-    writeFileSync(path, JSON.stringify(raw));
-
-    expect(storage.getWorkspace(ws.id)).toBeUndefined();
-  });
-
-  it("list skips records missing runtime", () => {
+describe("Storage legacy workspace compatibility", () => {
+  it("list loads records even when legacy runtime key is present", () => {
     const good = storage.createWorkspace(createReq({ name: "good" }));
-    const bad = storage.createWorkspace(createReq({ name: "bad" }));
-    const badPath = join(dataDir, "workspaces", `${bad.id}.json`);
+    const legacy = storage.createWorkspace(createReq({ name: "legacy" }));
+    const legacyPath = join(dataDir, "workspaces", `${legacy.id}.json`);
 
-    const raw = JSON.parse(readFileSync(badPath, "utf-8"));
-    delete raw.runtime;
-    writeFileSync(badPath, JSON.stringify(raw));
+    const raw = JSON.parse(readFileSync(legacyPath, "utf-8"));
+    raw.runtime = "host";
+    writeFileSync(legacyPath, JSON.stringify(raw));
 
     const list = storage.listWorkspaces();
     expect(list.map((w) => w.id)).toContain(good.id);
-    expect(list.map((w) => w.id)).not.toContain(bad.id);
+    expect(list.map((w) => w.id)).toContain(legacy.id);
+    expect(Object.prototype.hasOwnProperty.call(list.find((w) => w.id == legacy.id)!, "runtime")).toBe(false);
   });
 });
 
@@ -724,19 +685,12 @@ describe("Workspace full lifecycle", () => {
     expect(storage.listWorkspaces().find((w) => w.id === ws.id)).toBeUndefined();
   });
 
-  it("create workspace, change policy preset between host and container", () => {
-    const ws = storage.createWorkspace(createReq({ name: "Admin", policyPreset: "container", runtime: "host" }),
-    );
-
-    expect(ws.policyPreset).toBe("container");
-
-    const fixed = storage.updateWorkspace(ws.id, { policyPreset: "host" });
-    expect(fixed!.policyPreset).toBe("host");
-    expect(fixed!.runtime).toBe("host"); // runtime should be preserved
-
-    // Verify persisted
+  it("create workspace omits deprecated runtime key", () => {
+    const ws = storage.createWorkspace(createReq({ name: "Admin" }));
     const reloaded = storage.getWorkspace(ws.id);
-    expect(reloaded!.policyPreset).toBe("host");
+
+    expect(Object.prototype.hasOwnProperty.call(ws, "runtime")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(reloaded!, "runtime")).toBe(false);
   });
 
   it("multiple users, independent lifecycle", () => {

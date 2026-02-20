@@ -40,7 +40,6 @@ const TEST_SESSION: Session = {
   contextWindow: 200000,
   lastMessage: "I've updated the README with the new API docs.",
   thinkingLevel: "high",
-  runtime: "host",
   piSessionFile: "/tmp/pi-sessions/abc123.jsonl",
   piSessionFiles: ["/tmp/pi-sessions/abc123.jsonl"],
   piSessionId: "uuid-abc-123",
@@ -110,6 +109,17 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       args: { command: "npm test" },
       toolCallId: "tc-001",
     },
+    tool_start_with_segments: {
+      type: "tool_start",
+      tool: "read",
+      args: { path: "src/main.ts", offset: 1, limit: 50 },
+      toolCallId: "tc-seg-001",
+      callSegments: [
+        { text: "read ", style: "bold" },
+        { text: "src/main.ts", style: "accent" },
+        { text: ":1-50", style: "warning" },
+      ],
+    },
     tool_output: {
       type: "tool_output",
       output: "All 42 tests passed",
@@ -120,6 +130,17 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "tool_end",
       tool: "bash",
       toolCallId: "tc-001",
+    },
+    tool_end_with_details: {
+      type: "tool_end",
+      tool: "remember",
+      toolCallId: "tc-ext-001",
+      details: { file: "2026-02-18.md", redacted: false },
+      isError: false,
+      resultSegments: [
+        { text: "✓ Saved", style: "success" },
+        { text: " → 2026-02-18.md", style: "muted" },
+      ],
     },
 
     // Turn delivery

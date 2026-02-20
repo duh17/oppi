@@ -36,22 +36,18 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
     // MARK: - Setup
 
-    /// Category ID for high-risk permissions (deny-only from lock screen).
+    /// Category ID for biometric-gated permissions (deny-only from lock screen).
     static let biometricCategoryId = "PERMISSION_BIOMETRIC"
 
     /// Register notification categories and request authorization.
     ///
     /// Two categories:
-    /// - `PERMISSION_REQUEST`: Allow/Deny actions (low/medium risk)
-    /// - `PERMISSION_BIOMETRIC`: Deny-only + "Review" (high/critical risk)
-    ///
-    /// High-risk allows require Face ID, which isn't available from
-    /// the lock screen. Users must open the app to approve.
+    /// - `PERMISSION_REQUEST`: Allow/Deny actions (when biometric disabled)
+    /// - `PERMISSION_BIOMETRIC`: Deny-only (when biometric enabled, must open app to allow)
     func setup() async {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
-        // Standard: Allow + Deny (low/medium risk)
         let allow = UNNotificationAction(
             identifier: Self.allowActionId,
             title: "Allow",
@@ -68,8 +64,7 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             intentIdentifiers: []
         )
 
-        // Biometric-gated: Deny only (high/critical risk)
-        // User must open app for Allow (triggers Face ID)
+        // Biometric-gated: Deny only — user must open app for Allow (triggers Face ID)
         let biometricCategory = UNNotificationCategory(
             identifier: Self.biometricCategoryId,
             actions: [deny],
@@ -104,19 +99,18 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
             return
         }
 
-        let needsBiometric = BiometricService.shared.requiresBiometric(for: request.risk)
+        let needsBiometric = BiometricService.shared.requiresBiometric
 
         let content = UNMutableNotificationContent()
         content.title = needsBiometric ? "⚠ Permission Required" : "Permission Required"
         content.subtitle = request.tool
         content.body = needsBiometric
-            ? "High-risk action details are hidden on lock screen.\nOpen app to approve with \(BiometricService.shared.biometricName)"
+            ? "Open app to approve with \(BiometricService.shared.biometricName)"
             : request.displaySummary
         content.categoryIdentifier = needsBiometric ? Self.biometricCategoryId : Self.categoryId
         content.userInfo = [
             "permissionId": request.id,
             "sessionId": request.sessionId,
-            "risk": request.risk.rawValue,
         ]
         content.sound = .default
         content.interruptionLevel = .timeSensitive

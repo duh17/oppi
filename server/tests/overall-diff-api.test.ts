@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { RouteHandler, type RouteContext } from "../src/routes.js";
-import type { Session } from "../src/types.js";
+import type { Session, Workspace } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -49,7 +49,18 @@ function makeSession(id: string): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    runtime: "container",
+  };
+}
+
+function makeWorkspace(baseDir: string, session: Session): Workspace {
+  const now = Date.now();
+  return {
+    id: session.workspaceId ?? "w1",
+    name: "workspace",
+    skills: [],
+    hostMount: workspaceRootDir(baseDir, session),
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -120,10 +131,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         storage: {
           getSession: (sessionId: string) =>
             sessionId === session.id ? session : undefined,
-          getWorkspace: () => undefined,
-        },
-        sandbox: {
-          getBaseDir: () => baseDir,
+          getWorkspace: () => makeWorkspace(baseDir, session),
+          getDataDir: () => baseDir,
         },
       } as unknown as RouteContext;
 
@@ -176,10 +185,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
       const ctx = {
         storage: {
           getSession: () => session,
-          getWorkspace: () => undefined,
-        },
-        sandbox: {
-          getBaseDir: () => baseDir,
+          getWorkspace: () => makeWorkspace(baseDir, session),
+          getDataDir: () => baseDir,
         },
       } as unknown as RouteContext;
 
@@ -208,10 +215,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
       const ctx = {
         storage: {
           getSession: () => session,
-          getWorkspace: () => undefined,
-        },
-        sandbox: {
-          getBaseDir: () => baseDir,
+          getWorkspace: () => makeWorkspace(baseDir, session),
+          getDataDir: () => baseDir,
         },
       } as unknown as RouteContext;
 
@@ -283,10 +288,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         storage: {
           getSession: (sessionId: string) =>
             sessionId === session.id ? session : undefined,
-          getWorkspace: () => undefined,
-        },
-        sandbox: {
-          getBaseDir: () => baseDir,
+          getWorkspace: () => makeWorkspace(baseDir, session),
+          getDataDir: () => baseDir,
         },
       } as unknown as RouteContext;
 
@@ -363,10 +366,8 @@ describe("GET /workspaces/:wid/sessions/:id/overall-diff", () => {
         storage: {
           getSession: (sessionId: string) =>
             sessionId === session.id ? session : undefined,
-          getWorkspace: () => undefined,
-        },
-        sandbox: {
-          getBaseDir: () => baseDir,
+          getWorkspace: () => makeWorkspace(baseDir, session),
+          getDataDir: () => baseDir,
         },
       } as unknown as RouteContext;
 

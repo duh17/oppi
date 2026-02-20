@@ -1,106 +1,113 @@
 # oppi-server
 
-Self-hosted server for the [Oppi](https://github.com/duh17/oppi) mobile coding agent. Pairs with the Oppi iOS app to give you a mobile interface for AI-assisted coding on your own machine.
+Self-hosted server runtime for the Oppi iOS app.
 
-## Quick Start
+## Requirements
+
+- Node.js 20+
+- `pi` CLI (`npm install -g @mariozechner/pi-coding-agent`)
+- `pi` provider login (`pi` then `/login`)
+- macOS or Linux (Linux container lane is exercised via `npm run test:e2e:linux`)
+
+## Install
+
+### From npm (once published)
+
+```bash
+npm install -g oppi-server
+```
+
+### From source (today)
 
 ```bash
 git clone https://github.com/duh17/oppi.git
 cd oppi/server
 npm install
+npm run build
+```
+
+## Quick Start
+
+### 1) Initialize config
+
+```bash
+# global install
+oppi init
+
+# source checkout
 npx oppi init
-npx oppi pair
+```
+
+### 2) Start server
+
+```bash
+# global install
+oppi serve
+
+# source checkout
 npx oppi serve
 ```
 
-## What It Does
+### 3) Pair phone
 
-Oppi runs [pi](https://github.com/badlogic/pi-mono) sessions on your Mac — in Apple containers or directly on the host — controlled from your phone. The server handles:
+In a second terminal:
 
-- **Session management** — create, fork, resume coding sessions
-- **Workspace isolation** — each workspace gets its own container or host sandbox
-- **Tool gating** — approve/deny file writes, shell commands from your phone
-- **Push notifications** — get notified when the agent needs input
-- **Live streaming** — real-time agent output over WebSocket
-- **Skill registry** — curate what your agent can do, with container compatibility detection
+```bash
+# global install
+oppi pair
 
-## Requirements
-
-- **Node.js** ≥ 22
-- **[pi](https://github.com/badlogic/pi-mono)** — the coding agent runtime (`npm install -g @mariozechner/pi-coding-agent`)
-- **macOS 15+** (Sequoia) — required for Apple container support; host mode may work on Linux but is untested
-- An LLM provider account (Anthropic, OpenAI, etc. — via `pi login`)
-
-## Commands
-
+# source checkout
+npx oppi pair
 ```
-oppi init                  Interactive setup wizard
-oppi serve                 Start the server
-oppi pair [--host <h>]     Generate QR code for iOS pairing
-oppi status                Show server + pairing status
-oppi token rotate          Rotate bearer token (invalidates existing clients)
-oppi config get <key>      Read a config value
-oppi config set <key> <v>  Write a config value
-oppi config show           Show effective config
-oppi config validate       Validate config file
-oppi env init              Capture shell PATH for host sessions
-oppi env show              Show resolved host PATH
+
+Scan the QR in Oppi iOS.
+
+## Common Commands
+
+```bash
+oppi init
+oppi serve
+oppi pair --host <hostname-or-ip>
+oppi status
+oppi doctor
+oppi token rotate
+oppi config show
+oppi config set <key> <value>
+oppi config validate
+oppi env init
 ```
 
 ## Configuration
 
-Config lives in `~/.config/oppi/config.json` (or `$OPPI_DATA_DIR/config.json`).
+- Config file: `~/.config/oppi/config.json`
+- Data directory: `~/.config/oppi/`
+- Override data dir with `OPPI_DATA_DIR` or `--data-dir`
 
-Key settings:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `port` | `7749` | HTTP/WS listen port |
-| `defaultModel` | `anthropic/claude-sonnet-4-20250514` | Default model for new sessions |
-| `maxSessionsPerWorkspace` | `3` | Session limit per workspace |
-| `maxSessionsGlobal` | `5` | Total session limit |
-| `security.profile` | `tailscale-permissive` | Security profile (`tailscale-permissive` or `strict`) |
-
-Run `oppi init` to set these interactively.
-
-## Data Directory
-
-All state (config, sessions, workspaces) lives under one directory:
-
-```
-~/.config/oppi/
-├── config.json          # Server configuration
-├── identity/            # Ed25519 server keys
-├── sessions/            # Session state + history
-├── workspaces/          # Workspace definitions
-├── rules.json           # Learned policy rules
-├── skills/              # User-defined skills
-└── sandbox/             # Container/host sandbox mounts
-```
-
-Override with `OPPI_DATA_DIR` or `--data-dir`.
+See:
+- `docs/config-schema.md`
+- `docs/security-pairing-spec-v3.md`
 
 ## Development
 
 ```bash
-npm install
-npm test          # vitest test suite
-npm run build     # TypeScript compile
-npm run check     # typecheck + lint + format check
-npm start         # Start server (from compiled dist/)
-npm run dev       # Start with tsx watch (auto-reload)
+npm test
+npm run build
+npm run check
+npm run dev
 ```
 
-## Security
+Advanced test lanes:
 
-- Ed25519 signed pairing invites (time-limited, single-use)
-- Timing-safe bearer token auth on all endpoints
-- Credential isolation — API keys never enter containers (auth proxy injects on the host)
-- Config files written 0600, directories 0700
-- Security profiles: `tailscale-permissive` (default) or `strict`
-- Hard deny rules block dangerous operations regardless of user policy
+```bash
+npm run test:e2e:linux
+npm run test:e2e:linux:full
+npm run test:e2e:lmstudio:contract
+```
 
-See `docs/` for detailed security documentation.
+## Notes
+
+- APNs push wiring exists on the server, but iOS release profile currently keeps push/live-activity surfaces disabled.
+- If pairing works but session start fails, verify `pi` is installed and logged in.
 
 ## License
 

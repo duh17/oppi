@@ -26,7 +26,9 @@ private final class SafeSizingCell: UICollectionViewCell {
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
-        let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+        guard let attributes = layoutAttributes.copy() as? UICollectionViewLayoutAttributes else {
+            return layoutAttributes
+        }
 
         let targetSize = CGSize(
             width: attributes.size.width,
@@ -88,6 +90,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         let reducer: TimelineReducer
         let toolOutputStore: ToolOutputStore
         let toolArgsStore: ToolArgsStore
+        let toolSegmentStore: ToolSegmentStore
         let connection: ServerConnection
         let audioPlayer: AudioPlayerService
         let theme: AppTheme
@@ -98,7 +101,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UICollectionView {
         let collectionView = UICollectionView(frame: .zero, collectionViewLayout: Self.makeLayout())
-        collectionView.backgroundColor = UIColor(Color.tokyoBg)
+        collectionView.backgroundColor = UIColor(Color.themeBg)
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
         collectionView.contentInset.bottom = 12
@@ -151,11 +154,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var reducer: TimelineReducer?
         private var toolOutputStore: ToolOutputStore?
         private var toolArgsStore: ToolArgsStore?
+        private var toolSegmentStore: ToolSegmentStore?
         private var connection: ServerConnection?
         private var audioPlayer: AudioPlayerService?
         private weak var collectionView: UICollectionView?
-        private var theme: AppTheme = .tokyoNight
-        private var currentThemeID: ThemeID = .tokyoNight
+        private var theme: AppTheme = .dark
+        private var currentThemeID: ThemeID = .dark
 
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
         /// streaming text grows the tail between throttled auto-scroll pulses.
@@ -236,9 +240,9 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     fallback.text = "⚠️ Timeline row unavailable"
                     fallback.secondaryText = "Native timeline dependencies missing."
                     fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-                    fallback.textProperties.color = UIColor(Color.tokyoOrange)
+                    fallback.textProperties.color = UIColor(Color.themeOrange)
                     fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                    fallback.secondaryTextProperties.color = UIColor(Color.tokyoComment)
+                    fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
                     cell.contentConfiguration = fallback
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     ChatTimelinePerf.recordCellConfigure(
@@ -262,9 +266,9 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     fallback.text = title
                     fallback.secondaryText = detail
                     fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-                    fallback.textProperties.color = UIColor(Color.tokyoOrange)
+                    fallback.textProperties.color = UIColor(Color.themeOrange)
                     fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                    fallback.secondaryTextProperties.color = UIColor(Color.tokyoComment)
+                    fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
                     cell.contentConfiguration = fallback
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     ChatTimelinePerf.recordCellConfigure(
@@ -561,7 +565,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return Int(String(digits))
         }
 
-
         private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
             if let currentAudioPlayer = self.audioPlayer,
                currentAudioPlayer === audioPlayer {
@@ -659,13 +662,14 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             reducer = configuration.reducer
             toolOutputStore = configuration.toolOutputStore
             toolArgsStore = configuration.toolArgsStore
+            toolSegmentStore = configuration.toolSegmentStore
             connection = configuration.connection
             self.collectionView = collectionView
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
             theme = configuration.theme
             currentThemeID = configuration.themeID
 
-            collectionView.backgroundColor = UIColor(Color.tokyoBg)
+            collectionView.backgroundColor = UIColor(Color.themeBg)
 
             var nextItemByID: [String: ChatItem] = [:]
             nextItemByID.reserveCapacity(configuration.items.count)
@@ -841,19 +845,11 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 // Keep tap as no-op so accidental touches don't churn reconfigures.
                 return
 
-            case .systemEvent(let systemID, let message):
-                guard let compaction = Self.compactionPresentation(from: message),
-                      compaction.canExpand else {
-                    return
-                }
-
-                if reducer.expandedItemIDs.contains(systemID) {
-                    reducer.expandedItemIDs.remove(systemID)
-                } else {
-                    reducer.expandedItemIDs.insert(systemID)
-                }
-
-                reconfigureItems([systemID], in: collectionView)
+            case .systemEvent:
+                // Compaction rows now use an explicit chevron button affordance
+                // for expand/collapse to keep row-level tap behavior consistent
+                // with double-tap copy gestures.
+                return
 
             default:
                 break
@@ -971,14 +967,43 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 
             if let compaction = Self.compactionPresentation(from: message) {
                 let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
+                let onToggleExpand: (() -> Void)?
+                if compaction.canExpand {
+                    onToggleExpand = { [weak self] in
+                        self?.toggleCompactionExpansion(itemID: itemID)
+                    }
+                } else {
+                    onToggleExpand = nil
+                }
+
                 return CompactionTimelineRowConfiguration(
                     presentation: compaction,
                     isExpanded: isExpanded,
-                    themeID: currentThemeID
+                    themeID: currentThemeID,
+                    onToggleExpand: onToggleExpand
                 )
             }
 
             return SystemTimelineRowConfiguration(message: message, themeID: currentThemeID)
+        }
+
+        private func toggleCompactionExpansion(itemID: String) {
+            guard let reducer,
+                  let collectionView,
+                  let item = currentItemByID[itemID],
+                  case .systemEvent(_, let message) = item,
+                  let compaction = Self.compactionPresentation(from: message),
+                  compaction.canExpand else {
+                return
+            }
+
+            if reducer.expandedItemIDs.contains(itemID) {
+                reducer.expandedItemIDs.remove(itemID)
+            } else {
+                reducer.expandedItemIDs.insert(itemID)
+            }
+
+            reconfigureItems([itemID], in: collectionView)
         }
 
         private func nativeErrorConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
@@ -995,7 +1020,9 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 args: toolArgsStore?.args(for: itemID),
                 expandedItemIDs: reducer?.expandedItemIDs ?? [],
                 fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
-                isLoadingOutput: toolOutputLoadState.isLoading(itemID)
+                isLoadingOutput: toolOutputLoadState.isLoading(itemID),
+                callSegments: toolSegmentStore?.callSegments(for: itemID),
+                resultSegments: toolSegmentStore?.resultSegments(for: itemID)
             )
 
             return ToolPresentationBuilder.build(

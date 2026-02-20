@@ -7,13 +7,13 @@ struct FreshnessChip: View {
     private var tint: Color {
         switch state {
         case .live:
-            return .tokyoGreen
+            return .themeGreen
         case .syncing:
-            return .tokyoBlue
+            return .themeBlue
         case .offline:
-            return .tokyoRed
+            return .themeRed
         case .stale:
-            return .tokyoOrange
+            return .themeOrange
         }
     }
 
@@ -37,7 +37,7 @@ struct FreshnessChip: View {
                 .foregroundStyle(tint)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.themeComment)
                 .monospacedDigit()
         }
         .padding(.horizontal, 8)

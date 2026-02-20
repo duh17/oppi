@@ -11,76 +11,24 @@ describe("startup security warnings", () => {
     expect(warnings.some((warning) => warning.includes("host=0.0.0.0"))).toBe(true);
   });
 
-  it("does not warn for strict loopback-only hardened posture", () => {
-    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-hardened");
+  it("warns when allowedCidrs include global ranges", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-global-cidr");
+    config.allowedCidrs = ["0.0.0.0/0"];
+
+    const warnings = formatStartupSecurityWarnings(config);
+
+    expect(
+      warnings.some((warning) => warning.includes("allowedCidrs contains a global range")),
+    ).toBe(true);
+  });
+
+  it("has no warnings for loopback bind with private CIDRs", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-loopback");
     config.host = "127.0.0.1";
-    config.security = {
-      profile: "strict",
-      requireTlsOutsideTailnet: true,
-      allowInsecureHttpInTailnet: false,
-      requirePinnedServerIdentity: true,
-    };
-    config.identity = {
-      ...config.identity!,
-      enabled: true,
-    };
-    config.invite = {
-      ...config.invite!,
-      maxAgeSeconds: 600,
-    };
+    config.allowedCidrs = ["127.0.0.0/8"];
 
     const warnings = formatStartupSecurityWarnings(config);
 
     expect(warnings).toHaveLength(0);
-  });
-
-  it("warns when non-loopback bind allows plaintext outside tailnet", () => {
-    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-public");
-    config.host = "192.168.1.20";
-    config.security = {
-      ...config.security!,
-      requireTlsOutsideTailnet: false,
-    };
-
-    const warnings = formatStartupSecurityWarnings(config);
-
-    expect(
-      warnings.some((warning) =>
-        warning.includes("security.requireTlsOutsideTailnet=false"),
-      ),
-    ).toBe(true);
-  });
-
-  it("warns on disabled trust pinning and identity", () => {
-    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-trust");
-    config.host = "127.0.0.1";
-    config.security = {
-      ...config.security!,
-      requirePinnedServerIdentity: false,
-    };
-    config.identity = {
-      ...config.identity!,
-      enabled: false,
-    };
-
-    const warnings = formatStartupSecurityWarnings(config);
-
-    expect(
-      warnings.some((warning) => warning.includes("security.requirePinnedServerIdentity=false")),
-    ).toBe(true);
-    expect(warnings.some((warning) => warning.includes("identity.enabled=false"))).toBe(true);
-  });
-
-  it("warns when invite TTL is too long", () => {
-    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-ttl");
-    config.host = "127.0.0.1";
-    config.invite = {
-      ...config.invite!,
-      maxAgeSeconds: 7200,
-    };
-
-    const warnings = formatStartupSecurityWarnings(config);
-
-    expect(warnings.some((warning) => warning.includes("invite.maxAgeSeconds=7200"))).toBe(true);
   });
 });

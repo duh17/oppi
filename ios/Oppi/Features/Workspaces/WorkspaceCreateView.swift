@@ -13,14 +13,12 @@ struct WorkspaceCreateView: View {
     @State private var description = ""
     @State private var icon = ""
     @State private var selectedSkills: Set<String> = []
-    @State private var runtime = "container"
-    @State private var policyPreset = "container"
     @State private var isCreating = false
     @State private var error: String?
 
     /// Skills from the target server.
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skillsByServer[server.id] ?? connection.workspaceStore.skills
+        connection.workspaceStore.skillsByServer[server.id] ?? []
     }
 
     var body: some View {
@@ -38,7 +36,7 @@ struct WorkspaceCreateView: View {
                 Section("Skills") {
                     if skills.isEmpty {
                         Text("Loading skills…")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else {
                         ForEach(skills) { skill in
                             Button {
@@ -50,66 +48,31 @@ struct WorkspaceCreateView: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 4) {
-                                            Text(skill.name)
-                                                .font(.body)
-
-                                            if !skill.containerSafe {
-                                                Image(systemName: "exclamationmark.triangle.fill")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.orange)
-                                            }
-                                        }
+                                        Text(skill.name)
+                                            .font(.body)
 
                                         Text(skill.description)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.themeComment)
                                             .lineLimit(2)
                                     }
 
                                     Spacer()
 
                                     Image(systemName: selectedSkills.contains(skill.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .tokyoBlue : .secondary)
+                                        .foregroundStyle(selectedSkills.contains(skill.name) ? .themeBlue : .themeComment)
                                         .imageScale(.large)
                                 }
                             }
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
                         }
                     }
-                }
-
-                Section("Runtime") {
-                    Picker("Runtime", selection: $runtime) {
-                        Text("Container").tag("container")
-                        Text("Host").tag("host")
-                    }
-                    .pickerStyle(.segmented)
-
-                    Text(runtime == "container"
-                         ? "Container isolates filesystem/tools (recommended)."
-                         : "Host runs directly on Mac with full host access.")
-                        .font(.caption)
-                        .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
-                }
-
-                Section("Policy") {
-                    Picker("Preset", selection: $policyPreset) {
-                        ForEach(policyOptions, id: \.value) { option in
-                            Text(option.label).tag(option.value)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    Text(policyPresetDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 if let error {
                     Section {
                         Text(error)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                             .font(.caption)
                     }
                 }
@@ -128,40 +91,7 @@ struct WorkspaceCreateView: View {
                 }
             }
             .task { await loadSkills() }
-            .onChange(of: runtime) { _, newRuntime in
-                normalizePolicyPreset(for: newRuntime)
-            }
         }
-    }
-
-    private var policyOptions: [(label: String, value: String)] {
-        if runtime == "host" {
-            return [
-                ("Host Dev", "host"),
-                ("Host Standard", "host_standard"),
-                ("Host Locked", "host_locked"),
-            ]
-        }
-        return [("Container", "container")]
-    }
-
-    private var policyPresetDescription: String {
-        switch policyPreset {
-        case "host":
-            return "Developer trust mode: low friction, broad local autonomy."
-        case "host_standard":
-            return "Approval-first host mode for regular users."
-        case "host_locked":
-            return "Strict host mode: unknown actions blocked by default."
-        default:
-            return "Container mode: isolated runtime with standard supervision."
-        }
-    }
-
-    private func normalizePolicyPreset(for runtime: String) {
-        let allowed = Set(policyOptions.map(\.value))
-        guard !allowed.contains(policyPreset) else { return }
-        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private func loadSkills() async {
@@ -172,7 +102,7 @@ struct WorkspaceCreateView: View {
                 let skills = try await api.listSkills()
                 connection.workspaceStore.skillsByServer[server.id] = skills
             } catch {
-                // Fall back to flat skills list
+                // Keep empty state; refresh will retry.
             }
         }
     }
@@ -192,16 +122,12 @@ struct WorkspaceCreateView: View {
             name: name,
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
-            skills: Array(selectedSkills),
-            runtime: runtime,
-            policyPreset: policyPreset
+            skills: Array(selectedSkills)
         )
 
         do {
             let workspace = try await api.createWorkspace(request)
             connection.workspaceStore.upsert(workspace, serverId: server.id)
-            // Also update flat list for backward compat
-            connection.workspaceStore.upsert(workspace)
             dismiss()
         } catch {
             self.error = error.localizedDescription

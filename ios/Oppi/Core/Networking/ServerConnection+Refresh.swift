@@ -234,6 +234,12 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
+        // 0. Ensure /stream WebSocket is alive. If the WS died during background
+        //    (max reconnect attempts exhausted), restart it now.
+        if wsClient?.status == .disconnected || streamConsumptionTask == nil {
+            connectStream()
+        }
+
         // 1. Refresh global lists as needed (single-flight + freshness-gated).
         await refreshWorkspaceAndSessionLists(force: false)
 
@@ -244,7 +250,9 @@ extension ServerConnection {
                 id: request.id, outcome: .expired,
                 tool: request.tool, summary: request.displaySummary
             )
-            PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
+            if ReleaseFeatures.pushNotificationsEnabled {
+                PermissionNotificationService.shared.cancelNotification(permissionId: request.id)
+            }
         }
         if !expiredRequests.isEmpty {
             syncLiveActivityPermissions()
@@ -258,7 +266,7 @@ extension ServerConnection {
             return
         }
 
-        let streamAttached = wsClient?.connectedSessionId == sessionId
+        let streamAttached = sessionContinuations[sessionId] != nil
         let streamAlive: Bool
         if streamAttached {
             switch wsClient?.status {

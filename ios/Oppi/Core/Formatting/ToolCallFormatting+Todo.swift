@@ -164,9 +164,9 @@ extension ToolCallFormatting {
     /// Shows only non-zero section counts, e.g. "10 open" or "2 assigned · 5 open · 1 closed".
     private static func todoListTrailing(_ list: TodoListPayload) -> String {
         var parts: [String] = []
-        if list.assignedItems.count > 0 { parts.append("\(list.assignedItems.count) assigned") }
-        if list.openItems.count > 0 { parts.append("\(list.openItems.count) open") }
-        if list.closedItems.count > 0 { parts.append("\(list.closedItems.count) closed") }
+        if !list.assignedItems.isEmpty { parts.append("\(list.assignedItems.count) assigned") }
+        if !list.openItems.isEmpty { parts.append("\(list.openItems.count) open") }
+        if !list.closedItems.isEmpty { parts.append("\(list.closedItems.count) closed") }
         return parts.isEmpty ? "empty" : parts.joined(separator: " · ")
     }
 

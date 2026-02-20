@@ -12,6 +12,7 @@ enum OnboardingMode {
 struct OnboardingView: View {
     var mode: OnboardingMode = .initial
 
+    @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
@@ -40,7 +41,7 @@ struct OnboardingView: View {
 
                 Text("Control your pi agents\nfrom your phone.")
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
                     .multilineTextAlignment(.center)
             }
 
@@ -75,17 +76,17 @@ struct OnboardingView: View {
 
                 case .success:
                     Label("Connected!", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(.themeGreen)
                         .font(.headline)
 
                 case .failed(let error):
                     VStack(spacing: 8) {
                         Label("Connection failed", systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                             .font(.headline)
                         Text(error)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
 
                         Button("Try Again") {
                             if canScan {
@@ -144,10 +145,16 @@ struct OnboardingView: View {
 
             let effectiveCreds = bootstrap.effectiveCredentials
 
-            // Add to ServerStore (handles fingerprint dedup via addOrUpdate)
-            serverStore.addOrUpdate(from: effectiveCreds)
+            guard let pairedServer = PairedServer(
+                from: effectiveCreds,
+                sortOrder: serverStore.servers.count
+            ) else {
+                connectionTest = .failed("Missing server fingerprint")
+                return
+            }
 
-            guard connection.configure(credentials: effectiveCreds) else {
+            coordinator.addServer(pairedServer, switchTo: false)
+            guard coordinator.switchToServer(pairedServer) else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
             }
@@ -262,51 +269,45 @@ enum InviteBootstrapService {
             )
         }
 
-        let api = APIClient(baseURL: baseURL, token: credentials.token)
+        let bootstrapAPI = APIClient(baseURL: baseURL, token: credentials.token)
+
+        let effectiveToken: String
+        if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
+            do {
+                let pairResult = try await bootstrapAPI.pairDevice(pairingToken: pairingToken)
+                effectiveToken = pairResult.deviceToken
+            } catch {
+                throw InviteBootstrapError.message("Pairing failed. Request a fresh invite and try again.")
+            }
+        } else {
+            effectiveToken = credentials.token
+        }
+
+        let api = APIClient(baseURL: baseURL, token: effectiveToken)
 
         let healthy = try await api.health()
         guard healthy else {
             throw InviteBootstrapError.message("Server is not healthy")
         }
 
-        let profile: ServerSecurityProfile
-        do {
-            profile = try await api.securityProfile()
-        } catch {
-            throw InviteBootstrapError.message(
-                "Unable to fetch server security profile. Re-pair with a current server build."
-            )
-        }
-
-        if let violation = ConnectionSecurityPolicy.evaluate(host: credentials.host, profile: profile) {
-            throw InviteBootstrapError.message(violation.localizedDescription)
-        }
-
-        if let inviteMismatch = inviteMismatchReason(credentials: credentials, profile: profile) {
-            throw InviteBootstrapError.message(inviteMismatch)
-        }
-
         _ = try await api.me()
 
         let sameTarget = isSameServer(existingCredentials, credentials)
         let existingFingerprint = existingCredentials?.normalizedServerFingerprint
-        let profileFingerprint = profile.identity.normalizedFingerprint
+        let inviteFingerprint = credentials.normalizedServerFingerprint
         let requiresTrustReset = sameTarget
             && existingFingerprint != nil
-            && profileFingerprint != nil
-            && existingFingerprint != profileFingerprint
+            && inviteFingerprint != nil
+            && existingFingerprint != inviteFingerprint
 
-        let requiresPinnedTrust = (profile.requirePinnedServerIdentity ?? false) && profileFingerprint != nil
-        let requiresInviteTrust = credentials.inviteVersion == 2 && credentials.normalizedServerFingerprint != nil
+        let requiresInviteTrust = inviteFingerprint != nil
 
-        if requiresTrustReset || requiresPinnedTrust || requiresInviteTrust {
+        if requiresTrustReset || requiresInviteTrust {
             let reason: String
             if requiresTrustReset {
                 reason = "Server identity changed for \(credentials.host). Confirm trust reset."
             } else {
-                let displayFingerprint = profileFingerprint
-                    ?? credentials.normalizedServerFingerprint
-                    ?? "unknown"
+                let displayFingerprint = inviteFingerprint ?? "unknown"
                 reason = "Trust \(credentials.host) (\(shortFingerprint(displayFingerprint)))"
             }
 
@@ -316,43 +317,13 @@ enum InviteBootstrapService {
             }
         }
 
-        let effectiveCredentials = credentials.applyingSecurityProfile(profile)
+        let effectiveCredentials = credentials.withAuthToken(effectiveToken)
         let sessions = try await api.listSessions()
 
         return InviteBootstrapResult(
             effectiveCredentials: effectiveCredentials,
             sessions: sessions
         )
-    }
-
-    private static func inviteMismatchReason(
-        credentials: ServerCredentials,
-        profile: ServerSecurityProfile
-    ) -> String? {
-        guard credentials.inviteVersion == 2 else { return nil }
-
-        let inviteFingerprint = credentials.normalizedServerFingerprint
-        let profileFingerprint = profile.identity.normalizedFingerprint
-
-        if let inviteFingerprint,
-           let profileFingerprint,
-           inviteFingerprint != profileFingerprint {
-            return "Signed invite fingerprint mismatch. Refusing connection."
-        }
-
-        if let inviteKeyId = credentials.inviteKeyId,
-           !inviteKeyId.isEmpty,
-           inviteKeyId != profile.identity.keyId {
-            return "Signed invite key mismatch (kid changed). Refusing connection."
-        }
-
-        if let inviteProfile = credentials.securityProfile,
-           !inviteProfile.isEmpty,
-           inviteProfile != profile.profile {
-            return "Signed invite profile mismatch. Refusing connection."
-        }
-
-        return nil
     }
 
     private static func isSameServer(_ lhs: ServerCredentials?, _ rhs: ServerCredentials) -> Bool {

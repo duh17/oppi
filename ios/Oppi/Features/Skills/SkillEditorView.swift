@@ -208,7 +208,7 @@ struct SkillEditorView: View {
                     )
                 } label: {
                     Image(systemName: "keyboard.chevron.compact.down")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
             .padding(.horizontal, 4)
@@ -491,7 +491,6 @@ struct HighlightingTextEditor: UIViewRepresentable {
                 text = tv.text
             }
         }
-
 
     }
 }

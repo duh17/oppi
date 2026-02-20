@@ -11,7 +11,7 @@
 import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateId } from "./id.js";
-import type { RiskLevel } from "./policy.js";
+
 
 // ─── Types ───
 
@@ -31,7 +31,6 @@ export interface AuditEntry {
   // What was requested
   tool: string;
   displaySummary: string;
-  risk: RiskLevel;
 
   // What happened
   decision: "allow" | "deny";

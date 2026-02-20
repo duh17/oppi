@@ -7,8 +7,8 @@ enum JSONValue: Sendable, Equatable, Hashable {
     case number(Double)
     case bool(Bool)
     case null
-    case array([JSONValue])
-    case object([String: JSONValue])
+    case array([Self])
+    case object([String: Self])
 }
 
 // MARK: - Codable

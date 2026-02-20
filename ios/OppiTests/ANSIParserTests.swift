@@ -65,8 +65,8 @@ struct ANSIParserTests {
         let freshColor = bridged.attribute(.foregroundColor, at: freshRange.location, effectiveRange: nil) as? UIColor
         let plainColor = bridged.attribute(.foregroundColor, at: plainRange.location, effectiveRange: nil) as? UIColor
 
-        #expect(freshColor == UIColor(Color.tokyoGreen))
-        #expect(plainColor == UIColor(Color.tokyoFg))
+        #expect(freshColor == UIColor(Color.themeGreen))
+        #expect(plainColor == UIColor(Color.themeFg))
     }
 
     @Test("handles kypu status output")
@@ -116,7 +116,7 @@ struct ANSIParserTests {
 
     @Test("empty input")
     func emptyInput() {
-        #expect(ANSIParser.strip("") == "")
-        #expect(String(ANSIParser.attributedString(from: "").characters) == "")
+        #expect(ANSIParser.strip("").isEmpty)
+        #expect(String(ANSIParser.attributedString(from: "").characters).isEmpty)
     }
 }

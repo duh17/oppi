@@ -73,8 +73,9 @@ struct WorkspaceHomeView: View {
     private func serverSection(for server: PairedServer) -> some View {
         let serverId = server.id
         let workspaces = sortedWorkspaces(for: serverId)
-        let freshness = connection.workspaceStore.freshnessState(forServer: serverId)
-        let freshnessLabel = connection.workspaceStore.freshnessLabel(forServer: serverId)
+        let serverConn = coordinator.connection(for: serverId)
+        let freshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
+        let freshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
         let isUnreachable = freshness == .offline
 
         Section {
@@ -90,7 +91,9 @@ struct WorkspaceHomeView: View {
                             activeCount: activeCount(for: workspace.id, serverId: serverId),
                             stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
                             hasAttention: hasAttention(for: workspace.id, serverId: serverId),
-                            isUnreachable: isUnreachable
+                            isUnreachable: isUnreachable,
+                            badgeIcon: server.resolvedBadgeIcon,
+                            badgeColor: server.resolvedBadgeColor
                         )
                     }
                     .disabled(isUnreachable)
@@ -112,7 +115,7 @@ struct WorkspaceHomeView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                         .padding(.leading, 8)
                 }
                 .buttonStyle(.plain)
@@ -124,11 +127,13 @@ struct WorkspaceHomeView: View {
     // MARK: - Data
 
     private var allWorkspacesEmpty: Bool {
-        connection.workspaceStore.workspacesByServer.values.allSatisfy { $0.isEmpty }
+        coordinator.connections.values.allSatisfy { conn in
+            conn.workspaceStore.workspaces.isEmpty
+        }
     }
 
     private func workspacesForServer(_ serverId: String) -> [Workspace] {
-        connection.workspaceStore.workspacesByServer[serverId] ?? []
+        coordinator.connection(for: serverId)?.workspaceStore.workspaces ?? []
     }
 
     private func sortedWorkspaces(for serverId: String) -> [Workspace] {
@@ -148,10 +153,10 @@ struct WorkspaceHomeView: View {
 
     /// Sessions for a workspace on a specific server.
     ///
-    /// Uses per-server session query so non-active servers show correct counts
-    /// instead of always reading from the active partition.
+    /// Routes to the server's own SessionStore (per-server connections).
     private func sessionsFor(_ workspaceId: String, serverId: String) -> [Session] {
-        sessionStore.sessions(forServer: serverId).filter { $0.workspaceId == workspaceId }
+        let conn = coordinator.connection(for: serverId)
+        return (conn?.sessionStore.sessions ?? []).filter { $0.workspaceId == workspaceId }
     }
 
     private func activeCount(for workspaceId: String, serverId: String) -> Int {
@@ -163,7 +168,8 @@ struct WorkspaceHomeView: View {
     }
 
     private func hasAttention(for workspaceId: String, serverId: String) -> Bool {
-        let serverPermissions = permissionStore.pending(forServer: serverId)
+        let conn = coordinator.connection(for: serverId)
+        let serverPermissions = conn?.permissionStore.pending ?? []
         return sessionsFor(workspaceId, serverId: serverId).contains { session in
             serverPermissions.contains { $0.sessionId == session.id }
             || session.status == .error
@@ -190,12 +196,14 @@ private struct ServerSectionHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "server.rack")
-                    .font(.caption2)
-                    .foregroundStyle(statusColor)
+                RuntimeBadge(
+                    compact: true,
+                    icon: server.resolvedBadgeIcon,
+                    badgeColor: server.resolvedBadgeColor
+                )
                 Text(server.name)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.themeFg)
             }
 
             Spacer()
@@ -209,14 +217,6 @@ private struct ServerSectionHeader: View {
         .padding(.vertical, 2)
     }
 
-    private var statusColor: Color {
-        switch freshnessState {
-        case .live: return .green
-        case .syncing: return .blue
-        case .stale: return .orange
-        case .offline: return .red
-        }
-    }
 }
 
 // MARK: - Workspace Home Row
@@ -227,6 +227,8 @@ private struct WorkspaceHomeRow: View {
     let stoppedCount: Int
     let hasAttention: Bool
     var isUnreachable: Bool = false
+    var badgeIcon: ServerBadgeIcon = .defaultValue
+    var badgeColor: ServerBadgeColor = .defaultValue
 
     var body: some View {
         HStack(spacing: 12) {
@@ -238,7 +240,7 @@ private struct WorkspaceHomeRow: View {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
-                        .foregroundStyle(isUnreachable ? .secondary : .primary)
+                        .foregroundStyle(isUnreachable ? .themeComment : .themeFg)
 
                     if hasAttention {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -248,22 +250,22 @@ private struct WorkspaceHomeRow: View {
                 }
 
                 HStack(spacing: 8) {
-                    RuntimeBadge(runtime: workspace.runtime, compact: true)
+                    RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
 
                     if isUnreachable {
                         Text("Unreachable")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.themeRed)
                     } else if activeCount > 0 {
                         Label("\(activeCount) active", systemImage: "circle.fill")
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.themeGreen)
                     }
 
                     if stoppedCount > 0 {
                         Label("\(stoppedCount) stopped", systemImage: "stop.circle")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
 
                     if !isUnreachable && activeCount == 0 && stoppedCount == 0 {

@@ -30,6 +30,7 @@ import {
   spawnPiHost,
   type SpawnDeps,
 } from "../src/session-spawn.js";
+import { PolicyEngine } from "../src/policy.js";
 import {
   awaitProcessReady,
   getSpawnPolicy,
@@ -86,7 +87,7 @@ describe("session-spawn spawnPiHost", () => {
     await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
 
     expect(createSessionSocket).toHaveBeenCalledWith("s1", "w1");
-    const hostPolicy = getSpawnPolicy(setSessionPolicy, "s1", "host");
+    const hostPolicy = getSpawnPolicy(setSessionPolicy, "s1", "default");
     const hostDecision = hostPolicy.evaluate({
       tool: "bash",
       input: { command: "git push origin main" },
@@ -108,6 +109,7 @@ describe("session-spawn spawnPiHost", () => {
       HOST_MEMORY_EXTENSION,
       "--extension",
       HOST_TODOS_EXTENSION,
+      "--no-skills",
       "--provider",
       "openai-codex",
       "--model",
@@ -127,6 +129,103 @@ describe("session-spawn spawnPiHost", () => {
     expect(opts.env.OPPI_SESSION).toBe("s1");
         expect(opts.env.OPPI_GATE_HOST).toBe("127.0.0.1");
     expect(opts.env.OPPI_GATE_PORT).toBe("45678");
+  });
+
+  it("loads only workspace-enabled skills via --no-skills + --skill", async () => {
+    const session = makeSession();
+    const workspace = makeWorkspace({
+      skills: ["fetch", "search", "fetch", "missing"],
+      memoryEnabled: false,
+    });
+
+    const createSessionSocket = vi.fn(async () => 45680);
+    const setSessionPolicy = vi.fn();
+    const deps = makeDeps({
+      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      piExecutable: "/opt/homebrew/bin/pi",
+      resolveSkillPath: (name: string) => {
+        if (name === "fetch") return "/Users/example/.pi/agent/skills/fetch";
+        if (name === "search") return "/Users/example/.pi/agent/skills/search";
+        return undefined;
+      },
+    });
+
+    const expectedCwd = join(homedir(), "workspace", "oppi");
+    const existing = new Set<string>([
+      expectedCwd,
+      OPPI_GATE_EXTENSION,
+      "/Users/example/.pi/agent/skills/fetch",
+      "/Users/example/.pi/agent/skills/search",
+    ]);
+    mockedExistsSync.mockImplementation((path) =>
+      typeof path === "string" && existing.has(path),
+    );
+
+    const proc = new StubProcess();
+    mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+    await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+    const [, args] = mockedSpawn.mock.calls[0];
+    expect(args).toContain("--no-skills");
+    expect(args).toContain("--skill");
+    expect(args).toContain("/Users/example/.pi/agent/skills/fetch");
+    expect(args).toContain("/Users/example/.pi/agent/skills/search");
+    expect(
+      args.filter((arg) => arg === "/Users/example/.pi/agent/skills/fetch").length,
+    ).toBe(1);
+    expect(args).not.toContain("missing");
+  });
+
+  it("applies workspace fallback overrides when toggled ask ⇄ allow", async () => {
+    const evaluateDefaultAction = async (workspaceFallback: "allow" | "ask") => {
+      const session = makeSession();
+      const workspace = makeWorkspace({
+        memoryEnabled: false,
+        policy: { permissions: [], fallback: workspaceFallback },
+      });
+
+      const createSessionSocket = vi.fn(async () => 49001);
+      const setSessionPolicy = vi.fn();
+      const deps = makeDeps({
+        gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+        piExecutable: "/opt/homebrew/bin/pi",
+        globalPolicy: {
+          schemaVersion: 1,
+          mode: "host",
+          fallback: "ask",
+          guardrails: [],
+          permissions: [],
+        },
+      });
+
+      const expectedCwd = join(homedir(), "workspace", "oppi");
+      const existing = new Set<string>([expectedCwd, OPPI_GATE_EXTENSION]);
+      mockedExistsSync.mockImplementation((path) =>
+        typeof path === "string" && existing.has(path),
+      );
+
+      const proc = new StubProcess();
+      mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+
+      await awaitProcessReady(spawnPiHost(session, workspace, deps), proc);
+
+      expect(setSessionPolicy).toHaveBeenCalledWith("s1", expect.any(PolicyEngine));
+      const policy = setSessionPolicy.mock.calls.at(-1)?.[1] as PolicyEngine | undefined;
+      if (!policy) throw new Error("Expected setSessionPolicy to receive a policy engine");
+
+      const decision = policy.evaluate({
+        tool: "bash",
+        input: { command: "echo fallback-check" },
+        toolCallId: "tc-fallback",
+      });
+
+      return decision.action;
+    };
+
+    expect(await evaluateDefaultAction("allow")).toBe("allow");
+    expect(await evaluateDefaultAction("ask")).toBe("ask");
+    expect(await evaluateDefaultAction("allow")).toBe("allow");
   });
 
   it("loads named extensions from workspace.extensions", async () => {
@@ -254,7 +353,7 @@ describe("session-spawn spawnPiHost", () => {
     });
 
     await expect(spawnPiHost(session, workspace, deps)).rejects.toThrow(
-      "Host workspace path not found",
+      "Workspace path not found",
     );
     expect(mockedSpawn).not.toHaveBeenCalled();
   });

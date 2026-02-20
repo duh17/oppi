@@ -62,7 +62,6 @@ struct TimelineCacheTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,

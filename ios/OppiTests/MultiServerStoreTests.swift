@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
+// swiftlint:disable force_try force_unwrapping
+
 @Suite("WorkspaceStore Multi-Server", .serialized)
 struct MultiServerStoreTests {
 
@@ -314,9 +316,7 @@ struct MultiServerStoreTests {
             name: name,
             description: nil,
             icon: nil,
-            runtime: "container",
             skills: [],
-            policyPreset: "container",
             systemPrompt: nil,
             hostMount: nil,
             memoryEnabled: nil,
@@ -351,7 +351,7 @@ struct MultiServerStoreTests {
     }
 }
 
-final class MultiServerMockURLProtocol: URLProtocol, @unchecked Sendable {
+class MultiServerMockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, HTTPURLResponse))?
 
     override class func canInit(with request: URLRequest) -> Bool { true }

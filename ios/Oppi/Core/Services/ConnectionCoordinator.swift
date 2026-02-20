@@ -3,37 +3,91 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
 
-/// Orchestrates multi-server connections.
+/// Orchestrates concurrent multi-server connections.
 ///
-/// Owns the single `ServerConnection` (one WebSocket at a time) and coordinates
-/// server switching across all stores. Each server gets isolated session/permission
-/// data via the stores' internal partitioning.
+/// Each paired server gets its own `ServerConnection` with a persistent
+/// `/stream` WebSocket, its own stores, reducer, and coalescer. The
+/// coordinator manages the pool and tracks which server is "focused"
+/// (shown in the UI).
 ///
 /// Views use `@Environment(ConnectionCoordinator.self)` for multi-server operations
 /// and `@Environment(ServerConnection.self)` for active-connection operations.
 @MainActor @Observable
 final class ConnectionCoordinator {
-    let connection: ServerConnection
     let serverStore: ServerStore
 
-    /// Currently active server ID (fingerprint).
+    /// Currently focused server ID (fingerprint). The server whose data
+    /// is displayed in the main UI.
     private(set) var activeServerId: String?
 
-    /// API clients keyed by server ID — created on demand, cached for reuse.
-    private var apiClients: [String: APIClient] = [:]
+    /// Per-server connections. Each has its own WS, stores, reducer.
+    private(set) var connections: [String: ServerConnection] = [:]
+
+    /// The focused server's connection.
+    /// Falls back to a disconnected sentinel if no server is active.
+    var activeConnection: ServerConnection {
+        if let id = activeServerId, let conn = connections[id] {
+            return conn
+        }
+        // Fallback: return the first connection or a disconnected sentinel.
+        // This should not happen in normal operation (always have an active server).
+        return connections.values.first ?? disconnectedSentinel
+    }
+
+    /// Sentinel connection used when no servers are configured.
+    /// Prevents crashes from nil environment injection.
+    private let disconnectedSentinel = ServerConnection()
+
+    // Legacy compatibility: `connection` forwards to `activeConnection`.
+    var connection: ServerConnection { activeConnection }
 
     init(serverStore: ServerStore) {
         self.serverStore = serverStore
-        self.connection = ServerConnection()
+    }
+
+    // MARK: - Connection Pool
+
+    /// Get or create a ServerConnection for a specific server.
+    @discardableResult
+    func ensureConnection(for server: PairedServer) -> ServerConnection {
+        let serverId = server.id
+
+        if let existing = connections[serverId] {
+            return existing
+        }
+
+        let conn = ServerConnection()
+        guard conn.configure(credentials: server.credentials) else {
+            logger.error("Failed to configure connection for \(server.name, privacy: .public)")
+            return disconnectedSentinel
+        }
+
+        // Initialize the stores' active partition to this server
+        conn.sessionStore.switchServer(to: serverId)
+        conn.permissionStore.switchServer(to: serverId)
+        conn.workspaceStore.switchServer(to: serverId)
+
+        connections[serverId] = conn
+        logger.info("Created connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
+        return conn
+    }
+
+    /// Open `/stream` WebSocket for a server's connection (if not already connected).
+    func connectStream(for serverId: String) {
+        connections[serverId]?.connectStream()
+    }
+
+    /// Open `/stream` WebSocket for ALL paired servers.
+    func connectAllStreams() {
+        for server in serverStore.servers {
+            let conn = ensureConnection(for: server)
+            conn.connectStream()
+        }
     }
 
     // MARK: - Server Switching
 
-    /// Switch all stores + connection to target a different server.
-    ///
-    /// Coordinates: SessionStore partition, PermissionStore partition,
-    /// WorkspaceStore server context, and ServerConnection credentials.
-    /// Returns false if the connection can't be configured (policy/URL failure).
+    /// Switch the focused server. The previous server's WS stays open.
     @discardableResult
     func switchToServer(_ serverId: String) -> Bool {
         guard serverId != activeServerId else { return true }
@@ -51,58 +105,31 @@ final class ConnectionCoordinator {
     func switchToServer(_ server: PairedServer) -> Bool {
         let serverId = server.id
 
-        // Switch store partitions BEFORE connection so message routing
-        // writes to the correct server's data.
-        connection.sessionStore.switchServer(to: serverId)
-        connection.permissionStore.switchServer(to: serverId)
+        // Ensure connection exists and is configured
+        let conn = ensureConnection(for: server)
+        guard conn.credentials != nil else { return false }
 
         activeServerId = serverId
 
-        // Configure connection (tears down WS if server changed)
-        let result = connection.switchServer(to: server)
-
-        // Cache API client for this server
-        if apiClients[serverId] == nil, let baseURL = server.baseURL {
-            apiClients[serverId] = APIClient(baseURL: baseURL, token: server.token)
-        }
-
         logger.info("Switched to server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
-        return result
+        return true
     }
 
     // MARK: - API Clients
 
-    /// Get an API client for a specific server (creates on demand).
+    /// Get an API client for a specific server (from its connection).
     func apiClient(for serverId: String) -> APIClient? {
-        if let cached = apiClients[serverId] { return cached }
-
-        guard let server = serverStore.server(for: serverId),
-              let baseURL = server.baseURL else {
-            return nil
-        }
-
-        let client = APIClient(baseURL: baseURL, token: server.token)
-        apiClients[serverId] = client
-        return client
-    }
-
-    /// Invalidate cached API client (e.g. after credential change).
-    func invalidateAPIClient(for serverId: String) {
-        apiClients.removeValue(forKey: serverId)
+        connections[serverId]?.apiClient
     }
 
     // MARK: - Server Lifecycle
 
-    /// Add a new server. Creates the data partitions and optionally switches to it.
+    /// Add a new server. Creates the connection and optionally switches to it.
     func addServer(_ server: PairedServer, switchTo: Bool = true) {
         serverStore.addOrUpdate(server)
 
-        // Ensure partitions exist
-        connection.sessionStore.switchServer(to: server.id)
-        connection.sessionStore.switchServer(to: activeServerId ?? server.id)
-
-        connection.permissionStore.switchServer(to: server.id)
-        connection.permissionStore.switchServer(to: activeServerId ?? server.id)
+        let conn = ensureConnection(for: server)
+        conn.connectStream()
 
         if switchTo {
             switchToServer(server)
@@ -111,17 +138,14 @@ final class ConnectionCoordinator {
 
     /// Remove a server. Cleans up all associated data.
     func removeServer(id: String) {
-        // Disconnect if removing the active server
-        if id == activeServerId {
-            connection.disconnectSession()
+        // Disconnect and remove the server's connection
+        if let conn = connections[id] {
+            conn.disconnectSession()
+            conn.disconnectStream()
         }
+        connections.removeValue(forKey: id)
 
-        // Clean all stores
         serverStore.remove(id: id)
-        connection.sessionStore.removeServer(id)
-        connection.permissionStore.removeServer(id)
-        connection.workspaceStore.removeServer(id)
-        apiClients.removeValue(forKey: id)
 
         logger.info("Removed server \(id.prefix(16), privacy: .public)")
 
@@ -136,94 +160,51 @@ final class ConnectionCoordinator {
 
     // MARK: - Multi-Server Refresh
 
-    /// Refresh workspace + session data from ALL paired servers in parallel.
-    ///
-    /// The active server goes through the full ServerConnection refresh path.
-    /// Non-active servers get lightweight REST-only refreshes.
+    /// Refresh workspace + session data from ALL paired servers.
     func refreshAllServers() async {
+        for (serverId, conn) in connections {
+            guard let api = conn.apiClient else { continue }
+
+            // Workspace + skill catalogs
+            guard let server = serverStore.server(for: serverId) else { continue }
+            await conn.workspaceStore.loadServer(serverId: serverId, api: api)
+
+            // Sessions
+            if serverId == activeServerId {
+                await conn.refreshSessionList(force: true)
+            } else {
+                await refreshServerSessions(serverId: serverId, conn: conn, api: api)
+            }
+        }
+
+        // Also load workspace catalogs from any servers not yet connected
         let servers = serverStore.servers
-
-        // Keep workspace server order in sync with server store
-        connection.workspaceStore.serverOrder = servers.map(\.id)
-
-        // Active server: full refresh through ServerConnection
-        if let activeId = activeServerId {
-            await connection.refreshWorkspaceAndSessionLists(force: true)
-
-            // Sync single-server data into per-server slot
-            connection.workspaceStore.workspacesByServer[activeId] = connection.workspaceStore.workspaces
-            connection.workspaceStore.skillsByServer[activeId] = connection.workspaceStore.skills
-            if !connection.workspaceStore.serverOrder.contains(activeId) {
-                connection.workspaceStore.serverOrder.append(activeId)
-            }
-            connection.workspaceStore.serverFreshness[activeId] = ServerSyncState()
-            connection.workspaceStore.serverFreshness[activeId]?.markSyncSucceeded()
-        }
-
-        // Non-active servers: REST-only refresh (sequential to avoid isolation issues)
-        let inactiveServers = servers.filter { $0.id != activeServerId }
-        for server in inactiveServers {
-            await refreshInactiveServer(server)
-        }
-
-        // Sync flat lists for backward compat
-        connection.workspaceStore.workspaces = connection.workspaceStore.allWorkspaces
-        connection.workspaceStore.skills = connection.workspaceStore.allSkills
-        connection.workspaceStore.isLoaded = true
+        await activeConnection.workspaceStore.loadAll(servers: servers)
     }
 
-    /// Refresh only the non-active servers (lightweight REST).
-    /// Called on foreground recovery — the active server is handled by
-    /// `ServerConnection.reconnectIfNeeded()` separately.
+    /// Refresh non-focused servers (called on foreground recovery).
+    /// The focused server is handled by `ServerConnection.reconnectIfNeeded()`.
     func refreshInactiveServers() async {
-        let inactiveServers = serverStore.servers.filter { $0.id != activeServerId }
-        for server in inactiveServers {
-            await refreshInactiveServer(server)
-        }
+        for (serverId, conn) in connections where serverId != activeServerId {
+            // Ensure the /stream WebSocket is alive. If it died during background
+            // (max reconnect attempts exhausted), restart it.
+            if conn.wsClient?.status == .disconnected {
+                conn.connectStream()
+            }
 
-        // Sync flat lists
-        connection.workspaceStore.workspaces = connection.workspaceStore.allWorkspaces
-        connection.workspaceStore.skills = connection.workspaceStore.allSkills
+            guard let api = conn.apiClient else { continue }
+            await conn.workspaceStore.loadServer(serverId: serverId, api: api)
+            await refreshServerSessions(serverId: serverId, conn: conn, api: api)
+        }
     }
 
-    /// Refresh workspace + session data from a single inactive server.
-    private func refreshInactiveServer(_ server: PairedServer) async {
-        let serverId = server.id
-        guard let api = apiClient(for: serverId) else { return }
-
-        // Workspaces + skills
-        do {
-            let workspaces = try await api.listWorkspaces()
-            let skills = try await api.listSkills()
-
-            connection.workspaceStore.workspacesByServer[serverId] = workspaces
-            connection.workspaceStore.skillsByServer[serverId] = skills
-            if !connection.workspaceStore.serverOrder.contains(serverId) {
-                connection.workspaceStore.serverOrder.append(serverId)
-            }
-            connection.workspaceStore.serverFreshness[serverId] = ServerSyncState()
-            connection.workspaceStore.serverFreshness[serverId]?.markSyncSucceeded()
-
-            logger.info("Refreshed \(workspaces.count) workspaces from inactive server \(serverId.prefix(16), privacy: .public)")
-        } catch {
-            if connection.workspaceStore.serverFreshness[serverId] == nil {
-                connection.workspaceStore.serverFreshness[serverId] = ServerSyncState()
-            }
-            connection.workspaceStore.serverFreshness[serverId]?.markSyncFailed()
-            logger.error("Failed to refresh inactive server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
-
-        // Sessions — temporarily switch partition, then switch back
+    /// Refresh sessions for a specific server connection.
+    private func refreshServerSessions(serverId: String, conn: ServerConnection, api: APIClient) async {
         do {
             let sessions = try await api.listSessions()
-            let previousActiveServer = connection.sessionStore.activeServerId
-            connection.sessionStore.switchServer(to: serverId)
-            connection.sessionStore.applyServerSnapshot(sessions)
-            if let prev = previousActiveServer {
-                connection.sessionStore.switchServer(to: prev)
-            }
+            conn.sessionStore.applyServerSnapshot(sessions)
         } catch {
-            logger.error("Failed to refresh sessions from inactive server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to refresh sessions from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -231,6 +212,43 @@ final class ConnectionCoordinator {
 
     /// Register push token with all paired servers.
     func registerPushWithAllServers() async {
+        guard ReleaseFeatures.pushNotificationsEnabled else {
+            return
+        }
         await PushRegistration.shared.registerWithAllServers(serverStore.servers)
+    }
+
+    // MARK: - Cross-Server Queries
+
+    /// All sessions across all servers, ordered by last activity.
+    var allSessions: [Session] {
+        connections.values
+            .flatMap { $0.sessionStore.sessions }
+            .sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    /// All pending permissions across all servers.
+    var allPendingPermissions: [PermissionRequest] {
+        connections.values.flatMap { $0.permissionStore.pending }
+    }
+
+    /// Total pending permission count across all servers.
+    var allPendingPermissionCount: Int {
+        connections.values.reduce(0) { $0 + $1.permissionStore.count }
+    }
+
+    /// Find a session by ID across all servers.
+    func findSession(id: String) -> (session: Session, serverId: String, connection: ServerConnection)? {
+        for (serverId, conn) in connections {
+            if let session = conn.sessionStore.session(id: id) {
+                return (session, serverId, conn)
+            }
+        }
+        return nil
+    }
+
+    /// Get the connection for a specific server.
+    func connection(for serverId: String) -> ServerConnection? {
+        connections[serverId]
     }
 }
