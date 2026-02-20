@@ -148,6 +148,7 @@ struct ChatView: View {
             Self(sessionId: route.id)
         }
         .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .bottomBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 chatPrincipalToolbarItem
