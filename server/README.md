@@ -4,7 +4,7 @@ Self-hosted server runtime for the Oppi iOS app.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 20+
 - `pi` CLI (`npm install -g @mariozechner/pi-coding-agent`)
 - `pi` provider login (`pi` then `/login`)
 - macOS or Linux (Linux container lane is exercised via `npm run test:e2e:linux`)
