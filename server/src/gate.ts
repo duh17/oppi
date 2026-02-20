@@ -23,12 +23,11 @@ import { EventEmitter } from "node:events";
 import { generateId } from "./id.js";
 import type { PolicyEngine } from "./policy.js";
 import {
-  addDomainToAllowlist,
-  removeDomainFromAllowlist,
+  parseBashCommand,
   type GateRequest,
   type ResolutionOptions,
 } from "./policy.js";
-import type { RuleStore } from "./rules.js";
+import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
 
 // ─── Types ───
@@ -93,7 +92,7 @@ const HEARTBEAT_TIMEOUT_MS = 45_000; // Extension sends every 15s, we expect wit
 const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
-const TCP_HOST = "0.0.0.0"; // Listen on all interfaces for local extension connectivity
+const TCP_HOST = "127.0.0.1"; // Localhost only — extension connects from same machine
 
 // ─── Gate Server ───
 
@@ -238,19 +237,18 @@ export class GateServer extends EventEmitter {
     if (!pending) return false;
 
     const requestedScope = scope;
-    const normalizedScope = this.normalizeDecisionScope(action, requestedScope, pending.resolutionOptions);
+    let normalizedScope = this.normalizeDecisionScope(action, requestedScope, pending.resolutionOptions);
+
+    if (pending.tool.startsWith("policy.")) {
+      normalizedScope = "once";
+    }
+
     if (normalizedScope !== requestedScope) {
       console.warn(
         `[gate] Scope ${requestedScope} is not permitted for ${action}; downgraded to ${normalizedScope} (request=${requestId})`,
       );
     }
 
-    const policy = this.getPolicy(pending.sessionId);
-    const req: GateRequest = {
-      tool: pending.tool,
-      input: pending.input,
-      toolCallId: pending.toolCallId,
-    };
     let learnedRuleId: string | undefined;
 
     const normalizedExpiryMs =
@@ -262,40 +260,15 @@ export class GateServer extends EventEmitter {
         ? Date.now() + normalizedExpiryMs
         : undefined;
 
-    // Create learned rule if scope != "once"
     if (normalizedScope !== "once") {
-      const context = {
-        sessionId: pending.sessionId,
-        workspaceId: pending.workspaceId,
-      };
-
-      const suggest =
-        action === "allow"
-          ? policy.suggestRule(req, normalizedScope, context)
-          : policy.suggestDenyRule(req, normalizedScope, context);
-
-      if (suggest) {
-        const rule = this.ruleStore.add({
-          ...suggest,
-          ...(expiresAt !== undefined ? { expiresAt } : {}),
-        });
+      const ruleInput = this.buildRuleFromDecision(pending, action, normalizedScope, expiresAt);
+      if (ruleInput) {
+        const rule = this.ruleStore.add(ruleInput);
         learnedRuleId = rule.id;
         const expiryLabel = expiresAt ? `, expiresAt=${new Date(expiresAt).toISOString()}` : "";
         console.log(
-          `[gate] Learned rule: ${rule.description} (scope=${normalizedScope}, id=${rule.id}${expiryLabel})`,
+          `[gate] Learned rule: ${rule.label || "(no label)"} (scope=${normalizedScope}, id=${rule.id}${expiryLabel})`,
         );
-
-        // Browser domain + global allow → also add to shared allowlist
-        if (action === "allow" && normalizedScope === "global" && rule.match?.domain) {
-          addDomainToAllowlist(rule.match.domain);
-          console.log(`[gate] Added ${rule.match.domain} to fetch domain allowlist`);
-        }
-
-        // Browser domain + global deny → remove from shared allowlist
-        if (action === "deny" && normalizedScope === "global" && rule.match?.domain) {
-          removeDomainFromAllowlist(rule.match.domain);
-          console.log(`[gate] Removed ${rule.match.domain} from fetch domain allowlist`);
-        }
       }
     }
 
@@ -349,6 +322,68 @@ export class GateServer extends EventEmitter {
     // action === "deny"
     if (requested === "session") return "once";
     return options.denyAlways ? requested : "once";
+  }
+
+  private fixedResolutionOptions(tool: string): ResolutionOptions {
+    if (tool.startsWith("policy.")) {
+      return {
+        allowSession: false,
+        allowAlways: false,
+        denyAlways: false,
+      };
+    }
+
+    return {
+      allowSession: true,
+      allowAlways: true,
+      denyAlways: true,
+    };
+  }
+
+  private buildRuleFromDecision(
+    pending: PendingDecision,
+    action: "allow" | "deny",
+    scope: "session" | "workspace" | "global",
+    expiresAt?: number,
+  ): RuleInput | null {
+    if (pending.tool.startsWith("policy.")) return null;
+
+    const tool = pending.tool;
+    const decision = action === "allow" ? "allow" : "deny";
+
+    const input: RuleInput = {
+      tool,
+      decision,
+      scope,
+      source: "learned",
+      label: `${action === "allow" ? "Allow" : "Deny"} ${pending.displaySummary}`,
+      ...(scope === "session" ? { sessionId: pending.sessionId } : {}),
+      ...(scope === "workspace" ? { workspaceId: pending.workspaceId } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    };
+
+    if (tool === "bash") {
+      const command = (pending.input as { command?: string }).command?.trim() || "";
+      if (command.length > 0) {
+        input.pattern = command;
+        const parsed = parseBashCommand(command);
+        const executable = parsed.executable.includes("/")
+          ? parsed.executable.split("/").pop() || parsed.executable
+          : parsed.executable;
+        if (executable) input.executable = executable;
+      }
+      return input;
+    }
+
+    if (tool === "read" || tool === "write" || tool === "edit" || tool === "find" || tool === "ls") {
+      const path = (pending.input as { path?: string }).path;
+      if (typeof path === "string" && path.trim().length > 0) {
+        input.pattern = path.trim();
+      }
+      return input;
+    }
+
+    return input;
   }
 
   /**
@@ -535,7 +570,7 @@ export class GateServer extends EventEmitter {
 
     // action === "ask" → create pending decision, wait for phone
     const requestId = generateId(12);
-    const resolutionOptions = policy.getResolutionOptions(req, decision);
+    const resolutionOptions = this.fixedResolutionOptions(msg.tool);
 
     const response = await new Promise<GateResponse>((resolve) => {
       const createdAt = Date.now();
