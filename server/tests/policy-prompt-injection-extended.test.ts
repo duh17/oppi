@@ -1,5 +1,5 @@
 /**
- * Prompt-injection containment — tranche 2.
+ * Prompt-injection containment — extended suite.
  *
  * Extends adversarial egress/obfuscation matrix and hardens
  * secret-surface hard-deny coverage.
@@ -10,11 +10,11 @@ import { describe, expect, it } from "vitest";
 import { PolicyEngine, type GateRequest } from "../src/policy.js";
 
 function bash(command: string): GateRequest {
-  return { tool: "bash", input: { command }, toolCallId: "injection-v2" };
+  return { tool: "bash", input: { command }, toolCallId: "injection-extended" };
 }
 
 function readPath(path: string): GateRequest {
-  return { tool: "read", input: { path }, toolCallId: "injection-v2" };
+  return { tool: "read", input: { path }, toolCallId: "injection-extended" };
 }
 
 // ─── 1. Host-mode raw socket tools ───

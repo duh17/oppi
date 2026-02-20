@@ -1764,7 +1764,7 @@ export class PolicyEngine {
     }
   }
 
-  // ─── v2: Evaluate with learned rules ───
+  // ─── Rule-based evaluation ───
 
   /**
    * Evaluate a tool call with unified user rules.
@@ -1941,7 +1941,7 @@ export class PolicyEngine {
     };
   }
 
-  // ─── v2: Rule matching helpers ───
+  // ─── Rule matching helpers ───
 
   private parseRequestContext(req: GateRequest): {
     executable?: string;
@@ -2236,7 +2236,7 @@ export class PolicyEngine {
         return path ? [path] : [];
       }
       case "bash":
-        // For v1, skip path confinement on bash (covered by exec matching)
+        // Legacy evaluate() path skips path confinement on bash (covered by exec matching)
         return [];
       default:
         return [];
