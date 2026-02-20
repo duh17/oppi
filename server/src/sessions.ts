@@ -43,6 +43,7 @@ import {
 import { getGitStatus } from "./git-status.js";
 import { resolvePiExecutable, spawnPiHost, type SpawnDeps } from "./session-spawn.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
+import { SdkBackend } from "./sdk-backend.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -116,7 +117,9 @@ function safeStdinWrite(proc: ChildProcess, data: string): boolean {
 
 interface ActiveSession {
   session: Session;
-  process: ChildProcess;
+  process: ChildProcess | null;
+  /** SDK backend — when set, process is null and commands go through SDK. */
+  sdkBackend?: SdkBackend;
   workspaceId: string;
   subscribers: Set<(msg: ServerMessage) => void>;
   /** Pending RPC response callbacks keyed by request id */
@@ -317,11 +320,26 @@ export class SessionManager extends EventEmitter {
       this.runtimeManager.reserveSessionStart(identity);
 
       try {
-        const proc = await spawnPiHost(session, workspace, this.spawnDeps);
+        const useSdk = this.config.sessionBackend === "sdk";
+
+        let proc: ChildProcess | null = null;
+        let sdkBackend: SdkBackend | undefined;
+
+        if (useSdk) {
+          sdkBackend = await SdkBackend.create({
+            session,
+            workspace,
+            onEvent: (event) => this.handlePiEvent(key, event),
+            onEnd: (reason) => this.handleSessionEnd(key, reason),
+          });
+        } else {
+          proc = await spawnPiHost(session, workspace, this.spawnDeps);
+        }
 
         const activeSession: ActiveSession = {
           session,
           process: proc,
+          sdkBackend,
           workspaceId: identity.workspaceId,
           subscribers: new Set(),
           pendingResponses: new Map(),
@@ -461,7 +479,19 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    // 3. Agent event — translate and broadcast
+    // 3. Agent event — delegate to shared handler (used by both RPC and SDK paths)
+    this.handlePiEvent(key, data);
+  }
+
+  /**
+   * Process a pi agent event. Shared by RPC (via handleRpcLine after JSON parse)
+   * and SDK (via SdkBackend subscribe callback).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
+  private handlePiEvent(key: string, data: any): void {
+    const active = this.active.get(key);
+    if (!active) return;
+
     // Log lifecycle events (not high-frequency deltas)
     if (
       data.type === "agent_start" ||
@@ -560,7 +590,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Send extension_ui_response back to pi on stdin.
+   * Send extension_ui_response back to pi (stdin for RPC, direct for SDK).
    * Called by server.ts when phone responds to a UI dialog.
    */
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
@@ -572,7 +602,12 @@ export class SessionManager extends EventEmitter {
     if (!req) return false;
 
     active.pendingUIRequests.delete(response.id);
-    safeStdinWrite(active.process, JSON.stringify(response) + "\n");
+
+    // SDK sessions handle extension UI internally; RPC sends via stdin.
+    // TODO: wire SDK extension UI response path when extensions are loaded in-process.
+    if (active.process) {
+      safeStdinWrite(active.process, JSON.stringify(response) + "\n");
+    }
     return true;
   }
 
@@ -1358,12 +1393,20 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return;
 
+    // SDK path: route command to SDK backend directly
+    if (active.sdkBackend) {
+      this.routeSdkCommand(active.sdkBackend, command);
+      this.resetIdleTimer(key);
+      return;
+    }
+
+    // RPC path: write to stdin
     // Assign correlation id if not present
     if (!command.id) {
       command.id = `rpc-${++this.rpcIdCounter}`;
     }
 
-    safeStdinWrite(active.process, JSON.stringify(command) + "\n");
+    safeStdinWrite(active.process!, JSON.stringify(command) + "\n");
     this.resetIdleTimer(key);
   }
 
@@ -1378,6 +1421,12 @@ export class SessionManager extends EventEmitter {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
 
+    // SDK path: route directly and return result
+    if (active.sdkBackend) {
+      return this.routeSdkCommandAsync(active.sdkBackend, command);
+    }
+
+    // RPC path: correlate via stdin/stdout
     const id = `rpc-${++this.rpcIdCounter}`;
     command.id = id;
 
@@ -1396,8 +1445,52 @@ export class SessionManager extends EventEmitter {
         }
       });
 
-      safeStdinWrite(active.process, JSON.stringify(command) + "\n");
+      safeStdinWrite(active.process!, JSON.stringify(command) + "\n");
     });
+  }
+
+  /**
+   * Route a fire-and-forget command to the SDK backend.
+   */
+  private routeSdkCommand(backend: SdkBackend, command: Record<string, unknown>): void {
+    const type = command.type as string;
+    switch (type) {
+      case "prompt":
+        backend.prompt(command.message as string, {
+          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
+          streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
+        });
+        break;
+      case "abort":
+        void backend.abort();
+        break;
+      default:
+        console.warn(`${ts()} [sdk] Unhandled fire-and-forget command: ${type}`);
+    }
+  }
+
+  /**
+   * Route an async command to the SDK backend and return its result.
+   */
+  private async routeSdkCommandAsync(
+    backend: SdkBackend,
+    command: Record<string, unknown>,
+  ): Promise<unknown> {
+    const type = command.type as string;
+    switch (type) {
+      case "set_model": {
+        const result = await backend.setModel(command.model as string);
+        if (!result.success) throw new Error(result.error);
+        return result;
+      }
+      case "set_thinking_level":
+        backend.setThinkingLevel(command.level as string);
+        return { success: true };
+      case "get_state":
+        return backend.getState();
+      default:
+        throw new Error(`Unhandled SDK command: ${type}`);
+    }
   }
 
   // ─── Event Translation (delegated to session-protocol module) ───
@@ -1577,16 +1670,23 @@ export class SessionManager extends EventEmitter {
 
     // Cancel pending UI requests
     for (const [id] of active.pendingUIRequests) {
-      safeStdinWrite(
-        active.process,
-        JSON.stringify({
-          type: "extension_ui_response",
-          id,
-          cancelled: true,
-        }) + "\n",
-      );
+      if (active.process) {
+        safeStdinWrite(
+          active.process,
+          JSON.stringify({
+            type: "extension_ui_response",
+            id,
+            cancelled: true,
+          }) + "\n",
+        );
+      }
     }
     active.pendingUIRequests.clear();
+
+    // Dispose SDK backend if present
+    if (active.sdkBackend && !active.sdkBackend.isDisposed) {
+      active.sdkBackend.dispose();
+    }
 
     this.broadcast(key, { type: "session_ended", reason });
     this.clearIdleTimer(key);
@@ -1809,7 +1909,9 @@ export class SessionManager extends EventEmitter {
     reason?: string,
   ): void {
     try {
-      if (!active.process.killed) {
+      if (active.sdkBackend) {
+        active.sdkBackend.dispose();
+      } else if (active.process && !active.process.killed) {
         active.process.kill("SIGTERM");
       }
 
@@ -1849,7 +1951,9 @@ export class SessionManager extends EventEmitter {
       });
 
       try {
-        if (!current.process.killed) {
+        if (current.sdkBackend) {
+          void current.sdkBackend.abort();
+        } else if (current.process && !current.process.killed) {
           current.process.kill("SIGINT");
         }
       } catch {
@@ -1894,7 +1998,11 @@ export class SessionManager extends EventEmitter {
         }
 
         // Graceful: abort current operation
-        safeStdinWrite(active.process, JSON.stringify({ type: "abort" }) + "\n");
+        if (active.sdkBackend) {
+          void active.sdkBackend.abort();
+        } else if (active.process) {
+          safeStdinWrite(active.process, JSON.stringify({ type: "abort" }) + "\n");
+        }
 
         // Wait briefly then stop
         await new Promise((r) => setTimeout(r, this.stopSessionGraceMs));

@@ -3,14 +3,9 @@
  */
 
 import type { StyledSegment } from "./mobile-renderer.js";
+import type { GitStatus } from "./git-status.js";
 
 // ─── Workspaces ───
-
-export interface WorkspacePolicyConfig {
-  /** Optional workspace fallback override. If omitted, global fallback is used. */
-  fallback?: PolicyDecision;
-  permissions: PolicyPermission[];
-}
 
 export interface Workspace {
   id: string;
@@ -22,7 +17,6 @@ export interface Workspace {
   skills: string[]; // ["searxng", "fetch", "ast-grep"]
 
   // Permissions
-  policy?: WorkspacePolicyConfig; // workspace additive permissions (merged onto global policy)
   allowedPaths?: { path: string; access: "read" | "readwrite" }[]; // Extra dirs beyond workspace
   allowedExecutables?: string[]; // Extra executables auto-allowed for this workspace (e.g. ["node", "python3"])
 
@@ -131,7 +125,6 @@ export interface PolicyPermission {
 
   label?: string;
   reason?: string;
-  immutable?: boolean;
   match: PolicyMatch;
 }
 
@@ -198,6 +191,9 @@ export interface ServerConfig {
 
   // Per-model thinking preferences (synced from iOS)
   thinkingLevelByModel?: Record<string, string>;
+
+  /** Session backend: "rpc" (default, child process) or "sdk" (in-process). */
+  sessionBackend?: "rpc" | "sdk";
 }
 
 // ─── API Types ───
@@ -249,7 +245,6 @@ export interface CreateWorkspaceRequest {
   description?: string;
   icon?: string;
   skills: string[];
-  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -264,7 +259,6 @@ export interface UpdateWorkspaceRequest {
   description?: string;
   icon?: string;
   skills?: string[];
-  policy?: WorkspacePolicyConfig;
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -322,104 +316,105 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
  * Commands forwarded to pi RPC return an `rpc_result` with the same requestId.
  */
 export type ClientMessage = // ── Stream subscriptions (multiplexed user stream) ──
-(| {
-      type: "subscribe";
-      sessionId: string;
-      level?: "full" | "notifications";
-      /** Optional per-session durable sequence cursor for catch-up replay. */
-      sinceSeq?: number;
-      requestId?: string;
-    }
-  | {
-      type: "unsubscribe";
-      sessionId: string;
-      requestId?: string;
-    }
-  // ── Prompting ──
-  | {
-      type: "prompt";
-      message: string;
-      images?: ImageAttachment[];
-      streamingBehavior?: "steer" | "followUp";
-      requestId?: string;
-      clientTurnId?: string;
-    }
-  | {
-      type: "steer";
-      message: string;
-      images?: ImageAttachment[];
-      requestId?: string;
-      clientTurnId?: string;
-    }
-  | {
-      type: "follow_up";
-      message: string;
-      images?: ImageAttachment[];
-      requestId?: string;
-      clientTurnId?: string;
-    }
-  | { type: "abort"; requestId?: string }
-  | { type: "stop"; requestId?: string } // Abort current turn (alias for mobile UX)
-  | { type: "stop_session"; requestId?: string } // Kill session process entirely
-  // ── State ──
-  | { type: "get_state"; requestId?: string }
-  | { type: "get_messages"; requestId?: string }
-  | { type: "get_session_stats"; requestId?: string }
-  // ── Model ──
-  | { type: "set_model"; provider: string; modelId: string; requestId?: string }
-  | { type: "cycle_model"; requestId?: string }
-  | { type: "get_available_models"; requestId?: string }
-  // ── Thinking ──
-  | {
-      type: "set_thinking_level";
-      level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-      requestId?: string;
-    }
-  | { type: "cycle_thinking_level"; requestId?: string }
-  // ── Session ──
-  | { type: "new_session"; requestId?: string }
-  | { type: "set_session_name"; name: string; requestId?: string }
-  | { type: "compact"; customInstructions?: string; requestId?: string }
-  | { type: "set_auto_compaction"; enabled: boolean; requestId?: string }
-  | { type: "fork"; entryId: string; requestId?: string }
-  | { type: "get_fork_messages"; requestId?: string }
-  | { type: "switch_session"; sessionPath: string; requestId?: string }
-  // ── Queue modes ──
-  | { type: "set_steering_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
-  | { type: "set_follow_up_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
-  // ── Retry ──
-  | { type: "set_auto_retry"; enabled: boolean; requestId?: string }
-  | { type: "abort_retry"; requestId?: string }
-  // ── Bash ──
-  | { type: "bash"; command: string; requestId?: string }
-  | { type: "abort_bash"; requestId?: string }
-  // ── Commands ──
-  | { type: "get_commands"; requestId?: string }
-  // ── Permission gate ──
-  | {
-      type: "permission_response";
-      id: string;
-      action: "allow" | "deny";
-      scope?: "once" | "session" | "workspace" | "global";
-      /** Optional TTL for learned rule persistence (milliseconds). Ignored for scope="once". */
-      expiresInMs?: number;
-      requestId?: string;
-    }
-  // ── Extension UI dialog responses ──
-  | {
-      type: "extension_ui_response";
-      id: string;
-      value?: string;
-      confirmed?: boolean;
-      cancelled?: boolean;
-      requestId?: string;
-    }
-) & {
-  /**
-   * Optional target session for multiplexed user streams.
-   */
-  sessionId?: string;
-};
+  (
+    | {
+        type: "subscribe";
+        sessionId: string;
+        level?: "full" | "notifications";
+        /** Optional per-session durable sequence cursor for catch-up replay. */
+        sinceSeq?: number;
+        requestId?: string;
+      }
+    | {
+        type: "unsubscribe";
+        sessionId: string;
+        requestId?: string;
+      }
+    // ── Prompting ──
+    | {
+        type: "prompt";
+        message: string;
+        images?: ImageAttachment[];
+        streamingBehavior?: "steer" | "followUp";
+        requestId?: string;
+        clientTurnId?: string;
+      }
+    | {
+        type: "steer";
+        message: string;
+        images?: ImageAttachment[];
+        requestId?: string;
+        clientTurnId?: string;
+      }
+    | {
+        type: "follow_up";
+        message: string;
+        images?: ImageAttachment[];
+        requestId?: string;
+        clientTurnId?: string;
+      }
+    | { type: "abort"; requestId?: string }
+    | { type: "stop"; requestId?: string } // Abort current turn (alias for mobile UX)
+    | { type: "stop_session"; requestId?: string } // Kill session process entirely
+    // ── State ──
+    | { type: "get_state"; requestId?: string }
+    | { type: "get_messages"; requestId?: string }
+    | { type: "get_session_stats"; requestId?: string }
+    // ── Model ──
+    | { type: "set_model"; provider: string; modelId: string; requestId?: string }
+    | { type: "cycle_model"; requestId?: string }
+    | { type: "get_available_models"; requestId?: string }
+    // ── Thinking ──
+    | {
+        type: "set_thinking_level";
+        level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+        requestId?: string;
+      }
+    | { type: "cycle_thinking_level"; requestId?: string }
+    // ── Session ──
+    | { type: "new_session"; requestId?: string }
+    | { type: "set_session_name"; name: string; requestId?: string }
+    | { type: "compact"; customInstructions?: string; requestId?: string }
+    | { type: "set_auto_compaction"; enabled: boolean; requestId?: string }
+    | { type: "fork"; entryId: string; requestId?: string }
+    | { type: "get_fork_messages"; requestId?: string }
+    | { type: "switch_session"; sessionPath: string; requestId?: string }
+    // ── Queue modes ──
+    | { type: "set_steering_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
+    | { type: "set_follow_up_mode"; mode: "all" | "one-at-a-time"; requestId?: string }
+    // ── Retry ──
+    | { type: "set_auto_retry"; enabled: boolean; requestId?: string }
+    | { type: "abort_retry"; requestId?: string }
+    // ── Bash ──
+    | { type: "bash"; command: string; requestId?: string }
+    | { type: "abort_bash"; requestId?: string }
+    // ── Commands ──
+    | { type: "get_commands"; requestId?: string }
+    // ── Permission gate ──
+    | {
+        type: "permission_response";
+        id: string;
+        action: "allow" | "deny";
+        scope?: "once" | "session" | "global";
+        /** Optional TTL for learned rule persistence (milliseconds). Ignored for scope="once". */
+        expiresInMs?: number;
+        requestId?: string;
+      }
+    // ── Extension UI dialog responses ──
+    | {
+        type: "extension_ui_response";
+        id: string;
+        value?: string;
+        confirmed?: boolean;
+        cancelled?: boolean;
+        requestId?: string;
+      }
+  ) & {
+    /**
+     * Optional target session for multiplexed user streams.
+     */
+    sessionId?: string;
+  };
 
 // ─── RPC Response Payloads ───
 
@@ -483,120 +478,128 @@ export interface PiCommand {
 
 // Server → Client
 export type ServerMessage = // ── Connection ──
-(| { type: "connected"; session: Session; currentSeq?: number }
-  | { type: "stream_connected"; userName: string }
-  | { type: "state"; session: Session }
-  | { type: "session_ended"; reason: string }
-  | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
-  | { type: "stop_confirmed"; source: "user" | "timeout" | "server"; reason?: string }
-  | { type: "stop_failed"; source: "user" | "timeout" | "server"; reason: string }
-  | { type: "error"; error: string; code?: string; fatal?: boolean }
-  // ── Agent lifecycle ──
-  | { type: "agent_start" }
-  | { type: "agent_end" }
-  | { type: "message_end"; role: "user" | "assistant"; content: string }
-  // ── Streaming ──
-  | { type: "text_delta"; delta: string }
-  | { type: "thinking_delta"; delta: string }
-  // ── Tool execution ──
-  | { type: "tool_start"; tool: string; args: Record<string, unknown>; toolCallId?: string; callSegments?: StyledSegment[] }
-  | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
-  | { type: "tool_end"; tool: string; toolCallId?: string; details?: unknown; isError?: boolean; resultSegments?: StyledSegment[] }
-  // ── Turn delivery acknowledgements (idempotent send contract) ──
-  | {
-      type: "turn_ack";
-      command: TurnCommand;
-      clientTurnId: string;
-      stage: TurnAckStage;
-      requestId?: string;
-      duplicate?: boolean;
-    }
-  // ── RPC responses (keyed by requestId for correlation) ──
-  | {
-      type: "rpc_result";
-      command: string;
-      requestId?: string;
-      success: boolean;
-      data?: unknown;
-      error?: string;
-    }
-  // ── Compaction ──
-  | { type: "compaction_start"; reason: string }
-  | {
-      type: "compaction_end";
-      aborted: boolean;
-      willRetry: boolean;
-      summary?: string;
-      tokensBefore?: number;
-    }
-  // ── Retry ──
-  | {
-      type: "retry_start";
-      attempt: number;
-      maxAttempts: number;
-      delayMs: number;
-      errorMessage: string;
-    }
-  | { type: "retry_end"; success: boolean; attempt: number; finalError?: string }
-  // ── Permission gate ──
-  | {
-      type: "permission_request";
-      id: string;
-      sessionId: string;
-      tool: string;
-      input: Record<string, unknown>;
-      displaySummary: string;
-      reason: string;
-      timeoutAt: number;
-      expires?: boolean;
-      resolutionOptions?: {
-        allowSession: boolean;
-        allowAlways: boolean;
-        alwaysDescription?: string;
-        denyAlways: boolean;
-      };
-    }
-  | { type: "permission_expired"; id: string; reason: string }
-  | { type: "permission_cancelled"; id: string }
-  // ── Extension UI forwarding ──
-  | {
-      type: "extension_ui_request";
-      id: string;
-      sessionId: string;
-      method: string;
-      title?: string;
-      options?: string[];
-      message?: string;
-      placeholder?: string;
-      prefill?: string;
-      timeout?: number;
-    }
-  | {
-      type: "extension_ui_notification";
-      method: string;
-      message?: string;
-      notifyType?: string;
-      statusKey?: string;
-      statusText?: string;
-    }
-  // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
-  | {
-      type: "git_status";
-      workspaceId: string;
-      status: import("./git-status.js").GitStatus;
-    }
-) & {
-  seq?: number;
-  /**
-   * Session scope for multiplexed user streams.
-   * Per-session streams may omit this field.
-   */
-  sessionId?: string;
-  /**
-   * User-wide multiplexed stream sequence cursor.
-   */
-  streamSeq?: number;
-};
+  (
+    | { type: "connected"; session: Session; currentSeq?: number }
+    | { type: "stream_connected"; userName: string }
+    | { type: "state"; session: Session }
+    | { type: "session_ended"; reason: string }
+    | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
+    | { type: "stop_confirmed"; source: "user" | "timeout" | "server"; reason?: string }
+    | { type: "stop_failed"; source: "user" | "timeout" | "server"; reason: string }
+    | { type: "error"; error: string; code?: string; fatal?: boolean }
+    // ── Agent lifecycle ──
+    | { type: "agent_start" }
+    | { type: "agent_end" }
+    | { type: "message_end"; role: "user" | "assistant"; content: string }
+    // ── Streaming ──
+    | { type: "text_delta"; delta: string }
+    | { type: "thinking_delta"; delta: string }
+    // ── Tool execution ──
+    | {
+        type: "tool_start";
+        tool: string;
+        args: Record<string, unknown>;
+        toolCallId?: string;
+        callSegments?: StyledSegment[];
+      }
+    | { type: "tool_output"; output: string; isError?: boolean; toolCallId?: string }
+    | {
+        type: "tool_end";
+        tool: string;
+        toolCallId?: string;
+        details?: unknown;
+        isError?: boolean;
+        resultSegments?: StyledSegment[];
+      }
+    // ── Turn delivery acknowledgements (idempotent send contract) ──
+    | {
+        type: "turn_ack";
+        command: TurnCommand;
+        clientTurnId: string;
+        stage: TurnAckStage;
+        requestId?: string;
+        duplicate?: boolean;
+      }
+    // ── RPC responses (keyed by requestId for correlation) ──
+    | {
+        type: "rpc_result";
+        command: string;
+        requestId?: string;
+        success: boolean;
+        data?: unknown;
+        error?: string;
+      }
+    // ── Compaction ──
+    | { type: "compaction_start"; reason: string }
+    | {
+        type: "compaction_end";
+        aborted: boolean;
+        willRetry: boolean;
+        summary?: string;
+        tokensBefore?: number;
+      }
+    // ── Retry ──
+    | {
+        type: "retry_start";
+        attempt: number;
+        maxAttempts: number;
+        delayMs: number;
+        errorMessage: string;
+      }
+    | { type: "retry_end"; success: boolean; attempt: number; finalError?: string }
+    // ── Permission gate ──
+    | {
+        type: "permission_request";
+        id: string;
+        sessionId: string;
+        tool: string;
+        input: Record<string, unknown>;
+        displaySummary: string;
+        reason: string;
+        timeoutAt: number;
+        expires?: boolean;
+      }
+    | { type: "permission_expired"; id: string; reason: string }
+    | { type: "permission_cancelled"; id: string }
+    // ── Extension UI forwarding ──
+    | {
+        type: "extension_ui_request";
+        id: string;
+        sessionId: string;
+        method: string;
+        title?: string;
+        options?: string[];
+        message?: string;
+        placeholder?: string;
+        prefill?: string;
+        timeout?: number;
+      }
+    | {
+        type: "extension_ui_notification";
+        method: string;
+        message?: string;
+        notifyType?: string;
+        statusKey?: string;
+        statusText?: string;
+      }
+    // ── Git status (workspace-level, pushed after file-mutating tool calls) ──
+    | {
+        type: "git_status";
+        workspaceId: string;
+        status: GitStatus;
+      }
+  ) & {
+    seq?: number;
+    /**
+     * Session scope for multiplexed user streams.
+     * Per-session streams may omit this field.
+     */
+    sessionId?: string;
+    /**
+     * User-wide multiplexed stream sequence cursor.
+     */
+    streamSeq?: number;
+  };
 
 // ─── Push ───
 
