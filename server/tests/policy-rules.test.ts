@@ -1,5 +1,5 @@
 /**
- * Policy Engine v2 (slim) tests.
+ * Policy rule evaluation tests.
  */
 
 import { describe, it, expect, afterAll } from "vitest";
@@ -31,7 +31,7 @@ afterAll(() => {
 });
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "policy-v2-"));
+  const dir = mkdtempSync(join(tmpdir(), "policy-rules-"));
   tempDirs.push(dir);
   return dir;
 }
