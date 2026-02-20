@@ -28,6 +28,7 @@ function makeCtx(): TranslationContext {
     sessionId: "s1",
     partialResults: new Map(),
     streamedAssistantText: "",
+    hasStreamedThinking: false,
   };
 }
 
@@ -223,6 +224,45 @@ describe("session-protocol translatePiEvent", () => {
       { type: "thinking_delta", delta: "chain" },
     ]);
     expect(ctx.streamedAssistantText).toBe("");
+  });
+
+  it("skips thinking recovery when thinking was already streamed", () => {
+    const ctx = makeCtx();
+    ctx.streamedAssistantText = "Full answer.";
+    ctx.hasStreamedThinking = true; // thinking_delta events were forwarded live
+
+    const messages = translatePiEvent(
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Full answer." },
+            { type: "thinking", thinking: "streamed thinking" },
+          ],
+        },
+      },
+      ctx,
+    );
+
+    // No text_delta (text matches), no thinking_delta (already streamed)
+    expect(messages).toEqual([]);
+    expect(ctx.hasStreamedThinking).toBe(false); // reset for next message
+  });
+
+  it("sets hasStreamedThinking on thinking_delta forwarding", () => {
+    const ctx = makeCtx();
+    expect(ctx.hasStreamedThinking).toBe(false);
+
+    translatePiEvent(
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: "hmm" },
+      },
+      ctx,
+    );
+
+    expect(ctx.hasStreamedThinking).toBe(true);
   });
 
   it("logs extension errors and emits no messages", () => {

@@ -762,6 +762,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func handleMessageEnd(_ content: String) {
+        // Thinking is per-message — finalize it when the message ends,
+        // not just on agentEnd. This ensures the spinner stops even if
+        // agentEnd is delayed (e.g., tool calls follow this message).
+        finalizeThinking()
+
         guard !content.isEmpty else {
             finalizeAssistantMessage()
             return

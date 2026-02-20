@@ -41,11 +41,7 @@ import {
   type TranslationContext,
 } from "./session-protocol.js";
 import { getGitStatus } from "./git-status.js";
-import {
-  resolvePiExecutable,
-  spawnPiHost,
-  type SpawnDeps,
-} from "./session-spawn.js";
+import { resolvePiExecutable, spawnPiHost, type SpawnDeps } from "./session-spawn.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
@@ -72,6 +68,10 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
 /**
  * Compose a canonical `provider/modelId` string.
  *
@@ -96,7 +96,6 @@ export interface SessionBroadcastEvent {
   event: ServerMessage;
   durable: boolean;
 }
-
 
 // ─── Helpers ───
 
@@ -140,6 +139,8 @@ interface ActiveSession {
    * Used to recover missing final text from message_end when pi skips deltas.
    */
   streamedAssistantText: string;
+  /** True when thinking_delta events were forwarded for the current message. */
+  hasStreamedThinking: boolean;
   /** Per-session dedupe cache for idempotent prompt/steer/follow_up retries. */
   turnCache: TurnDedupeCache;
   /** Ordered turn IDs waiting for `agent_start` -> `started` ACK emission. */
@@ -312,53 +313,51 @@ export class SessionManager extends EventEmitter {
 
     const identity = this.buildWorkspaceIdentity(session, workspace);
 
-    return this.runtimeManager.withWorkspaceLock(
-            identity.workspaceId,
-      async () => {
-        this.runtimeManager.reserveSessionStart(identity);
+    return this.runtimeManager.withWorkspaceLock(identity.workspaceId, async () => {
+      this.runtimeManager.reserveSessionStart(identity);
 
-        try {
-          const proc = await spawnPiHost(session, workspace, this.spawnDeps);
+      try {
+        const proc = await spawnPiHost(session, workspace, this.spawnDeps);
 
-          const activeSession: ActiveSession = {
-            session,
-            process: proc,
-            workspaceId: identity.workspaceId,
-            subscribers: new Set(),
-            pendingResponses: new Map(),
-            pendingUIRequests: new Map(),
-            partialResults: new Map(),
-            streamedAssistantText: "",
-            turnCache: new TurnDedupeCache(),
-            pendingTurnStarts: [],
-            seq: 0,
-            eventRing: new EventRing(this.eventRingCapacity),
-          };
+        const activeSession: ActiveSession = {
+          session,
+          process: proc,
+          workspaceId: identity.workspaceId,
+          subscribers: new Set(),
+          pendingResponses: new Map(),
+          pendingUIRequests: new Map(),
+          partialResults: new Map(),
+          streamedAssistantText: "",
+          hasStreamedThinking: false,
+          turnCache: new TurnDedupeCache(),
+          pendingTurnStarts: [],
+          seq: 0,
+          eventRing: new EventRing(this.eventRingCapacity),
+        };
 
-          this.active.set(key, activeSession);
-          this.runtimeManager.markSessionReady(identity);
+        this.active.set(key, activeSession);
+        this.runtimeManager.markSessionReady(identity);
 
-          session.status = "ready";
-          session.lastActivity = Date.now();
-          this.persistSessionNow(key, session);
-          this.resetIdleTimer(key);
+        session.status = "ready";
+        session.lastActivity = Date.now();
+        this.persistSessionNow(key, session);
+        this.resetIdleTimer(key);
 
-          // Best-effort: capture pi session file/UUID from get_state so trace
-          // loading works after reconnects/restarts.
-          void this.bootstrapSessionState(key);
+        // Best-effort: capture pi session file/UUID from get_state so trace
+        // loading works after reconnects/restarts.
+        void this.bootstrapSessionState(key);
 
-          return session;
-        } catch (err) {
-          // Gate socket may have been created inside spawnPiHost
-          // before the error — always clean up.
-          this.gate.destroySessionSocket(sessionId);
+        return session;
+      } catch (err) {
+        // Gate socket may have been created inside spawnPiHost
+        // before the error — always clean up.
+        this.gate.destroySessionSocket(sessionId);
 
-          this.runtimeManager.releaseSession(identity);
+        this.runtimeManager.releaseSession(identity);
 
-          throw err;
-        }
-      },
-    );
+        throw err;
+      }
+    });
   }
 
   private buildWorkspaceIdentity(
@@ -366,7 +365,7 @@ export class SessionManager extends EventEmitter {
     workspace?: Workspace,
   ): WorkspaceSessionIdentity {
     return {
-            workspaceId: this.resolveSessionWorkspaceId(session, workspace),
+      workspaceId: this.resolveSessionWorkspaceId(session, workspace),
       sessionId: session.id,
     };
   }
@@ -390,7 +389,7 @@ export class SessionManager extends EventEmitter {
     return {
       gate: this.gate,
       piExecutable: this.piExecutable,
-      globalPolicy: this.storage.getConfig().policy,
+      policyConfig: this.config.policy,
       permissionGate: this.storage.getConfig().permissionGate,
       resolveSkillPath: this.resolveSkillPath,
       onRpcLine: (key, line) => this.handleRpcLine(key, line),
@@ -480,6 +479,7 @@ export class SessionManager extends EventEmitter {
     const ctx = this.translationContext(active);
     const messages = translatePiEvent(data, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
+    active.hasStreamedThinking = ctx.hasStreamedThinking;
     for (const message of messages) {
       this.broadcast(key, message);
     }
@@ -962,11 +962,7 @@ export class SessionManager extends EventEmitter {
     }
 
     try {
-      await this.sendRpcCommandAsync(
-        key,
-        { type: "set_thinking_level", level: preferred },
-        8_000,
-      );
+      await this.sendRpcCommandAsync(key, { type: "set_thinking_level", level: preferred }, 8_000);
 
       try {
         const state = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
@@ -986,7 +982,9 @@ export class SessionManager extends EventEmitter {
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`${ts()} [session:${active.session.id}] failed to apply remembered thinking level: ${message}`);
+      console.warn(
+        `${ts()} [session:${active.session.id}] failed to apply remembered thinking level: ${message}`,
+      );
       return false;
     }
   }
@@ -1150,7 +1148,8 @@ export class SessionManager extends EventEmitter {
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
     try {
-      let rpcData = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
+      let rpcData: unknown = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
+      const rpcObject = toRecord(rpcData);
 
       if (cmdType === "get_state") {
         if (this.applyPiStateSnapshot(active.session, rpcData)) {
@@ -1163,8 +1162,8 @@ export class SessionManager extends EventEmitter {
       // Track thinking level changes so the session object stays in sync
       if (cmdType === "cycle_thinking_level" || cmdType === "set_thinking_level") {
         const levelFromResponse =
-          typeof rpcData?.level === "string" && rpcData.level.trim().length > 0
-            ? rpcData.level.trim()
+          typeof rpcObject.level === "string" && rpcObject.level.trim().length > 0
+            ? rpcObject.level.trim()
             : undefined;
         const levelFromRequest =
           cmdType === "set_thinking_level" &&
@@ -1185,9 +1184,9 @@ export class SessionManager extends EventEmitter {
       // Track model changes so the session object stays in sync
       if (cmdType === "set_model" || cmdType === "cycle_model") {
         // set_model returns the model object, cycle_model returns { model, thinkingLevel, isScoped }
-        const modelData = cmdType === "cycle_model" ? rpcData?.model : rpcData;
-        const provider = modelData?.provider;
-        const modelId = modelData?.id;
+        const modelData = cmdType === "cycle_model" ? toRecord(rpcObject.model) : rpcObject;
+        const provider = modelData.provider;
+        const modelId = modelData.id;
         if (typeof provider === "string" && typeof modelId === "string") {
           const fullId = composeModelId(provider, modelId);
           if (active.session.model !== fullId) {
@@ -1203,35 +1202,31 @@ export class SessionManager extends EventEmitter {
         // cycle_model also returns thinkingLevel
         if (
           cmdType === "cycle_model" &&
-          typeof rpcData?.thinkingLevel === "string" &&
-          rpcData.thinkingLevel.trim().length > 0
+          typeof rpcObject.thinkingLevel === "string" &&
+          rpcObject.thinkingLevel.trim().length > 0
         ) {
-          active.session.thinkingLevel = rpcData.thinkingLevel.trim();
+          active.session.thinkingLevel = rpcObject.thinkingLevel.trim();
           this.persistThinkingPreference(active.session);
         }
 
         const appliedRememberedThinking = await this.applyRememberedThinkingLevel(key, active);
 
         // Keep rpc_result payload consistent with server-authoritative session state.
-        if (cmdType === "cycle_model" && appliedRememberedThinking) {
-          const cycleData =
-            rpcData && typeof rpcData === "object" && !Array.isArray(rpcData)
-              ? (rpcData as Record<string, unknown>)
-              : undefined;
-          if (cycleData && active.session.thinkingLevel) {
-            cycleData.thinkingLevel = active.session.thinkingLevel;
-            rpcData = cycleData;
-          }
+        if (
+          cmdType === "cycle_model" &&
+          appliedRememberedThinking &&
+          active.session.thinkingLevel
+        ) {
+          rpcObject.thinkingLevel = active.session.thinkingLevel;
+          rpcData = rpcObject;
         }
       }
 
       // Track session name changes so optimistic client renames don't get
       // overwritten by stale local get_state snapshots.
       if (cmdType === "set_session_name") {
-        const requestedName =
-          typeof message.name === "string" ? message.name.trim() : "";
-        const responseName =
-          typeof rpcData?.name === "string" ? rpcData.name.trim() : "";
+        const requestedName = typeof message.name === "string" ? message.name.trim() : "";
+        const responseName = typeof rpcObject.name === "string" ? rpcObject.name.trim() : "";
         const nextName = responseName.length > 0 ? responseName : requestedName;
         if (nextName.length > 0 && active.session.name !== nextName) {
           active.session.name = nextName;
@@ -1250,7 +1245,9 @@ export class SessionManager extends EventEmitter {
           }
         } catch (stateErr) {
           const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
-          console.warn(`[rpc] ${cmdType} state refresh failed for ${active.session.id}: ${message}`);
+          console.warn(
+            `[rpc] ${cmdType} state refresh failed for ${active.session.id}: ${message}`,
+          );
         }
       }
 
@@ -1284,8 +1281,6 @@ export class SessionManager extends EventEmitter {
       });
     }
   }
-
-
 
   /**
    * Abort the current agent operation.
@@ -1375,12 +1370,11 @@ export class SessionManager extends EventEmitter {
   /**
    * Send RPC command and await the response.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
   sendRpcCommandAsync(
     key: string,
     command: Record<string, unknown>,
     timeoutMs = 10_000,
-  ): Promise<any> {
+  ): Promise<unknown> {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
 
@@ -1417,6 +1411,7 @@ export class SessionManager extends EventEmitter {
       sessionId: active.session.id,
       partialResults: active.partialResults,
       streamedAssistantText: active.streamedAssistantText,
+      hasStreamedThinking: active.hasStreamedThinking,
       mobileRenderers: this.mobileRenderers,
     };
   }
@@ -1464,7 +1459,6 @@ export class SessionManager extends EventEmitter {
     this.markSessionDirty(key);
   }
 
-
   /**
    * After a file-mutating tool call, asynchronously fetch git status
    * and broadcast it to connected clients. Non-blocking — errors are
@@ -1502,16 +1496,18 @@ export class SessionManager extends EventEmitter {
     if (!workspace?.hostMount) return;
     if (workspace.gitStatusEnabled === false) return;
 
-    void getGitStatus(workspace.hostMount).then((status) => {
-      if (!status.isGitRepo) return;
-      this.broadcast(key, {
-        type: "git_status",
-        workspaceId: wsId,
-        status,
+    void getGitStatus(workspace.hostMount)
+      .then((status) => {
+        if (!status.isGitRepo) return;
+        this.broadcast(key, {
+          type: "git_status",
+          workspaceId: wsId,
+          status,
+        });
+      })
+      .catch(() => {
+        // Silently ignore git errors
       });
-    }).catch(() => {
-      // Silently ignore git errors
-    });
   }
 
   private markSessionDirty(key: string): void {
@@ -1597,10 +1593,9 @@ export class SessionManager extends EventEmitter {
     this.active.delete(key);
 
     this.runtimeManager.releaseSession({
-            workspaceId: active.workspaceId,
+      workspaceId: active.workspaceId,
       sessionId: active.session.id,
     });
-
   }
 
   // ─── Subscribe / Broadcast ───
@@ -1649,7 +1644,7 @@ export class SessionManager extends EventEmitter {
     });
 
     this.emit("session_event", {
-            sessionId: active.session.id,
+      sessionId: active.session.id,
       event: sequenced,
       durable: true,
     } satisfies SessionBroadcastEvent);
@@ -1672,7 +1667,7 @@ export class SessionManager extends EventEmitter {
     // through EventEmitter to avoid hot-path overhead.
     if (message.type === "state") {
       this.emit("session_event", {
-                sessionId: active.session.id,
+        sessionId: active.session.id,
         event: message,
         durable: false,
       } satisfies SessionBroadcastEvent);
@@ -1844,7 +1839,9 @@ export class SessionManager extends EventEmitter {
       }
 
       // Phase 1: stdin abort didn't work — send SIGINT to interrupt running tools
-      console.log(`${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; sending SIGINT`);
+      console.log(
+        `${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; sending SIGINT`,
+      );
       this.broadcast(key, {
         type: "stop_requested",
         source: "server",
@@ -1860,7 +1857,12 @@ export class SessionManager extends EventEmitter {
       }
 
       // Phase 2: if SIGINT doesn't resolve the abort, give up but keep session alive
-      current.pendingStop!.timeoutHandle = setTimeout(() => {
+      const currentPendingStop = current.pendingStop;
+      if (!currentPendingStop || currentPendingStop.mode !== "abort") {
+        return;
+      }
+
+      currentPendingStop.timeoutHandle = setTimeout(() => {
         const still = this.active.get(key);
         if (!still || still.pendingStop?.mode !== "abort") {
           return;

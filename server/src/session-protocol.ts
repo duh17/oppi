@@ -30,10 +30,7 @@ function ts(): string {
  * Pi normally streams assistant text via `message_update.text_delta`, but some
  * turns only include text in `message_end`. This helper bridges that gap.
  */
-export function computeAssistantTextTailDelta(
-  streamedText: string,
-  finalizedText: string,
-): string {
+export function computeAssistantTextTailDelta(streamedText: string, finalizedText: string): string {
   if (finalizedText.length === 0) return "";
   if (streamedText.length === 0) return finalizedText;
   if (finalizedText === streamedText) return "";
@@ -135,6 +132,8 @@ export interface TranslationContext {
   partialResults: Map<string, string>;
   /** Assistant text already streamed via text_delta for the current turn. */
   streamedAssistantText: string;
+  /** True when thinking_delta events were already forwarded for the current message. */
+  hasStreamedThinking: boolean;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
   mobileRenderers?: MobileRendererRegistry;
 }
@@ -207,6 +206,7 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
         return [{ type: "text_delta", delta: evt.delta }];
       }
       if (evt?.type === "thinking_delta") {
+        ctx.hasStreamedThinking = true;
         return [{ type: "thinking_delta", delta: evt.delta }];
       }
       return [];
@@ -289,7 +289,11 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})
       // and built-in tools emit BashToolDetails, ReadToolDetails, etc.
       const details = event.result?.details;
-      const resultSegments = ctx.mobileRenderers?.renderResult(event.toolName, details, !!event.isError);
+      const resultSegments = ctx.mobileRenderers?.renderResult(
+        event.toolName,
+        details,
+        !!event.isError,
+      );
       messages.push({
         type: "tool_end",
         tool: event.toolName,
@@ -366,20 +370,26 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
         out.push({ type: "text_delta", delta: tailDelta });
       }
 
-      const content = message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (
-            block?.type === "thinking" &&
-            typeof block.thinking === "string" &&
-            block.thinking.length > 0
-          ) {
-            out.push({ type: "thinking_delta", delta: block.thinking });
+      // Recover thinking only when it wasn't already streamed live.
+      // Streaming sets ctx.hasStreamedThinking; recovery is for reconnect
+      // catch-up scenarios where the client missed the streaming events.
+      if (!ctx.hasStreamedThinking) {
+        const content = message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (
+              block?.type === "thinking" &&
+              typeof block.thinking === "string" &&
+              block.thinking.length > 0
+            ) {
+              out.push({ type: "thinking_delta", delta: block.thinking });
+            }
           }
         }
       }
 
       ctx.streamedAssistantText = "";
+      ctx.hasStreamedThinking = false;
       return out;
     }
 
