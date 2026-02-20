@@ -31,6 +31,26 @@ struct WorkspaceDetailView: View {
         let activeChildForkCount: Int
     }
 
+    /// A unified item that can be either a stopped oppi session or a local TUI session.
+    private enum StoppedItem: Identifiable {
+        case session(Session)
+        case local(LocalSession)
+
+        var id: String {
+            switch self {
+            case .session(let s): return s.id
+            case .local(let l): return "local-\(l.id)"
+            }
+        }
+
+        var sortDate: Date {
+            switch self {
+            case .session(let s): return s.lastActivity
+            case .local(let l): return l.lastModified
+            }
+        }
+    }
+
     private struct StoppedSessionGroup: Identifiable {
         enum Bucket: Hashable {
             case day(Date)
@@ -38,7 +58,7 @@ struct WorkspaceDetailView: View {
         }
 
         let bucket: Bucket
-        let sessions: [Session]
+        let items: [StoppedItem]
 
         var id: String {
             switch bucket {
@@ -104,41 +124,76 @@ struct WorkspaceDetailView: View {
     }
 
     /// Local pi TUI sessions whose CWD matches this workspace's hostMount.
+    ///
+    /// The hostMount uses `~` (e.g. `~/workspace/oppi`) while CWD from the server
+    /// is absolute (e.g. `/Users/chenda/workspace/oppi`). We match by checking if
+    /// the CWD ends with the path after `~/`.
     private var filteredLocalSessions: [LocalSession] {
         guard let mount = workspace.hostMount, !mount.isEmpty else { return [] }
-        let resolved = mount.replacingOccurrences(of: "~", with: NSHomeDirectory())
+
+        // Extract the path suffix after ~/ for matching against absolute CWDs
+        let suffix: String
+        if mount.hasPrefix("~/") {
+            suffix = String(mount.dropFirst(2))  // "workspace/oppi"
+        } else if mount.hasPrefix("~") {
+            suffix = String(mount.dropFirst(1))   // just "~" means home dir
+        } else {
+            suffix = mount  // Already absolute — match directly
+        }
+
         return localSessions.filter { local in
             if hasSessionSearchQuery {
                 let title = local.displayTitle.lowercased()
                 guard title.contains(normalizedSessionSearchQuery) else { return false }
             }
-            return local.cwd == resolved || local.cwd.hasPrefix(resolved + "/")
+
+            if suffix.isEmpty {
+                // hostMount is "~" — match any CWD under user's home
+                return true
+            }
+
+            // Check if CWD ends with the suffix (e.g. "/Users/chenda/workspace/oppi" ends with "workspace/oppi")
+            // Also verify a path separator precedes the suffix to avoid partial matches
+            if local.cwd == mount { return true }
+            if local.cwd.hasSuffix("/" + suffix) { return true }
+            if local.cwd.hasSuffix("/" + suffix + "/") { return true }
+            // Check subdirectory
+            if let range = local.cwd.range(of: "/" + suffix + "/") {
+                return range.lowerBound < local.cwd.endIndex
+            }
+            return false
         }
     }
 
-    /// Progressive grouping for stopped sessions:
-    /// - Recent sessions: grouped by day (last 30 days)
-    /// - Older sessions: grouped by month
+    /// Progressive grouping for stopped sessions + local TUI sessions:
+    /// - Recent: grouped by day (last 30 days)
+    /// - Older: grouped by month
+    /// Local sessions are mixed in alongside stopped sessions by date.
     private var stoppedSessionGroups: [StoppedSessionGroup] {
-        guard !stoppedSessions.isEmpty else { return [] }
+        // Merge stopped sessions and local sessions into unified items
+        let stoppedItems: [StoppedItem] = stoppedSessions.map { .session($0) }
+        let localItems: [StoppedItem] = filteredLocalSessions.map { .local($0) }
+        let allItems = stoppedItems + localItems
+
+        guard !allItems.isEmpty else { return [] }
 
         let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
 
-        let grouped = Dictionary(grouping: stoppedSessions) { session in
-            if session.lastActivity >= recentCutoff {
-                return StoppedSessionGroup.Bucket.day(calendar.startOfDay(for: session.lastActivity))
+        let grouped = Dictionary(grouping: allItems) { item in
+            if item.sortDate >= recentCutoff {
+                return StoppedSessionGroup.Bucket.day(calendar.startOfDay(for: item.sortDate))
             }
 
-            let comps = calendar.dateComponents([.year, .month], from: session.lastActivity)
-            let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: session.lastActivity)
+            let comps = calendar.dateComponents([.year, .month], from: item.sortDate)
+            let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: item.sortDate)
             return StoppedSessionGroup.Bucket.month(monthStart)
         }
 
         return grouped
-            .map { bucket, sessions in
+            .map { bucket, items in
                 StoppedSessionGroup(
                     bucket: bucket,
-                    sessions: sessions.sorted { $0.lastActivity > $1.lastActivity }
+                    items: items.sorted { $0.sortDate > $1.sortDate }
                 )
             }
             .sorted { lhs, rhs in
@@ -185,47 +240,45 @@ struct WorkspaceDetailView: View {
                 }
             }
 
-            if !filteredLocalSessions.isEmpty {
-                Section("From Terminal") {
-                    ForEach(filteredLocalSessions) { local in
-                        Button {
-                            Task { await importAndResumeLocal(local) }
-                        } label: {
-                            LocalSessionRow(session: local)
-                        }
-                        .listRowBackground(Color.themeBg)
-                        .disabled(isImportingLocal)
-                    }
-                }
-            }
-
             if !stoppedSessionGroups.isEmpty {
                 ForEach(Array(stoppedSessionGroups.enumerated()), id: \.element.id) { index, group in
                     Section {
                         if isStoppedGroupExpanded(group) {
-                            ForEach(group.sessions) { session in
-                                NavigationLink(value: session.id) {
-                                    SessionRow(
-                                        session: session,
-                                        pendingCount: 0,
-                                        lineageHint: lineageHint(for: session)
-                                    )
-                                }
-                                .listRowBackground(Color.themeBg)
-                                .swipeActions(edge: .leading) {
+                            ForEach(group.items) { item in
+                                switch item {
+                                case .session(let session):
+                                    NavigationLink(value: session.id) {
+                                        SessionRow(
+                                            session: session,
+                                            pendingCount: 0,
+                                            lineageHint: lineageHint(for: session)
+                                        )
+                                    }
+                                    .listRowBackground(Color.themeBg)
+                                    .swipeActions(edge: .leading) {
+                                        Button {
+                                            Task { await resumeSession(session) }
+                                        } label: {
+                                            Label("Resume", systemImage: "play.fill")
+                                        }
+                                        .tint(.themeGreen)
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            Task { await deleteSession(session) }
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+
+                                case .local(let local):
                                     Button {
-                                        Task { await resumeSession(session) }
+                                        Task { await importAndResumeLocal(local) }
                                     } label: {
-                                        Label("Resume", systemImage: "play.fill")
+                                        LocalSessionRow(session: local)
                                     }
-                                    .tint(.themeGreen)
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        Task { await deleteSession(session) }
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                                    .listRowBackground(Color.themeBg)
+                                    .disabled(isImportingLocal)
                                 }
                             }
                         }

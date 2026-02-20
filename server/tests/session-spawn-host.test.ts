@@ -1,4 +1,3 @@
-import type { ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,7 +64,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 45678);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
       piExecutable: "/opt/homebrew/bin/pi",
     });
 
@@ -141,7 +140,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 45680);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
       piExecutable: "/opt/homebrew/bin/pi",
       resolveSkillPath: (name: string) => {
         if (name === "fetch") return "/Users/example/.pi/agent/skills/fetch";
@@ -188,7 +187,7 @@ describe("session-spawn spawnPiHost", () => {
       const createSessionSocket = vi.fn(async () => 49001);
       const setSessionPolicy = vi.fn();
       const deps = makeDeps({
-        gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+        gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
         piExecutable: "/opt/homebrew/bin/pi",
         globalPolicy: {
           schemaVersion: 1,
@@ -238,7 +237,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 45679);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
       piExecutable: "/opt/homebrew/bin/pi",
     });
 
@@ -276,7 +275,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 40001);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
       piExecutable: "pi",
     });
 
@@ -314,7 +313,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 40010);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
       piExecutable: "pi",
     });
 
@@ -343,7 +342,7 @@ describe("session-spawn spawnPiHost", () => {
     const createSessionSocket = vi.fn(async () => 40002);
     const setSessionPolicy = vi.fn();
     const deps = makeDeps({
-      gate: { createSessionSocket, setSessionPolicy } as unknown as SpawnDeps["gate"],
+      gate: { createSessionSocket, setSessionPolicy, ruleStore: { ensureWorkspaceDefaults: vi.fn(() => []) } } as unknown as SpawnDeps["gate"],
     });
 
     mockedExistsSync.mockImplementation((path) => {
