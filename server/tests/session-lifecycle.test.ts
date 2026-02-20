@@ -9,7 +9,6 @@ import { EventRing } from "../src/event-ring.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
-import type { SandboxManager } from "../src/sandbox.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 
@@ -36,7 +35,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    runtime: "host",
     ...overrides,
   };
 }
@@ -74,12 +72,7 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
     getGuardState: vi.fn(() => "guarded"),
   } as unknown as GateServer;
 
-  const sandbox = {
-    stopAll: vi.fn(async () => {}),
-    stopWorkspaceContainer: vi.fn(async () => {}),
-  } as unknown as SandboxManager;
-
-  const manager = new SessionManager(storage, gate, sandbox);
+  const manager = new SessionManager(storage, gate);
 
   // Disable idle timers for deterministic tests.
   (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
@@ -92,7 +85,6 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
     session,
     process,
     workspaceId: session.workspaceId ?? "w1",
-    runtime: session.runtime ?? "host",
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingResponses: new Map(),
     pendingUIRequests: new Map(),

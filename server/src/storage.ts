@@ -14,15 +14,13 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
+import { isIP } from "node:net";
 import { generateId } from "./id.js";
+import { defaultPolicy } from "./policy.js";
 import type {
   Session,
   SessionMessage,
-  SecurityProfile,
   ServerConfig,
-  ServerSecurityConfig,
-  ServerIdentityConfig,
-  ServerInviteConfig,
   Workspace,
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -30,11 +28,6 @@ import type {
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
-const SECURITY_PROFILES: ReadonlySet<SecurityProfile> = new Set([
-  "tailscale-permissive",
-  "strict",
-]);
-const INVITE_FORMATS: ReadonlySet<ServerInviteConfig["format"]> = new Set(["v2-signed"]);
 
 export interface ConfigValidationResult {
   valid: boolean;
@@ -47,33 +40,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function defaultSecurityConfig(): ServerSecurityConfig {
-  return {
-    profile: "tailscale-permissive",
-    requireTlsOutsideTailnet: true,
-    allowInsecureHttpInTailnet: true,
-    requirePinnedServerIdentity: true,
-  };
+function isValidCidr(value: string): boolean {
+  const parts = value.trim().split("/");
+  if (parts.length !== 2) return false;
+
+  const base = parts[0].trim();
+  const prefix = Number(parts[1]);
+  if (!Number.isInteger(prefix)) return false;
+
+  const family = isIP(base);
+  if (family === 4) return prefix >= 0 && prefix <= 32;
+  if (family === 6) return prefix >= 0 && prefix <= 128;
+  return false;
 }
 
-function defaultIdentityConfig(dataDir: string): ServerIdentityConfig {
-  return {
-    enabled: true,
-    algorithm: "ed25519",
-    keyId: "srv-default",
-    privateKeyPath: join(dataDir, "identity_ed25519"),
-    publicKeyPath: join(dataDir, "identity_ed25519.pub"),
-    fingerprint: "",
-  };
+function defaultAllowedCidrs(): string[] {
+  // Loopback + RFC1918 + CGNAT (Tailscale IPv4 range) + link-local + ULA.
+  return [
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "169.254.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+  ];
 }
 
-function defaultInviteConfig(): ServerInviteConfig {
-  return {
-    format: "v2-signed",
-    maxAgeSeconds: 600,
-    singleUse: false,
-  };
-}
+
 
 function createDefaultConfig(dataDir: string): ServerConfig {
   return {
@@ -81,16 +77,15 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     port: 7749,
     host: "0.0.0.0",
     dataDir,
-    defaultModel: "anthropic/claude-sonnet-4-0",
+    defaultModel: "openai-codex/gpt-5.3-codex",
     sessionIdleTimeoutMs: 10 * 60 * 1000,
     workspaceIdleTimeoutMs: 30 * 60 * 1000,
     maxSessionsPerWorkspace: 3,
     maxSessionsGlobal: 5,
     approvalTimeoutMs: 120 * 1000,
 
-    security: defaultSecurityConfig(),
-    identity: defaultIdentityConfig(dataDir),
-    invite: defaultInviteConfig(),
+    allowedCidrs: defaultAllowedCidrs(),
+    policy: defaultPolicy(),
   };
 }
 
@@ -106,9 +101,7 @@ function normalizeConfig(
 
   const config: ServerConfig = {
     ...defaults,
-    security: defaultSecurityConfig(),
-    identity: defaultIdentityConfig(defaults.dataDir),
-    invite: defaultInviteConfig(),
+    allowedCidrs: defaultAllowedCidrs(),
   };
 
   if (!isRecord(raw)) {
@@ -129,12 +122,18 @@ function normalizeConfig(
     "maxSessionsPerWorkspace",
     "maxSessionsGlobal",
     "approvalTimeoutMs",
+    "allowedCidrs",
+    "policy",
 
     "security",
     "identity",
     "invite",
     "token",
-    "deviceTokens",
+    "pairingToken",
+    "pairingTokenExpiresAt",
+    "authDeviceTokens",
+    "pushDeviceTokens",
+    "deviceTokens", // legacy alias (migrated to pushDeviceTokens)
     "liveActivityToken",
     "thinkingLevelByModel",
   ]);
@@ -180,20 +179,6 @@ function normalizeConfig(
     const value = obj[key];
     if (typeof value !== "string" || value.trim().length === 0) {
       errors.push(`config.${key}: expected non-empty string`);
-      changed = true;
-      return undefined;
-    }
-    return value;
-  };
-
-  const readBoolean = (key: string): boolean | undefined => {
-    if (!(key in obj)) {
-      changed = true;
-      return undefined;
-    }
-    const value = obj[key];
-    if (typeof value !== "boolean") {
-      errors.push(`config.${key}: expected boolean`);
       changed = true;
       return undefined;
     }
@@ -255,22 +240,375 @@ function normalizeConfig(
     config.approvalTimeoutMs = approvalTimeoutMs;
   }
 
-  const securityDefaults = defaultSecurityConfig();
-  if (!("security" in obj)) {
+  const allowedCidrsDefaults = defaultAllowedCidrs();
+  const parseAllowedCidrs = (value: unknown, path: string): string[] | null => {
+    if (!Array.isArray(value)) {
+      errors.push(`${path}: expected array of CIDR strings`);
+      changed = true;
+      return null;
+    }
+
+    const parsed: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (typeof item !== "string" || !isValidCidr(item)) {
+        errors.push(`${path}[${i}]: expected CIDR like 192.168.0.0/16`);
+        changed = true;
+        continue;
+      }
+      parsed.push(item.trim());
+    }
+
+    if (parsed.length === 0) {
+      errors.push(`${path}: must contain at least one valid CIDR`);
+      changed = true;
+      return null;
+    }
+
+    return parsed;
+  };
+
+  let hasTopLevelAllowedCidrs = false;
+  if (!("allowedCidrs" in obj)) {
     changed = true;
-    config.security = securityDefaults;
+    config.allowedCidrs = allowedCidrsDefaults;
   } else {
+    hasTopLevelAllowedCidrs = true;
+    const parsed = parseAllowedCidrs(obj.allowedCidrs, "config.allowedCidrs");
+    if (parsed) config.allowedCidrs = parsed;
+  }
+
+  const parsePolicyConfig = (
+    value: unknown,
+    path: string,
+  ): NonNullable<ServerConfig["policy"]> | null => {
+    if (!isRecord(value)) {
+      errors.push(`${path}: expected object`);
+      changed = true;
+      return null;
+    }
+
+    const allowed = new Set([
+      "schemaVersion",
+      "mode",
+      "description",
+      "fallback",
+      "guardrails",
+      "permissions",
+      "heuristics",
+    ]);
+
+    if (strictUnknown) {
+      for (const key of Object.keys(value)) {
+        if (!allowed.has(key)) {
+          errors.push(`${path}.${key}: unknown key`);
+        }
+      }
+    }
+
+    const parseDecision = (
+      raw: unknown,
+      decisionPath: string,
+    ): "allow" | "ask" | "block" | null => {
+      if (raw === "allow" || raw === "ask" || raw === "block") return raw;
+      errors.push(`${decisionPath}: expected one of allow|ask|block`);
+      changed = true;
+      return null;
+    };
+
+    const parseMatch = (
+      raw: unknown,
+      matchPath: string,
+    ): {
+      tool?: string;
+      executable?: string;
+      commandMatches?: string;
+      pathMatches?: string;
+      pathWithin?: string;
+      domain?: string;
+    } | null => {
+      if (!isRecord(raw)) {
+        errors.push(`${matchPath}: expected object`);
+        changed = true;
+        return null;
+      }
+
+      const allowedMatchKeys = new Set([
+        "tool",
+        "executable",
+        "commandMatches",
+        "pathMatches",
+        "pathWithin",
+        "domain",
+      ]);
+
+      if (strictUnknown) {
+        for (const key of Object.keys(raw)) {
+          if (!allowedMatchKeys.has(key)) {
+            errors.push(`${matchPath}.${key}: unknown key`);
+          }
+        }
+      }
+
+      const out: {
+        tool?: string;
+        executable?: string;
+        commandMatches?: string;
+        pathMatches?: string;
+        pathWithin?: string;
+        domain?: string;
+      } = {};
+
+      const readOptionalString = (k: keyof typeof out): void => {
+        if (!(k in raw)) return;
+        const v = raw[k];
+        if (typeof v !== "string" || v.trim().length === 0) {
+          errors.push(`${matchPath}.${k}: expected non-empty string`);
+          changed = true;
+          return;
+        }
+        out[k] = v;
+      };
+
+      readOptionalString("tool");
+      readOptionalString("executable");
+      readOptionalString("commandMatches");
+      readOptionalString("pathMatches");
+      readOptionalString("pathWithin");
+      readOptionalString("domain");
+
+      if (Object.keys(out).length === 0) {
+        errors.push(`${matchPath}: expected at least one match field`);
+        changed = true;
+        return null;
+      }
+
+      return out;
+    };
+
+    const parsePermission = (
+      raw: unknown,
+      permPath: string,
+    ): {
+      id: string;
+      decision: "allow" | "ask" | "block";
+      label?: string;
+      reason?: string;
+      immutable?: boolean;
+      match: {
+        tool?: string;
+        executable?: string;
+        commandMatches?: string;
+        pathMatches?: string;
+        pathWithin?: string;
+        domain?: string;
+      };
+    } | null => {
+      if (!isRecord(raw)) {
+        errors.push(`${permPath}: expected object`);
+        changed = true;
+        return null;
+      }
+
+      const allowedPermKeys = new Set([
+        "id",
+        "decision",
+        "risk",
+        "label",
+        "reason",
+        "immutable",
+        "match",
+      ]);
+
+      if (strictUnknown) {
+        for (const key of Object.keys(raw)) {
+          if (!allowedPermKeys.has(key)) {
+            errors.push(`${permPath}.${key}: unknown key`);
+          }
+        }
+      }
+
+      if (typeof raw.id !== "string" || !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(raw.id)) {
+        errors.push(`${permPath}.id: expected slug-like id (3-64 chars)`);
+        changed = true;
+        return null;
+      }
+
+      const decision = parseDecision(raw.decision, `${permPath}.decision`);
+      if (!decision) return null;
+
+      // "risk" is accepted for backwards compatibility but ignored
+      let label: string | undefined;
+      if ("label" in raw) {
+        if (typeof raw.label === "string" && raw.label.trim().length > 0) {
+          label = raw.label;
+        } else {
+          errors.push(`${permPath}.label: expected non-empty string`);
+          changed = true;
+        }
+      }
+
+      let reason: string | undefined;
+      if ("reason" in raw) {
+        if (typeof raw.reason === "string" && raw.reason.trim().length > 0) {
+          reason = raw.reason;
+        } else {
+          errors.push(`${permPath}.reason: expected non-empty string`);
+          changed = true;
+        }
+      }
+
+      let immutable: boolean | undefined;
+      if ("immutable" in raw) {
+        if (typeof raw.immutable === "boolean") {
+          immutable = raw.immutable;
+        } else {
+          errors.push(`${permPath}.immutable: expected boolean`);
+          changed = true;
+        }
+      }
+
+      const match = parseMatch(raw.match, `${permPath}.match`);
+      if (!match) return null;
+
+      return {
+        id: raw.id,
+        decision,
+        label,
+        reason,
+        immutable,
+        match,
+      };
+    };
+
+    if (value.schemaVersion !== 1) {
+      errors.push(`${path}.schemaVersion: expected 1`);
+      changed = true;
+      return null;
+    }
+
+    let mode: string | undefined;
+    if ("mode" in value) {
+      if (typeof value.mode === "string" && value.mode.trim().length > 0) {
+        mode = value.mode;
+      } else {
+        errors.push(`${path}.mode: expected non-empty string`);
+        changed = true;
+      }
+    }
+
+    let description: string | undefined;
+    if ("description" in value) {
+      if (typeof value.description === "string") {
+        description = value.description;
+      } else {
+        errors.push(`${path}.description: expected string`);
+        changed = true;
+      }
+    }
+
+    const fallback = parseDecision(value.fallback, `${path}.fallback`);
+    if (!fallback) return null;
+
+    if (!Array.isArray(value.guardrails)) {
+      errors.push(`${path}.guardrails: expected array`);
+      changed = true;
+      return null;
+    }
+    if (!Array.isArray(value.permissions)) {
+      errors.push(`${path}.permissions: expected array`);
+      changed = true;
+      return null;
+    }
+
+    const guardrails = value.guardrails
+      .map((entry, i) => parsePermission(entry, `${path}.guardrails[${i}]`))
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    const permissions = value.permissions
+      .map((entry, i) => parsePermission(entry, `${path}.permissions[${i}]`))
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    // Parse heuristics (optional — omitted means use defaults)
+    let heuristics: import("./types.js").PolicyHeuristics | undefined;
+    if ("heuristics" in value && value.heuristics != null) {
+      if (!isRecord(value.heuristics)) {
+        errors.push(`${path}.heuristics: expected object`);
+        changed = true;
+      } else {
+        const h = value.heuristics;
+        const validHeuristicKeys = new Set([
+          "pipeToShell",
+          "dataEgress",
+          "secretEnvInUrl",
+          "secretFileAccess",
+          "browserUnknownDomain",
+          "browserEval",
+        ]);
+
+        if (strictUnknown) {
+          for (const key of Object.keys(h)) {
+            if (!validHeuristicKeys.has(key)) {
+              errors.push(`${path}.heuristics.${key}: unknown key`);
+            }
+          }
+        }
+
+        const parseHeuristicValue = (
+          raw: unknown,
+          hPath: string,
+        ): "allow" | "ask" | "block" | false | undefined => {
+          if (raw === undefined) return undefined;
+          if (raw === false) return false;
+          if (raw === "allow" || raw === "ask" || raw === "block") return raw;
+          errors.push(`${hPath}: expected one of allow|ask|block or false`);
+          changed = true;
+          return undefined;
+        };
+
+        heuristics = {};
+        for (const key of validHeuristicKeys) {
+          if (key in h) {
+            const val = parseHeuristicValue(h[key], `${path}.heuristics.${key}`);
+            if (val !== undefined) {
+              (heuristics as Record<string, unknown>)[key] = val;
+            }
+          }
+        }
+      }
+    }
+
+    const result: NonNullable<ServerConfig["policy"]> = {
+      schemaVersion: 1,
+      mode,
+      description,
+      fallback,
+      guardrails,
+      permissions,
+    };
+    if (heuristics) result.heuristics = heuristics;
+    return result;
+  };
+
+  if ("policy" in obj) {
+    const parsed = parsePolicyConfig(obj.policy, "config.policy");
+    if (parsed) config.policy = parsed;
+  } else {
+    changed = true;
+  }
+
+  if ("security" in obj) {
     const rawSecurity = obj.security;
     if (!isRecord(rawSecurity)) {
       errors.push("config.security: expected object");
       changed = true;
-      config.security = securityDefaults;
     } else {
       const allowed = new Set([
         "profile",
         "requireTlsOutsideTailnet",
         "allowInsecureHttpInTailnet",
         "requirePinnedServerIdentity",
+        "allowedCidrs",
       ]);
       if (strictUnknown) {
         for (const key of Object.keys(rawSecurity)) {
@@ -280,185 +618,96 @@ function normalizeConfig(
         }
       }
 
-      const security: ServerSecurityConfig = { ...securityDefaults };
-
-      // Migrate removed "legacy" profile to default
-      if (rawSecurity.profile === "legacy") {
-        rawSecurity.profile = "tailscale-permissive";
-        changed = true;
+      const deprecatedKeys = [
+        "profile",
+        "requireTlsOutsideTailnet",
+        "allowInsecureHttpInTailnet",
+        "requirePinnedServerIdentity",
+      ] as const;
+      for (const key of deprecatedKeys) {
+        if (key in rawSecurity) {
+          warnings.push(`config.security.${key} is deprecated and ignored.`);
+          changed = true;
+        }
       }
 
-      if (!("profile" in rawSecurity)) {
-        changed = true;
-      } else if (typeof rawSecurity.profile !== "string" || !SECURITY_PROFILES.has(rawSecurity.profile as SecurityProfile)) {
-        errors.push(`config.security.profile: expected one of ${Array.from(SECURITY_PROFILES).join(", ")}`);
-        changed = true;
-      } else {
-        security.profile = rawSecurity.profile as SecurityProfile;
-      }
-
-      const securityBool = (key: keyof Omit<ServerSecurityConfig, "profile">): void => {
-        if (!(key in rawSecurity)) {
-          changed = true;
-          return;
-        }
-        const value = rawSecurity[key];
-        if (typeof value !== "boolean") {
-          errors.push(`config.security.${key}: expected boolean`);
-          changed = true;
-          return;
-        }
-        security[key] = value;
-      };
-
-      securityBool("requireTlsOutsideTailnet");
-      securityBool("allowInsecureHttpInTailnet");
-      securityBool("requirePinnedServerIdentity");
-
-      config.security = security;
-    }
-  }
-
-  const identityDefaults = defaultIdentityConfig(config.dataDir);
-  if (!("identity" in obj)) {
-    changed = true;
-    config.identity = identityDefaults;
-  } else {
-    const rawIdentity = obj.identity;
-    if (!isRecord(rawIdentity)) {
-      errors.push("config.identity: expected object");
-      changed = true;
-      config.identity = identityDefaults;
-    } else {
-      const allowed = new Set([
-        "enabled",
-        "algorithm",
-        "keyId",
-        "privateKeyPath",
-        "publicKeyPath",
-        "fingerprint",
-      ]);
-      if (strictUnknown) {
-        for (const key of Object.keys(rawIdentity)) {
-          if (!allowed.has(key)) {
-            errors.push(`config.identity.${key}: unknown key`);
+      if ("allowedCidrs" in rawSecurity) {
+        if (!hasTopLevelAllowedCidrs) {
+          const parsedLegacy = parseAllowedCidrs(rawSecurity.allowedCidrs, "config.security.allowedCidrs");
+          if (parsedLegacy) {
+            config.allowedCidrs = parsedLegacy;
+            warnings.push("config.security.allowedCidrs is deprecated; migrated to config.allowedCidrs.");
+            changed = true;
           }
+        } else {
+          warnings.push("config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs.");
+          changed = true;
         }
       }
-
-      const identity: ServerIdentityConfig = { ...identityDefaults };
-
-      if (!("enabled" in rawIdentity)) {
-        changed = true;
-      } else if (typeof rawIdentity.enabled !== "boolean") {
-        errors.push("config.identity.enabled: expected boolean");
-        changed = true;
-      } else {
-        identity.enabled = rawIdentity.enabled;
-      }
-
-      if (!("algorithm" in rawIdentity)) {
-        changed = true;
-      } else if (rawIdentity.algorithm !== "ed25519") {
-        errors.push("config.identity.algorithm: expected \"ed25519\"");
-        changed = true;
-      }
-
-      const identityString = (key: keyof Pick<ServerIdentityConfig, "keyId" | "privateKeyPath" | "publicKeyPath" | "fingerprint">): void => {
-        if (!(key in rawIdentity)) {
-          changed = true;
-          return;
-        }
-        const value = rawIdentity[key];
-        if (typeof value !== "string") {
-          errors.push(`config.identity.${key}: expected string`);
-          changed = true;
-          return;
-        }
-        if (key !== "fingerprint" && value.trim().length === 0) {
-          errors.push(`config.identity.${key}: expected non-empty string`);
-          changed = true;
-          return;
-        }
-        identity[key] = value;
-      };
-
-      identityString("keyId");
-      identityString("privateKeyPath");
-      identityString("publicKeyPath");
-      identityString("fingerprint");
-
-      config.identity = identity;
     }
   }
 
-  const inviteDefaults = defaultInviteConfig();
-  if (!("invite" in obj)) {
+  if ("identity" in obj) {
+    warnings.push("config.identity is deprecated and ignored.");
     changed = true;
-    config.invite = inviteDefaults;
-  } else {
-    const rawInvite = obj.invite;
-    if (!isRecord(rawInvite)) {
-      errors.push("config.invite: expected object");
-      changed = true;
-      config.invite = inviteDefaults;
-    } else {
-      const allowed = new Set(["format", "maxAgeSeconds", "singleUse"]);
-      if (strictUnknown) {
-        for (const key of Object.keys(rawInvite)) {
-          if (!allowed.has(key)) {
-            errors.push(`config.invite.${key}: unknown key`);
-          }
-        }
-      }
-
-      const invite: ServerInviteConfig = { ...inviteDefaults };
-
-      if (!("format" in rawInvite)) {
-        changed = true;
-      } else if (
-        typeof rawInvite.format !== "string" ||
-        !INVITE_FORMATS.has(rawInvite.format as ServerInviteConfig["format"])
-      ) {
-        errors.push(`config.invite.format: expected one of ${Array.from(INVITE_FORMATS).join(", ")}`);
-        changed = true;
-      } else {
-        invite.format = rawInvite.format as ServerInviteConfig["format"];
-      }
-
-      if (!("maxAgeSeconds" in rawInvite)) {
-        changed = true;
-      } else if (
-        typeof rawInvite.maxAgeSeconds !== "number" ||
-        !Number.isInteger(rawInvite.maxAgeSeconds) ||
-        rawInvite.maxAgeSeconds < 1
-      ) {
-        errors.push("config.invite.maxAgeSeconds: expected integer >= 1");
-        changed = true;
-      } else {
-        invite.maxAgeSeconds = rawInvite.maxAgeSeconds;
-      }
-
-      if (!("singleUse" in rawInvite)) {
-        changed = true;
-      } else if (typeof rawInvite.singleUse !== "boolean") {
-        errors.push("config.invite.singleUse: expected boolean");
-        changed = true;
-      } else {
-        invite.singleUse = rawInvite.singleUse;
-      }
-
-      config.invite = invite;
-    }
   }
 
-  // Pairing token + runtime state — passthrough (no validation, optional)
+  if ("invite" in obj) {
+    warnings.push("config.invite is deprecated and ignored.");
+    changed = true;
+  }
+
+  // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)
   if ("token" in obj && typeof obj.token === "string") {
     config.token = obj.token;
   }
-  if ("deviceTokens" in obj && Array.isArray(obj.deviceTokens)) {
-    config.deviceTokens = (obj.deviceTokens as unknown[]).filter((t): t is string => typeof t === "string");
+
+  if ("pairingToken" in obj && typeof obj.pairingToken === "string") {
+    config.pairingToken = obj.pairingToken;
   }
+
+  if ("pairingTokenExpiresAt" in obj
+    && typeof obj.pairingTokenExpiresAt === "number"
+    && Number.isFinite(obj.pairingTokenExpiresAt)
+  ) {
+    config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
+  }
+
+  if ("authDeviceTokens" in obj && Array.isArray(obj.authDeviceTokens)) {
+    config.authDeviceTokens = (obj.authDeviceTokens as unknown[]).filter(
+      (t): t is string => typeof t === "string",
+    );
+  }
+
+  if ("pushDeviceTokens" in obj && Array.isArray(obj.pushDeviceTokens)) {
+    config.pushDeviceTokens = (obj.pushDeviceTokens as unknown[]).filter(
+      (t): t is string => typeof t === "string",
+    );
+  }
+
+  // Legacy migration: `deviceTokens` historically mixed push + auth semantics.
+  // Safety-first migration maps legacy values to push storage only.
+  if ("deviceTokens" in obj && Array.isArray(obj.deviceTokens)) {
+    const legacyTokens = (obj.deviceTokens as unknown[]).filter(
+      (t): t is string => typeof t === "string",
+    );
+
+    if (legacyTokens.length > 0) {
+      warnings.push(
+        "config.deviceTokens is deprecated; migrated to config.pushDeviceTokens (not used for API auth).",
+      );
+      changed = true;
+
+      const mergedPushTokens = [...(config.pushDeviceTokens || [])];
+      for (const token of legacyTokens) {
+        if (!mergedPushTokens.includes(token)) {
+          mergedPushTokens.push(token);
+        }
+      }
+      config.pushDeviceTokens = mergedPushTokens;
+    }
+  }
+
   if ("liveActivityToken" in obj && typeof obj.liveActivityToken === "string") {
     config.liveActivityToken = obj.liveActivityToken;
   }
@@ -619,9 +868,6 @@ export class Storage {
     const merged: ServerConfig = {
       ...this.config,
       ...updates,
-      security: updates.security ? { ...this.config.security, ...updates.security } : this.config.security,
-      identity: updates.identity ? { ...this.config.identity, ...updates.identity } : this.config.identity,
-      invite: updates.invite ? { ...this.config.invite, ...updates.invite } : this.config.invite,
     };
 
     const normalized = normalizeConfig(merged, this.dataDir, false);
@@ -631,8 +877,16 @@ export class Storage {
 
   // ─── Pairing ───
 
-  private static generateToken(): string {
+  private static generateOwnerToken(): string {
     return `sk_${generateId(24)}`;
+  }
+
+  private static generateAuthDeviceToken(): string {
+    return `dt_${generateId(24)}`;
+  }
+
+  private static generatePairingToken(): string {
+    return `pt_${generateId(24)}`;
   }
 
   /** Whether the server has been paired (has a bearer token). */
@@ -648,16 +902,53 @@ export class Storage {
   /** Generate a new token and save to config. Returns the token. */
   ensurePaired(): string {
     if (this.config.token) return this.config.token;
-    const token = Storage.generateToken();
+    const token = Storage.generateOwnerToken();
     this.updateConfig({ token });
     return token;
   }
 
   /** Rotate the bearer token. Existing clients will need to re-pair. */
   rotateToken(): string {
-    const token = Storage.generateToken();
+    const token = Storage.generateOwnerToken();
     this.updateConfig({ token });
     return token;
+  }
+
+  /** Issue a one-time short-lived pairing token used by POST /pair. */
+  issuePairingToken(ttlMs: number = 90_000): string {
+    const pairingToken = Storage.generatePairingToken();
+    const expiresAt = Date.now() + Math.max(1_000, ttlMs);
+    this.updateConfig({ pairingToken, pairingTokenExpiresAt: expiresAt });
+    return pairingToken;
+  }
+
+  /** Consume pairing token atomically and issue a long-lived auth device token. */
+  consumePairingToken(candidate: string): string | null {
+    const pairingToken = this.config.pairingToken;
+    const expiresAt = this.config.pairingTokenExpiresAt;
+
+    if (!pairingToken || candidate !== pairingToken) {
+      return null;
+    }
+
+    if (typeof expiresAt === "number" && Date.now() > expiresAt) {
+      this.updateConfig({ pairingToken: undefined, pairingTokenExpiresAt: undefined });
+      return null;
+    }
+
+    let deviceToken = Storage.generateAuthDeviceToken();
+    const existing = new Set(this.config.authDeviceTokens || []);
+    while (existing.has(deviceToken)) {
+      deviceToken = Storage.generateAuthDeviceToken();
+    }
+
+    this.updateConfig({
+      authDeviceTokens: [...existing, deviceToken],
+      pairingToken: undefined,
+      pairingTokenExpiresAt: undefined,
+    });
+
+    return deviceToken;
   }
 
   /** Owner display name derived from hostname. */
@@ -665,22 +956,40 @@ export class Storage {
     return hostname().split(".")[0] || "owner";
   }
 
-  // ─── Device Tokens ───
+  // ─── Device/Auth Tokens ───
 
-  addDeviceToken(token: string): void {
-    const tokens = this.config.deviceTokens || [];
+  addAuthDeviceToken(token: string): void {
+    const tokens = this.config.authDeviceTokens || [];
     if (!tokens.includes(token)) {
-      this.updateConfig({ deviceTokens: [...tokens, token] });
+      this.updateConfig({ authDeviceTokens: [...tokens, token] });
     }
   }
 
-  removeDeviceToken(token: string): void {
-    const tokens = this.config.deviceTokens || [];
-    this.updateConfig({ deviceTokens: tokens.filter((t) => t !== token) });
+  removeAuthDeviceToken(token: string): void {
+    const tokens = this.config.authDeviceTokens || [];
+    this.updateConfig({ authDeviceTokens: tokens.filter((t) => t !== token) });
   }
 
-  getDeviceTokens(): string[] {
-    return this.config.deviceTokens || [];
+  getAuthDeviceTokens(): string[] {
+    return this.config.authDeviceTokens || [];
+  }
+
+  // ─── Push Tokens ───
+
+  addPushDeviceToken(token: string): void {
+    const tokens = this.config.pushDeviceTokens || [];
+    if (!tokens.includes(token)) {
+      this.updateConfig({ pushDeviceTokens: [...tokens, token] });
+    }
+  }
+
+  removePushDeviceToken(token: string): void {
+    const tokens = this.config.pushDeviceTokens || [];
+    this.updateConfig({ pushDeviceTokens: tokens.filter((t) => t !== token) });
+  }
+
+  getPushDeviceTokens(): string[] {
+    return this.config.pushDeviceTokens || [];
   }
 
   setLiveActivityToken(token: string | null): void {
@@ -876,9 +1185,6 @@ export class Storage {
     const id = generateId(8);
     const now = Date.now();
 
-    const policyPreset = req.policyPreset || "container";
-    const runtime =
-      req.runtime || (!req.hostMount && policyPreset === "container" ? "container" : "host");
     const extensions = normalizeExtensionList(req.extensions);
 
     const workspace: Workspace = {
@@ -886,9 +1192,8 @@ export class Storage {
       name: req.name,
       description: req.description,
       icon: req.icon,
-      runtime,
       skills: req.skills,
-      policyPreset,
+      policy: req.policy,
       systemPrompt: req.systemPrompt,
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
@@ -904,22 +1209,71 @@ export class Storage {
   }
 
   saveWorkspace(workspace: Workspace): void {
-
-    const path = this.getWorkspacePath(workspace.id);
+    const sanitized = this.sanitizeWorkspace(workspace);
+    const path = this.getWorkspacePath(sanitized.id);
     const dir = dirname(path);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    const payload = JSON.stringify(workspace, null, 2);
+    const payload = JSON.stringify(sanitized, null, 2);
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
-  private validateWorkspaceRuntime(workspace: Workspace): "host" | "container" {
-    if (workspace.runtime === "host" || workspace.runtime === "container") {
-      return workspace.runtime;
+  private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
+    const workspaceId = typeof raw.id === "string" ? raw.id : "unknown";
+
+    const workspace: Workspace = {
+      id: workspaceId,
+      name: typeof raw.name === "string" ? raw.name : "",
+      description: typeof raw.description === "string" ? raw.description : undefined,
+      icon: typeof raw.icon === "string" ? raw.icon : undefined,
+      skills: Array.isArray(raw.skills)
+        ? raw.skills.filter((skill): skill is string => typeof skill === "string")
+        : [],
+      policy: (() => {
+        if (!raw.policy || typeof raw.policy !== "object") {
+          return { permissions: [] };
+        }
+
+        const policyRaw = raw.policy as Record<string, unknown>;
+        const permissions = Array.isArray(policyRaw.permissions)
+          ? (policyRaw.permissions as NonNullable<Workspace["policy"]>["permissions"])
+          : [];
+
+        const fallbackRaw = policyRaw.fallback;
+        const fallback =
+          fallbackRaw === "allow" || fallbackRaw === "ask" || fallbackRaw === "block"
+            ? fallbackRaw
+            : undefined;
+
+        return fallback ? { permissions, fallback } : { permissions };
+      })(),
+      allowedPaths: Array.isArray(raw.allowedPaths)
+        ? (raw.allowedPaths as Workspace["allowedPaths"])
+        : undefined,
+      allowedExecutables: Array.isArray(raw.allowedExecutables)
+        ? (raw.allowedExecutables as string[])
+        : undefined,
+      systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : undefined,
+      hostMount: typeof raw.hostMount === "string" ? raw.hostMount : undefined,
+      memoryEnabled: typeof raw.memoryEnabled === "boolean" ? raw.memoryEnabled : undefined,
+      memoryNamespace: typeof raw.memoryNamespace === "string" ? raw.memoryNamespace : undefined,
+      extensions: normalizeExtensionList(raw.extensions as string[] | undefined),
+      defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : undefined,
+      lastUsedModel: typeof raw.lastUsedModel === "string" ? raw.lastUsedModel : undefined,
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+    };
+
+    if (
+      workspace.memoryEnabled &&
+      (!workspace.memoryNamespace || workspace.memoryNamespace.trim().length === 0)
+    ) {
+      workspace.memoryNamespace = `ws-${workspace.id}`;
     }
-    throw new Error(`workspace ${workspace.id} missing runtime`);
+
+    return workspace;
   }
 
   getWorkspace(workspaceId: string): Workspace | undefined {
@@ -927,10 +1281,8 @@ export class Storage {
     if (!existsSync(path)) return undefined;
 
     try {
-      const ws = JSON.parse(readFileSync(path, "utf-8")) as Workspace;
-      ws.runtime = this.validateWorkspaceRuntime(ws);
-      ws.extensions = normalizeExtensionList(ws.extensions);
-      return ws;
+      const ws = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+      return this.sanitizeWorkspace(ws);
     } catch {
       return undefined;
     }
@@ -945,10 +1297,8 @@ export class Storage {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".json")) continue;
       try {
-        const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Workspace;
-        ws.runtime = this.validateWorkspaceRuntime(ws);
-        ws.extensions = normalizeExtensionList(ws.extensions);
-        workspaces.push(ws);
+        const ws = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<string, unknown>;
+        workspaces.push(this.sanitizeWorkspace(ws));
       } catch (err) {
         console.error(`[storage] Corrupt workspace file ${join(dir, file)}, skipping:`, err);
       }
@@ -967,9 +1317,8 @@ export class Storage {
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined) workspace.description = updates.description;
     if (updates.icon !== undefined) workspace.icon = updates.icon;
-    if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
     if (updates.skills !== undefined) workspace.skills = updates.skills;
-    if (updates.policyPreset !== undefined) workspace.policyPreset = updates.policyPreset;
+    if (updates.policy !== undefined) workspace.policy = updates.policy;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
@@ -998,6 +1347,39 @@ export class Storage {
     return true;
   }
 
+  getWorkspacePolicy(workspaceId: string): Workspace["policy"] | undefined {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) return undefined;
+    return workspace.policy || { permissions: [] };
+  }
+
+  setWorkspacePolicyPermissions(
+    workspaceId: string,
+    permissions: NonNullable<Workspace["policy"]>["permissions"],
+    fallback?: NonNullable<Workspace["policy"]>["fallback"],
+  ): Workspace | undefined {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) return undefined;
+
+    const nextFallback = fallback ?? workspace.policy?.fallback;
+    workspace.policy = nextFallback ? { permissions, fallback: nextFallback } : { permissions };
+    workspace.updatedAt = Date.now();
+    this.saveWorkspace(workspace);
+    return workspace;
+  }
+
+  deleteWorkspacePolicyPermission(workspaceId: string, permissionId: string): Workspace | undefined {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) return undefined;
+
+    const policy = workspace.policy || { permissions: [] };
+    const next = policy.permissions.filter((p) => p.id !== permissionId);
+    workspace.policy = policy.fallback ? { permissions: next, fallback: policy.fallback } : { permissions: next };
+    workspace.updatedAt = Date.now();
+    this.saveWorkspace(workspace);
+    return workspace;
+  }
+
   /**
    * Ensure a user has at least one workspace. Seeds defaults if empty.
    */
@@ -1010,7 +1392,6 @@ export class Storage {
       description: "General-purpose agent with web search and browsing",
       icon: "terminal",
       skills: ["searxng", "fetch", "web-browser"],
-      policyPreset: "container",
       memoryEnabled: true,
       memoryNamespace: "general",
     });
@@ -1020,7 +1401,6 @@ export class Storage {
       description: "Deep research with search, web, and transcription",
       icon: "magnifyingglass",
       skills: ["searxng", "fetch", "web-browser", "deep-research", "youtube-transcript"],
-      policyPreset: "container",
       memoryEnabled: true,
       memoryNamespace: "research",
     });

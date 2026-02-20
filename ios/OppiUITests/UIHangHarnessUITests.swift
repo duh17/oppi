@@ -4,6 +4,7 @@ import XCTest
 ///
 /// Exercises the collection-backed chat timeline harness with deterministic
 /// fixture data and synthetic streaming.
+@MainActor
 final class UIHangHarnessUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -167,6 +168,101 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertLessThanOrEqual(perfGuardrail - perfGuardrailBefore, 1)
     }
 
+    func testVisualToolsetTapThroughRendersWithoutStalls() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 7)
+
+        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        expandAll.tap()
+
+        let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
+        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
+        renderToolSet.tap()
+
+        let visualImageButton = app.descendants(matching: .any)["harness.visual.image"]
+        XCTAssertTrue(visualImageButton.waitForExistence(timeout: 4))
+        visualImageButton.tap()
+
+        let firstThumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
+        XCTAssertTrue(firstThumbnail.waitForExistence(timeout: 4))
+        firstThumbnail.tap()
+
+        let doneButton = app.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 4))
+        doneButton.tap()
+
+        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
+        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        topButton.tap()
+
+        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
+        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        bottomButton.tap()
+
+        XCTAssertTrue(assertHarnessStillRunning(context: "rendering visual toolset + image fullscreen"))
+
+        let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+        XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
+    }
+
+    func testExpandedToolRowsReconfigureStressNoStalls() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 7)
+
+        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+        let stallBefore = pollDiagnostic("diag.stallCount", timeout: 4)
+
+        let alpha = app.descendants(matching: .any)["harness.session.alpha"]
+        let beta = app.descendants(matching: .any)["harness.session.beta"]
+        let gamma = app.descendants(matching: .any)["harness.session.gamma"]
+        XCTAssertTrue(alpha.waitForExistence(timeout: 4))
+        XCTAssertTrue(beta.waitForExistence(timeout: 4))
+        XCTAssertTrue(gamma.waitForExistence(timeout: 4))
+
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
+        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
+        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
+        let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
+        let themeToggle = app.descendants(matching: .any)["harness.theme.toggle"]
+
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
+        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
+        XCTAssertTrue(themeToggle.waitForExistence(timeout: 4))
+
+        let sessions = [alpha, beta, gamma]
+        for cycle in 0..<6 {
+            sessions[cycle % sessions.count].tap()
+            expandAll.tap()
+            renderToolSet.tap()
+            topButton.tap()
+            bottomButton.tap()
+            pulse.tap()
+            if cycle.isMultiple(of: 2) {
+                themeToggle.tap()
+            }
+
+            Thread.sleep(forTimeInterval: 0.06)
+            XCTAssertTrue(assertHarnessStillRunning(context: "expanded tool stress cycle \(cycle)"))
+        }
+
+        let stallAfter = pollDiagnostic("diag.stallCount", timeout: 6)
+        XCTAssertLessThanOrEqual(stallAfter - stallBefore, 1)
+
+        let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 6)
+        XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 2)
+    }
+
     @objc
     func testHarnessScreenshotState() throws {
         launchHarness(noStream: true)
@@ -184,7 +280,7 @@ final class UIHangHarnessUITests: XCTestCase {
 
     // MARK: - Launch
 
-    private func launchHarness(noStream: Bool) {
+    private func launchHarness(noStream: Bool, includeVisualFixtures: Bool = false) {
         app = XCUIApplication()
         app.launchArguments.append("--ui-hang-harness")
         app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
@@ -193,6 +289,9 @@ final class UIHangHarnessUITests: XCTestCase {
             app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "1"
         } else {
             app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "0"
+        }
+        if includeVisualFixtures {
+            app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = "1"
         }
         app.launch()
 

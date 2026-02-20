@@ -165,7 +165,7 @@ struct ChatSessionManagerTests {
 
         let firstReady = await streams.waitForCreated(1)
         #expect(firstReady)
-        connection.wsClient?._setConnectedSessionIdForTesting("s1")
+        connection._setActiveSessionIdForTesting("s1")
 
         manager.reconnect()
         #expect(manager.connectionGeneration == 1)
@@ -176,14 +176,14 @@ struct ChatSessionManagerTests {
 
         let secondReady = await streams.waitForCreated(2)
         #expect(secondReady)
-        connection.wsClient?._setConnectedSessionIdForTesting("s1")
+        connection._setActiveSessionIdForTesting("s1")
 
         // Force-drop stale stream #1 while stream #2 is active.
         streams.finish(index: 0)
         await firstConnect.value
 
         #expect(
-            connection.wsClient?.connectedSessionId == "s1",
+            connection.activeSessionId == "s1",
             "Stale generation cleanup must not disconnect newer stream"
         )
 
@@ -191,7 +191,7 @@ struct ChatSessionManagerTests {
         await secondConnect.value
 
         #expect(
-            connection.wsClient?.connectedSessionId == nil,
+            connection.activeSessionId == nil,
             "Current generation should disconnect on normal loop exit"
         )
     }
@@ -216,13 +216,13 @@ struct ChatSessionManagerTests {
         #expect(ready)
 
         // Simulate another session taking ownership before stale cleanup runs.
-        connection.wsClient?._setConnectedSessionIdForTesting("s2")
+        connection._setActiveSessionIdForTesting("s2")
 
         streams.finish(index: 0)
         await connectTask.value
 
         #expect(
-            connection.wsClient?.connectedSessionId == "s2",
+            connection.activeSessionId == "s2",
             "Cleanup must not disconnect socket owned by a different session"
         )
     }
@@ -763,7 +763,6 @@ struct ChatSessionManagerTests {
             createdAt: now,
             lastActivity: now,
             model: nil,
-            runtime: nil,
             messageCount: 0,
             tokens: TokenUsage(input: 0, output: 0),
             cost: 0,
@@ -796,6 +795,12 @@ private struct HistoryReloadCall: Equatable, Sendable {
     let cachedLastEventId: String?
 }
 
+private struct HistoryReloadSnapshot: Equatable, Sendable {
+    let calls: [HistoryReloadCall]
+    let cancellations: Int
+    let completions: Int
+}
+
 private actor HistoryReloadTracker {
     private var calls: [HistoryReloadCall] = []
     private var cancellations = 0
@@ -814,8 +819,8 @@ private actor HistoryReloadTracker {
         completions += 1
     }
 
-    func snapshot() -> (calls: [HistoryReloadCall], cancellations: Int, completions: Int) {
-        (calls, cancellations, completions)
+    func snapshot() -> HistoryReloadSnapshot {
+        HistoryReloadSnapshot(calls: calls, cancellations: cancellations, completions: completions)
     }
 
     func waitForCalls(_ expected: Int, timeoutMs: Int = 1_000) async -> Bool {

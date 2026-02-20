@@ -12,7 +12,10 @@ struct PhotoLibrarySaverTests {
         let original = PhotoLibrarySaver.write
         defer { PhotoLibrarySaver.write = original }
 
-        let expected = UIImage(systemName: "photo")!
+        guard let expected = UIImage(systemName: "photo") else {
+            Issue.record("Failed to create system image")
+            return
+        }
         var capturedData: Data?
 
         PhotoLibrarySaver.write = { image in

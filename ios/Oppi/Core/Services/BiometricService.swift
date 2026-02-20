@@ -4,44 +4,27 @@ import os.log
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Biometric")
 
-/// Biometric authentication gate for high-risk permission approvals.
+/// Biometric authentication gate for permission approvals.
 ///
-/// Uses Face ID / Touch ID to confirm "Allow" on dangerous actions.
+/// Uses Face ID / Touch ID to confirm "Allow" on all permissions when enabled.
 /// Falls back to device passcode if biometrics are unavailable.
 ///
 /// Usage flow:
 /// 1. Agent requests permission (e.g., `sudo apt install`)
 /// 2. User taps "Allow"
-/// 3. If risk >= threshold: Face ID prompt → success: allow sent → failure: blocked
-/// 4. If risk < threshold: allow sent immediately (no biometric)
+/// 3. If enabled: Face ID prompt → success: allow sent → failure: blocked
+/// 4. If disabled: allow sent immediately (no biometric)
 @MainActor
 final class BiometricService {
     static let shared = BiometricService()
 
-    /// Minimum risk level that requires biometric confirmation to allow.
-    /// Persisted in UserDefaults. Default: `.high`.
-    var threshold: RiskLevel {
-        get {
-            guard let raw = UserDefaults.standard.string(forKey: Self.thresholdKey),
-                  let level = RiskLevel(rawValue: raw)
-            else {
-                return .high
-            }
-            return level
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: Self.thresholdKey)
-        }
-    }
-
     /// Whether biometric gating is enabled at all.
-    /// When disabled, all risk levels approve with a simple tap.
+    /// When disabled, all permissions approve with a simple tap.
     var isEnabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey) }
     }
 
-    private static let thresholdKey = "\(AppIdentifiers.subsystem).biometric.threshold"
     private static let enabledKey = "\(AppIdentifiers.subsystem).biometric.enabled"
 
     private init() {}
@@ -73,10 +56,7 @@ final class BiometricService {
     // MARK: - Authentication
 
     /// Check if a permission approval requires biometric confirmation.
-    func requiresBiometric(for risk: RiskLevel) -> Bool {
-        guard isEnabled else { return false }
-        return risk.severity >= threshold.severity
-    }
+    var requiresBiometric: Bool { isEnabled }
 
     /// Authenticate via Face ID / Touch ID / device passcode.
     ///
@@ -110,21 +90,6 @@ final class BiometricService {
         } catch {
             logger.info("Biometric auth failed/cancelled: \(error.localizedDescription)")
             return false
-        }
-    }
-}
-
-// MARK: - RiskLevel Severity
-
-extension RiskLevel {
-    /// Numeric severity for threshold comparisons.
-    /// Higher = more dangerous.
-    var severity: Int {
-        switch self {
-        case .low: return 0
-        case .medium: return 1
-        case .high: return 2
-        case .critical: return 3
         }
     }
 }

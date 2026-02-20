@@ -29,9 +29,9 @@ struct SessionToolbar: View {
     }
 
     private var contextTint: Color {
-        if contextPercent > 0.9 { return .tokyoRed }
-        if contextPercent > 0.7 { return .tokyoOrange }
-        return .tokyoGreen
+        if contextPercent > 0.9 { return .themeRed }
+        if contextPercent > 0.7 { return .themeOrange }
+        return .themeGreen
     }
 
     private var effectiveContextTokens: Int {
@@ -117,7 +117,7 @@ struct SessionToolbar: View {
 private struct PillLabel: View {
     let icon: String?
     let text: String
-    var tint: Color = .tokyoFg
+    var tint: Color = .themeFg
     let showChevron: Bool
 
     var body: some View {
@@ -142,7 +142,7 @@ private struct PillLabel: View {
         .padding(.vertical, 6)
         .background {
             Capsule()
-                .fill(Color.tokyoComment.opacity(0.18))
+                .fill(Color.themeComment.opacity(0.18))
                 .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
         }
         .contentShape(Capsule())

@@ -8,12 +8,17 @@ struct WorkspaceDetailView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(PermissionStore.self) private var permissionStore
 
     @State private var isCreating = false
     @State private var error: String?
     @State private var lineageBySessionId: [String: SessionLineageSummary] = [:]
+    @State private var sessionSearchText = ""
+    @State private var expandedStoppedGroupIDs: Set<String> = []
+    @State private var collapsedStoppedGroupIDs: Set<String> = []
+    @State private var isWorkspaceToolsExpanded = false
 
     private struct SessionLineageSummary {
         let parentSessionName: String?
@@ -22,7 +27,56 @@ struct WorkspaceDetailView: View {
         let activeChildForkCount: Int
     }
 
+    private struct StoppedSessionGroup: Identifiable {
+        enum Bucket: Hashable {
+            case day(Date)
+            case month(Date)
+        }
+
+        let bucket: Bucket
+        let sessions: [Session]
+
+        var id: String {
+            switch bucket {
+            case .day(let day):
+                return "day-\(Int(day.timeIntervalSince1970))"
+            case .month(let month):
+                return "month-\(Int(month.timeIntervalSince1970))"
+            }
+        }
+    }
+
     // MARK: - Computed
+
+    private var calendar: Calendar {
+        Calendar.current
+    }
+
+    private var normalizedSessionSearchQuery: String {
+        sessionSearchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private var hasSessionSearchQuery: Bool {
+        !normalizedSessionSearchQuery.isEmpty
+    }
+
+    private var serverBadgeIcon: ServerBadgeIcon {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeIcon
+    }
+
+    private var serverBadgeColor: ServerBadgeColor {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeColor
+    }
 
     private var workspaceSessions: [Session] {
         sessionStore.sessions.filter { $0.workspaceId == workspace.id }
@@ -30,7 +84,7 @@ struct WorkspaceDetailView: View {
 
     private var activeSessions: [Session] {
         workspaceSessions
-            .filter { $0.status != .stopped }
+            .filter { $0.status != .stopped && matchesSessionSearch($0) }
             .sorted { lhs, rhs in
                 let lhsAttn = !permissionStore.pending(for: lhs.id).isEmpty
                 let rhsAttn = !permissionStore.pending(for: rhs.id).isEmpty
@@ -41,8 +95,38 @@ struct WorkspaceDetailView: View {
 
     private var stoppedSessions: [Session] {
         workspaceSessions
-            .filter { $0.status == .stopped }
+            .filter { $0.status == .stopped && matchesSessionSearch($0) }
             .sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    /// Progressive grouping for stopped sessions:
+    /// - Recent sessions: grouped by day (last 30 days)
+    /// - Older sessions: grouped by month
+    private var stoppedSessionGroups: [StoppedSessionGroup] {
+        guard !stoppedSessions.isEmpty else { return [] }
+
+        let recentCutoff = calendar.date(byAdding: .day, value: -30, to: Date()) ?? .distantPast
+
+        let grouped = Dictionary(grouping: stoppedSessions) { session in
+            if session.lastActivity >= recentCutoff {
+                return StoppedSessionGroup.Bucket.day(calendar.startOfDay(for: session.lastActivity))
+            }
+
+            let comps = calendar.dateComponents([.year, .month], from: session.lastActivity)
+            let monthStart = calendar.date(from: comps) ?? calendar.startOfDay(for: session.lastActivity)
+            return StoppedSessionGroup.Bucket.month(monthStart)
+        }
+
+        return grouped
+            .map { bucket, sessions in
+                StoppedSessionGroup(
+                    bucket: bucket,
+                    sessions: sessions.sorted { $0.lastActivity > $1.lastActivity }
+                )
+            }
+            .sorted { lhs, rhs in
+                stoppedGroupSortDate(lhs.bucket) > stoppedGroupSortDate(rhs.bucket)
+            }
     }
 
     // MARK: - Body
@@ -61,43 +145,63 @@ struct WorkspaceDetailView: View {
                                 lineageHint: lineageHint(for: session)
                             )
                         }
+                        .listRowBackground(Color.themeBg)
                         .swipeActions(edge: .trailing) {
                             Button {
                                 Task { await stopSession(session) }
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
-                            .tint(.orange)
+                            .tint(.themeOrange)
                         }
                     }
                 }
             }
 
-            if !stoppedSessions.isEmpty {
-                Section("Stopped") {
-                    ForEach(stoppedSessions) { session in
-                        NavigationLink(value: session.id) {
-                            SessionRow(
-                                session: session,
-                                pendingCount: 0,
-                                lineageHint: lineageHint(for: session)
-                            )
-                        }
-                        .swipeActions(edge: .leading) {
-                            Button {
-                                Task { await resumeSession(session) }
-                            } label: {
-                                Label("Resume", systemImage: "play.fill")
+            if !stoppedSessionGroups.isEmpty {
+                ForEach(Array(stoppedSessionGroups.enumerated()), id: \.element.id) { index, group in
+                    Section {
+                        if isStoppedGroupExpanded(group) {
+                            ForEach(group.sessions) { session in
+                                NavigationLink(value: session.id) {
+                                    SessionRow(
+                                        session: session,
+                                        pendingCount: 0,
+                                        lineageHint: lineageHint(for: session)
+                                    )
+                                }
+                                .listRowBackground(Color.themeBg)
+                                .swipeActions(edge: .leading) {
+                                    Button {
+                                        Task { await resumeSession(session) }
+                                    } label: {
+                                        Label("Resume", systemImage: "play.fill")
+                                    }
+                                    .tint(.themeGreen)
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        Task { await deleteSession(session) }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                             }
-                            .tint(.green)
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                Task { await deleteSession(session) }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
+                    } header: {
+                        Button {
+                            toggleStoppedGroupExpansion(group)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(index == 0 ? "Stopped · \(stoppedGroupTitle(group.bucket))" : stoppedGroupTitle(group.bucket))
+                                Spacer()
+                                Image(systemName: isStoppedGroupExpanded(group) ? "chevron.down" : "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.themeComment)
                             }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -109,11 +213,25 @@ struct WorkspaceDetailView: View {
                         systemImage: "terminal",
                         description: Text("Tap + to start a new session in this workspace.")
                     )
+                    .listRowBackground(Color.themeBg)
+                }
+            } else if hasSessionSearchQuery,
+                      activeSessions.isEmpty,
+                      stoppedSessions.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "No Matching Sessions",
+                        systemImage: "magnifyingglass",
+                        description: Text("Try a different session name.")
+                    )
+                    .listRowBackground(Color.themeBg)
                 }
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle(workspace.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search session name")
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId)
         }
@@ -125,14 +243,6 @@ struct WorkspaceDetailView: View {
                     Image(systemName: "plus")
                 }
                 .disabled(isCreating)
-            }
-
-            ToolbarItem(placement: .secondaryAction) {
-                NavigationLink {
-                    WorkspaceEditView(workspace: workspace)
-                } label: {
-                    Label("Edit Workspace", systemImage: "pencil")
-                }
             }
         }
         .refreshable {
@@ -162,34 +272,122 @@ struct WorkspaceDetailView: View {
 
     private var workspaceInfoSection: some View {
         Section {
-            HStack(spacing: 12) {
-                WorkspaceIcon(icon: workspace.icon, size: 28)
-                VStack(alignment: .leading, spacing: 4) {
-                    if let desc = workspace.description, !desc.isEmpty {
-                        Text(desc)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 8) {
-                        RuntimeBadge(runtime: workspace.runtime, compact: true)
-                        Text("\(workspace.skills.count) skills")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                        if let model = workspace.defaultModel {
-                            Text(model.split(separator: "/").last.map(String.init) ?? model)
+            DisclosureGroup(isExpanded: $isWorkspaceToolsExpanded) {
+                NavigationLink {
+                    WorkspacePolicyView(workspace: workspace)
+                } label: {
+                    Label("Safety Policy", systemImage: "shield.lefthalf.filled")
+                }
+                .listRowBackground(Color.themeBg)
+
+                NavigationLink {
+                    WorkspaceEditView(workspace: workspace)
+                } label: {
+                    Label("Edit Workspace", systemImage: "pencil")
+                }
+                .listRowBackground(Color.themeBg)
+            } label: {
+                HStack(spacing: 12) {
+                    WorkspaceIcon(icon: workspace.icon, size: 24)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let description = workspace.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+                           !description.isEmpty {
+                            Text(description)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.themeFg)
+                                .lineLimit(1)
+                        } else {
+                            Text(workspace.name)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.themeFg)
+                                .lineLimit(1)
+                        }
+
+                        HStack(spacing: 8) {
+                            RuntimeBadge(compact: true, icon: serverBadgeIcon, badgeColor: serverBadgeColor)
+                            Text("\(workspace.skills.count) skills")
                                 .font(.caption)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.themeComment)
+                            if let model = workspace.defaultModel {
+                                Text(model.split(separator: "/").last.map(String.init) ?? model)
+                                    .font(.caption)
+                                    .foregroundStyle(.themeComment)
+                            }
                         }
                     }
                 }
+                .padding(.vertical, 2)
             }
+            .listRowBackground(Color.themeBg)
+        }
+    }
 
-            NavigationLink {
-                WorkspacePolicyProfileView(workspace: workspace)
-            } label: {
-                Label("Safety Profile", systemImage: "shield.lefthalf.filled")
+    private func stoppedGroupSortDate(_ bucket: StoppedSessionGroup.Bucket) -> Date {
+        switch bucket {
+        case .day(let day):
+            return day
+        case .month(let month):
+            return month
+        }
+    }
+
+    private func stoppedGroupTitle(_ bucket: StoppedSessionGroup.Bucket) -> String {
+        switch bucket {
+        case .day(let day):
+            if calendar.isDateInToday(day) {
+                return "Today"
             }
+            if calendar.isDateInYesterday(day) {
+                return "Yesterday"
+            }
+            return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
 
+        case .month(let month):
+            return month.formatted(.dateTime.month(.wide).year())
+        }
+    }
+
+    private func matchesSessionSearch(_ session: Session) -> Bool {
+        guard hasSessionSearchQuery else {
+            return true
+        }
+
+        return sessionTitle(session)
+            .lowercased()
+            .contains(normalizedSessionSearchQuery)
+    }
+
+    private func isStoppedGroupExpanded(_ group: StoppedSessionGroup) -> Bool {
+        if hasSessionSearchQuery {
+            return true
+        }
+        if expandedStoppedGroupIDs.contains(group.id) {
+            return true
+        }
+        if collapsedStoppedGroupIDs.contains(group.id) {
+            return false
+        }
+        return isStoppedGroupExpandedByDefault(group.bucket)
+    }
+
+    private func toggleStoppedGroupExpansion(_ group: StoppedSessionGroup) {
+        if isStoppedGroupExpanded(group) {
+            expandedStoppedGroupIDs.remove(group.id)
+            collapsedStoppedGroupIDs.insert(group.id)
+        } else {
+            collapsedStoppedGroupIDs.remove(group.id)
+            expandedStoppedGroupIDs.insert(group.id)
+        }
+    }
+
+    private func isStoppedGroupExpandedByDefault(_ bucket: StoppedSessionGroup.Bucket) -> Bool {
+        switch bucket {
+        case .day(let day):
+            let todayStart = calendar.startOfDay(for: Date())
+            let expandedCutoff = calendar.date(byAdding: .day, value: -2, to: todayStart) ?? .distantPast
+            return day >= expandedCutoff
+        case .month:
+            return false
         }
     }
 
@@ -382,58 +580,83 @@ struct WorkspaceDetailView: View {
     }
 }
 
-// MARK: - Safety Profile
+// MARK: - Safety Policy
 
-private struct WorkspacePolicyProfileView: View {
+private struct WorkspacePolicyView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
 
-    @State private var profile: PolicyProfile?
+    @State private var policy: WorkspacePolicyResponse?
     @State private var rules: [PolicyRuleRecord] = []
     @State private var auditEntries: [PolicyAuditEntry] = []
     @State private var isLoading = false
     @State private var error: String?
+    @State private var editorDraft: PolicyPermissionDraft?
+    @State private var pendingDeletePermission: PolicyPermissionRecord?
+    @State private var rememberedRuleDraft: RememberedRuleDraft?
+    @State private var pendingDeleteRule: PolicyRuleRecord?
+
+    private var policyBadgeIcon: ServerBadgeIcon {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeIcon
+    }
+
+    private var policyBadgeColor: ServerBadgeColor {
+        guard let currentServerId = connection.currentServerId,
+              let server = serverStore.server(for: currentServerId) else {
+            return .defaultValue
+        }
+        return server.resolvedBadgeColor
+    }
 
     var body: some View {
         List {
-            if let profile {
-                summarySection(profile)
+            if let policy {
+                summarySection(policy)
 
-                Section("Always Blocked") {
-                    if profile.alwaysBlocked.isEmpty {
-                        Text("No hard blocks configured.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(profile.alwaysBlocked) { item in
-                            PolicyProfileItemRow(item: item)
+                Section("Global Guardrails") {
+                    if let global = policy.globalPolicy, !global.guardrails.isEmpty {
+                        ForEach(global.guardrails) { permission in
+                            policyPermissionRow(permission)
                         }
+                    } else {
+                        Text("No global guardrails configured.")
+                            .foregroundStyle(.themeComment)
                     }
                 }
 
-                Section("Needs Approval") {
-                    if profile.needsApproval.isEmpty {
-                        Text("No approval-required actions.")
-                            .foregroundStyle(.secondary)
+                Section("Workspace Permissions") {
+                    if policy.workspacePolicy.permissions.isEmpty {
+                        Text("No workspace-specific permissions.")
+                            .foregroundStyle(.themeComment)
                     } else {
-                        ForEach(profile.needsApproval) { item in
-                            PolicyProfileItemRow(item: item)
+                        ForEach(policy.workspacePolicy.permissions) { permission in
+                            Button {
+                                editorDraft = PolicyPermissionDraft(permission: permission)
+                            } label: {
+                                policyPermissionRow(permission)
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    pendingDeletePermission = permission
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
-                    }
-                }
-
-                Section("Runs Automatically") {
-                    ForEach(profile.usuallyAllowed, id: \.self) { line in
-                        Label(line, systemImage: "checkmark.circle")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
                     }
                 }
             } else if isLoading {
                 Section {
                     HStack {
                         Spacer()
-                        ProgressView("Loading policy profile…")
+                        ProgressView("Loading workspace policy…")
                         Spacer()
                     }
                 }
@@ -442,32 +665,22 @@ private struct WorkspacePolicyProfileView: View {
             Section("Remembered Permissions") {
                 if rules.isEmpty {
                     Text("No remembered rules for this workspace.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 } else {
                     ForEach(rules.prefix(25)) { rule in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(rule.description)
-                                .font(.subheadline)
-                            HStack(spacing: 8) {
-                                policyChip(rule.effect.uppercased(), color: rule.effect == "deny" ? .tokyoRed : .tokyoGreen)
-                                policyChip(rule.scope.capitalized, color: .tokyoBlue)
-                                policyChip(rule.risk.label, color: Color.riskColor(rule.risk))
-                            }
-
-                            if let match = ruleMatchSummary(rule.match) {
-                                Text(match)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-
-                            if let expiresAt = rule.expiresAt {
-                                Text("Expires \(expiresAt, style: .relative)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                        Button {
+                            rememberedRuleDraft = RememberedRuleDraft(rule: rule)
+                        } label: {
+                            rememberedRuleRow(rule)
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                pendingDeleteRule = rule
+                            } label: {
+                                Label("Revoke", systemImage: "trash")
                             }
                         }
-                        .padding(.vertical, 2)
                     }
 
                     if rules.count > 25 {
@@ -481,7 +694,7 @@ private struct WorkspacePolicyProfileView: View {
             Section("Recent Decisions") {
                 if auditEntries.isEmpty {
                     Text("No recent policy decisions.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 } else {
                     ForEach(auditEntries.prefix(30)) { entry in
                         VStack(alignment: .leading, spacing: 4) {
@@ -492,10 +705,9 @@ private struct WorkspacePolicyProfileView: View {
                             HStack(spacing: 8) {
                                 policyChip(
                                     entry.decision.capitalized,
-                                    color: entry.decision == "deny" ? .tokyoRed : .tokyoGreen
+                                    color: entry.decision == "deny" ? .themeRed : .themeGreen
                                 )
-                                policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .tokyoBlue)
-                                policyChip(entry.risk.label, color: Color.riskColor(entry.risk))
+                                policyChip(entry.resolvedBy.replacingOccurrences(of: "_", with: " "), color: .themeBlue)
                                 Spacer()
                                 Text(entry.timestamp, style: .relative)
                                     .font(.caption2)
@@ -513,13 +725,70 @@ private struct WorkspacePolicyProfileView: View {
                 }
             }
         }
-        .navigationTitle("Safety Profile")
+        .navigationTitle("Safety Policy")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await loadAll()
         }
         .task {
             await loadAll()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    editorDraft = PolicyPermissionDraft.defaultDraft()
+                } label: {
+                    Label("Add Permission", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(item: $editorDraft) { draft in
+            NavigationStack {
+                WorkspacePermissionEditorView(draft: draft) { updated in
+                    Task { await upsertWorkspacePermission(updated) }
+                }
+            }
+        }
+        .sheet(item: $rememberedRuleDraft) { draft in
+            NavigationStack {
+                RememberedRuleEditorView(draft: draft) { updated in
+                    Task { await updateRememberedRule(updated) }
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete Permission",
+            isPresented: Binding(
+                get: { pendingDeletePermission != nil },
+                set: { if !$0 { pendingDeletePermission = nil } }
+            ),
+            presenting: pendingDeletePermission
+        ) { permission in
+            Button("Delete", role: .destructive) {
+                Task { await deleteWorkspacePermission(permission) }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeletePermission = nil
+            }
+        } message: { permission in
+            Text("Remove workspace permission \(permission.label ?? permission.id)?")
+        }
+        .confirmationDialog(
+            "Revoke Remembered Rule",
+            isPresented: Binding(
+                get: { pendingDeleteRule != nil },
+                set: { if !$0 { pendingDeleteRule = nil } }
+            ),
+            presenting: pendingDeleteRule
+        ) { rule in
+            Button("Revoke", role: .destructive) {
+                Task { await deleteRememberedRule(rule) }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteRule = nil
+            }
+        } message: { rule in
+            Text("Remove remembered rule \(rule.description)?")
         }
         .alert("Policy Error", isPresented: Binding(
             get: { error != nil },
@@ -532,23 +801,39 @@ private struct WorkspacePolicyProfileView: View {
     }
 
     @ViewBuilder
-    private func summarySection(_ profile: PolicyProfile) -> some View {
+    private func summarySection(_ policy: WorkspacePolicyResponse) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    RuntimeBadge(runtime: profile.runtime, compact: true)
-                    policyChip(
-                        profile.supervisionLevel == "high" ? "High Supervision" : "Standard Supervision",
-                        color: profile.supervisionLevel == "high" ? .tokyoOrange : .tokyoGreen
-                    )
+                    RuntimeBadge(compact: true, icon: policyBadgeIcon, badgeColor: policyBadgeColor)
+                    Menu {
+                        ForEach(["allow", "ask", "block"], id: \.self) { option in
+                            Button {
+                                Task { await updateWorkspaceFallback(option) }
+                            } label: {
+                                if option == policy.effectivePolicy.fallback {
+                                    Label(option.uppercased(), systemImage: "checkmark")
+                                } else {
+                                    Text(option.uppercased())
+                                }
+                            }
+                            .disabled(option == policy.effectivePolicy.fallback)
+                        }
+                    } label: {
+                        policyChip("Fallback: \(policy.effectivePolicy.fallback.uppercased())", color: .themeBlue)
+                    }
                     Spacer()
                 }
 
-                Text(profile.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Text(policy.workspacePolicy.fallback == nil ? "Fallback inherited from global policy." : "Workspace fallback override is active.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
 
-                Text("Preset: \(policyPresetLabel(profile.policyPreset)) • Updated \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Effective policy includes \(policy.effectivePolicy.guardrails.count) guardrails and \(policy.effectivePolicy.permissions.count) permissions.")
+                    .font(.subheadline)
+                    .foregroundStyle(.themeComment)
+
+                Text("Workspace permissions: \(policy.workspacePolicy.permissions.count)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -556,6 +841,51 @@ private struct WorkspacePolicyProfileView: View {
         } header: {
             Text(workspace.name)
         }
+    }
+
+    @ViewBuilder
+    private func policyPermissionRow(_ permission: PolicyPermissionRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(permission.label ?? permission.id)
+                    .font(.subheadline)
+                Spacer()
+                policyChip(permission.decision.uppercased(), color: permission.decision == "block" ? .themeRed : (permission.decision == "ask" ? .themeOrange : .themeGreen))
+            }
+
+            if let matchSummary = permissionMatchSummary(permission.match) {
+                Text(matchSummary)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func rememberedRuleRow(_ rule: PolicyRuleRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(rule.description)
+                .font(.subheadline)
+            HStack(spacing: 8) {
+                policyChip(rule.effect.uppercased(), color: rule.effect == "deny" ? .themeRed : .themeGreen)
+                policyChip(rule.scope.capitalized, color: .themeBlue)
+            }
+
+            if let match = ruleMatchSummary(rule.match) {
+                Text(match)
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .textSelection(.enabled)
+            }
+
+            if let expiresAt = rule.expiresAt {
+                Text("Expires \(expiresAt, style: .relative)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -568,14 +898,15 @@ private struct WorkspacePolicyProfileView: View {
             .foregroundStyle(color)
     }
 
-    private func policyPresetLabel(_ value: String) -> String {
-        switch value {
-        case "container": return "Container"
-        case "host": return "Host Dev"
-        case "host_standard": return "Host Standard"
-        case "host_locked": return "Host Locked"
-        default: return value
-        }
+    private func permissionMatchSummary(_ match: PolicyPermissionRecord.Match) -> String? {
+        var parts: [String] = []
+        if let tool = match.tool, !tool.isEmpty { parts.append("tool: \(tool)") }
+        if let executable = match.executable, !executable.isEmpty { parts.append("exec: \(executable)") }
+        if let command = match.commandMatches, !command.isEmpty { parts.append("command: \(command)") }
+        if let path = match.pathMatches, !path.isEmpty { parts.append("path: \(path)") }
+        if let within = match.pathWithin, !within.isEmpty { parts.append("within: \(within)") }
+        if let domain = match.domain, !domain.isEmpty { parts.append("domain: \(domain)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
     private func ruleMatchSummary(_ match: PolicyRuleRecord.Match?) -> String? {
@@ -605,11 +936,11 @@ private struct WorkspacePolicyProfileView: View {
         defer { isLoading = false }
 
         do {
-            async let profileTask = api.getPolicyProfile(workspaceId: workspace.id)
+            async let policyTask = api.getWorkspacePolicy(workspaceId: workspace.id)
             async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
             async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
 
-            profile = try await profileTask
+            policy = try await policyTask
             rules = try await rulesTask
             auditEntries = try await auditTask
             error = nil
@@ -617,39 +948,410 @@ private struct WorkspacePolicyProfileView: View {
             self.error = error.localizedDescription
         }
     }
+
+    private func upsertWorkspacePermission(_ draft: PolicyPermissionDraft) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            let permission = draft.asPermissionRecord()
+            let updatedPolicy = try await api.patchWorkspacePolicy(
+                workspaceId: workspace.id,
+                permissions: [permission]
+            )
+
+            if let current = policy {
+                policy = WorkspacePolicyResponse(
+                    workspaceId: current.workspaceId,
+                    globalPolicy: current.globalPolicy,
+                    workspacePolicy: updatedPolicy,
+                    effectivePolicy: current.effectivePolicy
+                )
+            }
+
+            editorDraft = nil
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func updateWorkspaceFallback(_ fallback: String) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            let updatedPolicy = try await api.patchWorkspacePolicy(
+                workspaceId: workspace.id,
+                fallback: fallback
+            )
+
+            if let current = policy {
+                policy = WorkspacePolicyResponse(
+                    workspaceId: current.workspaceId,
+                    globalPolicy: current.globalPolicy,
+                    workspacePolicy: updatedPolicy,
+                    effectivePolicy: current.effectivePolicy
+                )
+            }
+
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func deleteWorkspacePermission(_ permission: PolicyPermissionRecord) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            let updatedPolicy = try await api.deleteWorkspacePolicyPermission(
+                workspaceId: workspace.id,
+                permissionId: permission.id
+            )
+
+            if let current = policy {
+                policy = WorkspacePolicyResponse(
+                    workspaceId: current.workspaceId,
+                    globalPolicy: current.globalPolicy,
+                    workspacePolicy: updatedPolicy,
+                    effectivePolicy: current.effectivePolicy
+                )
+            }
+
+            pendingDeletePermission = nil
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func updateRememberedRule(_ draft: RememberedRuleDraft) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            _ = try await api.patchPolicyRule(ruleId: draft.ruleId, request: draft.asPatchRequest())
+            rememberedRuleDraft = nil
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func deleteRememberedRule(_ rule: PolicyRuleRecord) async {
+        guard let api = connection.apiClient else { return }
+
+        do {
+            try await api.deletePolicyRule(ruleId: rule.id)
+            pendingDeleteRule = nil
+            rules.removeAll { $0.id == rule.id }
+            await loadAll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }
 
-private struct PolicyProfileItemRow: View {
-    let item: PolicyProfileItem
+private struct PolicyPermissionDraft: Identifiable {
+    let id = UUID()
+    var permissionId: String
+    var decision: String
+    var label: String
+    var reason: String
+    var tool: String
+    var executable: String
+    var commandMatches: String
+    var pathMatches: String
+    var pathWithin: String
+    var domain: String
+
+    init(
+        permissionId: String,
+        decision: String,
+        label: String,
+        reason: String,
+        tool: String,
+        executable: String,
+        commandMatches: String,
+        pathMatches: String,
+        pathWithin: String,
+        domain: String
+    ) {
+        self.permissionId = permissionId
+        self.decision = decision
+        self.label = label
+        self.reason = reason
+        self.tool = tool
+        self.executable = executable
+        self.commandMatches = commandMatches
+        self.pathMatches = pathMatches
+        self.pathWithin = pathWithin
+        self.domain = domain
+    }
+
+    static func defaultDraft() -> Self {
+        Self(
+            permissionId: "allow-\(UUID().uuidString.prefix(8).lowercased())",
+            decision: "allow",
+            label: "",
+            reason: "",
+            tool: "bash",
+            executable: "",
+            commandMatches: "",
+            pathMatches: "",
+            pathWithin: "",
+            domain: ""
+        )
+    }
+
+    init(permission: PolicyPermissionRecord) {
+        permissionId = permission.id
+        decision = permission.decision
+        label = permission.label ?? ""
+        reason = permission.reason ?? ""
+        tool = permission.match.tool ?? ""
+        executable = permission.match.executable ?? ""
+        commandMatches = permission.match.commandMatches ?? ""
+        pathMatches = permission.match.pathMatches ?? ""
+        pathWithin = permission.match.pathWithin ?? ""
+        domain = permission.match.domain ?? ""
+    }
+
+    func asPermissionRecord() -> PolicyPermissionRecord {
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return PolicyPermissionRecord(
+            id: permissionId.trimmingCharacters(in: .whitespacesAndNewlines),
+            decision: decision,
+            label: trimmedLabel.isEmpty ? nil : trimmedLabel,
+            reason: trimmedReason.isEmpty ? nil : trimmedReason,
+            immutable: nil,
+            match: .init(
+                tool: nonEmpty(tool),
+                executable: nonEmpty(executable),
+                commandMatches: nonEmpty(commandMatches),
+                pathMatches: nonEmpty(pathMatches),
+                pathWithin: nonEmpty(pathWithin),
+                domain: nonEmpty(domain)
+            )
+        )
+    }
+
+    private func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct RememberedRuleDraft: Identifiable {
+    let id = UUID()
+    let ruleId: String
+    let scope: String
+    var effect: String
+    var description: String
+    var tool: String
+    var executable: String
+    var domain: String
+    var pathPattern: String
+    var commandPattern: String
+
+    init(rule: PolicyRuleRecord) {
+        ruleId = rule.id
+        scope = rule.scope
+        effect = rule.effect
+        description = rule.description
+        tool = rule.tool ?? ""
+        executable = rule.match?.executable ?? ""
+        domain = rule.match?.domain ?? ""
+        pathPattern = rule.match?.pathPattern ?? ""
+        commandPattern = rule.match?.commandPattern ?? ""
+    }
+
+    func asPatchRequest() -> PolicyRulePatchRequest {
+        let matchPayload = PolicyRulePatchRequest.Match(
+            executable: nonEmpty(executable),
+            domain: nonEmpty(domain),
+            pathPattern: nonEmpty(pathPattern),
+            commandPattern: nonEmpty(commandPattern)
+        )
+
+        let hasMatch = [
+            matchPayload.executable,
+            matchPayload.domain,
+            matchPayload.pathPattern,
+            matchPayload.commandPattern,
+        ].contains { $0 != nil }
+
+        return PolicyRulePatchRequest(
+            effect: effect,
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            tool: nonEmpty(tool),
+            match: hasMatch ? matchPayload : nil
+        )
+    }
+
+    private func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct RememberedRuleEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var draft: RememberedRuleDraft
+    let onSave: (RememberedRuleDraft) -> Void
+
+    init(draft: RememberedRuleDraft, onSave: @escaping (RememberedRuleDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        self.onSave = onSave
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: item.risk.systemImage)
-                    .font(.caption)
-                    .foregroundStyle(Color.riskColor(item.risk))
-                Text(item.title)
-                    .font(.subheadline)
-                Spacer()
-                Text(item.risk.label)
-                    .font(.caption2)
-                    .foregroundStyle(Color.riskColor(item.risk))
+        Form {
+            Section("Rule") {
+                LabeledContent("Rule ID", value: draft.ruleId)
+                LabeledContent("Scope", value: draft.scope.capitalized)
+
+                Picker("Effect", selection: $draft.effect) {
+                    Text("Allow").tag("allow")
+                    Text("Deny").tag("deny")
+                }
+
+                TextField("description", text: $draft.description)
             }
 
-            if let description = item.description, !description.isEmpty {
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let example = item.example, !example.isEmpty {
-                Text(example)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
+            Section("Match") {
+                TextField("tool (optional)", text: $draft.tool)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("executable (optional)", text: $draft.executable)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("domain (optional)", text: $draft.domain)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("path glob (optional)", text: $draft.pathPattern)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("command glob (optional)", text: $draft.commandPattern)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
             }
         }
-        .padding(.vertical, 2)
+        .navigationTitle("Edit Remembered Rule")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(draft)
+                    dismiss()
+                }
+                .disabled(!isValid)
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        !draft.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (hasSpecificTool || hasAnyMatchField)
+    }
+
+    private var hasSpecificTool: Bool {
+        let trimmed = draft.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != "*"
+    }
+
+    private var hasAnyMatchField: Bool {
+        [
+            draft.executable,
+            draft.domain,
+            draft.pathPattern,
+            draft.commandPattern,
+        ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+}
+
+private struct WorkspacePermissionEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var draft: PolicyPermissionDraft
+    let onSave: (PolicyPermissionDraft) -> Void
+
+    init(draft: PolicyPermissionDraft, onSave: @escaping (PolicyPermissionDraft) -> Void) {
+        _draft = State(initialValue: draft)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        Form {
+            Section("Rule") {
+                TextField("permission id", text: $draft.permissionId)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+
+                Picker("Decision", selection: $draft.decision) {
+                    Text("Allow").tag("allow")
+                    Text("Ask").tag("ask")
+                    Text("Block").tag("block")
+                }
+
+                TextField("label (optional)", text: $draft.label)
+                TextField("reason (optional)", text: $draft.reason)
+            }
+
+            Section("Match") {
+                TextField("tool (bash/read/write/edit/*)", text: $draft.tool)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("executable (optional)", text: $draft.executable)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("command glob (optional)", text: $draft.commandMatches)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("path glob (optional)", text: $draft.pathMatches)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("pathWithin (optional)", text: $draft.pathWithin)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                TextField("domain (optional)", text: $draft.domain)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+            }
+        }
+        .navigationTitle("Edit Permission")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(draft)
+                    dismiss()
+                }
+                .disabled(!isValid)
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        !draft.permissionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        hasAnyMatchField
+    }
+
+    private var hasAnyMatchField: Bool {
+        [
+            draft.tool,
+            draft.executable,
+            draft.commandMatches,
+            draft.pathMatches,
+            draft.pathWithin,
+            draft.domain,
+        ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }

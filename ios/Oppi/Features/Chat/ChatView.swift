@@ -5,6 +5,7 @@ struct ChatView: View {
     let sessionId: String
 
     @Environment(ServerConnection.self) private var connection
+    @Environment(ServerStore.self) private var serverStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -32,10 +33,6 @@ struct ChatView: View {
     @State private var showCompactConfirmation = false
     @State private var showSkillPanel = false
     @State private var isKeyboardVisible = false
-    @State private var coloredThinkingBorderEnabled = UserDefaults.standard.bool(
-        forKey: coloredThinkingBorderDefaultsKey
-    )
-
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
@@ -47,6 +44,19 @@ struct ChatView: View {
 
     private var session: Session? {
         sessionStore.sessions.first { $0.id == sessionId }
+    }
+
+    private var currentServer: PairedServer? {
+        guard let currentServerId = connection.currentServerId else { return nil }
+        return serverStore.server(for: currentServerId)
+    }
+
+    private var serverBadgeIcon: ServerBadgeIcon {
+        currentServer?.resolvedBadgeIcon ?? .defaultValue
+    }
+
+    private var serverBadgeColor: ServerBadgeColor {
+        currentServer?.resolvedBadgeColor ?? .defaultValue
     }
 
     private var sessionDisplayName: String {
@@ -77,7 +87,7 @@ struct ChatView: View {
             return .offline
         }
 
-        let ownsSession = wsClient.connectedSessionId == sessionId
+        let ownsSession = connection.activeSessionId == sessionId
 
         let isWsSyncing: Bool
         let isWsDisconnected: Bool
@@ -107,6 +117,10 @@ struct ChatView: View {
     }
 
     var body: some View {
+        chatContent
+    }
+
+    private var chatContent: some View {
         VStack(spacing: 0) {
             ChatTimelineView(
                 sessionId: sessionId,
@@ -119,7 +133,7 @@ struct ChatView: View {
 
             footerArea
         }
-        .background(Color.tokyoBg.ignoresSafeArea())
+        .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -128,62 +142,18 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button {
-                    renameText = session?.name ?? ""
-                    showRenameAlert = true
-                } label: {
-                    sessionTitleLabel
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Rename session")
-#if DEBUG
-                .contextMenu {
-                    Button("Copy Session ID", systemImage: "doc.on.doc") {
-                        copySessionID()
-                    }
-                    Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
-                        uploadClientLogs()
-                    }
-                    .disabled(uploadingClientLogs)
-                }
-#endif
+                chatPrincipalToolbarItem
             }
 
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    if !reducer.items.isEmpty {
-                        Button { showOutline = true } label: {
-                            Image(systemName: "list.bullet")
-                                .font(.subheadline)
-                        }
-                    }
-                    Button { showSkillPanel = true } label: {
-                        RuntimeStatusBadge(
-                            runtime: session?.runtime,
-                            statusColor: session?.status.color ?? .tokyoComment,
-                            syncState: runtimeSyncState
-                        )
-                    }
-                }
+                chatTrailingToolbarItem
             }
         }
-        .sheet(isPresented: $showOutline) {
-            outlineSheet
-        }
-        .sheet(isPresented: $showModelPicker) {
-            modelPickerSheet
-        }
-        .sheet(isPresented: $showSkillPanel) {
-            skillPanelSheet
-        }
-        .fullScreenCover(isPresented: $showComposer) {
-            composerSheet
-        }
-        .alert("Rename Session", isPresented: $showRenameAlert) {
-            renameAlert
-        } message: {
-            Text("Keep it short (2–6 words). For task planning, start with TODO: ...")
-        }
+        .sheet(isPresented: $showOutline) { outlineSheet }
+        .sheet(isPresented: $showModelPicker) { modelPickerSheet }
+        .sheet(isPresented: $showSkillPanel) { skillPanelSheet }
+        .fullScreenCover(isPresented: $showComposer) { composerSheet }
+        .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
         .alert("Compact Context", isPresented: $showCompactConfirmation) {
             Button("Compact", role: .destructive) {
                 actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
@@ -237,13 +207,13 @@ struct ChatView: View {
             Task {
                 await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
             }
-            // Only disconnect if WE are still the active session.
-            // A new ChatView may have already taken over the WS.
-            if connection.wsClient?.connectedSessionId == sessionId
-                || connection.wsClient?.connectedSessionId == nil {
+            if connection.activeSessionId == sessionId
+                || connection.activeSessionId == nil {
                 connection.disconnectSession()
             }
-            LiveActivityManager.shared.endIfNeeded()
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.endIfNeeded()
+            }
         }
     }
 
@@ -272,7 +242,7 @@ struct ChatView: View {
                     isSending: actionHandler.isSending,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
-                    dictationService: dictationService,
+                    dictationService: ReleaseFeatures.composerDictationEnabled ? dictationService : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     slashCommands: connection.slashCommands,
@@ -293,27 +263,69 @@ struct ChatView: View {
                     },
                     onExpand: presentComposer,
                     appliesOuterPadding: true,
-                    thinkingBorderColor: coloredThinkingBorderEnabled
-                        ? theme.thinking.color(for: connection.thinkingLevel)
-                        : .tokyoComment
-                ) {
-                    SessionToolbar(
-                        session: session,
-                        thinkingLevel: connection.thinkingLevel,
-                        onModelTap: { showModelPicker = true },
-                        onThinkingSelect: { level in
-                            actionHandler.setThinking(
-                                level,
-                                connection: connection,
-                                reducer: reducer,
-                                sessionId: sessionId
-                            )
-                        },
-                        onCompact: {
-                            showCompactConfirmation = true
-                        }
-                    )
+                    thinkingBorderColor: theme.thinking.color(for: connection.thinkingLevel),
+                    actionRow: {
+                        SessionToolbar(
+                            session: session,
+                            thinkingLevel: connection.thinkingLevel,
+                            onModelTap: { showModelPicker = true },
+                            onThinkingSelect: { level in
+                                actionHandler.setThinking(
+                                    level,
+                                    connection: connection,
+                                    reducer: reducer,
+                                    sessionId: sessionId
+                                )
+                            },
+                            onCompact: {
+                                showCompactConfirmation = true
+                            }
+                        )
+                    }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chatPrincipalToolbarItem: some View {
+        Button {
+            renameText = session?.name ?? ""
+            showRenameAlert = true
+        } label: {
+            sessionTitleLabel
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Rename session")
+#if DEBUG
+        .contextMenu {
+            Button("Copy Session ID", systemImage: "doc.on.doc") {
+                copySessionID()
+            }
+            Button(uploadingClientLogs ? "Uploading Client Logs…" : "Upload Client Logs", systemImage: "arrow.up.doc") {
+                uploadClientLogs()
+            }
+            .disabled(uploadingClientLogs)
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private var chatTrailingToolbarItem: some View {
+        HStack(spacing: 12) {
+            if !reducer.items.isEmpty {
+                Button { showOutline = true } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.subheadline)
                 }
+            }
+            Button { showSkillPanel = true } label: {
+                RuntimeStatusBadge(
+                    statusColor: session?.status.color ?? .themeComment,
+                    syncState: runtimeSyncState,
+                    icon: serverBadgeIcon,
+                    badgeColor: serverBadgeColor
+                )
             }
         }
     }
@@ -322,18 +334,18 @@ struct ChatView: View {
         HStack(spacing: 6) {
             Text(sessionDisplayName)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.tokyoFg)
+                .foregroundStyle(.themeFg)
                 .lineLimit(1)
 
             if let cost = session?.cost, cost > 0 {
                 Text(String(format: "$%.2f", cost))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
             }
 
             Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
-                .foregroundStyle(copiedSessionID ? .tokyoGreen : .tokyoComment)
+                .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
         }
     }
 
@@ -564,5 +576,3 @@ struct ChatView: View {
         Button("Cancel", role: .cancel) {}
     }
 }
-
-

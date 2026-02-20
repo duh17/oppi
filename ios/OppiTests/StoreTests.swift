@@ -24,7 +24,16 @@ struct SessionStoreTests {
             "cost": 0
         }
         """
-        return try! JSONDecoder().decode(Session.self, from: json.data(using: .utf8)!)
+
+        guard let data = json.data(using: .utf8) else {
+            preconditionFailure("Failed to encode session JSON for test")
+        }
+
+        do {
+            return try JSONDecoder().decode(Session.self, from: data)
+        } catch {
+            preconditionFailure("Failed to decode Session in test: \(error)")
+        }
     }
 
     @MainActor
@@ -159,7 +168,7 @@ struct PermissionStoreTests {
         PermissionRequest(
             id: id, sessionId: sessionId, tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .low, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(120)
         )
     }
@@ -205,7 +214,7 @@ struct PermissionStoreTests {
         let taken = store.take(id: "p1")
 
         #expect(taken?.id == "p1")
-        #expect(store.count == 0)
+        #expect(store.pending.isEmpty)
     }
 
     @MainActor
@@ -222,7 +231,7 @@ struct PermissionStoreTests {
 
         store.remove(id: "p1")
 
-        #expect(store.count == 0)
+        #expect(store.pending.isEmpty)
     }
 
     @MainActor
@@ -273,12 +282,20 @@ struct WorkspaceStoreTests {
             "id": "\(id)",
             "name": "\(name)",
             "skills": [],
-            "policyPreset": "container",
             "createdAt": \(now),
             "updatedAt": \(now)
         }
         """
-        return try! JSONDecoder().decode(Workspace.self, from: json.data(using: .utf8)!)
+
+        guard let data = json.data(using: .utf8) else {
+            preconditionFailure("Failed to encode workspace JSON for test")
+        }
+
+        do {
+            return try JSONDecoder().decode(Workspace.self, from: data)
+        } catch {
+            preconditionFailure("Failed to decode Workspace in test: \(error)")
+        }
     }
 
     @MainActor

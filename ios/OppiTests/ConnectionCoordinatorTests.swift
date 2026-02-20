@@ -8,7 +8,7 @@ struct ConnectionCoordinatorTests {
 
     // MARK: - Server Switching
 
-    @Test func switchToServerUpdatesAllStores() {
+    @Test func switchToServerUpdatesActiveServer() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:switch-test", name: "Studio")
 
@@ -17,9 +17,9 @@ struct ConnectionCoordinatorTests {
 
         #expect(result == true)
         #expect(coordinator.activeServerId == "sha256:switch-test")
-        #expect(coordinator.connection.sessionStore.activeServerId == "sha256:switch-test")
-        #expect(coordinator.connection.permissionStore.activeServerId == "sha256:switch-test")
-        #expect(coordinator.connection.currentServerId == "sha256:switch-test")
+        #expect(coordinator.activeConnection.currentServerId == "sha256:switch-test")
+        #expect(coordinator.activeConnection.sessionStore.activeServerId == "sha256:switch-test")
+        #expect(coordinator.activeConnection.permissionStore.activeServerId == "sha256:switch-test")
     }
 
     @Test func switchToUnknownServerReturnsFalse() {
@@ -39,7 +39,27 @@ struct ConnectionCoordinatorTests {
         #expect(result == true)
     }
 
-    // MARK: - Session Isolation
+    // MARK: - Per-Server Connection Isolation
+
+    @Test func eachServerGetsOwnConnection() {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:iso-a", name: "Server A")
+        let serverB = makeServer(id: "sha256:iso-b", name: "Server B")
+
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.serverStore.addOrUpdate(serverB)
+
+        coordinator.switchToServer(serverA)
+        let connA = coordinator.activeConnection
+
+        coordinator.switchToServer(serverB)
+        let connB = coordinator.activeConnection
+
+        // Different connection instances
+        #expect(connA !== connB)
+        #expect(connA.currentServerId == "sha256:iso-a")
+        #expect(connB.currentServerId == "sha256:iso-b")
+    }
 
     @Test func sessionsAreIsolatedBetweenServers() {
         let (coordinator, _) = makeCoordinator()
@@ -51,21 +71,21 @@ struct ConnectionCoordinatorTests {
 
         // Add sessions to server A
         coordinator.switchToServer(serverA)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s1", name: "Session A"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "Session A"))
 
         // Switch to server B — should see empty sessions
         coordinator.switchToServer(serverB)
-        #expect(coordinator.connection.sessionStore.sessions.isEmpty)
+        #expect(coordinator.activeConnection.sessionStore.sessions.isEmpty)
 
         // Add sessions to server B
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s2", name: "Session B"))
-        #expect(coordinator.connection.sessionStore.sessions.count == 1)
-        #expect(coordinator.connection.sessionStore.sessions[0].name == "Session B")
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s2", name: "Session B"))
+        #expect(coordinator.activeConnection.sessionStore.sessions.count == 1)
+        #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session B")
 
         // Switch back to server A — session A should still be there
         coordinator.switchToServer(serverA)
-        #expect(coordinator.connection.sessionStore.sessions.count == 1)
-        #expect(coordinator.connection.sessionStore.sessions[0].name == "Session A")
+        #expect(coordinator.activeConnection.sessionStore.sessions.count == 1)
+        #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session A")
     }
 
     // MARK: - Permission Isolation
@@ -80,32 +100,32 @@ struct ConnectionCoordinatorTests {
 
         // Add permission on server A
         coordinator.switchToServer(serverA)
-        coordinator.connection.permissionStore.add(makePermission(id: "p1"))
+        coordinator.activeConnection.permissionStore.add(makePermission(id: "p1"))
 
         // Server B should be empty
         coordinator.switchToServer(serverB)
-        #expect(coordinator.connection.permissionStore.pending.isEmpty)
+        #expect(coordinator.activeConnection.permissionStore.pending.isEmpty)
 
-        // But allPending should see it
-        #expect(coordinator.connection.permissionStore.allPending.count == 1)
+        // Cross-server query should find it
+        #expect(coordinator.allPendingPermissions.count == 1)
+        #expect(coordinator.allPendingPermissionCount == 1)
     }
 
     // MARK: - Server Removal
 
-    @Test func removeServerCleansAllStores() {
+    @Test func removeServerCleansConnection() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:remove-test", name: "Victim")
 
         coordinator.serverStore.addOrUpdate(server)
         coordinator.switchToServer(server)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s1", name: "Doomed"))
-        coordinator.connection.permissionStore.add(makePermission(id: "p1"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "Doomed"))
+        coordinator.activeConnection.permissionStore.add(makePermission(id: "p1"))
 
         coordinator.removeServer(id: "sha256:remove-test")
 
         #expect(coordinator.serverStore.server(for: "sha256:remove-test") == nil)
-        #expect(coordinator.connection.sessionStore.sessions(forServer: "sha256:remove-test").isEmpty)
-        #expect(coordinator.connection.permissionStore.pending(forServer: "sha256:remove-test").isEmpty)
+        #expect(coordinator.connections["sha256:remove-test"] == nil)
         #expect(coordinator.activeServerId != "sha256:remove-test")
     }
 
@@ -124,38 +144,25 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId == "sha256:auto-switch-b")
     }
 
-    // MARK: - API Client Caching
+    // MARK: - API Client Per Connection
 
-    @Test func apiClientIsCachedPerServer() {
+    @Test func apiClientIsFromConnectionForServer() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:api-cache", name: "Cache")
         coordinator.serverStore.addOrUpdate(server)
+        coordinator.switchToServer(server)
 
         let client1 = coordinator.apiClient(for: "sha256:api-cache")
         let client2 = coordinator.apiClient(for: "sha256:api-cache")
 
         #expect(client1 != nil)
-        // Same actor instance
+        // Same connection → same API client
         #expect(client1 === client2)
-    }
-
-    @Test func invalidateAPIClientForcesRecreation() {
-        let (coordinator, _) = makeCoordinator()
-        let server = makeServer(id: "sha256:api-invalidate", name: "Invalidate")
-        coordinator.serverStore.addOrUpdate(server)
-
-        let client1 = coordinator.apiClient(for: "sha256:api-invalidate")
-        coordinator.invalidateAPIClient(for: "sha256:api-invalidate")
-        let client2 = coordinator.apiClient(for: "sha256:api-invalidate")
-
-        #expect(client1 != nil)
-        #expect(client2 != nil)
-        #expect(client1 !== client2)
     }
 
     // MARK: - Cross-Server Queries
 
-    @Test func sessionStoreAllSessionsSpansServers() {
+    @Test func allSessionsSpansServers() {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:cross-a", name: "A")
         let serverB = makeServer(id: "sha256:cross-b", name: "B")
@@ -164,16 +171,16 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         coordinator.switchToServer(serverA)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s1", name: "A1"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "A1"))
 
         coordinator.switchToServer(serverB)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s2", name: "B1"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s2", name: "B1"))
 
-        let allSessions = coordinator.connection.sessionStore.allSessions
+        let allSessions = coordinator.allSessions
         #expect(allSessions.count == 2)
     }
 
-    @Test func sessionStoreFindSessionAcrossServers() {
+    @Test func findSessionAcrossServers() {
         let (coordinator, _) = makeCoordinator()
         let serverA = makeServer(id: "sha256:find-a", name: "A")
         let serverB = makeServer(id: "sha256:find-b", name: "B")
@@ -182,11 +189,11 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         coordinator.switchToServer(serverA)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s-on-a", name: "On A"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s-on-a", name: "On A"))
 
         coordinator.switchToServer(serverB)
         // Currently on B, find session that lives on A
-        let result = coordinator.connection.sessionStore.findSession(id: "s-on-a")
+        let result = coordinator.findSession(id: "s-on-a")
         #expect(result != nil)
         #expect(result?.serverId == "sha256:find-a")
         #expect(result?.session.name == "On A")
@@ -204,23 +211,44 @@ struct ConnectionCoordinatorTests {
 
         // Session lives on server A
         coordinator.switchToServer(serverA)
-        coordinator.connection.sessionStore.upsert(makeSession(id: "s-push-target", name: "Target"))
+        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s-push-target", name: "Target"))
 
         // Switch to server B (simulate user looking at different server)
         coordinator.switchToServer(serverB)
         #expect(coordinator.activeServerId == "sha256:push-b")
 
         // Push notification arrives for session on server A — find and switch
-        if let found = coordinator.connection.sessionStore.findSession(id: "s-push-target") {
+        if let found = coordinator.findSession(id: "s-push-target") {
             coordinator.switchToServer(found.serverId)
+            found.connection.sessionStore.activeSessionId = "s-push-target"
         }
-        coordinator.connection.sessionStore.activeSessionId = "s-push-target"
 
         #expect(coordinator.activeServerId == "sha256:push-a")
-        #expect(coordinator.connection.sessionStore.activeSessionId == "s-push-target")
+        #expect(coordinator.activeConnection.sessionStore.activeSessionId == "s-push-target")
     }
 
-    // MARK: - Server Order Sync
+    // MARK: - Connection Pool
+
+    @Test func connectAllStreamsCreatesConnectionsForAllServers() {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:pool-a", name: "A")
+        let serverB = makeServer(id: "sha256:pool-b", name: "B")
+
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.serverStore.addOrUpdate(serverB)
+
+        // Before connecting, only the switched-to server has a connection
+        coordinator.switchToServer(serverA)
+        #expect(coordinator.connections.count == 1)
+
+        // Connect all creates connections for remaining servers
+        coordinator.connectAllStreams()
+        #expect(coordinator.connections.count == 2)
+        #expect(coordinator.connections["sha256:pool-a"] != nil)
+        #expect(coordinator.connections["sha256:pool-b"] != nil)
+    }
+
+    // MARK: - Workspace Store Order
 
     @Test func workspaceServerOrderMatchesServerStore() {
         let (coordinator, _) = makeCoordinator()
@@ -231,10 +259,9 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
         coordinator.switchToServer(serverA)
 
-        // After switching, workspace store should reflect server store order
-        coordinator.connection.workspaceStore.serverOrder = coordinator.serverStore.servers.map(\.id)
+        coordinator.activeConnection.workspaceStore.serverOrder = coordinator.serverStore.servers.map(\.id)
 
-        let order = coordinator.connection.workspaceStore.serverOrder
+        let order = coordinator.activeConnection.workspaceStore.serverOrder
         #expect(order.contains("sha256:order-a"))
         #expect(order.contains("sha256:order-b"))
     }
@@ -242,10 +269,6 @@ struct ConnectionCoordinatorTests {
     // MARK: - Helpers
 
     private func makeCoordinator() -> (ConnectionCoordinator, ServerStore) {
-        // Clear leftover state from other test runs.
-        // Must purge both UserDefaults index AND Keychain entries,
-        // otherwise the Keychain discovery fallback finds leaked
-        // entries from other test suites (ServerStoreTests).
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
         let store = ServerStore()
@@ -258,7 +281,12 @@ struct ConnectionCoordinatorTests {
             host: "localhost", port: 7749, token: "sk_test",
             name: name, serverFingerprint: id
         )
-        return PairedServer(from: creds, sortOrder: 0)!
+
+        guard let server = PairedServer(from: creds, sortOrder: 0) else {
+            preconditionFailure("Failed to create PairedServer for test")
+        }
+
+        return server
     }
 
     private func makeSession(id: String, name: String) -> Session {
@@ -282,7 +310,6 @@ struct ConnectionCoordinatorTests {
             tool: "bash",
             input: [:],
             displaySummary: "test",
-            risk: .low,
             reason: "",
             timeoutAt: Date().addingTimeInterval(60)
         )

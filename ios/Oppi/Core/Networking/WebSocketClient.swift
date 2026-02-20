@@ -3,13 +3,14 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WebSocket")
 
-/// WebSocket client for streaming session events.
+/// WebSocket client for the multiplexed `/stream` endpoint.
 ///
-/// Returns an `AsyncStream<ServerMessage>` from `connect()`.
+/// Returns an `AsyncStream<StreamMessage>` from `connect()`.
 /// Handles keepalive pings, reconnection, and cleanup.
 ///
-/// v1 policy: one active WebSocket at a time. Opening a new connection
-/// disconnects the previous one.
+/// Each server gets one persistent `/stream` WebSocket. Sessions are
+/// subscribed/unsubscribed via `subscribe`/`unsubscribe` commands
+/// sent over the same connection.
 @MainActor @Observable
 final class WebSocketClient {
     enum Status: Equatable {
@@ -20,8 +21,6 @@ final class WebSocketClient {
     }
 
     private(set) var status: Status = .disconnected
-    private(set) var connectedSessionId: String?
-    private var connectedWorkspaceId: String?
 
     /// Monotonic ID incremented on each `connect()` call.
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
@@ -36,10 +35,14 @@ final class WebSocketClient {
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
-    private var continuation: AsyncStream<ServerMessage>.Continuation?
+    private var continuation: AsyncStream<StreamMessage>.Continuation?
     private var inboundMetaQueue: [InboundMeta] = []
 
-    private let credentials: ServerCredentials
+    /// Active subscriptions tracked for resubscription after reconnect.
+    /// Key: sessionId, Value: subscription level.
+    private(set) var activeSubscriptions: [String: StreamSubscriptionLevel] = [:]
+
+    let credentials: ServerCredentials
     private let urlSession: URLSession
 
     private let maxReconnectAttempts = 10
@@ -66,36 +69,28 @@ final class WebSocketClient {
 
     // MARK: - Connect
 
-    /// Connect to a session's WebSocket stream.
+    /// Connect to the server's multiplexed `/stream` WebSocket.
     ///
-    /// Disconnects any existing connection first (v1 one-stream policy).
-    /// Returns an `AsyncStream` that yields `ServerMessage` until disconnect.
+    /// Disconnects any existing connection first.
+    /// Returns an `AsyncStream` that yields `StreamMessage` (message + sessionId)
+    /// until disconnect.
     ///
-    /// Uses the workspace-scoped v2 WS path.
-    func connect(sessionId: String, workspaceId: String) -> AsyncStream<ServerMessage> {
+    /// The first message will be `streamConnected(userName:)`.
+    /// After reconnection, `streamConnected` is yielded again — ServerConnection
+    /// uses this as the signal to re-subscribe to sessions.
+    func connect() -> AsyncStream<StreamMessage> {
         // Disconnect previous connection
         disconnect()
 
         connectionID &+= 1
         let thisConnection = connectionID
-        connectedSessionId = sessionId
-        connectedWorkspaceId = workspaceId
         status = .connecting
-        wsLogInfo(
-            "Connect requested",
-            metadata: [
-                "sessionId": sessionId,
-                "workspaceId": workspaceId,
-            ]
-        )
+        wsLogInfo("Connect requested to /stream")
 
         return AsyncStream { [weak self] continuation in
             self?.continuation = continuation
-            self?.openWebSocket(sessionId: sessionId, workspaceId: workspaceId, continuation: continuation)
+            self?.openStreamWebSocket(continuation: continuation)
 
-            // Guard: only disconnect if WE are still the active connection.
-            // Without this, a stale stream's onTermination fires async and
-            // kills a newer connection that already took over.
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in
                     guard let self, self.connectionID == thisConnection else { return }
@@ -105,15 +100,17 @@ final class WebSocketClient {
         }
     }
 
+    // MARK: - Send
+
     /// Send a client message over the WebSocket.
     ///
-    /// If the connection is in `.connecting` or `.reconnecting` state (e.g.,
-    /// app returning from background), waits for a bounded window before
-    /// giving up. This prevents messages from being silently dropped during
-    /// brief reconnect windows while still failing fast.
+    /// For session-scoped commands on `/stream`, provide `sessionId` to wrap
+    /// the message in a `SessionScopedMessage` envelope.
+    /// Commands like `subscribe`, `unsubscribe`, and `permission_response` don't
+    /// need a sessionId wrapper (they include it in their own encoding).
     ///
-    /// Once connected, enforces a bounded send timeout to prevent hangs.
-    func send(_ message: ClientMessage) async throws {
+    /// If the connection is reconnecting, waits briefly before failing.
+    func send(_ message: ClientMessage, sessionId: String? = nil) async throws {
         // Wait for connection if reconnecting (background → foreground)
         if status != .connected {
             let waited = try await waitForConnection()
@@ -135,14 +132,19 @@ final class WebSocketClient {
             )
             throw WebSocketError.notConnected
         }
-        let data = try message.jsonString()
+
+        // Encode with session scope if needed
+        let payload: String
+        if let sessionId, !Self.isStreamLevelCommand(message) {
+            payload = try SessionScopedMessage(sessionId: sessionId, message: message).jsonString()
+        } else {
+            payload = try message.jsonString()
+        }
+
         let sendTimeout = self.sendTimeout
 
         do {
-            // NOTE: do NOT use TaskGroup timeout racing here.
-            // If `ws.send` hangs and ignores cancellation, TaskGroup waits forever
-            // for child task teardown, which wedges the send path.
-            try await sendWithTimeout(payload: data, over: ws, timeout: sendTimeout)
+            try await sendWithTimeout(payload: payload, over: ws, timeout: sendTimeout)
         } catch {
             if let wsError = error as? WebSocketError, case .sendTimeout = wsError {
                 logger.error("WS send timed out for \(message.typeLabel, privacy: .public) — forcing reconnect")
@@ -153,21 +155,41 @@ final class WebSocketClient {
                 if self.webSocket === ws {
                     ws.cancel(with: .goingAway, reason: nil)
                     self.webSocket = nil
-                    if connectedSessionId != nil {
-                        attemptReconnect()
-                    } else {
-                        status = .disconnected
-                    }
+                    attemptReconnect()
                 }
             }
             throw error
         }
+
+        // Track subscription state
+        trackSubscription(message)
+    }
+
+    // MARK: - Subscription Tracking
+
+    /// Track subscribe/unsubscribe commands for reconnect resubscription.
+    private func trackSubscription(_ message: ClientMessage) {
+        switch message {
+        case .subscribe(let sessionId, let level, _, _):
+            activeSubscriptions[sessionId] = level
+        case .unsubscribe(let sessionId, _):
+            activeSubscriptions.removeValue(forKey: sessionId)
+        default:
+            break
+        }
+    }
+
+    /// Commands that include their own sessionId and don't need the envelope.
+    nonisolated private static func isStreamLevelCommand(_ message: ClientMessage) -> Bool {
+        switch message {
+        case .subscribe, .unsubscribe, .permissionResponse:
+            return true
+        default:
+            return false
+        }
     }
 
     /// Send payload with a hard timeout that cannot be wedged by a stuck async send.
-    ///
-    /// Uses callback-based `URLSessionWebSocketTask.send` plus a timeout task.
-    /// Whichever path resolves first wins; late completions are ignored.
     private func sendWithTimeout(
         payload: String,
         over ws: URLSessionWebSocketTask,
@@ -212,9 +234,7 @@ final class WebSocketClient {
     }
 
     /// Wait for the connection to reach `.connected` state.
-    /// Returns true if connected, false if timed out or disconnected.
     private func waitForConnection() async throws -> Bool {
-        // Already disconnected with no reconnect in progress — don't wait
         if status == .disconnected { return false }
 
         let deadline = ContinuousClock.now + waitForConnectionTimeout
@@ -235,6 +255,7 @@ final class WebSocketClient {
                 "hasReceiveTask": String(receiveTask != nil),
                 "hasPingTask": String(pingTask != nil),
                 "hasReconnectTask": String(reconnectTask != nil),
+                "subscriptions": String(activeSubscriptions.count),
             ]
         )
 
@@ -251,9 +272,8 @@ final class WebSocketClient {
         continuation?.finish()
         continuation = nil
         inboundMetaQueue.removeAll(keepingCapacity: false)
+        activeSubscriptions.removeAll()
 
-        connectedSessionId = nil
-        connectedWorkspaceId = nil
         status = .disconnected
     }
 
@@ -261,12 +281,9 @@ final class WebSocketClient {
 
     private func wsLogMetadata(extra: [String: String] = [:]) -> [String: String] {
         var metadata = extra
-        metadata["sessionId"] = connectedSessionId ?? metadata["sessionId"] ?? "unknown"
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
-        if let connectedWorkspaceId {
-            metadata["workspaceId"] = connectedWorkspaceId
-        }
+        metadata["subscriptions"] = activeSubscriptions.keys.joined(separator: ",")
         return metadata
     }
 
@@ -289,9 +306,9 @@ final class WebSocketClient {
         ClientLog.error("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
     }
 
-    private func openWebSocket(sessionId: String, workspaceId: String, continuation: AsyncStream<ServerMessage>.Continuation) {
-        guard let url = credentials.webSocketURL(sessionId: sessionId, workspaceId: workspaceId) else {
-            logger.error("Invalid WebSocket URL for session \(sessionId) — disconnecting")
+    private func openStreamWebSocket(continuation: AsyncStream<StreamMessage>.Continuation) {
+        guard let url = credentials.streamURL else {
+            logger.error("Invalid /stream URL — disconnecting")
             disconnect()
             return
         }
@@ -306,7 +323,7 @@ final class WebSocketClient {
         startPingTimer(ws: ws)
     }
 
-    private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<ServerMessage>.Continuation) {
+    private func startReceiveLoop(ws: URLSessionWebSocketTask, continuation: AsyncStream<StreamMessage>.Continuation) {
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -321,12 +338,10 @@ final class WebSocketClient {
                         continue
                     }
 
-                    let serverMessage: ServerMessage
+                    let streamMessage: StreamMessage
                     do {
-                        serverMessage = try ServerMessage.decode(from: text)
+                        streamMessage = try StreamMessage.decode(from: text)
                     } catch {
-                        // Log decode error but DON'T break — keep the stream alive.
-                        // MUST be .error — .warning/.info are NOT persisted in device log archives.
                         logger.error("PIPE: DECODE FAILED: \(error.localizedDescription, privacy: .public) — raw: \(text.prefix(300), privacy: .public)")
                         self?.wsLogError(
                             "PIPE decode failed",
@@ -352,11 +367,11 @@ final class WebSocketClient {
                         }
                     }
 
-                    if case .unknown(let type) = serverMessage {
+                    if case .unknown(let type) = streamMessage.message {
                         logger.debug("Received unknown server message: \(type)")
                     }
 
-                    continuation.yield(serverMessage)
+                    continuation.yield(streamMessage)
                 } catch {
                     if Task.isCancelled { break }
                     logger.error("WebSocket receive error: \(error)")
@@ -370,8 +385,7 @@ final class WebSocketClient {
 
             // Connection lost — attempt reconnect
             await MainActor.run {
-                guard let self, self.connectedSessionId != nil else { return }
-                self.attemptReconnect()
+                self?.attemptReconnect()
             }
         }
     }
@@ -383,16 +397,8 @@ final class WebSocketClient {
                 try? await Task.sleep(for: self?.pingInterval ?? .seconds(30))
                 guard !Task.isCancelled else { break }
 
-                // Guard: skip ping if the task is no longer running.
-                // This avoids sending pings into a cancelled/completed task.
                 guard ws.state == .running else { break }
 
-                // Use a one-shot wrapper around the continuation because
-                // URLSessionWebSocketTask.sendPing can invoke its completion
-                // handler more than once when the task is cancelled during an
-                // in-flight ping (race with reconnect/disconnect paths).
-                // withCheckedContinuation crashes on double-resume; the
-                // OneShotPingContinuation silently drops subsequent resumes.
                 let failed = await withUnsafeContinuation { (cont: UnsafeContinuation<Bool, Never>) in
                     let oneShot = OneShotPingContinuation(cont)
                     ws.sendPing { error in
@@ -402,8 +408,6 @@ final class WebSocketClient {
 
                 if failed {
                     consecutiveFailures += 1
-                    // Two consecutive failures → treat as dead connection.
-                    // Single failures can be transient (brief network blip).
                     if consecutiveFailures >= 2 {
                         logger.error("Ping watchdog: \(consecutiveFailures) consecutive failures — triggering reconnect")
                         self?.wsLogError(
@@ -427,14 +431,15 @@ final class WebSocketClient {
     }
 
     private func attemptReconnect() {
-        guard let sessionId = connectedSessionId else { return }
+        // Don't reconnect if explicitly disconnected (no subscriptions = intentional)
+        guard status != .disconnected else { return }
 
         var attempt = 0
         if case .reconnecting(let a) = status { attempt = a }
 
         guard attempt < maxReconnectAttempts else {
             logger.error("Max reconnect attempts reached")
-            wsLogError("Max reconnect attempts reached", metadata: ["sessionId": sessionId])
+            wsLogError("Max reconnect attempts reached")
             disconnect()
             return
         }
@@ -456,11 +461,8 @@ final class WebSocketClient {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard let self,
-                      let cont = self.continuation,
-                      let workspaceId = self.connectedWorkspaceId,
-                      !workspaceId.isEmpty else { return }
-                self.openWebSocket(sessionId: sessionId, workspaceId: workspaceId, continuation: cont)
+                guard let self, let cont = self.continuation else { return }
+                self.openStreamWebSocket(continuation: cont)
             }
         }
     }
@@ -471,7 +473,6 @@ final class WebSocketClient {
     }
 
     /// Exponential backoff with jitter: 2^(attempt-1) seconds, capped at 30s, ±25% jitter.
-    /// Jitter prevents thundering herd when server restarts with multiple clients.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
         let base = min(pow(2, Double(attempt - 1)), 30)
         let jitterFactor = Double.random(in: 0.75...1.25)
@@ -493,6 +494,7 @@ final class WebSocketClient {
         }
 
         let seq = (object["seq"] as? NSNumber)?.intValue
+            ?? (object["streamSeq"] as? NSNumber)?.intValue
         let currentSeq = (object["currentSeq"] as? NSNumber)?.intValue
         return InboundMeta(seq: seq, currentSeq: currentSeq)
     }
@@ -500,11 +502,6 @@ final class WebSocketClient {
     /// Test seam for deterministic send/reconnect behavior tests.
     func _setStatusForTesting(_ status: Status) {
         self.status = status
-    }
-
-    /// Test seam for lifecycle race tests that need to simulate ownership handoff.
-    func _setConnectedSessionIdForTesting(_ sessionId: String?) {
-        self.connectedSessionId = sessionId
     }
 
     /// Thread-safe one-shot resolver for callback + timeout races.
@@ -542,10 +539,6 @@ final class WebSocketClient {
 
 // MARK: - One-Shot Ping Continuation
 
-/// Thread-safe wrapper that ensures an `UnsafeContinuation` is resumed
-/// exactly once. Subsequent calls to `resume(returning:)` are silently
-/// dropped. This prevents crashes when `URLSessionWebSocketTask.sendPing`
-/// invokes its completion handler more than once during cancellation races.
 private final class OneShotPingContinuation: @unchecked Sendable {
     private var continuation: UnsafeContinuation<Bool, Never>?
     private let lock = NSLock()

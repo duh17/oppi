@@ -1,17 +1,14 @@
 import Foundation
 
-// MARK: - Security Request Types
+// MARK: - Pairing + Security Request Types
 
-struct InviteUpdate: Encodable {
-    let maxAgeSeconds: Int
+struct PairDeviceRequest: Encodable {
+    let pairingToken: String
+    let deviceName: String?
 }
 
-struct UpdateSecurityProfileRequest: Encodable {
-    let profile: String
-    let requireTlsOutsideTailnet: Bool
-    let allowInsecureHttpInTailnet: Bool
-    let requirePinnedServerIdentity: Bool
-    let invite: InviteUpdate
+struct PairDeviceResponse: Decodable {
+    let deviceToken: String
 }
 
 // MARK: - Workspace Request Types
@@ -21,8 +18,6 @@ struct CreateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     let skills: [String]
-    var runtime: String?
-    var policyPreset: String?
     var systemPrompt: String?
     var hostMount: String?
     var memoryEnabled: Bool?
@@ -36,8 +31,6 @@ struct UpdateWorkspaceRequest: Encodable {
     var description: String?
     var icon: String?
     var skills: [String]?
-    var runtime: String?
-    var policyPreset: String?
     var systemPrompt: String?
     var hostMount: String?
     var memoryEnabled: Bool?
@@ -48,45 +41,53 @@ struct UpdateWorkspaceRequest: Encodable {
 
 // MARK: - Policy Models
 
-struct PolicyProfile: Decodable, Sendable {
-    let workspaceId: String?
-    let workspaceName: String?
-    let runtime: String
-    let policyPreset: String
-    let supervisionLevel: String
-    let summary: String
-    let generatedAt: Date
-    let alwaysBlocked: [PolicyProfileItem]
-    let needsApproval: [PolicyProfileItem]
-    let usuallyAllowed: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case workspaceId, workspaceName, runtime, policyPreset, supervisionLevel
-        case summary, generatedAt, alwaysBlocked, needsApproval, usuallyAllowed
+struct PolicyPermissionRecord: Codable, Identifiable, Sendable {
+    struct Match: Codable, Sendable {
+        let tool: String?
+        let executable: String?
+        let commandMatches: String?
+        let pathMatches: String?
+        let pathWithin: String?
+        let domain: String?
     }
 
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
-        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
-        runtime = try c.decode(String.self, forKey: .runtime)
-        policyPreset = try c.decode(String.self, forKey: .policyPreset)
-        supervisionLevel = try c.decode(String.self, forKey: .supervisionLevel)
-        summary = try c.decode(String.self, forKey: .summary)
-        let generatedAtMs = try c.decode(Double.self, forKey: .generatedAt)
-        generatedAt = Date(timeIntervalSince1970: generatedAtMs / 1000)
-        alwaysBlocked = try c.decode([PolicyProfileItem].self, forKey: .alwaysBlocked)
-        needsApproval = try c.decode([PolicyProfileItem].self, forKey: .needsApproval)
-        usuallyAllowed = try c.decode([String].self, forKey: .usuallyAllowed)
-    }
+    let id: String
+    let decision: String
+    let label: String?
+    let reason: String?
+    let immutable: Bool?
+    let match: Match
 }
 
-struct PolicyProfileItem: Decodable, Identifiable, Sendable {
-    let id: String
-    let title: String
+struct PolicyConfigRecord: Codable, Sendable {
+    let schemaVersion: Int?
+    let mode: String?
     let description: String?
-    let risk: RiskLevel
-    let example: String?
+    let fallback: String
+    let guardrails: [PolicyPermissionRecord]
+    let permissions: [PolicyPermissionRecord]
+}
+
+struct WorkspacePolicyRecord: Codable, Sendable {
+    let fallback: String?
+    let permissions: [PolicyPermissionRecord]
+}
+
+struct WorkspacePolicyResponse: Decodable, Sendable {
+    let workspaceId: String
+    let globalPolicy: PolicyConfigRecord?
+    let workspacePolicy: WorkspacePolicyRecord
+    let effectivePolicy: PolicyConfigRecord
+}
+
+struct WorkspacePolicyPatchRequest: Encodable, Sendable {
+    let permissions: [PolicyPermissionRecord]?
+    let fallback: String?
+}
+
+struct WorkspacePolicyMutationResponse: Decodable, Sendable {
+    let workspace: Workspace
+    let policy: WorkspacePolicyRecord
 }
 
 struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
@@ -106,14 +107,13 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
     let sessionId: String?
     let source: String
     let description: String
-    let risk: RiskLevel
     let createdAt: Date
     let createdBy: String?
     let expiresAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, effect, tool, match, scope, workspaceId, sessionId, source
-        case description, risk, createdAt, createdBy, expiresAt
+        case description, createdAt, createdBy, expiresAt
     }
 
     init(from decoder: Decoder) throws {
@@ -127,7 +127,6 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
         source = try c.decode(String.self, forKey: .source)
         description = try c.decode(String.self, forKey: .description)
-        risk = try c.decode(RiskLevel.self, forKey: .risk)
         let createdAtMs = try c.decode(Double.self, forKey: .createdAt)
         createdAt = Date(timeIntervalSince1970: createdAtMs / 1000)
         createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
@@ -137,6 +136,24 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
             expiresAt = nil
         }
     }
+}
+
+struct PolicyRulePatchRequest: Encodable, Sendable {
+    struct Match: Encodable, Sendable {
+        let executable: String?
+        let domain: String?
+        let pathPattern: String?
+        let commandPattern: String?
+    }
+
+    let effect: String?
+    let description: String?
+    let tool: String?
+    let match: Match?
+}
+
+struct PolicyRuleMutationResponse: Decodable, Sendable {
+    let rule: PolicyRuleRecord
 }
 
 struct PolicyAuditUserChoice: Decodable, Sendable {
@@ -169,7 +186,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
     let workspaceId: String
     let tool: String
     let displaySummary: String
-    let risk: RiskLevel
     let decision: String
     let resolvedBy: String
     let layer: String
@@ -179,7 +195,7 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, timestamp, sessionId, workspaceId, tool, displaySummary
-        case risk, decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
+        case decision, resolvedBy, layer, ruleId, ruleSummary, userChoice
     }
 
     init(from decoder: Decoder) throws {
@@ -191,7 +207,6 @@ struct PolicyAuditEntry: Decodable, Identifiable, Sendable {
         workspaceId = try c.decode(String.self, forKey: .workspaceId)
         tool = try c.decode(String.self, forKey: .tool)
         displaySummary = try c.decode(String.self, forKey: .displaySummary)
-        risk = try c.decode(RiskLevel.self, forKey: .risk)
         decision = try c.decode(String.self, forKey: .decision)
         resolvedBy = try c.decode(String.self, forKey: .resolvedBy)
         layer = try c.decode(String.self, forKey: .layer)

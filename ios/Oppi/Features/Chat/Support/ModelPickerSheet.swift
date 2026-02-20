@@ -67,7 +67,7 @@ struct ModelPickerSheet: View {
                     modelList
                 }
             }
-            .background(Color.tokyoBg)
+            .background(Color.themeBg)
             .navigationTitle("Models")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search models…")
@@ -94,7 +94,7 @@ struct ModelPickerSheet: View {
                 } header: {
                     Text("Recent")
                         .font(.caption.bold())
-                        .foregroundStyle(.tokyoFgDim)
+                        .foregroundStyle(.themeFgDim)
                 }
             }
 
@@ -106,7 +106,7 @@ struct ModelPickerSheet: View {
                 } header: {
                     Text(providerDisplayName(group.provider))
                         .font(.caption.bold())
-                        .foregroundStyle(.tokyoFgDim)
+                        .foregroundStyle(.themeFgDim)
                 }
             }
         }
@@ -125,7 +125,7 @@ struct ModelPickerSheet: View {
                 dismiss()
             }
             .listRowBackground(
-                isCurrent ? Color.tokyoBlue.opacity(0.12) : Color.tokyoBg
+                isCurrent ? Color.themeBlue.opacity(0.12) : Color.themeBg
             )
     }
 
@@ -160,22 +160,22 @@ private struct ModelRow: View {
                 HStack(spacing: 6) {
                     Text(model.name)
                         .font(.subheadline.weight(isCurrent ? .bold : .regular))
-                        .foregroundStyle(isCurrent ? .tokyoBlue : .tokyoFg)
+                        .foregroundStyle(isCurrent ? .themeBlue : .themeFg)
                         .lineLimit(1)
 
                     if isCurrent {
                         Text("current")
                             .font(.caption2.bold())
-                            .foregroundStyle(.tokyoBlue)
+                            .foregroundStyle(.themeBlue)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.tokyoBlue.opacity(0.2), in: Capsule())
+                            .background(Color.themeBlue.opacity(0.2), in: Capsule())
                     }
                 }
 
                 Text("\(model.provider)/\(model.id)")
                     .font(.caption.monospaced())
-                    .foregroundStyle(.tokyoComment)
+                    .foregroundStyle(.themeComment)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -187,12 +187,12 @@ private struct ModelRow: View {
                 if model.contextWindow > 0 {
                     Text(formatTokenCount(model.contextWindow))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tokyoFgDim)
+                        .foregroundStyle(.themeFgDim)
                 }
 
                 if isCurrent {
                     Image(systemName: "checkmark")
-                        .foregroundStyle(.tokyoBlue)
+                        .foregroundStyle(.themeBlue)
                         .font(.subheadline.weight(.semibold))
                 }
             }

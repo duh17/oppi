@@ -11,8 +11,6 @@ struct WorkspaceEditView: View {
     @State private var description: String = ""
     @State private var icon: String = ""
     @State private var selectedSkills: Set<String> = []
-    @State private var runtime: String = "container"
-    @State private var policyPreset: String = "container"
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
     @State private var memoryEnabled: Bool = false
@@ -25,9 +23,28 @@ struct WorkspaceEditView: View {
     @State private var isSaving = false
     @State private var error: String?
     @State private var availableModels: [ModelInfo] = []
+    @State private var selectedSkillDetail: SkillDetailDestination?
+
+    private var activeServerId: String? {
+        connection.currentServerId
+    }
 
     private var skills: [SkillInfo] {
-        connection.workspaceStore.skills
+        if let activeServerId,
+           let scoped = connection.workspaceStore.skillsByServer[activeServerId] {
+            return scoped
+        }
+        return []
+    }
+
+    private var workspaceForEditing: Workspace {
+        if let activeServerId,
+           let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
+            .first(where: { $0.id == workspace.id }) {
+            return scoped
+        }
+
+        return workspace
     }
 
     var body: some View {
@@ -44,7 +61,7 @@ struct WorkspaceEditView: View {
             Section("Skills") {
                 if skills.isEmpty {
                     Text("Loading skills…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 } else {
                     ForEach(skills) { skill in
                         SkillToggleRow(
@@ -56,51 +73,25 @@ struct WorkspaceEditView: View {
                                 } else {
                                     selectedSkills.remove(skill.name)
                                 }
+                            },
+                            onShowDetail: {
+                                selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
                             }
                         )
                     }
                 }
             }
 
-            Section("Runtime") {
-                Picker("Runtime", selection: $runtime) {
-                    Text("Container").tag("container")
-                    Text("Host").tag("host")
-                }
-                .pickerStyle(.segmented)
-
-                Text(runtime == "container"
-                     ? "Container runtime: isolated environment."
-                     : "Host runtime: direct process on macOS host.")
-                    .font(.caption)
-                    .foregroundStyle(runtime == "container" ? .tokyoGreen : .tokyoOrange)
-            }
-
-            Section("Policy") {
-                Picker("Preset", selection: $policyPreset) {
-                    ForEach(policyOptions, id: \.value) { option in
-                        Text(option.label).tag(option.value)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Text(policyPresetDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section(runtime == "container" ? "Workspace Mount" : "Host Working Directory") {
+            Section("Host Working Directory") {
                 TextField("~/workspace/project", text: $hostMount)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
 
                 if !hostMount.isEmpty {
-                    Text(runtime == "container"
-                         ? "Host directory mounted as /work in container"
-                         : "Host process current directory")
+                    Text("Host process current directory")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
@@ -114,21 +105,21 @@ struct WorkspaceEditView: View {
 
                     Text("Same namespace across workspaces shares memory")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.themeComment)
                 }
             }
 
             Section("Extensions") {
                 Text("Named extensions from ~/.pi/agent/extensions.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
 
                 if isLoadingExtensions && availableExtensions.isEmpty {
                         Text("Loading available extensions…")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else if availableExtensions.isEmpty {
                         Text("No discoverable extensions found.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     } else {
                         ForEach(availableExtensions) { ext in
                             Button {
@@ -140,24 +131,24 @@ struct WorkspaceEditView: View {
                                             .font(.body)
                                         Text(ext.kind)
                                             .font(.caption2.monospaced())
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.themeComment)
                                     }
 
                                     Spacer()
 
                                     Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .tokyoBlue : .secondary)
+                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
                                         .imageScale(.large)
                                 }
                             }
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.themeFg)
                         }
                     }
 
                     if !manualExtensionNames.isEmpty {
                         Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                     }
 
                     TextField("Selected names (comma separated)", text: $extensionNames)
@@ -190,7 +181,7 @@ struct WorkspaceEditView: View {
                             }
                         }
                     }
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.themeFg)
                 }
             }
 
@@ -198,28 +189,28 @@ struct WorkspaceEditView: View {
                 TextEditor(text: $systemPrompt)
                     .frame(minHeight: 120)
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.tokyoFg)
-                    .tint(.tokyoBlue)
+                    .foregroundStyle(.themeFg)
+                    .tint(.themeBlue)
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.tokyoBgDark)
+                            .fill(Color.themeBgDark)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.tokyoComment.opacity(0.25), lineWidth: 1)
+                            .stroke(Color.themeComment.opacity(0.25), lineWidth: 1)
                     )
 
                 Text("Appended to the base agent prompt")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeComment)
             }
 
             if let error {
                 Section {
                     Text(error)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.themeRed)
                         .font(.caption)
                 }
             }
@@ -234,16 +225,13 @@ struct WorkspaceEditView: View {
                 .disabled(name.isEmpty || isSaving)
             }
         }
-        .navigationDestination(for: SkillDetailDestination.self) { dest in
+        .navigationDestination(item: $selectedSkillDetail) { dest in
             SkillDetailView(skillName: dest.skillName)
         }
         .navigationDestination(for: SkillFileDestination.self) { dest in
             SkillFileView(skillName: dest.skillName, filePath: dest.filePath)
         }
         .onAppear { loadFromWorkspace() }
-        .onChange(of: runtime) { _, newRuntime in
-            normalizePolicyPreset(for: newRuntime)
-        }
         .task {
             await loadModels()
             await loadExtensions()
@@ -261,36 +249,6 @@ struct WorkspaceEditView: View {
                 seen.insert(value)
                 return true
             }
-    }
-
-    private var policyOptions: [(label: String, value: String)] {
-        if runtime == "host" {
-            return [
-                ("Host Dev", "host"),
-                ("Host Standard", "host_standard"),
-                ("Host Locked", "host_locked"),
-            ]
-        }
-        return [("Container", "container")]
-    }
-
-    private var policyPresetDescription: String {
-        switch policyPreset {
-        case "host":
-            return "Developer trust mode: low friction, broad local autonomy."
-        case "host_standard":
-            return "Approval-first host mode for regular users."
-        case "host_locked":
-            return "Strict host mode: unknown actions blocked by default."
-        default:
-            return "Container mode: isolated runtime with standard supervision."
-        }
-    }
-
-    private func normalizePolicyPreset(for runtime: String) {
-        let allowed = Set(policyOptions.map(\.value))
-        guard !allowed.contains(policyPreset) else { return }
-        policyPreset = runtime == "host" ? "host_standard" : "container"
     }
 
     private var selectedExtensionNames: [String] {
@@ -324,19 +282,17 @@ struct WorkspaceEditView: View {
     }
 
     private func loadFromWorkspace() {
-        name = workspace.name
-        description = workspace.description ?? ""
-        icon = workspace.icon ?? ""
-        selectedSkills = Set(workspace.skills)
-        runtime = workspace.runtime
-        policyPreset = workspace.policyPreset
-        hostMount = workspace.hostMount ?? ""
-        systemPrompt = workspace.systemPrompt ?? ""
-        memoryEnabled = workspace.memoryEnabled ?? false
-        memoryNamespace = workspace.memoryNamespace ?? ""
-        extensionNames = (workspace.extensions ?? []).joined(separator: ", ")
-        defaultModel = workspace.defaultModel ?? ""
-        normalizePolicyPreset(for: runtime)
+        let source = workspaceForEditing
+        name = source.name
+        description = source.description ?? ""
+        icon = source.icon ?? ""
+        selectedSkills = Set(source.skills)
+        hostMount = source.hostMount ?? ""
+        systemPrompt = source.systemPrompt ?? ""
+        memoryEnabled = source.memoryEnabled ?? false
+        memoryNamespace = source.memoryNamespace ?? ""
+        extensionNames = (source.extensions ?? []).joined(separator: ", ")
+        defaultModel = source.defaultModel ?? ""
     }
 
     private func loadModels() async {
@@ -372,8 +328,6 @@ struct WorkspaceEditView: View {
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
             skills: Array(selectedSkills),
-            runtime: runtime,
-            policyPreset: policyPreset,
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,
             memoryEnabled: memoryEnabled,
@@ -384,7 +338,9 @@ struct WorkspaceEditView: View {
 
         do {
             let updated = try await api.updateWorkspace(id: workspace.id, request)
-            connection.workspaceStore.upsert(updated)
+            if let activeServerId {
+                connection.workspaceStore.upsert(updated, serverId: activeServerId)
+            }
             dismiss()
         } catch {
             self.error = error.localizedDescription
@@ -399,44 +355,45 @@ private struct SkillToggleRow: View {
     let skill: SkillInfo
     let isSelected: Bool
     let onToggle: (Bool) -> Void
+    let onShowDetail: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Button {
                 onToggle(!isSelected)
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text(skill.name)
-                                .font(.body)
-
-                            if !skill.containerSafe {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
-                        }
+                        Text(skill.name)
+                            .font(.body)
 
                         Text(skill.description)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeComment)
                             .lineLimit(2)
                     }
 
                     Spacer()
 
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? .tokyoBlue : .secondary)
+                        .foregroundStyle(isSelected ? .themeBlue : .themeComment)
                         .imageScale(.large)
                 }
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.primary)
+            .buttonStyle(.plain)
+            .foregroundStyle(.themeFg)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            NavigationLink(value: SkillDetailDestination(skillName: skill.name)) {
-                EmptyView()
+            Button(action: onShowDetail) {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
-            .frame(width: 20)
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(skill.name) details")
         }
     }
 }
