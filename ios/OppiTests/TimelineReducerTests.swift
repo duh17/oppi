@@ -41,6 +41,36 @@ struct TimelineReducerTests {
     }
 
     @MainActor
+    @Test func thinkingStreamingShowsPreviewBeforeFinalization() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Let me "))
+        reducer.process(.thinkingDelta(sessionId: "s1", delta: "analyze this"))
+
+        // Mid-stream: thinking item exists with isDone == false and preview text
+        #expect(reducer.items.count == 1)
+        guard case .thinking(_, let preview, _, let isDone) = reducer.items[0] else {
+            Issue.record("Expected thinking item during streaming")
+            return
+        }
+        #expect(preview.contains("Let me analyze"))
+        #expect(!isDone) // Still streaming
+
+        // Finalize
+        reducer.process(.textDelta(sessionId: "s1", delta: "Answer."))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        // After finalization: thinking isDone, then assistant message
+        #expect(reducer.items.count == 2)
+        guard case .thinking(_, _, _, let finalDone) = reducer.items[0] else {
+            Issue.record("Expected thinking item after finalization")
+            return
+        }
+        #expect(finalDone)
+    }
+
+    @MainActor
     @Test func toolCallSequence() {
         let reducer = TimelineReducer()
         let toolId = "tool-1"
