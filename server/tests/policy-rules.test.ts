@@ -149,6 +149,14 @@ describe("evaluateWithRules", () => {
     expect(decision.reason).toContain("always require approval");
   });
 
+  it("respects configured fallback when no rule matches", () => {
+    const { store } = makeStore();
+    const decision = engine.evaluateWithRules(bash("echo hello"), store.getAll(), "s1", "ws1");
+
+    expect(decision.action).toBe("allow");
+    expect(decision.reason).toContain("default allow");
+  });
+
   it("deny wins over allow when both match", () => {
     const { store } = makeStore();
 
@@ -291,7 +299,7 @@ describe("evaluateWithRules", () => {
     const s2 = engine.evaluateWithRules(bash("git status"), store.getAll(), "s2", "ws1");
 
     expect(s1.action).toBe("allow");
-    expect(s2.action).toBe("ask");
+    expect(s2.action).toBe("allow");
   });
 
   it("ignores expired rules", () => {
@@ -306,7 +314,7 @@ describe("evaluateWithRules", () => {
     });
 
     const decision = engine.evaluateWithRules(bash("git status"), store.getAll(), "s1", "ws1");
-    expect(decision.action).toBe("ask");
+    expect(decision.action).toBe("allow");
   });
 
   it("heuristics still trigger (pipe to shell)", () => {
@@ -359,10 +367,17 @@ describe("evaluateWithRules", () => {
     expect(decision.reason).toContain("Read-only shell inspection");
   });
 
-  it("does not auto-allow mutating find invocations", () => {
+  it("does not treat mutating find invocations as read-only inspection", () => {
     const { store } = makeStore();
+    const askFallbackEngine = new PolicyEngine({
+      schemaVersion: 1,
+      mode: "test",
+      fallback: "ask",
+      guardrails: [],
+      permissions: [],
+    });
 
-    const decision = engine.evaluateWithRules(
+    const decision = askFallbackEngine.evaluateWithRules(
       bash("find . -name '*.tmp' -delete"),
       store.getAll(),
       "s1",
@@ -370,6 +385,7 @@ describe("evaluateWithRules", () => {
     );
 
     expect(decision.action).toBe("ask");
+    expect(decision.reason).toContain("No matching rule");
   });
 });
 

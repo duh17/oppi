@@ -6,7 +6,7 @@
  * 2. Heuristics-as-code
  * 3. User rules (deny-first, then most-specific)
  * 4. Read-only bash auto-allow (no matching rule)
- * 5. Default ask
+ * 5. Default policy fallback
  */
 
 import { globMatch } from "./glob.js";
@@ -1774,7 +1774,7 @@ export class PolicyEngine {
    *   2. Heuristics (structural detection)
    *   3. User rules (deny wins, then most specific non-deny)
    *   4. Read-only bash auto-allow (when no rule matches)
-   *   5. Default ask
+   *   5. Default policy fallback
    */
   evaluateWithRules(
     req: GateRequest,
@@ -1807,8 +1807,8 @@ export class PolicyEngine {
       }
 
       return {
-        action: "ask",
-        reason: "No matching rule — using default ask",
+        action: this.policy.defaultAction,
+        reason: `No matching rule — using default ${this.policy.defaultAction}`,
         layer: "default",
       };
     }

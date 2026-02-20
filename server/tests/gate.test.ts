@@ -65,7 +65,7 @@ async function setupGuardedSession(): Promise<void> {
   });
 
   const port = await activeGate.createSessionSocket(SESSION_ID);
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 50));
   client = await connect(port);
 
   const ack = await sendAndWait(client, {
@@ -81,7 +81,7 @@ describe("GateServer", () => {
   it("completes guard handshake", async () => {
     gate = createGate("container");
     const port = await gate.createSessionSocket(SESSION_ID);
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
 
     client = await connect(port);
     const ack = await sendAndWait(client, {
@@ -145,7 +145,7 @@ describe("GateServer", () => {
     });
 
     const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     client = await connect(port);
 
     const ack = await sendAndWait(client, {
@@ -175,7 +175,7 @@ describe("GateServer", () => {
     });
 
     const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     client = await connect(port);
 
     const ack = await sendAndWait(client, {
@@ -208,7 +208,7 @@ describe("GateServer", () => {
     });
 
     const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     client = await connect(port);
 
     const ack = await sendAndWait(client, {
@@ -283,15 +283,14 @@ describe("GateServer", () => {
 
     const allowResult = await runFallbackCheck("tc_fallback_2");
     expect(allowResult.action).toBe("allow");
-    // Slim policy model defaults unmatched requests to ask regardless of fallback.
-    expect(approvalCount).toBe(2);
+    expect(approvalCount).toBe(1);
 
     activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(askFallbackPolicy));
 
     const askResult2 = await runFallbackCheck("tc_fallback_3");
     expect(askResult2.action).toBe("allow");
-    expect(approvalCount).toBe(3);
-    expect(approvalReasons[2]).toContain("No matching rule");
+    expect(approvalCount).toBe(2);
+    expect(approvalReasons[1]).toContain("No matching rule");
   });
 
   it("stores session rules with TTL from permission responses", async () => {
@@ -324,8 +323,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
 
-    const learned = activeGate
-      .ruleStore
+    const learned = activeGate.ruleStore
       .getAll()
       .find(
         (rule) =>
@@ -374,8 +372,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
 
-    const learned = activeGate
-      .ruleStore
+    const learned = activeGate.ruleStore
       .getAll()
       .find(
         (rule) =>
@@ -423,8 +420,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
 
-    const learned = activeGate
-      .ruleStore
+    const learned = activeGate.ruleStore
       .getAll()
       .find(
         (rule) =>
