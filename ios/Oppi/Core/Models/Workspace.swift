@@ -11,14 +11,8 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var description: String?
     var icon: String?           // SF Symbol name or emoji
 
-    // Runtime
-    var runtime: String         // "container" | "host"
-
     // Skills
     var skills: [String]        // ["searxng", "fetch", "ast-grep"]
-
-    // Permissions
-    var policyPreset: String    // "container" | "host" | "host_standard" | "host_locked"
 
     // Context
     var systemPrompt: String?
@@ -38,7 +32,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     let createdAt: Date
     var updatedAt: Date
 
-    var isContainerRuntime: Bool { runtime == "container" }
 }
 
 // MARK: - Codable (Unix millisecond timestamps)
@@ -46,8 +39,7 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
 extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
-        case runtime
-        case skills, policyPreset
+        case skills
         case systemPrompt, hostMount
         case memoryEnabled, memoryNamespace
         case extensions
@@ -62,10 +54,7 @@ extension Workspace: Codable {
         description = try c.decodeIfPresent(String.self, forKey: .description)
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         skills = try c.decode([String].self, forKey: .skills)
-        policyPreset = try c.decodeIfPresent(String.self, forKey: .policyPreset) ?? "container"
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
-        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
-            ?? ((hostMount == nil && policyPreset == "container") ? "container" : "host")
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
@@ -85,9 +74,7 @@ extension Workspace: Codable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(description, forKey: .description)
         try c.encodeIfPresent(icon, forKey: .icon)
-        try c.encode(runtime, forKey: .runtime)
         try c.encode(skills, forKey: .skills)
-        try c.encode(policyPreset, forKey: .policyPreset)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
         try c.encodeIfPresent(memoryEnabled, forKey: .memoryEnabled)
@@ -96,19 +83,5 @@ extension Workspace: Codable {
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)
-    }
-}
-
-// MARK: - Presentation helpers
-
-extension Workspace {
-    var policyPresetLabel: String {
-        switch policyPreset {
-        case "container": return "Container"
-        case "host": return "Host Dev"
-        case "host_standard": return "Host Standard"
-        case "host_locked": return "Host Locked"
-        default: return policyPreset
-        }
     }
 }

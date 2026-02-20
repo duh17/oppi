@@ -37,7 +37,7 @@ struct OppiApp: App {
     @State private var themeStore = ThemeStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
-    private var connection: ServerConnection { coordinator.connection }
+    private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
 #if DEBUG
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
@@ -55,13 +55,13 @@ struct OppiApp: App {
             } else {
                 ContentView()
                     .environment(coordinator)
-                    .environment(coordinator.connection)
-                    .environment(coordinator.connection.sessionStore)
-                    .environment(coordinator.connection.permissionStore)
-                    .environment(coordinator.connection.reducer)
-                    .environment(coordinator.connection.reducer.toolOutputStore)
-                    .environment(coordinator.connection.reducer.toolArgsStore)
-                    .environment(coordinator.connection.audioPlayer)
+                    .environment(coordinator.activeConnection)
+                    .environment(coordinator.activeConnection.sessionStore)
+                    .environment(coordinator.activeConnection.permissionStore)
+                    .environment(coordinator.activeConnection.reducer)
+                    .environment(coordinator.activeConnection.reducer.toolOutputStore)
+                    .environment(coordinator.activeConnection.reducer.toolArgsStore)
+                    .environment(coordinator.activeConnection.audioPlayer)
                     .environment(navigation)
                     .environment(coordinator.serverStore)
                     .environment(themeStore)
@@ -110,19 +110,24 @@ struct OppiApp: App {
                 existingCredentials: existingCredentials
             ) { reason in await BiometricService.shared.authenticate(reason: reason) }
 
+            // Add to ServerStore via coordinator (creates connection + opens /stream)
+            guard let pairedServer = PairedServer(
+                from: bootstrap.effectiveCredentials,
+                sortOrder: serverStore.servers.count
+            ) else {
+                throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
+            }
+            coordinator.addServer(
+                pairedServer,
+                switchTo: true
+            )
+
+            // Reset the new connection's state
             connection.disconnectSession()
             connection.reducer.reset()
             connection.permissionStore.pending.removeAll()
             connection.sessionStore.sessions.removeAll()
             connection.sessionStore.activeSessionId = nil
-            // Add to ServerStore via coordinator (handles fingerprint dedup + store partitions)
-            coordinator.addServer(
-                PairedServer(from: bootstrap.effectiveCredentials, sortOrder: serverStore.servers.count)!,
-                switchTo: false  // We configure manually below
-            )
-            guard connection.configure(credentials: bootstrap.effectiveCredentials) else {
-                throw InviteBootstrapError.message("Connection blocked by server transport policy")
-            }
 
             connection.sessionStore.markSyncStarted()
             connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
@@ -130,8 +135,10 @@ struct OppiApp: App {
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
-            await PushRegistration.shared.requestAndRegister()
-            await coordinator.registerPushWithAllServers()
+            if ReleaseFeatures.pushNotificationsEnabled {
+                await PushRegistration.shared.requestAndRegister()
+                await coordinator.registerPushWithAllServers()
+            }
             connection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.host)"
         } catch {
             connection.sessionStore.markSyncFailed()
@@ -159,7 +166,7 @@ struct OppiApp: App {
                 Task {
                     // Active server: full reconnect (WS, session metadata, lists)
                     await connection.reconnectIfNeeded()
-                    // Inactive servers: lightweight REST refresh (workspaces, sessions)
+                    // All other servers: reconnect + refresh
                     await coordinator.refreshInactiveServers()
                 }
             }
@@ -168,7 +175,10 @@ struct OppiApp: App {
 #if DEBUG
             mainThreadLagWatchdog.stop()
 #endif
-            connection.flushAndSuspend()
+            // Flush all connections on background
+            for (_, conn) in coordinator.connections {
+                conn.flushAndSuspend()
+            }
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
 
         case .inactive:
@@ -307,34 +317,45 @@ struct OppiApp: App {
 #endif
 
     private func setupNotifications() async {
+        guard ReleaseFeatures.pushNotificationsEnabled else {
+            return
+        }
+
         let notificationService = PermissionNotificationService.shared
         await notificationService.setup()
 
-        // Wire notification actions back to the connection.
-        // Permission responses go over WebSocket — if the permission is from
-        // a non-active server, we need to use REST fallback instead.
-        let conn = connection
-        notificationService.onPermissionResponse = { [weak conn] permissionId, action in
-            guard let conn else { return }
-            Task {
-                try? await conn.respondToPermission(id: permissionId, action: action)
+        // Wire notification actions back to the correct server's connection.
+        // Permission responses go over WebSocket — find the right connection.
+        let coord = coordinator
+        notificationService.onPermissionResponse = { [weak coord] permissionId, action in
+            guard let coord else { return }
+            Task { @MainActor in
+                // Find which server has this permission and respond via its connection
+                for (_, conn) in coord.connections {
+                    if conn.permissionStore.pending.contains(where: { $0.id == permissionId }) {
+                        try? await conn.respondToPermission(id: permissionId, action: action)
+                        return
+                    }
+                }
+                // Fallback: try active connection
+                try? await coord.activeConnection.respondToPermission(id: permissionId, action: action)
             }
         }
 
-        // Configure push registration with the connection
-        PushRegistration.shared.configure(connection: conn)
+        // Configure push registration with the active connection
+        PushRegistration.shared.configure(connection: connection)
 
         // Navigate to session when user taps a push notification body.
         // Cross-server: find which server owns the session and switch to it.
-        let coord = coordinator
-        notificationService.onNavigateToPermission = { [weak conn, weak coord] _, sessionId in
-            guard let conn, let coord, !sessionId.isEmpty else { return }
-            // Find the session across all servers
-            if let found = conn.sessionStore.findSession(id: sessionId) {
-                coord.switchToServer(found.serverId)
+        notificationService.onNavigateToPermission = { [weak coord] _, sessionId in
+            guard let coord, !sessionId.isEmpty else { return }
+            Task { @MainActor in
+                if let found = coord.findSession(id: sessionId) {
+                    coord.switchToServer(found.serverId)
+                    found.connection.sessionStore.activeSessionId = sessionId
+                }
+                navigation.selectedTab = .workspaces
             }
-            conn.sessionStore.activeSessionId = sessionId
-            navigation.selectedTab = .workspaces
         }
     }
 
@@ -402,15 +423,15 @@ struct OppiApp: App {
             return
         }
 
-        let initialCreds = server.credentials
-        coordinator.switchToServer(server)
-        var creds = initialCreds
-
-        guard connection.configure(credentials: creds) else {
+        // Switch to the target server (creates + configures its ServerConnection)
+        guard coordinator.switchToServer(server) else {
             launchOutcome = "invalid_credentials"
             navigation.showOnboarding = true
             return
         }
+
+        // Open /stream WebSocket for ALL paired servers (concurrent connections)
+        coordinator.connectAllStreams()
 
         guard let api = connection.apiClient else {
             launchOutcome = "no_api_client"
@@ -422,57 +443,7 @@ struct OppiApp: App {
         // Even if security profile check fails (server offline), show cached workspace.
         navigation.showOnboarding = false
 
-        // Enforce trust + transport contract as early as possible.
-        do {
-            let profile = try await api.securityProfile()
-
-            if let violation = ConnectionSecurityPolicy.evaluate(host: creds.host, profile: profile) {
-                launchOutcome = "blocked_transport_policy"
-                appLog.error("SECURITY transport policy blocked host=\(creds.host, privacy: .public): \(violation.localizedDescription, privacy: .public)")
-                connection.extensionToast = "Server blocked: \(violation.localizedDescription)"
-                return
-            }
-
-            let serverFingerprint = profile.identity.normalizedFingerprint
-            let storedFingerprint = creds.normalizedServerFingerprint
-
-            if profile.requirePinnedServerIdentity ?? false {
-                if let serverFingerprint, let storedFingerprint, serverFingerprint != storedFingerprint {
-                    launchOutcome = "identity_mismatch"
-                    appLog.error(
-                        "SECURITY pinned identity mismatch host=\(creds.host, privacy: .public) stored=\(storedFingerprint, privacy: .public) server=\(serverFingerprint, privacy: .public)"
-                    )
-                    connection.extensionToast = "Server identity changed. Re-pair from Settings."
-                    return
-                }
-
-                if serverFingerprint == nil {
-                    launchOutcome = "missing_server_fingerprint"
-                    appLog.error("SECURITY pinned identity required but server fingerprint missing")
-                    connection.extensionToast = "Server identity missing. Re-pair from Settings."
-                    return
-                }
-            }
-
-            let upgraded = creds.applyingSecurityProfile(profile)
-            if upgraded != creds {
-                // Save to per-server keychain slot (not legacy)
-                if let server = serverStore.addOrUpdate(from: upgraded) {
-                    try? KeychainService.saveServer(server)
-                }
-                coordinator.invalidateAPIClient(for: upgraded.normalizedServerFingerprint ?? "")
-                creds = upgraded
-                guard connection.configure(credentials: upgraded) else {
-                    launchOutcome = "blocked_transport_policy"
-                    connection.extensionToast = "Server transport policy changed. Re-pair from Settings."
-                    return
-                }
-            }
-        } catch {
-            launchOutcome = "missing_security_profile"
-            appLog.error("SECURITY profile check failed on launch: \(error.localizedDescription, privacy: .public)")
-            // Server unreachable — continue with cached data, don't kick to onboarding.
-        }
+        // Security profile is server-config managed and no longer required for launch.
 
         // 2. Restore UI state (tab, active session, draft, scroll position)
         if let restored {
@@ -508,8 +479,10 @@ struct OppiApp: App {
             await coordinator.refreshAllServers()
 
             // 7. Register for push notifications with all paired servers
-            await PushRegistration.shared.requestAndRegister()
-            await coordinator.registerPushWithAllServers()
+            if ReleaseFeatures.pushNotificationsEnabled {
+                await PushRegistration.shared.requestAndRegister()
+                await coordinator.registerPushWithAllServers()
+            }
         } catch {
             connection.sessionStore.markSyncFailed()
             launchOutcome = "offline_cache_only"

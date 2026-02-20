@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import type { ServerMessage } from "../src/types.js";
+import { MobileRendererRegistry, type StyledSegment } from "../src/mobile-renderer.js";
 
 const FIXTURE_PATH = resolve(__dirname, "../../protocol/pi-events.json");
 
@@ -139,13 +140,63 @@ describe("pi event replay", () => {
     expect((msg2[0] as { output: string }).output).toBe("42 tests passed\n");
   });
 
-  it("tool_execution_end → tool_end", () => {
+  it("tool_execution_end → tool_end with details and isError", () => {
     const ctx = makeContext();
-    const event = events.find((e) => e.type === "tool_execution_end");
+    // First tool_execution_end has result.details
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-001",
+    );
+    // Seed partialResults so final text delta is empty (already streamed)
+    ctx.partialResults.set("tc-replay-001", "Running tests...\n42 tests passed\n");
+    const messages = translatePiEvent(event, ctx);
+
+    const toolEnd = messages.find((m) => m.type === "tool_end");
+    expect(toolEnd).toBeDefined();
+    expect(toolEnd!.type).toBe("tool_end");
+    const te = toolEnd as { type: string; details?: unknown; isError?: boolean };
+    expect(te.details).toEqual({ exitCode: 0, durationMs: 1234 });
+    expect(te.isError).toBeUndefined(); // isError=false → omitted
+  });
+
+  it("tool_execution_end error → tool_end with isError: true", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-err",
+    );
+    const messages = translatePiEvent(event, ctx);
+
+    const toolEnd = messages.find((m) => m.type === "tool_end");
+    expect(toolEnd).toBeDefined();
+    const te = toolEnd as { type: string; details?: unknown; isError?: boolean };
+    expect(te.details).toEqual({ exitCode: 127, durationMs: 50 });
+    expect(te.isError).toBe(true);
+  });
+
+  it("tool_execution_end extension → tool_end with extension details", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-ext",
+    );
+    const messages = translatePiEvent(event, ctx);
+
+    const toolEnd = messages.find((m) => m.type === "tool_end");
+    const te = toolEnd as { type: string; tool: string; details?: unknown };
+    expect(te.tool).toBe("remember");
+    expect(te.details).toEqual({ file: "2026-02-18-mac-studio.md", redacted: false });
+  });
+
+  it("tool_execution_end bare (no result) → tool_end without details", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-bare",
+    );
     const messages = translatePiEvent(event, ctx);
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].type).toBe("tool_end");
+    const te = messages[0] as { type: string; details?: unknown; isError?: boolean };
+    expect(te.type).toBe("tool_end");
+    expect(te.details).toBeUndefined();
+    expect(te.isError).toBeUndefined();
   });
 
   it("auto_compaction_start → compaction_start", () => {
@@ -209,5 +260,91 @@ describe("pi event replay", () => {
     expect(types).toContain("tool_start");
     expect(types).toContain("tool_output");
     expect(types).toContain("tool_end");
+  });
+});
+
+describe("mobile renderer integration", () => {
+  const events = loadEvents();
+
+  function makeContextWithRenderers(): TranslationContext {
+    return {
+      ...makeContext(),
+      mobileRenderers: new MobileRendererRegistry(),
+    };
+  }
+
+  it("tool_execution_start → tool_start includes callSegments", () => {
+    const ctx = makeContextWithRenderers();
+    const event = events.find((e) => e.type === "tool_execution_start" && e.toolName === "bash");
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(1);
+    const msg = messages[0] as { callSegments?: StyledSegment[] };
+    expect(msg.callSegments).toBeDefined();
+    expect(msg.callSegments!.length).toBeGreaterThan(0);
+    // bash call should show "$ npm test"
+    const text = msg.callSegments!.map((s) => s.text).join("");
+    expect(text).toContain("npm test");
+  });
+
+  it("tool_execution_start without renderer → no callSegments", () => {
+    const ctx = makeContext(); // no mobileRenderers
+    const event = events.find((e) => e.type === "tool_execution_start" && e.toolName === "bash");
+    const messages = translatePiEvent(event, ctx);
+
+    const msg = messages[0] as { callSegments?: StyledSegment[] };
+    expect(msg.callSegments).toBeUndefined();
+  });
+
+  it("tool_execution_end with details → tool_end includes resultSegments", () => {
+    const ctx = makeContextWithRenderers();
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-ext",
+    );
+    const messages = translatePiEvent(event, ctx);
+
+    // remember tool → should have resultSegments
+    // Note: remember is not a built-in renderer, but registry might not have it.
+    // For this test, let's register a custom renderer:
+    ctx.mobileRenderers!.register("remember", {
+      renderCall(args) {
+        return [{ text: "remember ", style: "bold" }, { text: String(args.text || ""), style: "muted" }];
+      },
+      renderResult(details: any) {
+        return [{ text: "✓ Saved", style: "success" }, { text: ` → ${details?.file || "journal"}`, style: "muted" }];
+      },
+    });
+
+    const messages2 = translatePiEvent(event, ctx);
+    const toolEnd = messages2.find((m) => m.type === "tool_end");
+    const te = toolEnd as { resultSegments?: StyledSegment[] };
+    expect(te.resultSegments).toBeDefined();
+    expect(te.resultSegments!.map((s) => s.text).join("")).toContain("✓ Saved");
+  });
+
+  it("tool_execution_end error → resultSegments with error style", () => {
+    const ctx = makeContextWithRenderers();
+    const event = events.find(
+      (e) => e.type === "tool_execution_end" && (e as { toolCallId?: string }).toolCallId === "tc-replay-err",
+    );
+    const messages = translatePiEvent(event, ctx);
+
+    const toolEnd = messages.find((m) => m.type === "tool_end");
+    const te = toolEnd as { resultSegments?: StyledSegment[] };
+    expect(te.resultSegments).toBeDefined();
+    // bash error with exitCode 127 → "exit 127" with error style
+    expect(te.resultSegments!.some((s) => s.style === "error")).toBe(true);
+  });
+
+  it("read tool_execution_start → callSegments with path and range", () => {
+    const ctx = makeContextWithRenderers();
+    const event = events.find((e) => e.type === "tool_execution_start" && e.toolName === "read");
+    const messages = translatePiEvent(event, ctx);
+
+    const msg = messages[0] as { callSegments?: StyledSegment[] };
+    expect(msg.callSegments).toBeDefined();
+    const text = msg.callSegments!.map((s) => s.text).join("");
+    expect(text).toContain("src/main.ts");
+    expect(text).toContain(":1-50");
   });
 });

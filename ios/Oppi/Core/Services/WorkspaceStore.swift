@@ -45,23 +45,23 @@ struct ServerSyncState: Sendable {
 
 /// Observable store for workspaces and the available skill pool.
 ///
-/// Supports both single-server (legacy) and multi-server usage:
-/// - Single-server: `load(api:)` + `workspaces`/`skills`
-/// - Multi-server: `loadAll(servers:)` + `workspacesByServer`/`skillsByServer`
+/// Canonical source of truth is per-server storage (`workspacesByServer`,
+/// `skillsByServer`). The legacy `workspaces` / `skills` API is now just an
+/// active-server view over that same storage, so single- and multi-server
+/// flows share one data path.
 @MainActor @Observable
 final class WorkspaceStore {
-    // ── Single-server (backward compat) ──
+    // MARK: - Active server context
 
-    var workspaces: [Workspace] = []
-    var skills: [SkillInfo] = []
-    var isLoaded = false
+    /// Which server's catalog is exposed through `workspaces` / `skills`.
+    private(set) var activeServerId: String?
 
-    /// Freshness metadata for single-server refreshes.
-    var lastSuccessfulSyncAt: Date?
-    var isSyncing = false
-    var lastSyncFailed = false
+    /// Tracks whether each server catalog has been loaded at least once.
+    private var serverLoaded: [String: Bool] = [:]
 
-    // ── Multi-server ──
+    private var activeKey: String { activeServerId ?? "" }
+
+    // MARK: - Canonical per-server storage
 
     /// Workspaces keyed by server ID (fingerprint).
     var workspacesByServer: [String: [Workspace]] = [:]
@@ -72,9 +72,63 @@ final class WorkspaceStore {
     /// Per-server sync freshness tracking.
     var serverFreshness: [String: ServerSyncState] = [:]
 
-    /// Ordered server IDs reflecting display order. Set by `loadAll`.
-    /// Visible for testing; prefer `loadAll` for production use.
+    /// Ordered server IDs reflecting display order.
     var serverOrder: [String] = []
+
+    /// Test seam: inject isolated cache instance.
+    var _cacheForTesting: TimelineCache?
+
+    // MARK: - Active-server compatibility API
+
+    /// Active server workspaces (legacy API).
+    var workspaces: [Workspace] {
+        get { workspacesByServer[activeKey] ?? [] }
+        set { workspacesByServer[activeKey] = newValue }
+    }
+
+    /// Active server skills (legacy API).
+    var skills: [SkillInfo] {
+        get { skillsByServer[activeKey] ?? [] }
+        set { skillsByServer[activeKey] = newValue }
+    }
+
+    /// Active server loaded state (legacy API).
+    var isLoaded: Bool {
+        get { serverLoaded[activeKey] ?? false }
+        set { serverLoaded[activeKey] = newValue }
+    }
+
+    /// Active server freshness (legacy API).
+    var lastSuccessfulSyncAt: Date? {
+        get { serverFreshness[activeKey]?.lastSuccessfulSyncAt }
+        set {
+            mutateFreshness(for: activeKey) { state in
+                state.lastSuccessfulSyncAt = newValue
+            }
+        }
+    }
+
+    /// Active server syncing flag (legacy API).
+    var isSyncing: Bool {
+        get { serverFreshness[activeKey]?.isSyncing ?? false }
+        set {
+            mutateFreshness(for: activeKey) { state in
+                state.isSyncing = newValue
+            }
+        }
+    }
+
+    /// Active server last-failure flag (legacy API).
+    var lastSyncFailed: Bool {
+        get { serverFreshness[activeKey]?.lastSyncFailed ?? false }
+        set {
+            mutateFreshness(for: activeKey) { state in
+                state.lastSyncFailed = newValue
+            }
+        }
+    }
+
+    // MARK: - Cross-server queries
 
     /// All workspaces flattened from all servers, ordered by server sort order.
     var allWorkspaces: [Workspace] {
@@ -88,7 +142,7 @@ final class WorkspaceStore {
             .filter { seen.insert($0.name).inserted }
     }
 
-    /// Whether ALL servers have been loaded at least once.
+    /// Whether ALL servers have successfully synced at least once.
     var isAllLoaded: Bool {
         guard !serverOrder.isEmpty else { return false }
         return serverOrder.allSatisfy { serverFreshness[$0]?.lastSuccessfulSyncAt != nil }
@@ -99,41 +153,50 @@ final class WorkspaceStore {
         serverFreshness.values.contains { $0.isSyncing }
     }
 
-    /// Test seam: inject isolated cache instance.
-    var _cacheForTesting: TimelineCache?
+    // MARK: - Server context
 
-    // ── Single-server freshness (backward compat) ──
+    /// Switch active-server compatibility view to a different server.
+    func switchServer(to serverId: String) {
+        guard serverId != activeServerId else { return }
+        activeServerId = serverId
+
+        if workspacesByServer[serverId] == nil {
+            workspacesByServer[serverId] = []
+        }
+        if skillsByServer[serverId] == nil {
+            skillsByServer[serverId] = []
+        }
+        if serverFreshness[serverId] == nil {
+            serverFreshness[serverId] = ServerSyncState()
+        }
+        if serverLoaded[serverId] == nil {
+            serverLoaded[serverId] = false
+        }
+    }
+
+    // MARK: - Freshness (active server compatibility)
 
     func markSyncStarted() {
-        isSyncing = true
+        markSyncStarted(forServer: activeKey)
     }
 
     func markSyncSucceeded(at date: Date = Date()) {
-        isSyncing = false
-        lastSyncFailed = false
-        lastSuccessfulSyncAt = date
+        markSyncSucceeded(forServer: activeKey, at: date)
     }
 
     func markSyncFailed() {
-        isSyncing = false
-        lastSyncFailed = true
+        markSyncFailed(forServer: activeKey)
     }
 
     func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
-        FreshnessState.derive(
-            lastSuccessfulSyncAt: lastSuccessfulSyncAt,
-            isSyncing: isSyncing,
-            lastSyncFailed: lastSyncFailed,
-            staleAfter: staleAfter,
-            now: now
-        )
+        freshnessState(forServer: activeKey, now: now, staleAfter: staleAfter)
     }
 
     func freshnessLabel(now: Date = Date()) -> String {
-        FreshnessState.updatedLabel(lastSuccessfulSyncAt: lastSuccessfulSyncAt, now: now)
+        freshnessLabel(forServer: activeKey, now: now)
     }
 
-    // ── Multi-server freshness ──
+    // MARK: - Freshness (per-server)
 
     /// Get freshness state for a specific server.
     func freshnessState(forServer serverId: String, now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
@@ -147,15 +210,11 @@ final class WorkspaceStore {
         return state.freshnessLabel(now: now)
     }
 
-    // ── Mutations ──
+    // MARK: - Mutations
 
-    /// Insert or update a workspace.
+    /// Insert or update a workspace in the active-server partition.
     func upsert(_ workspace: Workspace) {
-        if let idx = workspaces.firstIndex(where: { $0.id == workspace.id }) {
-            workspaces[idx] = workspace
-        } else {
-            workspaces.append(workspace)
-        }
+        upsert(workspace, serverId: activeKey)
     }
 
     /// Insert or update a workspace for a specific server.
@@ -169,9 +228,9 @@ final class WorkspaceStore {
         workspacesByServer[serverId] = list
     }
 
-    /// Remove a workspace by ID.
+    /// Remove a workspace by ID from active-server partition.
     func remove(id: String) {
-        workspaces.removeAll { $0.id == id }
+        remove(id: id, serverId: activeKey)
     }
 
     /// Remove a workspace by ID from a specific server.
@@ -184,137 +243,206 @@ final class WorkspaceStore {
         workspacesByServer.removeValue(forKey: serverId)
         skillsByServer.removeValue(forKey: serverId)
         serverFreshness.removeValue(forKey: serverId)
+        serverLoaded.removeValue(forKey: serverId)
         serverOrder.removeAll { $0 == serverId }
+        if activeServerId == serverId {
+            activeServerId = nil
+        }
     }
 
-    // ── Single-server load (backward compat) ──
+    // MARK: - Loading
 
-    /// Load workspaces and skills from a single server.
+    /// Load workspaces + skills for the active server (compatibility wrapper).
     ///
-    /// Shows cached data immediately if stores are empty, then refreshes
-    /// from the server in the same call. Cache is updated on success.
+    /// Uses cache immediately when first loading this server, then refreshes
+    /// from network. Single- and multi-server paths share `loadServer`.
     func load(api: APIClient) async {
+        await loadServer(serverId: activeKey, api: api, allowLegacyFallback: true)
+    }
+
+    /// Load workspaces + skills for a specific server.
+    func loadServer(serverId: String, api: APIClient, allowLegacyFallback: Bool = false) async {
         let cache = _cacheForTesting ?? TimelineCache.shared
 
-        // Show cached data immediately if this is first load
-        if !isLoaded {
-            async let cachedWs = cache.loadWorkspaces()
-            async let cachedSk = cache.loadSkills()
-            let (cws, csk) = await (cachedWs, cachedSk)
-            if let cws { workspaces = cws }
-            if let csk { skills = csk }
+        if !serverId.isEmpty && !serverOrder.contains(serverId) {
+            serverOrder.append(serverId)
+        }
+        if serverLoaded[serverId] == nil {
+            serverLoaded[serverId] = false
+        }
+        ensureFreshness(for: serverId)
+
+        // Show cached data immediately on first load for this server.
+        if serverLoaded[serverId] != true {
+            let cached = await loadCachedCatalog(
+                serverId: serverId,
+                cache: cache,
+                allowLegacyFallback: allowLegacyFallback
+            )
+
+            if let cws = cached.workspaces {
+                workspacesByServer[serverId] = cws
+            }
+            if let csk = cached.skills {
+                skillsByServer[serverId] = csk
+            }
+
+            let hasCachedData = (cached.workspaces?.isEmpty == false) || (cached.skills?.isEmpty == false)
+            if hasCachedData {
+                serverLoaded[serverId] = true
+            }
+
+            // Opportunistic cache migration: legacy → namespaced.
+            if cached.usedLegacy, !serverId.isEmpty {
+                let capturedServerId = serverId
+                let cachedWorkspaces = cached.workspaces
+                let cachedSkills = cached.skills
+                Task.detached {
+                    if let cachedWorkspaces {
+                        await cache.saveWorkspaces(cachedWorkspaces, serverId: capturedServerId)
+                    }
+                    if let cachedSkills {
+                        await cache.saveSkills(cachedSkills, serverId: capturedServerId)
+                    }
+                }
+            }
         }
 
-        markSyncStarted()
+        markSyncStarted(forServer: serverId)
 
-        // Fetch fresh from server
         async let fetchWorkspaces = api.listWorkspaces()
         async let fetchSkills = api.listSkills()
 
         do {
             let (ws, sk) = try await (fetchWorkspaces, fetchSkills)
-            workspaces = ws
-            skills = sk
-            isLoaded = true
-            markSyncSucceeded()
+            workspacesByServer[serverId] = ws
+            skillsByServer[serverId] = sk
+            serverLoaded[serverId] = true
+            markSyncSucceeded(forServer: serverId)
 
-            // Update cache in background
+            if serverId.isEmpty {
+                logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills")
+            } else {
+                logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills from server \(serverId.prefix(16), privacy: .public)")
+            }
+
+            let capturedServerId = serverId
             Task.detached {
-                await cache.saveWorkspaces(ws)
-                await cache.saveSkills(sk)
+                if capturedServerId.isEmpty {
+                    await cache.saveWorkspaces(ws)
+                    await cache.saveSkills(sk)
+                } else {
+                    await cache.saveWorkspaces(ws, serverId: capturedServerId)
+                    await cache.saveSkills(sk, serverId: capturedServerId)
+                }
             }
         } catch {
-            markSyncFailed()
-            // Keep stale/cached data on error; retry on next load
-            if !isLoaded && !workspaces.isEmpty {
-                isLoaded = true  // Mark loaded if we have cached data
+            markSyncFailed(forServer: serverId)
+            if serverId.isEmpty {
+                logger.error("Failed to load workspaces/skills: \(error.localizedDescription, privacy: .public)")
+            } else {
+                logger.error("Failed to load from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+
+            // Keep stale/cached data on error.
+            if serverLoaded[serverId] != true {
+                let hasCachedData = !(workspacesByServer[serverId] ?? []).isEmpty
+                    || !(skillsByServer[serverId] ?? []).isEmpty
+                if hasCachedData {
+                    serverLoaded[serverId] = true
+                }
             }
         }
     }
 
-    // ── Multi-server load ──
-
-    /// Load workspaces and skills from ALL paired servers in parallel.
+    /// Load workspaces and skills from ALL paired servers.
     ///
-    /// Each server's data is cached and fetched independently.
-    /// Failures are per-server — one server going down doesn't affect others.
+    /// Uses the same per-server path as single-server loads (`loadServer`).
     func loadAll(servers: [PairedServer]) async {
-        let cache = _cacheForTesting ?? TimelineCache.shared
         serverOrder = servers.map(\.id)
 
-        // Initialize freshness for new servers
         for server in servers {
-            if serverFreshness[server.id] == nil {
-                serverFreshness[server.id] = ServerSyncState()
+            ensureFreshness(for: server.id)
+            if serverLoaded[server.id] == nil {
+                serverLoaded[server.id] = false
             }
         }
 
-        // Show cached data immediately for servers not yet loaded
-        await withTaskGroup(of: (String, [Workspace]?, [SkillInfo]?).self) { group in
-            for server in servers where workspacesByServer[server.id] == nil {
-                let serverId = server.id
-                group.addTask {
-                    let ws = await cache.loadWorkspaces(serverId: serverId)
-                    let sk = await cache.loadSkills(serverId: serverId)
-                    return (serverId, ws, sk)
-                }
-            }
-            for await (serverId, ws, sk) in group {
-                if let ws { workspacesByServer[serverId] = ws }
-                if let sk { skillsByServer[serverId] = sk }
-            }
-        }
-
-        // Mark all servers as syncing
+        let allowLegacyFallback = servers.count == 1
         for server in servers {
-            serverFreshness[server.id]?.markSyncStarted()
+            guard let baseURL = server.baseURL else { continue }
+            let api = APIClient(baseURL: baseURL, token: server.token)
+            await loadServer(
+                serverId: server.id,
+                api: api,
+                allowLegacyFallback: allowLegacyFallback
+            )
+        }
+    }
+
+    // MARK: - Private helpers
+
+    private struct CachedCatalog {
+        var workspaces: [Workspace]?
+        var skills: [SkillInfo]?
+        var usedLegacy = false
+    }
+
+    private func ensureFreshness(for serverId: String) {
+        if serverFreshness[serverId] == nil {
+            serverFreshness[serverId] = ServerSyncState()
+        }
+    }
+
+    private func mutateFreshness(for serverId: String, _ mutate: (inout ServerSyncState) -> Void) {
+        var state = serverFreshness[serverId] ?? ServerSyncState()
+        mutate(&state)
+        serverFreshness[serverId] = state
+    }
+
+    private func markSyncStarted(forServer serverId: String) {
+        mutateFreshness(for: serverId) { $0.markSyncStarted() }
+    }
+
+    private func markSyncSucceeded(forServer serverId: String, at date: Date = Date()) {
+        mutateFreshness(for: serverId) { $0.markSyncSucceeded(at: date) }
+    }
+
+    private func markSyncFailed(forServer serverId: String) {
+        mutateFreshness(for: serverId) { $0.markSyncFailed() }
+    }
+
+    private func loadCachedCatalog(
+        serverId: String,
+        cache: TimelineCache,
+        allowLegacyFallback: Bool
+    ) async -> CachedCatalog {
+        if serverId.isEmpty {
+            async let ws = cache.loadWorkspaces()
+            async let sk = cache.loadSkills()
+            return await CachedCatalog(workspaces: ws, skills: sk)
         }
 
-        // Fetch from all servers in parallel
-        await withTaskGroup(of: (String, Result<([Workspace], [SkillInfo]), Error>).self) { group in
-            for server in servers {
-                guard let baseURL = server.baseURL else { continue }
-                let serverId = server.id
-                let token = server.token
+        async let namespacedWs = cache.loadWorkspaces(serverId: serverId)
+        async let namespacedSk = cache.loadSkills(serverId: serverId)
+        var catalog = await CachedCatalog(workspaces: namespacedWs, skills: namespacedSk)
 
-                group.addTask {
-                    let api = APIClient(baseURL: baseURL, token: token)
-                    do {
-                        async let ws = api.listWorkspaces()
-                        async let sk = api.listSkills()
-                        let result = try await (ws, sk)
-                        return (serverId, .success(result))
-                    } catch {
-                        return (serverId, .failure(error))
-                    }
-                }
+        if allowLegacyFallback, catalog.workspaces == nil || catalog.skills == nil {
+            async let legacyWs = cache.loadWorkspaces()
+            async let legacySk = cache.loadSkills()
+            let fallbackWs = await legacyWs
+            let fallbackSk = await legacySk
+
+            if catalog.workspaces == nil, let fallbackWs {
+                catalog.workspaces = fallbackWs
+                catalog.usedLegacy = true
             }
-
-            for await (serverId, result) in group {
-                switch result {
-                case .success(let (ws, sk)):
-                    workspacesByServer[serverId] = ws
-                    skillsByServer[serverId] = sk
-                    serverFreshness[serverId]?.markSyncSucceeded()
-                    logger.info("Loaded \(ws.count) workspaces, \(sk.count) skills from server \(serverId.prefix(16), privacy: .public)")
-
-                    // Update per-server cache
-                    let capturedServerId = serverId
-                    Task.detached {
-                        await cache.saveWorkspaces(ws, serverId: capturedServerId)
-                        await cache.saveSkills(sk, serverId: capturedServerId)
-                    }
-
-                case .failure(let error):
-                    serverFreshness[serverId]?.markSyncFailed()
-                    logger.error("Failed to load from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
-                }
+            if catalog.skills == nil, let fallbackSk {
+                catalog.skills = fallbackSk
+                catalog.usedLegacy = true
             }
         }
 
-        // Sync flat lists for backward compat
-        workspaces = allWorkspaces
-        skills = allSkills
-        isLoaded = true
+        return catalog
     }
 }

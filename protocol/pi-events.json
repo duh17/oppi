@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical pi RPC events — the JSON lines pi sends on stdout. Used to test server-side event translation (session-protocol.ts translatePiEvent).",
     "generated": "2026-02-16T18:00:00Z",
-    "eventCount": 18
+    "eventCount": 21
   },
   "events": [
     {
@@ -53,10 +53,43 @@
       }
     },
     {
-      "_label": "tool_execution_end: tool call completes",
+      "_label": "tool_execution_end: tool call completes with details",
       "type": "tool_execution_end",
       "toolName": "bash",
-      "toolCallId": "tc-replay-001"
+      "toolCallId": "tc-replay-001",
+      "result": {
+        "content": [{ "type": "text", "text": "Running tests...\n42 tests passed\n" }],
+        "details": { "exitCode": 0, "durationMs": 1234 }
+      },
+      "isError": false
+    },
+    {
+      "_label": "tool_execution_end: error tool call with details",
+      "type": "tool_execution_end",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-err",
+      "result": {
+        "content": [{ "type": "text", "text": "command not found: foobar" }],
+        "details": { "exitCode": 127, "durationMs": 50 }
+      },
+      "isError": true
+    },
+    {
+      "_label": "tool_execution_end: extension tool with structured details",
+      "type": "tool_execution_end",
+      "toolName": "remember",
+      "toolCallId": "tc-replay-ext",
+      "result": {
+        "content": [{ "type": "text", "text": "Saved to journal: 2026-02-18-mac-studio.md" }],
+        "details": { "file": "2026-02-18-mac-studio.md", "redacted": false }
+      },
+      "isError": false
+    },
+    {
+      "_label": "tool_execution_end: bare (no result) — legacy compat",
+      "type": "tool_execution_end",
+      "toolName": "bash",
+      "toolCallId": "tc-replay-bare"
     },
     {
       "_label": "message_end assistant: turn completes with usage stats",

@@ -29,6 +29,13 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
 
+    private lazy var copyDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }()
+
     init(configuration: AssistantTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
@@ -83,7 +90,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
         iconLabel.font = .monospacedSystemFont(ofSize: 17, weight: .semibold)
-        iconLabel.textColor = UIColor(ThemeID.tokyoNight.palette.purple)
+        iconLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().purple)
         iconLabel.text = "π"
         iconLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -94,7 +101,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         addSubview(bubbleContainer)
         bubbleContainer.addSubview(iconLabel)
         bubbleContainer.addSubview(markdownView)
-        iconLabel.addInteraction(UIContextMenuInteraction(delegate: self))
+        bubbleContainer.addGestureRecognizer(copyDoubleTapGesture)
+        bubbleContainer.addInteraction(UIContextMenuInteraction(delegate: self))
 
         NSLayoutConstraint.activate([
             bubbleContainer.topAnchor.constraint(equalTo: topAnchor),
@@ -133,13 +141,57 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         ))
     }
 
-    private func copyToPasteboard(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    @objc private func handleBubbleDoubleTapCopy() {
+        let text = currentConfiguration.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
 
-        UIPasteboard.general.string = trimmed
-        let feedback = UIImpactFeedbackGenerator(style: .light)
-        feedback.impactOccurred(intensity: 0.82)
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        TimelineCopyFeedback.copy(
+            text,
+            feedbackView: bubbleContainer,
+            trimWhitespaceAndNewlines: true
+        )
+    }
+
+    func contextMenu() -> UIMenu? {
+        let text = currentConfiguration.text
+        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
+
+        guard hasCopyText || hasForkAction else {
+            return nil
+        }
+
+        var actions: [UIMenuElement] = []
+
+        if hasCopyText {
+            actions.append(
+                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                    self?.copyToPasteboard(text)
+                }
+            )
+
+            actions.append(
+                UIAction(title: "Copy as Markdown", image: UIImage(systemName: "text.document")) { [weak self] _ in
+                    self?.copyToPasteboard(text)
+                }
+            )
+        }
+
+        if hasForkAction, let onFork = currentConfiguration.onFork {
+            actions.append(
+                UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
+                    onFork()
+                }
+            )
+        }
+
+        return UIMenu(title: "", children: actions)
     }
 }
 
@@ -148,40 +200,12 @@ extension AssistantTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let text = currentConfiguration.text
-        let hasCopyText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasForkAction = currentConfiguration.canFork && currentConfiguration.onFork != nil
-
-        guard hasCopyText || hasForkAction else { return nil }
+        guard contextMenu() != nil else {
+            return nil
+        }
 
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self else { return nil }
-
-            var actions: [UIMenuElement] = []
-
-            if hasCopyText {
-                actions.append(
-                    UIAction(title: "Copy Full Response", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                        self?.copyToPasteboard(text)
-                    }
-                )
-
-                actions.append(
-                    UIAction(title: "Copy Full Response as Markdown", image: UIImage(systemName: "text.document")) { [weak self] _ in
-                        self?.copyToPasteboard(text)
-                    }
-                )
-            }
-
-            if hasForkAction, let onFork = self.currentConfiguration.onFork {
-                actions.append(
-                    UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
-                        onFork()
-                    }
-                )
-            }
-
-            return UIMenu(title: "", children: actions)
+            self?.contextMenu()
         }
     }
 }

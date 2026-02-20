@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 
+// swiftlint:disable large_tuple
+
 // MARK: - SyntaxLanguage
 
 /// Language identification for syntax highlighting.
@@ -29,7 +31,7 @@ enum SyntaxLanguage: Sendable, Hashable {
     case unknown
 
     /// Detect language from file extension or code fence name.
-    static func detect(_ identifier: String) -> SyntaxLanguage {
+    static func detect(_ identifier: String) -> Self {
         switch identifier.lowercased() {
         case "swift": return .swift
         case "ts", "tsx", "mts", "cts", "typescript": return .typescript
@@ -308,11 +310,11 @@ enum SyntaxHighlighter {
             // Inside block comment — scan for close
             if inBlockComment {
                 if i + 1 < chars.count, chars[i] == "*", chars[i + 1] == "/" {
-                    result += colored("*/", .tokyoComment)
+                    result += colored("*/", .themeSyntaxComment)
                     i += 2
                     inBlockComment = false
                 } else {
-                    result += colored(String(chars[i]), .tokyoComment)
+                    result += colored(String(chars[i]), .themeSyntaxComment)
                     i += 1
                 }
                 continue
@@ -322,20 +324,20 @@ enum SyntaxHighlighter {
             if language.hasBlockComments,
                i + 1 < chars.count, chars[i] == "/", chars[i + 1] == "*" {
                 inBlockComment = true
-                result += colored("/*", .tokyoComment)
+                result += colored("/*", .themeSyntaxComment)
                 i += 2
                 continue
             }
 
             // Line comment
             if let prefix = commentPrefix, matchesAt(chars, offset: i, pattern: prefix) {
-                result += colored(String(chars[i...]), .tokyoComment)
+                result += colored(String(chars[i...]), .themeSyntaxComment)
                 return result
             }
 
             // Preprocessor (#include, #define) for C/C++
-            if chars[i] == "#", (language == .c || language == .cpp) {
-                result += colored(String(chars[i...]), .tokyoPurple)
+            if chars[i] == "#", language == .c || language == .cpp {
+                result += colored(String(chars[i...]), .themeSyntaxKeyword)
                 return result
             }
 
@@ -346,7 +348,7 @@ enum SyntaxHighlighter {
                 while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
                     i += 1
                 }
-                result += colored(String(chars[start..<i]), .tokyoYellow)
+                result += colored(String(chars[start..<i]), .themeSyntaxType)
                 continue
             }
 
@@ -354,7 +356,7 @@ enum SyntaxHighlighter {
             let ch = chars[i]
             if ch == "\"" || ch == "'" || ch == "`" {
                 let (text, end) = scanString(chars, from: i, quote: ch)
-                result += colored(text, .tokyoGreen)
+                result += colored(text, .themeSyntaxString)
                 i = end
                 continue
             }
@@ -362,7 +364,7 @@ enum SyntaxHighlighter {
             // Number
             if ch.isNumber {
                 let (text, end) = scanNumber(chars, from: i)
-                result += colored(text, .tokyoOrange)
+                result += colored(text, .themeSyntaxNumber)
                 i = end
                 continue
             }
@@ -371,18 +373,18 @@ enum SyntaxHighlighter {
             if ch.isLetter || ch == "_" {
                 let (word, end) = scanWord(chars, from: i)
                 if keywords.contains(word) {
-                    result += colored(word, .tokyoPurple)
+                    result += colored(word, .themeSyntaxKeyword)
                 } else if isTypeLike(word) {
-                    result += colored(word, .tokyoCyan)
+                    result += colored(word, .themeSyntaxType)
                 } else {
-                    result += colored(word, .tokyoFg)
+                    result += colored(word, .themeSyntaxVariable)
                 }
                 i = end
                 continue
             }
 
             // Punctuation / operators
-            result += colored(String(ch), .tokyoFg)
+            result += colored(String(ch), .themeSyntaxPunctuation)
             i += 1
         }
 
@@ -400,19 +402,19 @@ enum SyntaxHighlighter {
             let ch = chars[i]
 
             if ch.isWhitespace {
-                result += colored(String(ch), .tokyoFg)
+                result += colored(String(ch), .themeSyntaxVariable)
                 i += 1
                 continue
             }
 
             if ch == "#", isShellCommentStart(chars, at: i) {
-                result += colored(String(chars[i...]), .tokyoComment)
+                result += colored(String(chars[i...]), .themeSyntaxComment)
                 return result
             }
 
             if ch == "\"" || ch == "'" || ch == "`" {
                 let (text, end) = scanString(chars, from: i, quote: ch)
-                result += colored(text, .tokyoGreen)
+                result += colored(text, .themeSyntaxString)
                 i = end
                 expectCommand = false
                 continue
@@ -420,14 +422,14 @@ enum SyntaxHighlighter {
 
             if ch == "$" {
                 let (variable, end) = scanShellVariable(chars, from: i)
-                result += colored(variable, .tokyoCyan)
+                result += colored(variable, .themeSyntaxType)
                 i = end
                 expectCommand = false
                 continue
             }
 
             if let (op, end, resetsCommand) = scanShellOperator(chars, from: i) {
-                result += colored(op, .tokyoPurple)
+                result += colored(op, .themeSyntaxOperator)
                 i = end
                 if resetsCommand {
                     expectCommand = true
@@ -437,7 +439,7 @@ enum SyntaxHighlighter {
 
             if ch == "-", isShellOptionStart(chars, at: i) {
                 let (option, end) = scanShellToken(chars, from: i)
-                result += colored(option, .tokyoYellow)
+                result += colored(option, .themeSyntaxVariable)
                 i = end
                 expectCommand = false
                 continue
@@ -445,29 +447,29 @@ enum SyntaxHighlighter {
 
             let (token, end) = scanShellToken(chars, from: i)
             if token.isEmpty {
-                result += colored(String(ch), .tokyoFg)
+                result += colored(String(ch), .themeSyntaxVariable)
                 i += 1
                 continue
             }
 
             if expectCommand, isShellAssignment(token) {
-                result += colored(token, .tokyoCyan)
+                result += colored(token, .themeSyntaxType)
                 i = end
                 continue
             }
 
             if shellKeywords.contains(token) {
-                result += colored(token, .tokyoPurple)
+                result += colored(token, .themeSyntaxKeyword)
                 expectCommand = shellCommandStarterKeywords.contains(token)
                 i = end
                 continue
             }
 
             if expectCommand {
-                result += colored(token, .tokyoCyan)
+                result += colored(token, .themeSyntaxFunction)
                 expectCommand = false
             } else {
-                result += colored(token, .tokyoFg)
+                result += colored(token, .themeSyntaxVariable)
             }
             i = end
         }
@@ -738,8 +740,8 @@ enum SyntaxHighlighter {
 
     private static func matchesAt(_ chars: [Character], offset: Int, pattern: [Character]) -> Bool {
         guard offset + pattern.count <= chars.count else { return false }
-        for j in 0..<pattern.count {
-            if chars[offset + j] != pattern[j] { return false }
+        for j in 0..<pattern.count where chars[offset + j] != pattern[j] {
+            return false
         }
         return true
     }
@@ -760,23 +762,23 @@ enum SyntaxHighlighter {
                 var j = end
                 while j < chars.count, chars[j] == " " || chars[j] == "\t" { j += 1 }
                 let isKey = j < chars.count && chars[j] == ":"
-                result += colored(text, isKey ? .tokyoCyan : .tokyoGreen)
+                result += colored(text, isKey ? .themeSyntaxType : .themeSyntaxString)
                 i = end
             } else if ch.isNumber || (ch == "-" && i + 1 < chars.count && chars[i + 1].isNumber) {
                 let (text, end) = scanJSONNumber(chars, from: i)
-                result += colored(text, .tokyoOrange)
+                result += colored(text, .themeSyntaxNumber)
                 i = end
             } else if matchesWord(chars, at: i, word: "true") {
-                result += colored("true", .tokyoPurple)
+                result += colored("true", .themeSyntaxKeyword)
                 i += 4
             } else if matchesWord(chars, at: i, word: "false") {
-                result += colored("false", .tokyoPurple)
+                result += colored("false", .themeSyntaxKeyword)
                 i += 5
             } else if matchesWord(chars, at: i, word: "null") {
-                result += colored("null", .tokyoComment)
+                result += colored("null", .themeSyntaxComment)
                 i += 4
             } else {
-                result += colored(String(ch), .tokyoFgDim)
+                result += colored(String(ch), .themeSyntaxPunctuation)
                 i += 1
             }
         }
@@ -788,8 +790,7 @@ enum SyntaxHighlighter {
         if chars[i] == "-" { i += 1 }
         while i < chars.count {
             let c = chars[i]
-            if c.isNumber || c == "." { i += 1 }
-            else if (c == "e" || c == "E") {
+            if c.isNumber || c == "." { i += 1 } else if c == "e" || c == "E" {
                 i += 1
                 if i < chars.count, chars[i] == "+" || chars[i] == "-" { i += 1 }
             } else { break }

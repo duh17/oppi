@@ -24,9 +24,7 @@ export function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
   return {
     id: "w1",
     name: "pios",
-    runtime: "host",
     skills: [],
-    policyPreset: "host",
     hostMount: "~/workspace/oppi",
     createdAt: now,
     updatedAt: now,
@@ -44,8 +42,6 @@ export class StubProcess extends EventEmitter {
 export function makeDeps(overrides?: Partial<SpawnDeps>): SpawnDeps {
   return {
     gate: {} as SpawnDeps["gate"],
-    sandbox: {} as SpawnDeps["sandbox"],
-    authProxy: null,
     piExecutable: "pi",
     onRpcLine: vi.fn(),
     onSessionEnd: vi.fn(),
@@ -56,13 +52,13 @@ export function makeDeps(overrides?: Partial<SpawnDeps>): SpawnDeps {
 export function getSpawnPolicy(
   setSessionPolicy: ReturnType<typeof vi.fn>,
   sessionId: string,
-  expectedPreset: "host" | "container",
+  expectedMode: "default",
 ): PolicyEngine {
   expect(setSessionPolicy).toHaveBeenCalledWith(sessionId, expect.any(PolicyEngine));
   const call = setSessionPolicy.mock.calls.at(-1);
   if (!call) throw new Error("setSessionPolicy was not called");
   const [, policy] = call as [string, PolicyEngine];
-  expect(policy.getPresetName()).toBe(expectedPreset);
+  expect(policy.getPolicyMode()).toBe(expectedMode);
   return policy;
 }
 

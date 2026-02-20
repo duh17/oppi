@@ -8,8 +8,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { WebSocket } from "ws";
@@ -46,10 +48,41 @@ function put(path: string, body: unknown, auth = true): Promise<Response> {
   });
 }
 
+function patch(path: string, body: unknown, auth = true): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (auth) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`${baseUrl}${path}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
 function del(path: string, auth = true): Promise<Response> {
   const headers: Record<string, string> = {};
   if (auth) headers["Authorization"] = `Bearer ${token}`;
   return fetch(`${baseUrl}${path}`, { method: "DELETE", headers });
+}
+
+function connectGate(port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ port, host: "127.0.0.1" }, () => resolve(socket));
+    socket.on("error", reject);
+  });
+}
+
+function sendGateMessage(
+  socket: Socket,
+  msg: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: socket });
+    rl.once("line", (line) => {
+      rl.close();
+      resolve(JSON.parse(line));
+    });
+    socket.write(JSON.stringify(msg) + "\n");
+  });
 }
 
 beforeAll(async () => {
@@ -278,17 +311,6 @@ describe("WebSocket", () => {
   });
 });
 
-// ── Security profile ──
-
-describe("security profile API", () => {
-  it("GET /security/profile returns current profile", async () => {
-    const res = await get("/security/profile");
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.profile).toBeTypeOf("string");
-  });
-});
-
 // ── Policy ──
 
 describe("policy API", () => {
@@ -297,6 +319,118 @@ describe("policy API", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.rules).toBeInstanceOf(Array);
+  });
+
+  it("PATCH /policy/rules/:id returns 404 for missing rule", async () => {
+    const res = await fetch(`${baseUrl}/policy/rules/does-not-exist`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "Updated" }),
+    });
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Rule not found");
+  });
+
+  it("PATCH workspace fallback hot-reloads active gate session behavior", async () => {
+    const wsRes = await post("/workspaces", { name: "policy-hot-reload", skills: [] });
+    expect(wsRes.status).toBe(201);
+    const wsBody = await wsRes.json();
+    const workspace = wsBody.workspace as { id: string };
+
+    const session = storage.createSession("policy-hot-reload-session");
+    session.workspaceId = workspace.id;
+    storage.saveSession(session);
+
+    const internals = server as unknown as {
+      gate: {
+        createSessionSocket: (sessionId: string, workspaceId?: string) => Promise<number>;
+        setSessionPolicy: (sessionId: string, policy: unknown) => void;
+        resolveDecision: (
+          requestId: string,
+          action: "allow" | "deny",
+          scope?: "once" | "session" | "workspace" | "global",
+          expiresInMs?: number,
+        ) => boolean;
+        destroySessionSocket: (sessionId: string) => void;
+        on: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
+        off: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
+      };
+      sessions: {
+        isActive: (sessionId: string) => boolean;
+      };
+    };
+
+    const gate = internals.gate;
+    const sessionsManager = internals.sessions;
+    const originalIsActive = sessionsManager.isActive.bind(sessionsManager);
+    sessionsManager.isActive = (sessionId: string) =>
+      sessionId === session.id || originalIsActive(sessionId);
+
+    const gatePort = await gate.createSessionSocket(session.id, workspace.id);
+    const gateSocket = await connectGate(gatePort);
+
+    let approvals = 0;
+    const approvalListener = (pending: { id: string }) => {
+      approvals += 1;
+      setTimeout(() => {
+        gate.resolveDecision(pending.id, "allow");
+      }, 10);
+    };
+
+    try {
+      const ack = await sendGateMessage(gateSocket, {
+        type: "guard_ready",
+        sessionId: session.id,
+        extensionVersion: "1.0.0",
+      });
+      expect(ack.type).toBe("guard_ack");
+
+      gate.on("approval_needed", approvalListener);
+
+      const askRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "ask" });
+      expect(askRes.status).toBe(200);
+
+      const firstDecision = await sendGateMessage(gateSocket, {
+        type: "gate_check",
+        tool: "edit",
+        input: {
+          path: "server/tests/legacy-stream-compat.test.ts",
+          oldText: "placeholder-old",
+          newText: "placeholder-new",
+        },
+        toolCallId: "tc-hot-reload-1",
+      });
+      expect(firstDecision.action).toBe("allow");
+      expect(approvals).toBe(1);
+
+      const allowRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "allow" });
+      expect(allowRes.status).toBe(200);
+
+      const secondDecision = await sendGateMessage(gateSocket, {
+        type: "gate_check",
+        tool: "edit",
+        input: {
+          path: "server/tests/legacy-stream-compat.test.ts",
+          oldText: "placeholder-old",
+          newText: "placeholder-new",
+        },
+        toolCallId: "tc-hot-reload-2",
+      });
+      expect(secondDecision.action).toBe("allow");
+      expect(approvals).toBe(1);
+    } finally {
+      gate.off("approval_needed", approvalListener);
+      if (!gateSocket.destroyed) {
+        gateSocket.destroy();
+      }
+      gate.destroySessionSocket(session.id);
+      sessionsManager.isActive = originalIsActive;
+    }
   });
 
   it("GET /policy/audit returns audit entries", async () => {
@@ -346,11 +480,31 @@ describe("themes API", () => {
   const validTheme = {
     theme: {
       colors: {
-        bg: "#000000", bgDark: "#111111", bgHighlight: "#222222",
-        fg: "#ffffff", fgDim: "#cccccc", comment: "#888888",
-        blue: "#0000ff", cyan: "#00ffff", green: "#00ff00",
-        orange: "#ff8800", purple: "#8800ff", red: "#ff0000",
-        yellow: "#ffff00",
+        // Base (13)
+        bg: "#1a1b26", bgDark: "#16161e", bgHighlight: "#292e42",
+        fg: "#c0caf5", fgDim: "#a9b1d6", comment: "#565f89",
+        blue: "#7aa2f7", cyan: "#7dcfff", green: "#9ece6a",
+        orange: "#ff9e64", purple: "#bb9af7", red: "#f7768e",
+        yellow: "#e0af68", thinkingText: "#a9b1d6",
+        // User message (2)
+        userMessageBg: "#292e42", userMessageText: "#c0caf5",
+        // Tool state (5)
+        toolPendingBg: "#1e2a4a", toolSuccessBg: "#1e2e1e", toolErrorBg: "#2e1e1e",
+        toolTitle: "#c0caf5", toolOutput: "#a9b1d6",
+        // Markdown (10)
+        mdHeading: "#ffaa00", mdLink: "#0000ff", mdLinkUrl: "#666666",
+        mdCode: "#00ffff", mdCodeBlock: "#00ff00", mdCodeBlockBorder: "#808080",
+        mdQuote: "#808080", mdQuoteBorder: "#808080", mdHr: "#808080",
+        mdListBullet: "#00ffff",
+        // Diffs (3)
+        toolDiffAdded: "#00ff00", toolDiffRemoved: "#ff0000", toolDiffContext: "#808080",
+        // Syntax (9)
+        syntaxComment: "#6A9955", syntaxKeyword: "#569CD6", syntaxFunction: "#DCDCAA",
+        syntaxVariable: "#9CDCFE", syntaxString: "#CE9178", syntaxNumber: "#B5CEA8",
+        syntaxType: "#4EC9B0", syntaxOperator: "#D4D4D4", syntaxPunctuation: "#D4D4D4",
+        // Thinking (6)
+        thinkingOff: "#505050", thinkingMinimal: "#6e6e6e", thinkingLow: "#5f87af",
+        thinkingMedium: "#81a2be", thinkingHigh: "#b294bb", thinkingXhigh: "#d183e8",
       },
     },
   };
@@ -401,6 +555,35 @@ describe("user skills API", () => {
     const body = await res.json();
     expect(body.skills).toBeInstanceOf(Array);
   });
+
+  it("POST /me/skills is disabled", async () => {
+    const res = await post("/me/skills", {
+      name: "new-skill",
+      sessionId: "session-123",
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
+
+  it("PUT /me/skills/:name is disabled", async () => {
+    const res = await put("/me/skills/search", {
+      content: '---\nname: search\ndescription: "Updated"\n---\n# Updated',
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
+
+  it("DELETE /me/skills/:name is disabled", async () => {
+    const res = await del("/me/skills/search");
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Skill editing is disabled on remote clients",
+    });
+  });
 });
 
 // ── Device token ──
@@ -426,26 +609,20 @@ describe("device token API", () => {
   });
 });
 
-// ── Security profile ──
+// ── Workspace policy ──
 
-describe("security profile mutation", () => {
-  it("PUT /security/profile updates profile", async () => {
-    const res = await put("/security/profile", { profile: "tailscale-permissive" });
-    expect(res.status).toBe(200);
-  });
+describe("workspace policy", () => {
+  it("GET /workspaces/:id/policy returns merged policy object", async () => {
+    const createRes = await post("/workspaces", { name: "policy-check", skills: [] });
+    expect(createRes.status).toBe(201);
+    const { workspace } = await createRes.json();
 
-  it("PUT /security/profile rejects invalid profile", async () => {
-    const res = await put("/security/profile", { profile: "nonexistent-profile" });
-    expect(res.status).toBe(400);
-  });
-
-  it("GET /policy/profile returns policy profile object", async () => {
-    const res = await get("/policy/profile");
+    const res = await get(`/workspaces/${workspace.id}/policy`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    // profile is an object with runtime, preset, rules, etc.
-    expect(body.profile).toBeTypeOf("object");
-    expect(body.profile.runtime).toBeTypeOf("string");
+    expect(body.workspaceId).toBe(workspace.id);
+    expect(body.effectivePolicy).toBeTypeOf("object");
+    expect(Array.isArray(body.effectivePolicy.permissions)).toBe(true);
   });
 });
 
@@ -480,6 +657,33 @@ describe("workspace lifecycle", () => {
     // 404 after delete
     const afterRes = await get(`/workspaces/${id}`);
     expect(afterRes.status).toBe(404);
+  });
+
+  it("still allows skill enable/disable through workspace updates", async () => {
+    const skillsRes = await get("/skills");
+    expect(skillsRes.status).toBe(200);
+    const skillsBody = await skillsRes.json();
+    const skillName = skillsBody.skills?.[0]?.name as string | undefined;
+    expect(skillName).toBeTruthy();
+
+    const createRes = await post("/workspaces", {
+      name: "skill-toggle-workspace",
+      skills: skillName ? [skillName] : [],
+    });
+    expect(createRes.status).toBe(201);
+    const { workspace } = await createRes.json();
+
+    const disableRes = await put(`/workspaces/${workspace.id}`, { skills: [] });
+    expect(disableRes.status).toBe(200);
+    const disableBody = await disableRes.json();
+    expect(disableBody.workspace.skills).toEqual([]);
+
+    const enableRes = await put(`/workspaces/${workspace.id}`, {
+      skills: skillName ? [skillName] : [],
+    });
+    expect(enableRes.status).toBe(200);
+    const enableBody = await enableRes.json();
+    expect(enableBody.workspace.skills).toEqual(skillName ? [skillName] : []);
   });
 });
 

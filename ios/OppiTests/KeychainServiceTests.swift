@@ -44,8 +44,7 @@ struct KeychainServiceTests {
     }
 
     @Test func loadServersDoesNotCrash() {
-        let servers = KeychainService.loadServers()
-        #expect(servers.count >= 0)
+        _ = KeychainService.loadServers()
     }
 
     // MARK: - KeychainError

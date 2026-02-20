@@ -218,7 +218,7 @@ struct TruncationTests {
         let long = String(repeating: "y", count: ToolRowTextRenderer.maxRenderedOutputCharacters + 100)
         let result = ToolRowTextRenderer.displayOutputText(long)
         #expect(result.count < long.count)
-        #expect(result.contains("Copy Output"))
+        #expect(result.contains("Use Copy"))
     }
 
     @Test func shortCommandNotTruncated() {

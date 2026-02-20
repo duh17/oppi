@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_try force_unwrapping
+
 /// Tests for reliability and server interaction hardening.
 ///
 /// Fix 1: Reconnect jitter (WebSocketClient backoff)

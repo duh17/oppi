@@ -5,11 +5,14 @@
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
-    "oppi": "./dist/cli.js"
+    "oppi": "dist/cli.js"
   },
   "files": [
     "dist/",
-    "LICENSE"
+    "extensions/",
+    "themes/",
+    "LICENSE",
+    "README.md"
   ],
   "engines": {
     "node": ">=20.0.0"
@@ -39,6 +42,12 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:e2e:linux": "./scripts/e2e-linux-container.sh",
+    "test:e2e:linux:full": "E2E_MODE=full ./scripts/e2e-linux-container.sh",
+    "test:e2e:lmstudio:contract": "node ./scripts/e2e-lmstudio-contract.mjs",
+    "test:security:adversarial": "tsx ./scripts/manual/security-adversarial.ts",
+    "test:load:ws": "tsx ./scripts/manual/load-ws.ts",
+    "tool:gate-client": "tsx ./scripts/manual/gate-client.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",

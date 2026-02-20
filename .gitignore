@@ -7,6 +7,7 @@ ios/build/
 ios/*.xcodeproj/
 ios/OppiMac/
 ios/OppiMacTests/
+ios/.env.testflight.local
 
 # Agent
 .internal/

@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// swiftlint:disable force_try force_unwrapping
+
 /// Tests confirming bugs found in the behavioral audit, and verifying fixes.
 ///
 /// Bug 3: permissionCancelled leaves stale card in timeline
@@ -20,7 +22,7 @@ struct BugBashTests {
         PermissionRequest(
             id: id, sessionId: sessionId, tool: "bash",
             input: [:], displaySummary: "bash: test",
-            risk: .high, reason: "Test",
+            reason: "Test",
             timeoutAt: Date().addingTimeInterval(timeoutOffset)
         )
     }
@@ -53,13 +55,13 @@ struct BugBashTests {
             if case .permission = $0 { return true }
             return false
         }
-        #expect(inlinePerms.count == 0, "Pending permissions should not appear in timeline")
+        #expect(inlinePerms.isEmpty, "Pending permissions should not appear in timeline")
 
         // Route permission cancelled
         conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
 
         // Store should be empty
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.isEmpty)
 
         // Timeline should have a resolved marker
         let resolved = conn.reducer.items.filter {
@@ -86,7 +88,7 @@ struct BugBashTests {
         #expect(conn.permissionStore.count == 1)
 
         conn.handleServerMessage(.permissionCancelled(id: "p1"), sessionId: "s1")
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.isEmpty)
     }
 
     @MainActor
@@ -96,7 +98,7 @@ struct BugBashTests {
         // Cancel a permission that was never added
         conn.handleServerMessage(.permissionCancelled(id: "nonexistent"), sessionId: "s1")
 
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.isEmpty)
         #expect(conn.reducer.items.isEmpty)
     }
 
@@ -111,7 +113,7 @@ struct BugBashTests {
 
         let expiredRequests = store.sweepExpired()
 
-        #expect(store.count == 0)
+        #expect(store.isEmpty)
         #expect(expiredRequests.count == 1)
         #expect(expiredRequests[0].id == "p1")
     }
@@ -170,7 +172,7 @@ struct BugBashTests {
         }
 
         // Permission should be gone from store
-        #expect(conn.permissionStore.count == 0)
+        #expect(conn.permissionStore.isEmpty)
 
         // Timeline should show resolved marker
         let resolved = conn.reducer.items.filter {
@@ -294,7 +296,7 @@ struct BugBashTests {
         let taken = store.take(id: "p1")
         #expect(taken?.id == "p1")
         #expect(taken?.tool == "bash")
-        #expect(store.count == 0)
+        #expect(store.isEmpty)
     }
 
     @MainActor

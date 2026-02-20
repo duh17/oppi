@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
+        guard ReleaseFeatures.pushNotificationsEnabled else {
+            return
+        }
         PushRegistration.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
     }
 
@@ -21,6 +24,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
+        guard ReleaseFeatures.pushNotificationsEnabled else {
+            return
+        }
         PushRegistration.shared.didFailToRegisterForRemoteNotifications(error: error)
     }
 }

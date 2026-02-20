@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateId } from "./id.js";
-import type { RiskLevel } from "./policy.js";
+
 
 // ─── Types ───
 
@@ -39,7 +39,6 @@ export interface LearnedRule {
   // Metadata
   source: "learned" | "manual";
   description: string;
-  risk: RiskLevel;
   createdAt: number;
   createdBy?: string; // userId who created/approved
   expiresAt?: number; // Optional TTL (ms since epoch)
@@ -93,6 +92,64 @@ export class RuleStore {
     }
 
     return false;
+  }
+
+  update(
+    id: string,
+    updates: {
+      effect?: LearnedRule["effect"];
+      tool?: LearnedRule["tool"] | null;
+      match?: LearnedRule["match"];
+      description?: string;
+      expiresAt?: number | null;
+    },
+  ): LearnedRule | null {
+    const applyUpdates = (rule: LearnedRule): LearnedRule => {
+      const next: LearnedRule = { ...rule };
+
+      if (updates.effect !== undefined) {
+        next.effect = updates.effect;
+      }
+      if (updates.description !== undefined) {
+        next.description = updates.description;
+      }
+      if (updates.match !== undefined) {
+        next.match = updates.match;
+      }
+      if (updates.tool !== undefined) {
+        if (updates.tool === null) {
+          delete next.tool;
+        } else {
+          next.tool = updates.tool;
+        }
+      }
+      if (updates.expiresAt !== undefined) {
+        if (updates.expiresAt === null) {
+          delete next.expiresAt;
+        } else {
+          next.expiresAt = updates.expiresAt;
+        }
+      }
+
+      return next;
+    };
+
+    const sessionIdx = this.sessionRules.findIndex((r) => r.id === id);
+    if (sessionIdx >= 0) {
+      const updated = applyUpdates(this.sessionRules[sessionIdx]);
+      this.sessionRules[sessionIdx] = updated;
+      return updated;
+    }
+
+    const persistedIdx = this.persisted.findIndex((r) => r.id === id);
+    if (persistedIdx >= 0) {
+      const updated = applyUpdates(this.persisted[persistedIdx]);
+      this.persisted[persistedIdx] = updated;
+      this.save();
+      return updated;
+    }
+
+    return null;
   }
 
   // ── Queries ──

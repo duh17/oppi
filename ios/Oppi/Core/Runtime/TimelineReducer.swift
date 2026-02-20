@@ -65,6 +65,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Separate store for structured tool args.
     let toolArgsStore = ToolArgsStore()
 
+    /// Separate store for structured tool result details.
+    /// Populated when `tool_end` carries `details` from pi's `AgentToolResult`.
+    let toolDetailsStore = ToolDetailsStore()
+
+    /// Separate store for server-rendered styled segments.
+    /// Populated from `callSegments`/`resultSegments` in tool_start/tool_end.
+    let toolSegmentStore = ToolSegmentStore()
+
     /// Trace event IDs from the last successful history load.
     /// Used to detect append-only reloads and avoid full rebuilds.
     private var loadedTraceEventIDs: [String] = []
@@ -105,21 +113,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
+        toolDetailsStore.clearAll()
+        toolSegmentStore.clearAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
         renderVersion &+= 1
     }
 
-    /// Drop non-essential in-memory state on iOS memory warning.
-    /// Keeps visible timeline rows intact, but clears expandable payloads
-    /// and strips heavy data (base64 images) from retained items.
+    // Drop non-essential in-memory state on iOS memory warning.
+    // Keeps visible timeline rows intact, but clears expandable payloads
+    // and strips heavy data (base64 images) from retained items.
+    // swiftlint:disable:next large_tuple
     func handleMemoryWarning() -> (toolOutputBytesCleared: Int, expandedItemsCollapsed: Int, imagesStripped: Int) {
         cancelMarkdownPrewarm()
 
         let clearedBytes = toolOutputStore.totalBytes
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
+        toolDetailsStore.clearAll()
+        toolSegmentStore.clearAll()
 
         let expandedCount = expandedItemIDs.count
         expandedItemIDs.removeAll()
@@ -199,6 +212,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
+        toolDetailsStore.clearAll()
+        toolSegmentStore.clearAll()
 
         var assistantTextsToCache: [String] = []
         assistantTextsToCache.reserveCapacity(events.count)
@@ -524,7 +539,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .messageEnd(_, let content):
             handleMessageEnd(content)
 
-        case .toolStart(_, let toolEventId, let tool, let args):
+        case .toolStart(_, let toolEventId, let tool, let args, let callSegments):
             // Split assistant text around tool boundaries so chronology in the
             // timeline matches execution order (text-before-tool, tool row,
             // text-after-tool).
@@ -575,12 +590,23 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 toolArgsStore.set(args, for: toolEventId)
             }
 
+            // Store server-rendered segments for collapsed display
+            if let callSegments, !callSegments.isEmpty {
+                toolSegmentStore.setCallSegments(callSegments, for: toolEventId)
+            }
+
         case .toolOutput(_, let toolEventId, let output, let isError):
             toolOutputStore.append(output, to: toolEventId)
             updateToolCallPreview(id: toolEventId, isError: isError)
 
-        case .toolEnd(_, let toolEventId):
-            updateToolCallDone(id: toolEventId)
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
+            if let details {
+                toolDetailsStore.set(details, for: toolEventId)
+            }
+            if let resultSegments, !resultSegments.isEmpty {
+                toolSegmentStore.setResultSegments(resultSegments, for: toolEventId)
+            }
+            updateToolCallDone(id: toolEventId, isError: isError)
 
         case .permissionRequest:
             // Pending permissions live in PermissionStore/overlay, not the timeline.
@@ -954,17 +980,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
     }
 
-    private func updateToolCallDone(id: String) {
+    private func updateToolCallDone(id: String, isError: Bool = false) {
         guard let idx = indexForID(id),
-              case .toolCall(_, let tool, let args, let preview, let bytes, let isErr, _) = items[idx]
+              case .toolCall(_, let tool, let args, let preview, let bytes, let streamIsErr, _) = items[idx]
         else {
             return
         }
 
+        // tool_end isError is authoritative; streaming error state is a hint.
+        let finalIsError = isError || streamIsErr
         items[idx] = .toolCall(
             id: id, tool: tool, argsSummary: args,
             outputPreview: preview, outputByteCount: bytes,
-            isError: isErr, isDone: true
+            isError: finalIsError, isDone: true
         )
     }
 
