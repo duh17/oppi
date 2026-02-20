@@ -27,21 +27,6 @@ enum ReleaseFeatures {
     static let composerDictationEnabled = false
 }
 
-/// Shipping toggles for first release hardening.
-///
-/// Keep these centralized so we can re-enable features intentionally
-/// once reliability is proven.
-enum ReleaseFeatures {
-    /// Remote/local notification flow for permission prompts.
-    static let pushNotificationsEnabled = false
-
-    /// Dynamic Island / Lock Screen session activity surface.
-    static let liveActivitiesEnabled = false
-
-    /// Composer microphone button + custom speech-to-text flow.
-    static let composerDictationEnabled = false
-}
-
 /// Rendering implementation gates for timeline hot paths.
 ///
 /// Policy: keep chat timeline interactions UIKit-first for predictable sizing,
