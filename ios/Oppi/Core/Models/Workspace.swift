@@ -25,6 +25,9 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     // Extensions
     var extensions: [String]?
 
+    // Git status
+    var gitStatusEnabled: Bool?  // Show git context bar (default: true)
+
     // Defaults
     var defaultModel: String?
 
@@ -43,6 +46,7 @@ extension Workspace: Codable {
         case systemPrompt, hostMount
         case memoryEnabled, memoryNamespace
         case extensions
+        case gitStatusEnabled
         case defaultModel
         case createdAt, updatedAt
     }
@@ -59,6 +63,7 @@ extension Workspace: Codable {
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled)
         memoryNamespace = try c.decodeIfPresent(String.self, forKey: .memoryNamespace)
         extensions = try c.decodeIfPresent([String].self, forKey: .extensions)
+        gitStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .gitStatusEnabled)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
 
         let createdMs = try c.decode(Double.self, forKey: .createdAt)
@@ -80,6 +85,7 @@ extension Workspace: Codable {
         try c.encodeIfPresent(memoryEnabled, forKey: .memoryEnabled)
         try c.encodeIfPresent(memoryNamespace, forKey: .memoryNamespace)
         try c.encodeIfPresent(extensions, forKey: .extensions)
+        try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(updatedAt.timeIntervalSince1970 * 1000, forKey: .updatedAt)

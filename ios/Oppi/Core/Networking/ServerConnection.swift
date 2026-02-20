@@ -25,6 +25,7 @@ final class ServerConnection {
     let sessionStore = SessionStore()
     let permissionStore = PermissionStore()
     let workspaceStore = WorkspaceStore()
+    let gitStatusStore = GitStatusStore()
 
     // Audio
     let audioPlayer = AudioPlayerService()

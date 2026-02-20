@@ -122,6 +122,12 @@ struct ChatView: View {
 
     private var chatContent: some View {
         VStack(spacing: 0) {
+            WorkspaceContextBar(
+                gitStatus: connection.gitStatusStore.gitStatus,
+                changeStats: session?.changeStats,
+                isLoading: connection.gitStatusStore.isLoading
+            )
+
             ChatTimelineView(
                 sessionId: sessionId,
                 workspaceId: session?.workspaceId,
@@ -174,6 +180,15 @@ struct ChatView: View {
             if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
                 inputText = draft
                 connection.composerDraft = nil
+            }
+            // Load initial git status for the workspace
+            if let wsId = session?.workspaceId, let api = connection.apiClient {
+                let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
+                connection.gitStatusStore.loadInitial(
+                    workspaceId: wsId,
+                    apiClient: api,
+                    gitStatusEnabled: ws?.gitStatusEnabled ?? true
+                )
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in

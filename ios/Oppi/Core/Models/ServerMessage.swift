@@ -49,6 +49,9 @@ enum ServerMessage: Sendable, Equatable {
     case extensionUIRequest(ExtensionUIRequest)
     case extensionUINotification(method: String, message: String?, notifyType: String?, statusKey: String?, statusText: String?)
 
+    // Git status (workspace-level, pushed after file-mutating tool calls)
+    case gitStatus(workspaceId: String, status: GitStatus)
+
     // Errors
     case error(message: String, code: String?, fatal: Bool)
 
@@ -123,6 +126,8 @@ extension ServerMessage: Decodable {
         case aborted, willRetry, summary, tokensBefore
         // retry
         case attempt, maxAttempts, delayMs, errorMessage, finalError
+        // git_status
+        case workspaceId, status
     }
 
     init(from decoder: Decoder) throws {
@@ -298,6 +303,11 @@ extension ServerMessage: Decodable {
             let statusText = try c.decodeIfPresent(String.self, forKey: .statusText)
             self = .extensionUINotification(method: method, message: msg, notifyType: notifyType, statusKey: statusKey, statusText: statusText)
 
+        case "git_status":
+            let workspaceId = try c.decode(String.self, forKey: .workspaceId)
+            let status = try c.decode(GitStatus.self, forKey: .status)
+            self = .gitStatus(workspaceId: workspaceId, status: status)
+
         default:
             self = .unknown(type: type)
         }
@@ -369,6 +379,7 @@ extension ServerMessage {
         case .permissionCancelled: "permissionCancelled"
         case .extensionUIRequest: "extensionUIRequest"
         case .extensionUINotification: "extensionUINotification"
+        case .gitStatus: "gitStatus"
         case .error: "error"
         case .unknown(let type): "unknown(\(type))"
         }

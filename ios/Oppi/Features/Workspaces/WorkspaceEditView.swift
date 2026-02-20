@@ -13,6 +13,7 @@ struct WorkspaceEditView: View {
     @State private var selectedSkills: Set<String> = []
     @State private var hostMount: String = ""
     @State private var systemPrompt: String = ""
+    @State private var gitStatusEnabled: Bool = true
     @State private var memoryEnabled: Bool = false
     @State private var memoryNamespace: String = ""
     @State private var extensionNames: String = ""
@@ -93,6 +94,14 @@ struct WorkspaceEditView: View {
                         .font(.caption)
                         .foregroundStyle(.themeComment)
                 }
+            }
+
+            Section("Git Status") {
+                Toggle("Show git status bar", isOn: $gitStatusEnabled)
+
+                Text("Shows branch, dirty files, and change stats in chat view")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
             }
 
             Section("Memory") {
@@ -289,6 +298,7 @@ struct WorkspaceEditView: View {
         selectedSkills = Set(source.skills)
         hostMount = source.hostMount ?? ""
         systemPrompt = source.systemPrompt ?? ""
+        gitStatusEnabled = source.gitStatusEnabled ?? true
         memoryEnabled = source.memoryEnabled ?? false
         memoryNamespace = source.memoryNamespace ?? ""
         extensionNames = (source.extensions ?? []).joined(separator: ", ")
@@ -330,6 +340,7 @@ struct WorkspaceEditView: View {
             skills: Array(selectedSkills),
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,
+            gitStatusEnabled: gitStatusEnabled,
             memoryEnabled: memoryEnabled,
             memoryNamespace: memoryNamespace.isEmpty ? nil : memoryNamespace,
             extensions: parseExtensionNames(extensionNames),
