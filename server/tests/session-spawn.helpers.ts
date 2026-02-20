@@ -40,8 +40,14 @@ export class StubProcess extends EventEmitter {
 }
 
 export function makeDeps(overrides?: Partial<SpawnDeps>): SpawnDeps {
+  const stubGate = {
+    ruleStore: {
+      ensureWorkspaceDefaults: vi.fn(() => []),
+    },
+  } as unknown as SpawnDeps["gate"];
+
   return {
-    gate: {} as SpawnDeps["gate"],
+    gate: stubGate,
     piExecutable: "pi",
     onRpcLine: vi.fn(),
     onSessionEnd: vi.fn(),

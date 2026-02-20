@@ -71,6 +71,7 @@ function makeManagerHarness(status: Session["status"] = "busy"): {
   const storage = {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
+    getWorkspace: vi.fn(() => undefined),
   } as unknown as Storage;
 
   const gate = {

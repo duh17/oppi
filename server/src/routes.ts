@@ -46,6 +46,7 @@ import { discoverProjects, scanDirectories } from "./host.js";
 import { isValidExtensionName, listHostExtensions } from "./extension-loader.js";
 import {
   discoverLocalSessions,
+  invalidateLocalSessionsCache,
   validateLocalSessionPath,
   validateCwdAlignment,
 } from "./local-sessions.js";
@@ -1257,14 +1258,22 @@ export class RouteHandler {
         return;
       }
 
+      // Extract name from the local session JSONL if not explicitly provided
+      let sessionName = body.name;
+      if (!sessionName) {
+        const localMeta = await this.readLocalSessionMeta(validation.path);
+        sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
+      }
+
       const model = body.model || workspace.lastUsedModel || workspace.defaultModel;
-      const session = this.ctx.storage.createSession(body.name, model);
+      const session = this.ctx.storage.createSession(sessionName, model);
 
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
       this.ctx.storage.saveSession(session);
+      invalidateLocalSessionsCache();
 
       const hydrated = this.ctx.ensureSessionContextWindow(session);
       this.json(res, { session: hydrated }, 201);
@@ -1291,6 +1300,50 @@ export class RouteHandler {
       if (!firstLine) return null;
       const header = JSON.parse(firstLine);
       return typeof header.cwd === "string" ? header.cwd : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read name and first message from a local JSONL session (first 16KB only). */
+  private async readLocalSessionMeta(
+    filePath: string,
+  ): Promise<{ name?: string; firstMessage?: string } | null> {
+    try {
+      const content = readFileSync(filePath, "utf8").slice(0, 16384);
+      const lines = content.split("\n");
+      let name: string | undefined;
+      let firstMessage: string | undefined;
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry: Record<string, unknown>;
+        try {
+          entry = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (entry.type === "session_info") {
+          const n = entry.name;
+          if (typeof n === "string" && n.trim()) name = n.trim();
+        }
+        if (!firstMessage && entry.type === "message") {
+          const msg = entry.message as Record<string, unknown> | undefined;
+          if (msg?.role === "user") {
+            const c = msg.content;
+            if (typeof c === "string") firstMessage = c;
+            else if (Array.isArray(c)) {
+              const t = c.find(
+                (x: unknown) =>
+                  typeof x === "object" && x !== null && (x as Record<string, unknown>).type === "text",
+              ) as { text?: string } | undefined;
+              if (t?.text) firstMessage = t.text;
+            }
+          }
+        }
+        if (name && firstMessage) break;
+      }
+      return { name, firstMessage };
     } catch {
       return null;
     }
