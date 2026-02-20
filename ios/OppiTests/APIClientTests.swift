@@ -606,15 +606,15 @@ struct APIClientTests {
             let bodyData = self.requestBodyData(request)
             guard
                 let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-                let effect = json["effect"] as? String,
-                let description = json["description"] as? String
+                let decision = json["decision"] as? String,
+                let label = json["label"] as? String
             else {
                 Issue.record("Expected JSON patch body")
                 return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
             }
 
-            #expect(effect == "deny")
-            #expect(description == "Block git push")
+            #expect(decision == "deny")
+            #expect(label == "Block git push")
 
             return self.mockResponse(json: """
             {
@@ -636,15 +636,11 @@ struct APIClientTests {
         let updated = try await client.patchPolicyRule(
             ruleId: "r1",
             request: PolicyRulePatchRequest(
-                effect: "deny",
-                description: "Block git push",
+                decision: "deny",
+                label: "Block git push",
                 tool: "bash",
-                match: .init(
-                    executable: nil,
-                    domain: nil,
-                    pathPattern: nil,
-                    commandPattern: "git push*"
-                )
+                pattern: "git push*",
+                executable: nil
             )
         )
 

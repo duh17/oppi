@@ -102,6 +102,20 @@ struct WorkspaceDetailView: View {
         return server.resolvedBadgeColor
     }
 
+    /// Current workspace snapshot from the active server store.
+    ///
+    /// `WorkspaceDetailView` is pushed with a value copy, so without this
+    /// lookup the screen can show stale fields after editing (name, icon,
+    /// hostMount, model, etc.) until navigating away and back.
+    private var currentWorkspace: Workspace {
+        guard let currentServerId = connection.currentServerId,
+              let latest = connection.workspaceStore.workspacesByServer[currentServerId]?
+                .first(where: { $0.id == workspace.id }) else {
+            return workspace
+        }
+        return latest
+    }
+
     private var workspaceSessions: [Session] {
         sessionStore.sessions.filter { $0.workspaceId == workspace.id }
     }
@@ -129,7 +143,7 @@ struct WorkspaceDetailView: View {
     /// is absolute (e.g. `/Users/chenda/workspace/oppi`). We match by checking if
     /// the CWD ends with the path after `~/`.
     private var filteredLocalSessions: [LocalSession] {
-        guard let mount = workspace.hostMount, !mount.isEmpty else { return [] }
+        guard let mount = currentWorkspace.hostMount, !mount.isEmpty else { return [] }
 
         // Extract the path suffix after ~/ for matching against absolute CWDs
         let suffix: String
@@ -323,7 +337,7 @@ struct WorkspaceDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(workspace.name)
+        .navigationTitle(currentWorkspace.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .searchable(text: $sessionSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search session name")
@@ -347,18 +361,18 @@ struct WorkspaceDetailView: View {
             ToolbarItemGroup(placement: .bottomBar) {
                 Button { showEditWorkspace = true } label: {
                     HStack(spacing: 12) {
-                        WorkspaceIcon(icon: workspace.icon, size: 20)
+                        WorkspaceIcon(icon: currentWorkspace.icon, size: 20)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(workspace.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? workspace.name)
+                            Text(currentWorkspace.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? currentWorkspace.name)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.themeFg)
                                 .lineLimit(1)
                             HStack(spacing: 6) {
                                 RuntimeBadge(compact: true, icon: serverBadgeIcon, badgeColor: serverBadgeColor)
-                                Text("\(workspace.skills.count) skills")
+                                Text("\(currentWorkspace.skills.count) skills")
                                     .font(.caption2)
                                     .foregroundStyle(.themeComment)
-                                if let model = workspace.defaultModel {
+                                if let model = currentWorkspace.defaultModel {
                                     Text(model.split(separator: "/").last.map(String.init) ?? model)
                                         .font(.caption2)
                                         .foregroundStyle(.themeComment)
@@ -387,7 +401,7 @@ struct WorkspaceDetailView: View {
                 connection.gitStatusStore.loadInitial(
                     workspaceId: workspace.id,
                     apiClient: api,
-                    gitStatusEnabled: workspace.gitStatusEnabled ?? true
+                    gitStatusEnabled: currentWorkspace.gitStatusEnabled ?? true
                 )
             }
         }
@@ -407,10 +421,10 @@ struct WorkspaceDetailView: View {
             Text(error ?? "")
         }
         .navigationDestination(isPresented: $showEditWorkspace) {
-            WorkspaceEditView(workspace: workspace)
+            WorkspaceEditView(workspace: currentWorkspace)
         }
         .navigationDestination(isPresented: $showWorkspacePolicy) {
-            WorkspacePolicyView(workspace: workspace)
+            WorkspacePolicyView(workspace: currentWorkspace)
         }
     }
 
