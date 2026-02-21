@@ -1,11 +1,8 @@
 /**
- * Gate port release audit.
+ * Gate guard lifecycle.
  *
- * Verifies that gate TCP sockets are always cleaned up, even when
- * session start fails or the process exits abnormally. The gate server
- * allocates a TCP port per session — leaked ports exhaust the OS limit.
- *
- * Tests use a real GateServer on random ports to confirm socket teardown.
+ * Verifies that session guards are always cleaned up, even when
+ * session start fails or the process exits abnormally.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
@@ -35,63 +32,50 @@ afterEach(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("Gate port lifecycle", () => {
-  it("createSessionSocket allocates a port, destroySessionSocket releases it", async () => {
-    const port = await gate.createSessionSocket("s1", "u1");
+describe("Gate guard lifecycle", () => {
+  it("createGuard registers a guarded session, destroySessionGuard removes it", () => {
+    gate.createGuard("s1", "w1");
+    expect(gate.getGuardState("s1")).toBe("guarded");
 
-    expect(typeof port).toBe("number");
-    expect(port).toBeGreaterThan(0);
+    gate.destroySessionGuard("s1");
+    expect(gate.getGuardState("s1")).toBe("unguarded");
 
-    gate.destroySessionSocket("s1");
-
-    // After destroy, creating a new socket for the same session should work
-    // without EADDRINUSE.
-    const port2 = await gate.createSessionSocket("s1", "u1");
-    expect(port2).toBeGreaterThan(0);
-    gate.destroySessionSocket("s1");
+    // Re-creating after destroy should work.
+    gate.createGuard("s1", "w1");
+    expect(gate.getGuardState("s1")).toBe("guarded");
+    gate.destroySessionGuard("s1");
   });
 
-  it("destroySessionSocket is idempotent", async () => {
-    await gate.createSessionSocket("s1", "u1");
+  it("destroySessionGuard is idempotent", () => {
+    gate.createGuard("s1", "w1");
 
-    gate.destroySessionSocket("s1");
-    gate.destroySessionSocket("s1"); // should not throw
-    gate.destroySessionSocket("nonexistent"); // should not throw
+    gate.destroySessionGuard("s1");
+    gate.destroySessionGuard("s1"); // should not throw
+    gate.destroySessionGuard("nonexistent"); // should not throw
   });
 
-  it("shutdown cleans up all sessions", async () => {
-    await gate.createSessionSocket("s1", "u1");
-    await gate.createSessionSocket("s2", "u1");
-    await gate.createSessionSocket("s3", "u1");
+  it("shutdown cleans up all sessions", () => {
+    gate.createGuard("s1", "w1");
+    gate.createGuard("s2", "w1");
+    gate.createGuard("s3", "w1");
 
-    await gate.shutdown();
+    gate.shutdown();
 
-    // After shutdown, all ports freed. Creating new sockets should work.
-    const port = await gate.createSessionSocket("s1", "u1");
-    expect(port).toBeGreaterThan(0);
-    gate.destroySessionSocket("s1");
+    // After shutdown, all guards removed.
+    expect(gate.getGuardState("s1")).toBe("unguarded");
+    expect(gate.getGuardState("s2")).toBe("unguarded");
+
+    // Creating new guard should work.
+    gate.createGuard("s1", "w1");
+    expect(gate.getGuardState("s1")).toBe("guarded");
+    gate.destroySessionGuard("s1");
   });
 
-  it("multiple sessions get distinct ports", async () => {
-    const ports = new Set<number>();
-
-    for (let i = 0; i < 5; i++) {
-      const port = await gate.createSessionSocket(`s${i}`, "u1");
-      ports.add(port);
-    }
-
-    expect(ports.size).toBe(5);
-
-    for (let i = 0; i < 5; i++) {
-      gate.destroySessionSocket(`s${i}`);
-    }
-  });
-
-  it("destroy after shutdown does not throw", async () => {
-    await gate.createSessionSocket("s1", "u1");
-    await gate.shutdown();
+  it("destroy after shutdown does not throw", () => {
+    gate.createGuard("s1", "w1");
+    gate.shutdown();
 
     // Gate already cleaned up s1 in shutdown — this should be a no-op.
-    gate.destroySessionSocket("s1");
+    gate.destroySessionGuard("s1");
   });
 });

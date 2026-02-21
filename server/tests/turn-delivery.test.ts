@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
@@ -6,6 +6,7 @@ import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
+import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -33,27 +34,12 @@ function makeSession(status: Session["status"] = "ready"): Session {
   };
 }
 
-function makeProcessStub(): {
-  process: ChildProcess;
-  stdinWrite: ReturnType<typeof vi.fn>;
-} {
-  const stdinWrite = vi.fn();
-  const process = {
-    stdin: {
-      write: stdinWrite,
-      writable: true,
-    },
-    killed: false,
-  } as unknown as ChildProcess;
-
-  return { process, stdinWrite };
-}
-
 function makeManagerHarness(status: Session["status"] = "ready"): {
   manager: SessionManager;
   events: ServerMessage[];
   session: Session;
-  stdinWrite: ReturnType<typeof vi.fn>;
+  sdkBackend: ReturnType<typeof makeSdkBackendStub>["sdkBackend"];
+  prompt: ReturnType<typeof vi.fn>;
   addSessionMessage: ReturnType<typeof vi.fn>;
   getModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
   setModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
@@ -82,29 +68,27 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   } as unknown as Storage;
 
   const gate = {
-    destroySessionSocket: vi.fn(),
+    destroySessionGuard: vi.fn(),
   } as unknown as GateServer;
 
   const manager = new SessionManager(storage, gate);
 
-  // Keep tests deterministic — we don't need idle timer behavior here.
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
-  const { process, stdinWrite } = makeProcessStub();
+  const { sdkBackend, prompt } = makeSdkBackendStub();
   const session = makeSession(status);
 
   const active = {
     session,
-    process,
+    sdkBackend,
     workspaceId: "w1",
     subscribers: new Set<(msg: ServerMessage) => void>(),
-    pendingResponses: new Map(),
     pendingUIRequests: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
+    hasStreamedThinking: false,
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
-    guardCheckScheduled: true,
     seq: 0,
     eventRing: new EventRing(),
   };
@@ -121,7 +105,8 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     manager,
     events,
     session,
-    stdinWrite,
+    sdkBackend,
+    prompt,
     addSessionMessage,
     getModelThinkingLevelPreference,
     setModelThinkingLevelPreference,
@@ -148,7 +133,7 @@ function asStateEvents(events: ServerMessage[]): Array<Extract<ServerMessage, { 
 
 describe("turn delivery idempotency", () => {
   it("dedupes duplicate prompt retries by clientTurnId", async () => {
-    const { manager, events, stdinWrite, addSessionMessage, session } = makeManagerHarness("ready");
+    const { manager, events, prompt, addSessionMessage, session } = makeManagerHarness("ready");
 
     await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
@@ -163,7 +148,7 @@ describe("turn delivery idempotency", () => {
     });
 
     expect(addSessionMessage).toHaveBeenCalledTimes(1);
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
     expect(session.messageCount).toBe(1);
     expect(session.lastMessage).toBe("hello");
 
@@ -176,7 +161,7 @@ describe("turn delivery idempotency", () => {
   });
 
   it("rejects conflicting payload reuse for the same clientTurnId", async () => {
-    const { manager, events, stdinWrite, addSessionMessage } = makeManagerHarness("ready");
+    const { manager, events, prompt, addSessionMessage } = makeManagerHarness("ready");
 
     await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
@@ -193,14 +178,14 @@ describe("turn delivery idempotency", () => {
     ).rejects.toThrow("clientTurnId conflict: turn-1");
 
     expect(addSessionMessage).toHaveBeenCalledTimes(1);
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
 
     const turnAcks = asTurnAcks(events);
     expect(turnAcks).toHaveLength(2);
   });
 
   it("absorbs duplicate retry storms without duplicate persistence", async () => {
-    const { manager, events, stdinWrite, addSessionMessage } = makeManagerHarness("ready");
+    const { manager, events, prompt, addSessionMessage } = makeManagerHarness("ready");
     const key = "s1";
 
     await manager.sendPrompt("s1", "hello", {
@@ -221,11 +206,11 @@ describe("turn delivery idempotency", () => {
     }
 
     expect(addSessionMessage).toHaveBeenCalledTimes(1);
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
 
-    (manager as unknown as { handleRpcLine: (sessionKey: string, line: string) => void }).handleRpcLine(
+    (manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }).handlePiEvent(
       key,
-      JSON.stringify({ type: "agent_start" }),
+      { type: "agent_start" },
     );
 
     const startedDuplicateReqIds: string[] = [];
@@ -240,7 +225,7 @@ describe("turn delivery idempotency", () => {
     }
 
     expect(addSessionMessage).toHaveBeenCalledTimes(1);
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
 
     const duplicateAcks = asTurnAcks(events).filter((ack) => ack.duplicate);
     expect(duplicateAcks).toHaveLength(dispatchedDuplicateReqIds.length + startedDuplicateReqIds.length);
@@ -257,7 +242,7 @@ describe("turn delivery idempotency", () => {
   });
 
   it("replays latest stage on duplicate retries after turn start", async () => {
-    const { manager, events, stdinWrite } = makeManagerHarness("ready");
+    const { manager, events, prompt } = makeManagerHarness("ready");
     const key = "s1";
 
     await manager.sendPrompt("s1", "hello", {
@@ -266,9 +251,9 @@ describe("turn delivery idempotency", () => {
       timestamp: 1,
     });
 
-    (manager as unknown as { handleRpcLine: (sessionKey: string, line: string) => void }).handleRpcLine(
+    (manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }).handlePiEvent(
       key,
-      JSON.stringify({ type: "agent_start" }),
+      { type: "agent_start" },
     );
 
     await manager.sendPrompt("s1", "hello", {
@@ -277,7 +262,7 @@ describe("turn delivery idempotency", () => {
       timestamp: 2,
     });
 
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
 
     const turnAcks = asTurnAcks(events);
     const duplicateAck = turnAcks.find((ack) => ack.requestId === "req-2");

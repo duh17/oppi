@@ -1,9 +1,9 @@
 /**
- * Pi RPC event translation and session state helpers.
+ * Pi event translation and session state helpers.
  *
- * Pure/stateless functions that convert pi's JSON-lines RPC protocol
- * into the simplified ServerMessage format consumed by the iOS app.
- * Also handles session state mutation (change stats, usage, messages).
+ * Pure/stateless functions that convert pi agent events into the
+ * simplified ServerMessage format consumed by the iOS app.
+ * Also handles session state mutation (stats, usage, messages).
  *
  * Extracted from sessions.ts to keep the SessionManager focused on
  * lifecycle orchestration and wiring.
@@ -96,7 +96,7 @@ export function extractUsage(message: any): {
 }
 
 /**
- * Normalize noisy/low-level RPC errors into user-facing text.
+ * Normalize noisy/low-level SDK errors into user-facing text.
  */
 export function normalizeRpcError(command: string, error: string): string {
   const trimmed = error.trim();
@@ -158,7 +158,7 @@ export function extractMediaOutputs(contents: any[], toolCallId?: string): Serve
 }
 
 /**
- * Translate a single pi RPC event into zero or more ServerMessages.
+ * Translate a single pi agent event into zero or more ServerMessages.
  *
  * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
  * side effect (streaming state for the current turn).
