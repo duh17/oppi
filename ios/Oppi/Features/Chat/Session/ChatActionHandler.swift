@@ -41,12 +41,10 @@ final class ChatActionHandler {
     private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
-    private static let autoTitleSourceLimit = 600
     private static let autoTitleMaxLength = 48
-    private static let autoTitleMaxWords = 6
     static let autoTitleEnabledDefaultsKey = "\(AppIdentifiers.subsystem).session.autoTitle.enabled"
     private static var isAutoTitleEnabled: Bool {
-        UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: autoTitleEnabledDefaultsKey) as? Bool ?? false
     }
     private static let autoTitleInstructions = """
         You generate concise coding session titles.
@@ -58,7 +56,6 @@ final class ChatActionHandler {
         - Prefer specific nouns from the request (feature, bug, file, subsystem, tool).
         - Skip conversational filler like "please", "can you", "help me", or "I need to".
         - No quotes, markdown, emojis, or trailing punctuation.
-        - Do not add "TODO:"; the app adds TODO prefixing when needed.
         """
 
     var sendProgressText: String? {
@@ -465,7 +462,7 @@ final class ChatActionHandler {
         guard !source.isEmpty else { return }
         guard !autoTitleAttemptedSessionIds.contains(sessionId) else { return }
         guard let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
-              Self.shouldAutoTitle(session: session) else {
+              (session.name?.trimmingCharacters(in: .whitespacesAndNewlines))?.isEmpty ?? true else {
             return
         }
 
@@ -476,12 +473,12 @@ final class ChatActionHandler {
             guard let self else { return }
             defer { self.autoTitleTasksBySessionId[sessionId] = nil }
 
-            let limitedSource = String(source.prefix(Self.autoTitleSourceLimit))
+            let limitedSource = String(source.prefix(600))
             let generated = await self.generateSessionTitle(from: limitedSource)
             guard !Task.isCancelled, let generated else { return }
 
             guard var latest = sessionStore.sessions.first(where: { $0.id == sessionId }),
-                  Self.shouldAutoTitle(session: latest) else {
+                  (latest.name?.trimmingCharacters(in: .whitespacesAndNewlines))?.isEmpty ?? true else {
                 return
             }
 
@@ -502,24 +499,10 @@ final class ChatActionHandler {
         }
     }
 
-    /// Whether a session is eligible for auto-titling.
-    ///
-    /// Only checks that no name has been set. The `autoTitleAttemptedSessionIds`
-    /// guard in the caller ensures we only attempt once per session per app run.
-    /// We intentionally do NOT gate on messageCount — fast models (codex) fire
-    /// message_end events that increment the count before the auto-title logic
-    /// even gets scheduled.
-    private static func shouldAutoTitle(session: Session) -> Bool {
-        if let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
-            return false
-        }
-        return true
-    }
-
     private func generateSessionTitle(from firstMessage: String) async -> String? {
         if let hook = _generateSessionTitleForTesting {
             let candidate = await hook(firstMessage)
-            return Self.normalizeAutoTitle(candidate, sourceMessage: firstMessage)
+            return Self.normalizeTitle(candidate)
         }
 
         return await Task.detached(priority: .utility) {
@@ -528,13 +511,10 @@ final class ChatActionHandler {
     }
 
     private static func generateSessionTitleOffMain(from firstMessage: String) async -> String? {
-        let fallback = heuristicTitle(from: firstMessage)
-
         let model = SystemLanguageModel.default
-        let availability = model.availability
-        guard case .available = availability else {
-            log.error("Auto title: Foundation model not available — \(String(describing: availability), privacy: .public), fallbackLen=\(fallback?.count ?? 0, privacy: .public)")
-            return fallback
+        guard case .available = model.availability else {
+            log.error("Auto title: Foundation model not available")
+            return nil
         }
 
         let prompt = """
@@ -548,146 +528,51 @@ final class ChatActionHandler {
         do {
             let session = LanguageModelSession(instructions: autoTitleInstructions)
             let response = try await session.respond(to: prompt)
-            let raw = response.content
-            let normalized = normalizeAutoTitle(raw, sourceMessage: firstMessage)
-            log.error("Auto title: Foundation model produced rawLen=\(raw.count, privacy: .public) normalized=\(normalized != nil, privacy: .public)")
-            return normalized ?? fallback
+            return normalizeTitle(response.content)
         } catch {
-            log.error("Auto title: Foundation model error — \(error.localizedDescription, privacy: .public)")
-            return fallback
-        }
-    }
-
-    private static func heuristicTitle(from firstMessage: String) -> String? {
-        let collapsed = collapseWhitespace(firstMessage)
-        guard !collapsed.isEmpty else { return nil }
-
-        let firstLine = collapsed.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? collapsed
-        let tokens = firstLine
-            .split(whereSeparator: { $0.isWhitespace })
-            .prefix(autoTitleMaxWords)
-            .map(String.init)
-            .joined(separator: " ")
-
-        return normalizeAutoTitle(tokens, sourceMessage: firstMessage)
-    }
-
-    private static func normalizeAutoTitle(_ raw: String?, sourceMessage: String) -> String? {
-        guard var title = sanitizeTitle(raw) else { return nil }
-
-        if isTodoSessionPrompt(sourceMessage) {
-            title = ensureTodoPrefix(title)
-        }
-
-        title = limitWordCount(title, maxWords: autoTitleMaxWords)
-
-        if title.count > autoTitleMaxLength {
-            title = truncateTitle(title, maxLength: autoTitleMaxLength)
-        }
-
-        guard !title.isEmpty else { return nil }
-        return title
-    }
-
-    private static func sanitizeTitle(_ raw: String?) -> String? {
-        guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            log.error("Auto title error: \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
 
+    /// Normalize a title: first line, strip common LLM artifacts, cap length.
+    static func normalizeTitle(_ raw: String?) -> String? {
+        guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else { return nil }
+
+        // Take first line only
         if let newline = title.firstIndex(of: "\n") {
             title = String(title[..<newline])
         }
 
+        // Strip "Title:" prefix LLMs sometimes add
         title = title.replacingOccurrences(
-            of: #"(?i)^title\s*:\s*"#,
-            with: "",
-            options: .regularExpression
+            of: #"(?i)^title\s*:\s*"#, with: "", options: .regularExpression
         )
-        title = title.replacingOccurrences(
-            of: #"^\s*[-*•]\s*"#,
-            with: "",
-            options: .regularExpression
-        )
-        title = title.replacingOccurrences(
-            of: #"^\s*\d+\s*[\).:-]\s*"#,
-            with: "",
-            options: .regularExpression
-        )
-        title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`“”‘’[]() "))
+
+        // Strip wrapping quotes and trailing punctuation
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`\u{201c}\u{201d}\u{2018}\u{2019}[]() "))
         title = title.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?"))
-        title = collapseWhitespace(title)
 
-        guard !title.isEmpty else { return nil }
-        return title
-    }
+        // Collapse whitespace
+        title = title.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
 
-    private static func isTodoSessionPrompt(_ sourceMessage: String) -> Bool {
-        sourceMessage.range(
-            of: #"(?i)\b(todo|to[- ]do|task(?: list|s)?|checklist|action items?|next steps?|planning)\b"#,
-            options: .regularExpression
-        ) != nil
-    }
-
-    private static func ensureTodoPrefix(_ title: String) -> String {
-        var core = title.replacingOccurrences(
-            of: #"(?i)^(?:todo|to[- ]do|task(?: list|s)?)\s*[:\-]?\s*"#,
-            with: "",
-            options: .regularExpression
-        )
-        core = core.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !core.isEmpty else { return "TODO" }
-        return "TODO: \(core)"
-    }
-
-    private static func limitWordCount(_ text: String, maxWords: Int) -> String {
-        let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
-        guard words.count > maxWords else { return text }
-        return words.prefix(maxWords).map(String.init).joined(separator: " ")
-    }
-
-    private static func truncateTitle(_ title: String, maxLength: Int) -> String {
-        guard title.count > maxLength else { return title }
-
-        let endIndex = title.index(title.startIndex, offsetBy: maxLength)
-        var truncated = String(title[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let cutMidWord: Bool = {
-            guard endIndex < title.endIndex else { return false }
-            let next = title[endIndex]
-            let prev = title[title.index(before: endIndex)]
-            return !next.isWhitespace && !prev.isWhitespace
-        }()
-
-        if cutMidWord,
-           let lastSpace = truncated.lastIndex(where: { $0.isWhitespace }) {
-            truncated = String(truncated[..<lastSpace])
+        // Cap length at word boundary
+        if title.count > autoTitleMaxLength {
+            let endIndex = title.index(title.startIndex, offsetBy: autoTitleMaxLength)
+            title = String(title[..<endIndex])
+            if let lastSpace = title.lastIndex(where: { $0.isWhitespace }) {
+                title = String(title[..<lastSpace])
+            }
+            title = title.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
         }
 
-        truncated = truncated.trimmingCharacters(in: .whitespacesAndNewlines)
-        truncated = truncated.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?-"))
-
-        if truncated.isEmpty {
-            return String(title[..<endIndex]).trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?- "))
-        }
-
-        return truncated
+        return title.isEmpty ? nil : title
     }
 
     private static func normalizeManualSessionName(_ raw: String) -> String? {
-        var title = collapseWhitespace(raw)
-        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
-
-        if title.count > autoTitleMaxLength {
-            title = truncateTitle(title, maxLength: autoTitleMaxLength)
-        }
-
-        guard !title.isEmpty else { return nil }
-        return title
-    }
-
-    private static func collapseWhitespace(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        normalizeTitle(raw)
     }
 
     private func beginSendTracking() {

@@ -288,10 +288,8 @@ final class LiveActivityManager {
     }
 
     private func sessionLabel(for sessionId: String, sessions: [Session]) -> String {
-        if let session = sessions.first(where: { $0.id == sessionId }),
-           let name = session.name?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !name.isEmpty {
-            return name
+        if let session = sessions.first(where: { $0.id == sessionId }) {
+            return session.displayTitle
         }
         return "Session \(String(sessionId.prefix(8)))"
     }

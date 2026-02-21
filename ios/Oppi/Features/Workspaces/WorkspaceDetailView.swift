@@ -38,6 +38,7 @@ struct WorkspaceDetailView: View {
     @State private var localSessions: [LocalSession] = []
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
+    @State private var policyFallback: PolicyFallbackDecision = .allow
 
     private struct SessionLineageSummary {
         let parentSessionName: String?
@@ -115,6 +116,28 @@ struct WorkspaceDetailView: View {
             return .defaultValue
         }
         return server.resolvedBadgeColor
+    }
+
+    private var policyFallbackIconName: String {
+        switch policyFallback {
+        case .deny:
+            return "lock.fill"
+        case .ask:
+            return "hand.raised.fill"
+        case .allow:
+            return "lock.open.fill"
+        }
+    }
+
+    private var policyFallbackColor: Color {
+        switch policyFallback {
+        case .deny:
+            return .themeRed
+        case .ask:
+            return .themeOrange
+        case .allow:
+            return .themeGreen
+        }
     }
 
     /// Current workspace snapshot from the active server store.
@@ -401,17 +424,20 @@ struct WorkspaceDetailView: View {
                 }
                 Spacer()
                 Button { showWorkspacePolicy = true } label: {
-                    Image(systemName: "lock.fill")
+                    Image(systemName: policyFallbackIconName)
+                        .foregroundStyle(policyFallbackColor)
                 }
             }
         }
         .refreshable {
             await refreshSessions()
             await refreshLocalSessions()
+            await refreshPolicyFallback()
         }
         .task {
             await refreshLineage()
             await refreshLocalSessions()
+            await refreshPolicyFallback()
             if let api = connection.apiClient {
                 connection.gitStatusStore.loadInitial(
                     workspaceId: workspace.id,
@@ -439,7 +465,9 @@ struct WorkspaceDetailView: View {
             WorkspaceEditView(workspace: currentWorkspace)
         }
         .navigationDestination(isPresented: $showWorkspacePolicy) {
-            WorkspacePolicyView(workspace: currentWorkspace)
+            WorkspacePolicyView(workspace: currentWorkspace) { fallback in
+                policyFallback = fallback
+            }
         }
     }
 
@@ -550,11 +578,7 @@ struct WorkspaceDetailView: View {
     }
 
     private func sessionTitle(_ session: Session) -> String {
-        let trimmed = session.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let trimmed, !trimmed.isEmpty {
-            return trimmed
-        }
-        return "Session \(String(session.id.prefix(8)))"
+        session.displayTitle
     }
 
     private func refreshLineage() async {
@@ -731,15 +755,27 @@ struct WorkspaceDetailView: View {
             // Non-fatal — local sessions are a nice-to-have
         }
     }
+
+    private func refreshPolicyFallback() async {
+        guard let api = connection.apiClient else { return }
+        do {
+            policyFallback = try await api.getPolicyFallback()
+        } catch {
+            // Non-fatal — use cached/default icon state
+        }
+    }
 }
 
 // MARK: - Safety Policy
 
 private struct WorkspacePolicyView: View {
     let workspace: Workspace
+    let onFallbackChanged: (PolicyFallbackDecision) -> Void
 
     @Environment(ServerConnection.self) private var connection
 
+    @State private var fallbackDecision: PolicyFallbackDecision = .allow
+    @State private var isUpdatingFallback = false
     @State private var rules: [PolicyRuleRecord] = []
     @State private var auditEntries: [PolicyAuditEntry] = []
     @State private var isLoading = false
@@ -757,6 +793,23 @@ private struct WorkspacePolicyView: View {
                         Spacer()
                     }
                 }
+            }
+
+            Section("Default Fallback") {
+                Picker("When no rule matches", selection: Binding(
+                    get: { fallbackDecision },
+                    set: { newValue in
+                        guard newValue != fallbackDecision else { return }
+                        fallbackDecision = newValue
+                        Task { await updateFallbackDecision(newValue) }
+                    }
+                )) {
+                    Text("Allow").tag(PolicyFallbackDecision.allow)
+                    Text("Ask").tag(PolicyFallbackDecision.ask)
+                    Text("Deny").tag(PolicyFallbackDecision.deny)
+                }
+                .pickerStyle(.segmented)
+                .disabled(isLoading || isUpdatingFallback)
             }
 
             Section("Remembered Rules") {
@@ -937,12 +990,39 @@ private struct WorkspacePolicyView: View {
         do {
             async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
             async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
+            async let fallbackTask = api.getPolicyFallback()
 
             rules = try await rulesTask
             auditEntries = try await auditTask
+            let loadedFallback = try await fallbackTask
+            fallbackDecision = loadedFallback
+            onFallbackChanged(loadedFallback)
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func updateFallbackDecision(_ fallback: PolicyFallbackDecision) async {
+        guard let api = connection.apiClient else { return }
+
+        isUpdatingFallback = true
+        defer { isUpdatingFallback = false }
+
+        do {
+            let updatedFallback = try await api.patchPolicyFallback(fallback)
+            fallbackDecision = updatedFallback
+            onFallbackChanged(updatedFallback)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+            do {
+                let loadedFallback = try await api.getPolicyFallback()
+                fallbackDecision = loadedFallback
+                onFallbackChanged(loadedFallback)
+            } catch {
+                // Keep optimistic value if fallback reload fails.
+            }
         }
     }
 

@@ -14,7 +14,7 @@ struct SessionRow: View {
     }
 
     private var title: String {
-        session.name ?? "Session \(String(session.id.prefix(8)))"
+        session.displayTitle
     }
 
     private var modelShort: String? {

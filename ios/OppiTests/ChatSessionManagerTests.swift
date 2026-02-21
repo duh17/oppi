@@ -848,6 +848,7 @@ struct ChatSessionManagerTests {
             cost: 0,
             contextTokens: nil,
             contextWindow: nil,
+            firstMessage: nil,
             lastMessage: nil,
             thinkingLevel: nil
         )
