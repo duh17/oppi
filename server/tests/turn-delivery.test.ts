@@ -1,4 +1,3 @@
-
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
@@ -40,27 +39,22 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   session: Session;
   sdkBackend: ReturnType<typeof makeSdkBackendStub>["sdkBackend"];
   prompt: ReturnType<typeof vi.fn>;
-  addSessionMessage: ReturnType<typeof vi.fn>;
   getModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
   setModelThinkingLevelPreference: ReturnType<typeof vi.fn>;
 } {
-  const addSessionMessage = vi.fn();
   const thinkingLevelByModel = new Map<string, string>();
 
   const getModelThinkingLevelPreference = vi.fn((modelId: string) => {
     return thinkingLevelByModel.get(modelId);
   });
 
-  const setModelThinkingLevelPreference = vi.fn(
-    (modelId: string, level: string) => {
-      thinkingLevelByModel.set(modelId, level);
-    },
-  );
+  const setModelThinkingLevelPreference = vi.fn((modelId: string, level: string) => {
+    thinkingLevelByModel.set(modelId, level);
+  });
 
   const storage = {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
-    addSessionMessage,
     getModelThinkingLevelPreference,
     setModelThinkingLevelPreference,
     getWorkspace: vi.fn(() => undefined),
@@ -94,7 +88,7 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
   };
 
   const key = session.id;
-  ((manager as unknown as { active: Map<string, unknown> }).active).set(key, active);
+  (manager as unknown as { active: Map<string, unknown> }).active.set(key, active);
 
   const events: ServerMessage[] = [];
   manager.subscribe(session.id, (msg) => {
@@ -107,7 +101,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     session,
     sdkBackend,
     prompt,
-    addSessionMessage,
     getModelThinkingLevelPreference,
     setModelThinkingLevelPreference,
   };
@@ -119,7 +112,9 @@ function asTurnAcks(events: ServerMessage[]): Array<Extract<ServerMessage, { typ
   );
 }
 
-function asRpcResults(events: ServerMessage[]): Array<Extract<ServerMessage, { type: "rpc_result" }>> {
+function asRpcResults(
+  events: ServerMessage[],
+): Array<Extract<ServerMessage, { type: "rpc_result" }>> {
   return events.filter(
     (event): event is Extract<ServerMessage, { type: "rpc_result" }> => event.type === "rpc_result",
   );
@@ -133,7 +128,7 @@ function asStateEvents(events: ServerMessage[]): Array<Extract<ServerMessage, { 
 
 describe("turn delivery idempotency", () => {
   it("dedupes duplicate prompt retries by clientTurnId", async () => {
-    const { manager, events, prompt, addSessionMessage, session } = makeManagerHarness("ready");
+    const { manager, events, prompt, session } = makeManagerHarness("ready");
 
     await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
@@ -147,7 +142,6 @@ describe("turn delivery idempotency", () => {
       timestamp: 2,
     });
 
-    expect(addSessionMessage).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(session.messageCount).toBe(1);
     expect(session.lastMessage).toBe("hello");
@@ -161,7 +155,7 @@ describe("turn delivery idempotency", () => {
   });
 
   it("rejects conflicting payload reuse for the same clientTurnId", async () => {
-    const { manager, events, prompt, addSessionMessage } = makeManagerHarness("ready");
+    const { manager, events, prompt } = makeManagerHarness("ready");
 
     await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
@@ -177,7 +171,6 @@ describe("turn delivery idempotency", () => {
       }),
     ).rejects.toThrow("clientTurnId conflict: turn-1");
 
-    expect(addSessionMessage).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledTimes(1);
 
     const turnAcks = asTurnAcks(events);
@@ -185,7 +178,7 @@ describe("turn delivery idempotency", () => {
   });
 
   it("absorbs duplicate retry storms without duplicate persistence", async () => {
-    const { manager, events, prompt, addSessionMessage } = makeManagerHarness("ready");
+    const { manager, events, prompt } = makeManagerHarness("ready");
     const key = "s1";
 
     await manager.sendPrompt("s1", "hello", {
@@ -205,13 +198,11 @@ describe("turn delivery idempotency", () => {
       });
     }
 
-    expect(addSessionMessage).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledTimes(1);
 
-    (manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }).handlePiEvent(
-      key,
-      { type: "agent_start" },
-    );
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent(key, { type: "agent_start" });
 
     const startedDuplicateReqIds: string[] = [];
     for (let i = 13; i <= 20; i += 1) {
@@ -224,11 +215,12 @@ describe("turn delivery idempotency", () => {
       });
     }
 
-    expect(addSessionMessage).toHaveBeenCalledTimes(1);
     expect(prompt).toHaveBeenCalledTimes(1);
 
     const duplicateAcks = asTurnAcks(events).filter((ack) => ack.duplicate);
-    expect(duplicateAcks).toHaveLength(dispatchedDuplicateReqIds.length + startedDuplicateReqIds.length);
+    expect(duplicateAcks).toHaveLength(
+      dispatchedDuplicateReqIds.length + startedDuplicateReqIds.length,
+    );
 
     for (const requestId of dispatchedDuplicateReqIds) {
       const ack = duplicateAcks.find((event) => event.requestId === requestId);
@@ -251,10 +243,9 @@ describe("turn delivery idempotency", () => {
       timestamp: 1,
     });
 
-    (manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }).handlePiEvent(
-      key,
-      { type: "agent_start" },
-    );
+    (
+      manager as unknown as { handlePiEvent: (sessionKey: string, data: unknown) => void }
+    ).handlePiEvent(key, { type: "agent_start" });
 
     await manager.sendPrompt("s1", "hello", {
       clientTurnId: "turn-1",
@@ -273,9 +264,12 @@ describe("turn delivery idempotency", () => {
   it("refreshes and persists pi state after fork rpc succeeds", async () => {
     const { manager, events, session } = makeManagerHarness("ready");
 
-    const saveSession = vi.spyOn(manager as unknown as { persistSessionNow: (key: string, session: Session) => void }, "persistSessionNow");
+    const saveSession = vi.spyOn(
+      manager as unknown as { persistSessionNow: (key: string, session: Session) => void },
+      "persistSessionNow",
+    );
 
-    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "fork") {
         return { text: "forked", cancelled: false };
       }
@@ -290,21 +284,19 @@ describe("turn delivery idempotency", () => {
       throw new Error(`unexpected command: ${String(command.type)}`);
     });
 
-    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
+      sendCommandAsync;
 
-    await manager.forwardRpcCommand("s1",
-      { type: "fork", entryId: "msg-123" },
-      "req-fork-1",
-    );
+    await manager.forwardClientCommand("s1", { type: "fork", entryId: "msg-123" }, "req-fork-1");
 
-    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+    expect(sendCommandAsync).toHaveBeenNthCalledWith(
       1,
       "s1",
       expect.objectContaining({ type: "fork", entryId: "msg-123" }),
       30_000,
     );
 
-    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+    expect(sendCommandAsync).toHaveBeenNthCalledWith(
       2,
       "s1",
       expect.objectContaining({ type: "get_state" }),
@@ -327,16 +319,12 @@ describe("turn delivery idempotency", () => {
   });
 
   it("persists thinking preference after set_thinking_level", async () => {
-    const {
-      manager,
-      session,
-      events,
-      setModelThinkingLevelPreference,
-    } = makeManagerHarness("ready");
+    const { manager, session, events, setModelThinkingLevelPreference } =
+      makeManagerHarness("ready");
 
     session.model = "anthropic/claude-sonnet-4-0";
 
-    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "set_thinking_level") {
         return {};
       }
@@ -344,16 +332,17 @@ describe("turn delivery idempotency", () => {
       throw new Error(`unexpected command: ${String(command.type)}`);
     });
 
-    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
+      sendCommandAsync;
 
-    await manager.forwardRpcCommand("s1",
+    await manager.forwardClientCommand(
+      "s1",
       { type: "set_thinking_level", level: "high" },
       "req-thinking-1",
     );
 
     expect(session.thinkingLevel).toBe("high");
     expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      
       "anthropic/claude-sonnet-4-0",
       "high",
     );
@@ -378,7 +367,7 @@ describe("turn delivery idempotency", () => {
       return undefined;
     });
 
-    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "set_model") {
         return { provider: "anthropic", id: "claude-sonnet-4-0" };
       }
@@ -398,28 +387,34 @@ describe("turn delivery idempotency", () => {
       throw new Error(`unexpected command: ${String(command.type)}`);
     });
 
-    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
+      sendCommandAsync;
 
-    await manager.forwardRpcCommand("s1",
+    await manager.forwardClientCommand(
+      "s1",
       { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
       "req-model-1",
     );
 
-    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+    expect(sendCommandAsync).toHaveBeenNthCalledWith(
       1,
       "s1",
-      expect.objectContaining({ type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" }),
+      expect.objectContaining({
+        type: "set_model",
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-0",
+      }),
       30_000,
     );
 
-    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+    expect(sendCommandAsync).toHaveBeenNthCalledWith(
       2,
       "s1",
       expect.objectContaining({ type: "set_thinking_level", level: "minimal" }),
       8_000,
     );
 
-    expect(sendRpcCommandAsync).toHaveBeenNthCalledWith(
+    expect(sendCommandAsync).toHaveBeenNthCalledWith(
       3,
       "s1",
       expect.objectContaining({ type: "get_state" }),
@@ -429,7 +424,6 @@ describe("turn delivery idempotency", () => {
     expect(session.model).toBe("anthropic/claude-sonnet-4-0");
     expect(session.thinkingLevel).toBe("minimal");
     expect(setModelThinkingLevelPreference).toHaveBeenCalledWith(
-      
       "anthropic/claude-sonnet-4-0",
       "minimal",
     );
@@ -444,7 +438,7 @@ describe("turn delivery idempotency", () => {
 
     // Simulate pi reporting a nested-provider model via get_state.
     // The model id contains a slash (z.ai/glm-5) but the provider is "openrouter".
-    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "set_model") {
         return { provider: "openrouter", id: "z.ai/glm-5" };
       }
@@ -456,9 +450,11 @@ describe("turn delivery idempotency", () => {
       return {};
     });
 
-    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
+      sendCommandAsync;
 
-    await manager.forwardRpcCommand("s1",
+    await manager.forwardClientCommand(
+      "s1",
       { type: "set_model", provider: "openrouter", modelId: "z.ai/glm-5" },
       "req-nested-1",
     );
@@ -471,9 +467,9 @@ describe("turn delivery idempotency", () => {
   });
 
   it("does not double-prefix when model id already starts with provider", async () => {
-    const { manager, session, events } = makeManagerHarness("ready");
+    const { manager, session } = makeManagerHarness("ready");
 
-    const sendRpcCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
+    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
       if (command.type === "set_model") {
         return { provider: "anthropic", id: "claude-sonnet-4-0" };
       }
@@ -485,9 +481,11 @@ describe("turn delivery idempotency", () => {
       return {};
     });
 
-    (manager as unknown as { sendRpcCommandAsync: typeof sendRpcCommandAsync }).sendRpcCommandAsync = sendRpcCommandAsync;
+    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
+      sendCommandAsync;
 
-    await manager.forwardRpcCommand("s1",
+    await manager.forwardClientCommand(
+      "s1",
       { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
       "req-simple-1",
     );

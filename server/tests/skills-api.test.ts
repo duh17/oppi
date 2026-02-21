@@ -177,7 +177,7 @@ describe("GET /skills", () => {
 
     expect(data.skills).toHaveLength(2);
     expect(data.skills.map((s: any) => s.name).sort()).toEqual(["fetch", "search"]);
-    expect(data.skills[0].containerSafe).toBeDefined();
+    expect(data.skills[0].description).toBeDefined();
   });
 });
 

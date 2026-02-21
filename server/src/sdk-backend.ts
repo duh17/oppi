@@ -329,7 +329,7 @@ export class SdkBackend {
     };
   }
 
-  /** Full state snapshot for forwardRpcCommand responses. */
+  /** Full state snapshot for client command responses. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi state shape is heterogeneous
   getStateSnapshot(): any {
     const m = this.piSession.model;
