@@ -405,6 +405,14 @@ export class PolicyEngine {
     return this.policy.name;
   }
 
+  getDefaultAction(): PolicyDecision["action"] {
+    return this.policy.defaultAction;
+  }
+
+  setDefaultAction(action: PolicyDecision["action"]): void {
+    this.policy.defaultAction = action;
+  }
+
   // ─── Internal ───
 
   private matchesRule(rule: PolicyRule, tool: string, input: Record<string, unknown>): boolean {

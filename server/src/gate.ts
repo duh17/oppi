@@ -95,6 +95,17 @@ export class GateServer extends EventEmitter {
     this.sessionPolicies.set(sessionId, policy);
   }
 
+  getDefaultFallback(): "allow" | "ask" | "deny" {
+    return this.defaultPolicy.getDefaultAction();
+  }
+
+  setDefaultFallback(action: "allow" | "ask" | "deny"): void {
+    this.defaultPolicy.setDefaultAction(action);
+    for (const policy of this.sessionPolicies.values()) {
+      policy.setDefaultAction(action);
+    }
+  }
+
   /** Get the policy engine for a session (falls back to default). */
   private getPolicy(sessionId: string): PolicyEngine {
     return this.sessionPolicies.get(sessionId) || this.defaultPolicy;

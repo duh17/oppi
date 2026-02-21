@@ -42,6 +42,39 @@ struct UpdateWorkspaceRequest: Encodable {
 
 // MARK: - Policy Models
 
+enum PolicyFallbackDecision: String, CaseIterable, Codable, Sendable {
+    case allow
+    case ask
+    case deny
+
+    init(serverValue: String) {
+        switch serverValue {
+        case "allow":
+            self = .allow
+        case "ask":
+            self = .ask
+        case "deny", "denied", "block":
+            self = .deny
+        default:
+            self = .ask
+        }
+    }
+}
+
+struct PolicyFallbackResponse: Decodable, Sendable {
+    let fallback: PolicyFallbackDecision
+
+    enum CodingKeys: String, CodingKey {
+        case fallback
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decode(String.self, forKey: .fallback)
+        fallback = PolicyFallbackDecision(serverValue: raw)
+    }
+}
+
 struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
     let id: String
     let decision: String

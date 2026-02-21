@@ -1,6 +1,6 @@
 # Session Storage Optimization — Implementation TODO
 
-Status: Planned  
+Status: Phase 1/2 complete (manual validation in progress)  
 Owner: server/runtime  
 Updated: 2026-02-21
 
@@ -11,6 +11,7 @@ Reference decision: `docs/design/session-storage-analysis.md`
 Make Oppi session files metadata-only while keeping pi JSONL trace as the sole history source-of-truth.
 
 Non-goals:
+
 - no new sidecar message-history format
 - no fallback history cache format
 - no `/stream` protocol changes
@@ -23,8 +24,8 @@ Non-goals:
   - pi JSONL is history source-of-truth
   - `sessions/<id>.json` is metadata/index only
 - [x] Define changed-files cap target (default: 100)
-- [ ] Define post-migration success metrics:
-  - sessions dir size at current workload
+- [x] Define post-migration success metrics:
+  - sessions dir size at current workload (target: < 5 MB)
   - no reconnect/catch-up regressions
   - session list and chat history parity
 
@@ -36,13 +37,11 @@ Non-goals:
 
 - [x] Update `server/src/storage.ts`:
   - `saveSession(session)` writes `{ session }` only
-  - `getSession(sessionId)` reads both legacy and new format
-  - `listSessions()` reads both legacy and new format
-- [x] Remove/retire message-array write path:
-  - stop persisting `messages[]` in `addSessionMessage`
-  - keep function as compatibility shim or remove call sites
-- [x] Add startup migration (opportunistic, in-place):
-  - if legacy file contains `{ session, messages }`, rewrite as `{ session }`
+  - `getSession(sessionId)` reads `{ session }` only
+  - `listSessions()` reads `{ session }` only
+- [x] Remove message-array write/read paths:
+  - stop persisting `messages[]`
+  - remove related storage APIs/call sites
 
 ### Session update flow
 
@@ -51,11 +50,10 @@ Non-goals:
   - keep in-memory session counters (`messageCount`, `tokens`, `cost`, `lastMessage`) updated from live events
 - [x] Update comments in `server/src/sessions.ts` that mention SessionMessage fallback
 
-### Types and API compatibility
+### Types and API
 
-- [ ] Keep public session payload shape unchanged (`Session` fields stay)
-- [ ] Confirm no active endpoint requires persisted `messages[]` for iOS flows
-- [ ] Keep legacy decode compatibility for old files during transition
+- [x] Keep public session payload shape unchanged (`Session` fields stay)
+- [x] Confirm no active endpoint requires persisted `messages[]` for iOS flows
 
 ---
 
@@ -86,16 +84,10 @@ Non-goals:
 
 ---
 
-## Phase 3 — Optional compact git summary on session (only if needed)
+## Phase 3 — Deferred (not needed)
 
-Only implement if mobile UX needs historical git summary without opening workspace git panel.
-
-- [ ] Add minimal session-level git summary fields (if required):
-  - branch/head start/end
-  - uncommitted count end
-  - ahead/behind/stash end
-- [ ] Do **not** persist full `git_status.files` arrays in session metadata
-- [ ] Keep detailed git state in existing `git_status` API + push path
+Decision: skip compact session-level git summary fields for now.
+Current UX uses live `git_status` API/push; no additional persisted git summary is required.
 
 ---
 
@@ -104,7 +96,7 @@ Only implement if mobile UX needs historical git summary without opening workspa
 ### Automated
 
 - [ ] `cd server && npm run check`
-- [ ] Targeted server tests:
+- [x] Targeted server tests:
   - storage/session lifecycle
   - user-stream websocket/reconnect
   - protocol snapshots
@@ -113,21 +105,20 @@ Only implement if mobile UX needs historical git summary without opening workspa
 
 ### Manual
 
-- [ ] Open existing legacy sessions and verify history loads from trace
+- [x] Open existing sessions and verify history loads from trace
 - [ ] Run long codex session, ensure live streaming unchanged
 - [ ] Verify session list metadata (last activity, tokens, change stats) still updates
-- [ ] Verify changed-files overflow presentation in iOS
+- [x] Verify changed-files overflow presentation in iOS
 
 ### Operational metrics
 
-- [ ] Measure `~/.config/oppi/sessions` size before/after
+- [x] Measure `~/.config/oppi/sessions` size before/after
+  - current: 307 files, ~0.44 MB total
 - [ ] Spot-check event-loop responsiveness during heavy streaming
-- [ ] Confirm no regressions in reconnect catch-up behavior
+- [x] Confirm no regressions in reconnect catch-up behavior
 
 ---
 
-## Rollback Plan
+## Roll-forward Plan
 
-- [ ] Keep backward read compatibility for legacy files
-- [ ] Keep migration idempotent and one-way safe (`{session,messages}` -> `{session}`)
-- [ ] If regression appears, rollback write behavior while preserving read compatibility
+- [x] If regression appears, fix forward with metadata-only storage intact

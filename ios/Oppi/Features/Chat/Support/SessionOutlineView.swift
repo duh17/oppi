@@ -5,6 +5,11 @@ import SwiftUI
 /// Shows two panes:
 /// - Session Timeline: scannable timeline entries, filterable by type
 /// - Changes: centralized file-change summary (edit/write) grouped by file
+///
+/// **Performance:** Pre-computes per-item summaries and lowercased search text
+/// on appear. Filtering uses pre-lowercased `String.contains` instead of
+/// `localizedCaseInsensitiveContains`. Search is debounced at 200ms. A render
+/// window limits ForEach scope to ~200 visible items with auto-expand on scroll.
 struct SessionOutlineView: View {
     let sessionId: String
     let workspaceId: String?
@@ -16,8 +21,19 @@ struct SessionOutlineView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var filter: OutlineFilter = .all
     @State private var mode: OutlineMode = .outline
+
+    // Pre-computed outline entries — built once on appear.
+    @State private var allEntries: [OutlineEntry] = []
+    @State private var displayedEntries: [OutlineEntry] = []
+
+    private static let initialRenderWindow = 200
+    private static let renderWindowStep = 200
+    @State private var renderWindow = Self.initialRenderWindow
+
+    @State private var searchDebounceTask: Task<Void, Never>?
 
     enum OutlineMode: String, CaseIterable {
         case outline = "Session Timeline"
@@ -28,35 +44,6 @@ struct SessionOutlineView: View {
         case all = "All"
         case messages = "Messages"
         case tools = "Tools"
-    }
-
-    private var filteredItems: [ChatItem] {
-        items.filter { item in
-            switch filter {
-            case .all:
-                // Keep the list focused: hide most system-only noise,
-                // but preserve compaction markers so users can locate the boundary.
-                switch item {
-                case .permissionResolved:
-                    return false
-                case .systemEvent:
-                    return isCompactionEvent(item)
-                default:
-                    return true
-                }
-            case .messages:
-                switch item {
-                case .userMessage, .assistantMessage, .audioClip: return true
-                default: return false
-                }
-            case .tools:
-                if case .toolCall = item { return true }
-                return false
-            }
-        }.filter { item in
-            guard !searchText.isEmpty else { return true }
-            return outlineSummary(for: item).localizedCaseInsensitiveContains(searchText)
-        }
     }
 
     var body: some View {
@@ -82,7 +69,7 @@ struct SessionOutlineView: View {
                         sessionId: sessionId,
                         workspaceId: workspaceId,
                         items: items,
-                        searchText: searchText
+                        searchText: debouncedSearchText
                     )
                 }
             }
@@ -98,11 +85,132 @@ struct SessionOutlineView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task {
+                buildIndex()
+                applyFilter()
+            }
+            .onChange(of: searchText) { _, newValue in
+                searchDebounceTask?.cancel()
+                if newValue.isEmpty {
+                    // Clear search immediately for responsiveness.
+                    debouncedSearchText = ""
+                    applyFilter()
+                } else {
+                    searchDebounceTask = Task {
+                        try? await Task.sleep(for: .milliseconds(200))
+                        guard !Task.isCancelled else { return }
+                        debouncedSearchText = newValue
+                    }
+                }
+            }
+            .onChange(of: debouncedSearchText) { _, _ in
+                applyFilter()
+            }
+            .onChange(of: filter) { _, _ in
+                applyFilter()
+            }
+            .onDisappear {
+                searchDebounceTask?.cancel()
+            }
         }
     }
 
+    // MARK: - Index Building
+
+    /// Build pre-computed entries for all items. O(n) once on appear.
+    private func buildIndex() {
+        guard allEntries.isEmpty else { return }
+
+        var entries: [OutlineEntry] = []
+        entries.reserveCapacity(items.count)
+
+        for item in items {
+            let isCompaction = Self.isCompactionEvent(item)
+            let summary = outlineSummary(for: item)
+            let diffStats = outlineDiffStats(for: item)
+
+            let passesAllFilter: Bool
+            switch item {
+            case .permissionResolved:
+                passesAllFilter = false
+            case .systemEvent:
+                passesAllFilter = isCompaction
+            default:
+                passesAllFilter = true
+            }
+
+            let isMessage: Bool
+            switch item {
+            case .userMessage, .assistantMessage, .audioClip:
+                isMessage = true
+            default:
+                isMessage = false
+            }
+
+            let isTool: Bool
+            if case .toolCall = item {
+                isTool = true
+            } else {
+                isTool = false
+            }
+
+            let isForkable: Bool
+            if case .userMessage = item, UUID(uuidString: item.id) == nil {
+                isForkable = true
+            } else {
+                isForkable = false
+            }
+
+            entries.append(OutlineEntry(
+                id: item.id,
+                item: item,
+                summary: summary,
+                lowercasedSummary: summary.lowercased(),
+                diffStats: diffStats,
+                isCompaction: isCompaction,
+                isForkable: isForkable,
+                passesAllFilter: passesAllFilter,
+                isMessage: isMessage,
+                isTool: isTool
+            ))
+        }
+
+        allEntries = entries
+    }
+
+    /// Filter pre-computed entries by current filter and search text.
+    private func applyFilter() {
+        let query = debouncedSearchText.lowercased()
+
+        displayedEntries = allEntries.filter { entry in
+            // Type filter
+            switch filter {
+            case .all:
+                guard entry.passesAllFilter else { return false }
+            case .messages:
+                guard entry.isMessage else { return false }
+            case .tools:
+                guard entry.isTool else { return false }
+            }
+
+            // Search filter (pre-lowercased, no ICU overhead)
+            if !query.isEmpty {
+                return entry.lowercasedSummary.contains(query)
+            }
+            return true
+        }
+
+        // Reset render window when filter/search changes so the user
+        // starts at the top of the new result set.
+        renderWindow = Self.initialRenderWindow
+    }
+
+    // MARK: - Outline Pane
+
     @ViewBuilder
     private var outlinePane: some View {
+        let visibleCount = min(displayedEntries.count, renderWindow)
+
         VStack(spacing: 0) {
             // Filter chips
             HStack(spacing: 8) {
@@ -125,7 +233,7 @@ struct SessionOutlineView: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
-                Text("\(filteredItems.count) items")
+                Text("\(displayedEntries.count) items")
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
             }
@@ -134,72 +242,47 @@ struct SessionOutlineView: View {
 
             Divider().overlay(Color.themeComment.opacity(0.3))
 
-            // Outline list
+            // Outline list with render window
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                    ForEach(0..<visibleCount, id: \.self) { index in
+                        let entry = displayedEntries[index]
                         Button {
-                            onSelect(item.id)
+                            onSelect(entry.id)
                             dismiss()
                         } label: {
                             OutlineRow(
-                                item: item,
-                                summary: outlineSummary(for: item),
-                                diffStats: outlineDiffStats(for: item),
-                                isCompaction: isCompactionEvent(item),
-                                showDivider: index < filteredItems.count - 1
+                                item: entry.item,
+                                summary: entry.summary,
+                                diffStats: entry.diffStats,
+                                isCompaction: entry.isCompaction,
+                                showDivider: index < visibleCount - 1
                             )
                         }
                         .buttonStyle(.plain)
+                        .id(entry.id)
                         .contextMenu {
-                            if let onFork, isForkable(item) {
+                            if let onFork, entry.isForkable {
                                 Button("Fork from here", systemImage: "arrow.triangle.branch") {
-                                    onFork(item.id)
+                                    onFork(entry.id)
                                     dismiss()
                                 }
+                            }
+                        }
+                        .onAppear {
+                            // Auto-expand render window when approaching the end.
+                            if index >= visibleCount - 20,
+                               renderWindow < displayedEntries.count {
+                                renderWindow = min(
+                                    displayedEntries.count,
+                                    renderWindow + Self.renderWindowStep
+                                )
                             }
                         }
                     }
                 }
             }
         }
-    }
-
-    /// Only persisted user messages can be forked from.
-    ///
-    /// Mirrors pi CLI behavior (`get_fork_messages` returns user entry IDs).
-    /// Live in-flight rows use local UUID placeholders that the server
-    /// cannot resolve as fork ancestry entries.
-    private func isForkable(_ item: ChatItem) -> Bool {
-        guard isServerBackedEntryID(item.id) else { return false }
-        switch item {
-        case .userMessage: return true
-        default: return false
-        }
-    }
-
-    private func isServerBackedEntryID(_ id: String) -> Bool {
-        UUID(uuidString: id) == nil
-    }
-
-    private func isCompactionEvent(_ item: ChatItem) -> Bool {
-        switch item {
-        case .toolCall(_, let tool, _, _, _, _, _):
-            return ToolCallFormatting.normalized(tool) == "__compaction"
-        case .systemEvent(_, let message):
-            return isCompactionMessage(message)
-        default:
-            return false
-        }
-    }
-
-    private func isCompactionMessage(_ message: String) -> Bool {
-        let normalized = message
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        guard !normalized.isEmpty else { return false }
-        return normalized.contains("compact")
     }
 
     // MARK: - Summary Text
@@ -280,6 +363,48 @@ struct SessionOutlineView: View {
               ToolCallFormatting.isEditTool(tool) else { return nil }
         return ToolCallFormatting.editDiffStats(from: toolArgsStore.args(for: id))
     }
+
+    // MARK: - Classification Helpers
+
+    private static func isCompactionEvent(_ item: ChatItem) -> Bool {
+        switch item {
+        case .toolCall(_, let tool, _, _, _, _, _):
+            return ToolCallFormatting.normalized(tool) == "__compaction"
+        case .systemEvent(_, let message):
+            return isCompactionMessage(message)
+        default:
+            return false
+        }
+    }
+
+    private static func isCompactionMessage(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard !normalized.isEmpty else { return false }
+        return normalized.contains("compact")
+    }
+}
+
+// MARK: - Pre-computed Outline Entry
+
+/// Holds pre-computed summary, search text, and classification for each item.
+/// Built once on view appear so filtering is cheap boolean + string.contains.
+private struct OutlineEntry: Identifiable {
+    let id: String
+    let item: ChatItem
+    let summary: String
+    /// Pre-lowercased summary for fast search (avoids ICU locale overhead).
+    let lowercasedSummary: String
+    let diffStats: ToolCallFormatting.DiffStats?
+    let isCompaction: Bool
+    let isForkable: Bool
+
+    // Filter category flags
+    let passesAllFilter: Bool
+    let isMessage: Bool
+    let isTool: Bool
 }
 
 // MARK: - Outline Row

@@ -264,7 +264,7 @@ export function isDataEgress(parsed: ParsedCommand): boolean {
   return false;
 }
 
-export function evaluateSecretFileAccess(
+function evaluateSecretFileAccess(
   tool: string,
   input: Record<string, unknown>,
 ): PolicyDecision | null {

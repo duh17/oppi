@@ -27,10 +27,8 @@ npm run build
 ```bash
 oppi init                    # initialize config
 oppi serve                   # start server
-oppi pair [--host <h>]       # generate pairing QR
+oppi pair                    # generate pairing QR
 oppi status                  # show running sessions
-oppi doctor                  # check setup
-oppi token rotate            # rotate auth token
 oppi config show             # show config
 oppi config set <key> <val>  # update config
 oppi config validate         # validate config

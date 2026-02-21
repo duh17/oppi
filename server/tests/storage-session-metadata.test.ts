@@ -29,12 +29,12 @@ describe("storage session metadata format", () => {
     expect("messages" in payload).toBe(false);
   });
 
-  it("migrates legacy {session,messages} record on getSession", () => {
+  it("reads session metadata from disk", () => {
     const storage = new Storage(dir);
     const now = Date.now();
 
-    const legacySession = {
-      id: "legacy-s1",
+    const sessionRecord = {
+      id: "s1",
       status: "ready",
       createdAt: now,
       lastActivity: now,
@@ -44,57 +44,10 @@ describe("storage session metadata format", () => {
       cost: 0,
     };
 
-    const sessionPath = join(dir, "sessions", "legacy-s1.json");
-    writeFileSync(
-      sessionPath,
-      JSON.stringify(
-        {
-          session: legacySession,
-          messages: [
-            {
-              id: "m1",
-              sessionId: "legacy-s1",
-              role: "assistant",
-              content: "legacy",
-              timestamp: now,
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-    );
+    const sessionPath = join(dir, "sessions", "s1.json");
+    writeFileSync(sessionPath, JSON.stringify({ session: sessionRecord }, null, 2));
 
-    const loaded = storage.getSession("legacy-s1");
-    expect(loaded?.id).toBe("legacy-s1");
-
-    const migrated = JSON.parse(readFileSync(sessionPath, "utf-8")) as {
-      session?: { id: string };
-      messages?: unknown;
-    };
-
-    expect(migrated.session?.id).toBe("legacy-s1");
-    expect("messages" in migrated).toBe(false);
-  });
-
-  it("keeps addSessionMessage as non-persisting compatibility shim", () => {
-    const storage = new Storage(dir);
-    const session = storage.createSession("shim", "anthropic/claude-sonnet-4-0");
-
-    const added = storage.addSessionMessage(session.id, {
-      role: "assistant",
-      content: "hello",
-      timestamp: Date.now(),
-    });
-
-    expect(added.id).toBeTruthy();
-    expect(added.sessionId).toBe(session.id);
-
-    const sessionPath = join(dir, "sessions", `${session.id}.json`);
-    const payload = JSON.parse(readFileSync(sessionPath, "utf-8")) as {
-      messages?: unknown;
-    };
-
-    expect("messages" in payload).toBe(false);
+    const loaded = storage.getSession("s1");
+    expect(loaded?.id).toBe("s1");
   });
 });

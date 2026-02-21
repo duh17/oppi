@@ -203,14 +203,6 @@ export interface ApiError {
   code?: string;
 }
 
-export interface CreateSessionRequest {
-  name?: string;
-  model?: string;
-  workspaceId?: string;
-  /** Resume an existing local pi session by its JSONL path. */
-  piSessionFile?: string;
-}
-
 // ─── Local Sessions ───
 
 /** A pi TUI session discovered on the host (not yet managed by oppi). */
@@ -233,11 +225,6 @@ export interface LocalSession {
   createdAt: number;
   /** File last-modified timestamp (ms). */
   lastModified: number;
-}
-
-export interface AllowedPathEntry {
-  path: string;
-  access: "read" | "readwrite";
 }
 
 export interface CreateWorkspaceRequest {
@@ -266,19 +253,6 @@ export interface UpdateWorkspaceRequest {
   extensions?: string[];
   defaultModel?: string;
   gitStatusEnabled?: boolean;
-}
-
-export interface CreateSessionResponse {
-  session: Session;
-}
-
-export interface ListSessionsResponse {
-  sessions: Session[];
-}
-
-export interface SessionDetailResponse {
-  session: Session;
-  messages: SessionMessage[];
 }
 
 export interface ClientLogUploadEntry {
@@ -415,66 +389,6 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
      */
     sessionId?: string;
   };
-
-// ─── RPC Response Payloads ───
-
-/** Full model info from pi RPC. */
-export interface PiModel {
-  id: string;
-  name: string;
-  api: string;
-  provider: string;
-  baseUrl?: string;
-  reasoning?: boolean;
-  input?: string[];
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
-}
-
-/** Full session state from pi RPC get_state. */
-export interface PiState {
-  model: PiModel | null;
-  thinkingLevel: string;
-  isStreaming: boolean;
-  isCompacting: boolean;
-  steeringMode: string;
-  followUpMode: string;
-  sessionFile?: string;
-  sessionId?: string;
-  sessionName?: string;
-  autoCompactionEnabled: boolean;
-  messageCount: number;
-  pendingMessageCount: number;
-}
-
-/** Session token/cost stats from pi RPC. */
-export interface PiSessionStats {
-  sessionFile: string;
-  sessionId: string;
-  userMessages: number;
-  assistantMessages: number;
-  toolCalls: number;
-  toolResults: number;
-  totalMessages: number;
-  tokens: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    total: number;
-  };
-  cost: number;
-}
-
-/** Command entry from pi RPC get_commands. */
-export interface PiCommand {
-  name: string;
-  description?: string;
-  source: "extension" | "prompt" | "skill";
-  location?: "user" | "project" | "path";
-  path?: string;
-}
 
 // Server → Client
 export type ServerMessage = // ── Connection ──
@@ -617,10 +531,6 @@ export interface RegisterDeviceTokenRequest {
 export interface PairDeviceRequest {
   pairingToken: string;
   deviceName?: string;
-}
-
-export interface PairDeviceResponse {
-  deviceToken: string;
 }
 
 export interface InviteData {
