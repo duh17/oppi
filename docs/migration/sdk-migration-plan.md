@@ -1,5 +1,8 @@
 # Oppi Server: RPC-to-SDK Migration Plan
 
+> **Status: COMPLETE (2026-02-20).** All 5 phases implemented and validated.
+> Kept as historical reference.
+
 Last updated: 2026-02-20
 
 ## Goal
