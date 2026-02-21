@@ -40,7 +40,7 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
 | `maxSessionsPerWorkspace` | number | `3` | Max concurrent sessions per workspace |
 | `maxSessionsGlobal` | number | `5` | Max concurrent sessions total |
 | `approvalTimeoutMs` | number | `120000` | Permission gate timeout; `0` = no expiry |
-| `permissionGate` | boolean | `true` | Set to `false` to disable the permission gate entirely |
+| `permissionGate` | boolean | `true` | Gate on with `fallback: allow` — heuristics catch dangerous ops, everything else auto-runs |
 | `allowedCidrs` | string[] | private ranges | Source IP allowlist for HTTP + WS |
 | `thinkingLevelByModel` | object | `{}` | Per-model thinking level (e.g. `"high"`) |
 
