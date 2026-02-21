@@ -48,6 +48,7 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
     var mutatingToolCalls: Int
     var filesChanged: Int
     var changedFiles: [String]
+    var changedFilesOverflow: Int?
     var addedLines: Int
     var removedLines: Int
 }

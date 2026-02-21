@@ -325,10 +325,18 @@ private struct SelectableAttributedText: UIViewRepresentable {
 
         func textView(
             _ textView: UITextView,
-            shouldInteractWith url: URL,
-            in characterRange: NSRange,
-            interaction: UITextItemInteraction
-        ) -> Bool {
+            primaryActionFor textItem: UITextItem,
+            defaultAction: UIAction
+        ) -> UIAction? {
+            guard case let .link(url) = textItem.content else {
+                return defaultAction
+            }
+
+            return shouldOpenLinkExternally(url) ? defaultAction : nil
+        }
+
+        @MainActor
+        private func shouldOpenLinkExternally(_ url: URL) -> Bool {
             let normalizedURL = normalizedInteractionURL(url)
 
             guard let scheme = normalizedURL.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
@@ -831,7 +839,8 @@ struct TableBlockView: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: NativeTableBlockView, context: Context) -> CGSize? {
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        let fallbackWidth = uiView.window?.windowScene?.screen.bounds.width ?? uiView.bounds.width
+        let width = proposal.width ?? fallbackWidth
         let fitting = uiView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,

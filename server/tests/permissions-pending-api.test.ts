@@ -44,14 +44,8 @@ function makePending(overrides: Partial<PendingDecision> = {}): PendingDecision 
     tool: "bash",
     input: { command: "echo hello" },
     displaySummary: "Run: echo hello",
-    risk: "low",
     reason: "bash execution",
     timeoutAt: now + 60_000,
-    resolutionOptions: {
-      allowSession: true,
-      allowAlways: true,
-      denyAlways: true,
-    },
     ...overrides,
   };
 }

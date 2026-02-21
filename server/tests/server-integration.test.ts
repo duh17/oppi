@@ -8,10 +8,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { WebSocket } from "ws";
@@ -21,6 +19,9 @@ let storage: Storage;
 let server: Server;
 let baseUrl: string;
 let token: string;
+
+const authDeviceToken = "dt_test_auth_device_token";
+const pushOnlyToken = "apns_test_push_only_token";
 
 function get(path: string, auth = true): Promise<Response> {
   const headers: Record<string, string> = {};
@@ -64,38 +65,20 @@ function del(path: string, auth = true): Promise<Response> {
   return fetch(`${baseUrl}${path}`, { method: "DELETE", headers });
 }
 
-function connectGate(port: number): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection({ port, host: "127.0.0.1" }, () => resolve(socket));
-    socket.on("error", reject);
-  });
-}
-
-function sendGateMessage(
-  socket: Socket,
-  msg: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: socket });
-    rl.once("line", (line) => {
-      rl.close();
-      resolve(JSON.parse(line));
-    });
-    socket.write(JSON.stringify(msg) + "\n");
-  });
-}
-
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-server-integration-"));
   storage = new Storage(dataDir);
-  const port = 17750 + Math.floor(Math.random() * 1000);
-  const proxyPort = 17850 + Math.floor(Math.random() * 1000);
-  storage.updateConfig({ port, host: "127.0.0.1" });
+  storage.updateConfig({
+    port: 0,
+    host: "127.0.0.1",
+    authDeviceTokens: [authDeviceToken],
+    pushDeviceTokens: [pushOnlyToken],
+  });
   token = storage.ensurePaired();
-  process.env.OPPI_AUTH_PROXY_PORT = String(proxyPort);
+  process.env.OPPI_AUTH_PROXY_PORT = "0";
   server = new Server(storage);
   await server.start();
-  baseUrl = `http://127.0.0.1:${port}`;
+  baseUrl = `http://127.0.0.1:${server.port}`;
 }, 15_000);
 
 afterAll(async () => {
@@ -336,102 +319,17 @@ describe("policy API", () => {
     expect(body.error).toBe("Rule not found");
   });
 
-  it("PATCH workspace fallback hot-reloads active gate session behavior", async () => {
-    const wsRes = await post("/workspaces", { name: "policy-hot-reload", skills: [] });
+  it("workspace fallback policy endpoint is not exposed", async () => {
+    const wsRes = await post("/workspaces", { name: "policy-endpoint-check", skills: [] });
     expect(wsRes.status).toBe(201);
     const wsBody = await wsRes.json();
     const workspace = wsBody.workspace as { id: string };
 
-    const session = storage.createSession("policy-hot-reload-session");
-    session.workspaceId = workspace.id;
-    storage.saveSession(session);
+    const patchRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "allow" });
+    expect(patchRes.status).toBe(404);
 
-    const internals = server as unknown as {
-      gate: {
-        createSessionSocket: (sessionId: string, workspaceId?: string) => Promise<number>;
-        setSessionPolicy: (sessionId: string, policy: unknown) => void;
-        resolveDecision: (
-          requestId: string,
-          action: "allow" | "deny",
-          scope?: "once" | "session" | "workspace" | "global",
-          expiresInMs?: number,
-        ) => boolean;
-        destroySessionSocket: (sessionId: string) => void;
-        on: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
-        off: (event: "approval_needed", listener: (pending: { id: string; reason: string }) => void) => void;
-      };
-      sessions: {
-        isActive: (sessionId: string) => boolean;
-      };
-    };
-
-    const gate = internals.gate;
-    const sessionsManager = internals.sessions;
-    const originalIsActive = sessionsManager.isActive.bind(sessionsManager);
-    sessionsManager.isActive = (sessionId: string) =>
-      sessionId === session.id || originalIsActive(sessionId);
-
-    const gatePort = await gate.createSessionSocket(session.id, workspace.id);
-    const gateSocket = await connectGate(gatePort);
-
-    let approvals = 0;
-    const approvalListener = (pending: { id: string }) => {
-      approvals += 1;
-      setTimeout(() => {
-        gate.resolveDecision(pending.id, "allow");
-      }, 10);
-    };
-
-    try {
-      const ack = await sendGateMessage(gateSocket, {
-        type: "guard_ready",
-        sessionId: session.id,
-        extensionVersion: "1.0.0",
-      });
-      expect(ack.type).toBe("guard_ack");
-
-      gate.on("approval_needed", approvalListener);
-
-      const askRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "ask" });
-      expect(askRes.status).toBe(200);
-
-      const firstDecision = await sendGateMessage(gateSocket, {
-        type: "gate_check",
-        tool: "edit",
-        input: {
-          path: "server/tests/legacy-stream-compat.test.ts",
-          oldText: "placeholder-old",
-          newText: "placeholder-new",
-        },
-        toolCallId: "tc-hot-reload-1",
-      });
-      expect(firstDecision.action).toBe("allow");
-      expect(approvals).toBe(1);
-
-      const allowRes = await patch(`/workspaces/${workspace.id}/policy`, { fallback: "allow" });
-      expect(allowRes.status).toBe(200);
-
-      const secondDecision = await sendGateMessage(gateSocket, {
-        type: "gate_check",
-        tool: "edit",
-        input: {
-          path: "server/tests/legacy-stream-compat.test.ts",
-          oldText: "placeholder-old",
-          newText: "placeholder-new",
-        },
-        toolCallId: "tc-hot-reload-2",
-      });
-      expect(secondDecision.action).toBe("allow");
-      // Slim policy defaults unmatched requests to ask regardless of fallback.
-      expect(approvals).toBe(2);
-    } finally {
-      gate.off("approval_needed", approvalListener);
-      if (!gateSocket.destroyed) {
-        gateSocket.destroy();
-      }
-      gate.destroySessionSocket(session.id);
-      sessionsManager.isActive = originalIsActive;
-    }
+    const getRes = await get(`/workspaces/${workspace.id}/policy`);
+    expect(getRes.status).toBe(404);
   });
 
   // ── Rules CRUD ──
@@ -780,20 +678,16 @@ describe("device token API", () => {
   });
 });
 
-// ── Workspace policy ──
+// ── Workspace policy routes ──
 
-describe("workspace policy", () => {
-  it("GET /workspaces/:id/policy returns merged policy object", async () => {
+describe("workspace policy routes", () => {
+  it("GET /workspaces/:id/policy returns 404", async () => {
     const createRes = await post("/workspaces", { name: "policy-check", skills: [] });
     expect(createRes.status).toBe(201);
     const { workspace } = await createRes.json();
 
     const res = await get(`/workspaces/${workspace.id}/policy`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.workspaceId).toBe(workspace.id);
-    expect(body.effectivePolicy).toBeTypeOf("object");
-    expect(Array.isArray(body.effectivePolicy.permissions)).toBe(true);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -967,5 +861,92 @@ describe("error handling", () => {
     const { workspace } = await wsRes.json();
     const res = await get(`/workspaces/${workspace.id}/sessions/NONEXISTENT`);
     expect(res.status).toBe(404);
+  });
+});
+
+// ── Auth Token Separation ──
+
+describe("auth token separation", () => {
+  it("accepts pair-issued auth device token", async () => {
+    const res = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${authDeviceToken}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects push-only device token for API auth", async () => {
+    const res = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${pushOnlyToken}` },
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ── Pairing Token Flow ──
+
+describe("pairing token flow", () => {
+  it("issues dt token and rejects replay", async () => {
+    const pt = storage.issuePairingToken(90_000);
+
+    const first = await fetch(`${baseUrl}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { deviceToken: string };
+    expect(firstBody.deviceToken.startsWith("dt_")).toBe(true);
+
+    // Issued token works for auth
+    const auth = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${firstBody.deviceToken}` },
+    });
+    expect(auth.status).toBe(200);
+
+    // Replay rejected
+    const replay = await fetch(`${baseUrl}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+    });
+    expect(replay.status).toBe(401);
+  });
+
+  it("rejects expired pairing token", async () => {
+    const pt = storage.issuePairingToken(1_000);
+    await new Promise((r) => setTimeout(r, 1_100));
+
+    const res = await fetch(`${baseUrl}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairingToken: pt }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects missing pairingToken", async () => {
+    const res = await fetch(`${baseUrl}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rate limits repeated invalid pairing attempts", async () => {
+    let sawRateLimit = false;
+    for (let i = 0; i < 8; i++) {
+      const res = await fetch(`${baseUrl}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingToken: `pt_invalid_${i}` }),
+      });
+      if (res.status === 429) {
+        sawRateLimit = true;
+        break;
+      }
+      expect(res.status).toBe(401);
+    }
+    expect(sawRateLimit).toBe(true);
   });
 });

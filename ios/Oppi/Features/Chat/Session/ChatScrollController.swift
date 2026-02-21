@@ -41,6 +41,7 @@ final class ChatScrollController {
     /// Keyboard animation settle time — suppress auto-scroll until layout settles.
     private let keyboardSettleDuration: Duration = .milliseconds(500)
     private var keyboardTransitionUntil: ContinuousClock.Instant?
+    @ObservationIgnored
     nonisolated(unsafe) private var keyboardObservers: [NSObjectProtocol] = []
 
     /// Set by outline view to scroll to a specific item.

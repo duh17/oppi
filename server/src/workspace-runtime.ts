@@ -181,10 +181,7 @@ export class WorkspaceRuntime {
    * Execute fn under the per-workspace mutex.
    * Serializes workspace-level operations that should not race.
    */
-  async withWorkspaceLock<T>(
-    workspaceId: string,
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  async withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
     const key = workspaceId;
     let mutex = this.workspaceMutexes.get(key);
     if (!mutex) {
@@ -267,7 +264,7 @@ export class WorkspaceRuntime {
   // ─── Queries ───
 
   /** Count active sessions in a specific workspace. */
-  getWorkspaceSessionCount( workspaceId: string): number {
+  getWorkspaceSessionCount(workspaceId: string): number {
     return this.workspaceSlots.get(workspaceId)?.size ?? 0;
   }
 

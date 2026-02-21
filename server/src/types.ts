@@ -50,8 +50,10 @@ export interface SessionChangeStats {
   mutatingToolCalls: number;
   /** Unique file count mutated by edit/write tools. */
   filesChanged: number;
-  /** Deduplicated file paths changed in this session. */
+  /** Deduplicated file paths changed in this session (bounded sample). */
   changedFiles: string[];
+  /** Count of additional changed files not included in changedFiles sample. */
+  changedFilesOverflow?: number;
   /** Best-effort aggregate line additions (from edit/write args). */
   addedLines: number;
   /** Best-effort aggregate line removals (from edit args). */
@@ -487,6 +489,8 @@ export type ServerMessage = // ── Connection ──
     // ── Agent lifecycle ──
     | { type: "agent_start" }
     | { type: "agent_end" }
+    | { type: "turn_start" }
+    | { type: "turn_end" }
     | { type: "message_end"; role: "user" | "assistant"; content: string }
     // ── Streaming ──
     | { type: "text_delta"; delta: string }

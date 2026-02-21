@@ -232,8 +232,7 @@ struct UIHangHarnessView: View {
                         displaySummary: "command: rm -rf /tmp/demo",
                         reason: "Filesystem mutation requires approval",
                         timeoutAt: visualTS.addingTimeInterval(120),
-                        expires: true,
-                        resolutionOptions: nil
+                        expires: true
                     )
                 ))
 

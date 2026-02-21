@@ -42,64 +42,7 @@ struct UpdateWorkspaceRequest: Encodable {
 
 // MARK: - Policy Models
 
-struct PolicyPermissionRecord: Codable, Identifiable, Sendable {
-    struct Match: Codable, Sendable {
-        let tool: String?
-        let executable: String?
-        let commandMatches: String?
-        let pathMatches: String?
-        let pathWithin: String?
-        let domain: String?
-    }
-
-    let id: String
-    let decision: String
-    let label: String?
-    let reason: String?
-    let immutable: Bool?
-    let match: Match
-}
-
-struct PolicyConfigRecord: Codable, Sendable {
-    let schemaVersion: Int?
-    let mode: String?
-    let description: String?
-    let fallback: String
-    let guardrails: [PolicyPermissionRecord]
-    let permissions: [PolicyPermissionRecord]
-}
-
-struct WorkspacePolicyRecord: Codable, Sendable {
-    let fallback: String?
-    let permissions: [PolicyPermissionRecord]
-}
-
-struct WorkspacePolicyResponse: Decodable, Sendable {
-    let workspaceId: String
-    let globalPolicy: PolicyConfigRecord?
-    let workspacePolicy: WorkspacePolicyRecord
-    let effectivePolicy: PolicyConfigRecord
-}
-
-struct WorkspacePolicyPatchRequest: Encodable, Sendable {
-    let permissions: [PolicyPermissionRecord]?
-    let fallback: String?
-}
-
-struct WorkspacePolicyMutationResponse: Decodable, Sendable {
-    let workspace: Workspace
-    let policy: WorkspacePolicyRecord
-}
-
 struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
-    /// Legacy compatibility shape still returned by some server versions.
-    struct Match: Decodable, Sendable {
-        let executable: String?
-        let domain: String?
-        let pathPattern: String?
-        let commandPattern: String?
-    }
-
     let id: String
     let decision: String
     let tool: String?
@@ -114,15 +57,9 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
     let createdBy: String?
     let expiresAt: Date?
 
-    /// Legacy fields for old UI code paths.
-    let match: Match?
-
-    var effect: String { decision }
-    var description: String { label }
-
     enum CodingKeys: String, CodingKey {
-        case id, decision, effect, tool, pattern, executable, label, description
-        case match, scope, workspaceId, sessionId, source
+        case id, decision, tool, pattern, executable, label
+        case scope, workspaceId, sessionId, source
         case createdAt, createdBy, expiresAt
     }
 
@@ -130,38 +67,11 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
 
         id = try c.decode(String.self, forKey: .id)
-
-        let rawDecision = try c.decodeIfPresent(String.self, forKey: .decision)
-            ?? (try c.decodeIfPresent(String.self, forKey: .effect))
-            ?? "ask"
-        if rawDecision == "block" {
-            decision = "deny"
-        } else {
-            decision = rawDecision
-        }
-
+        decision = try c.decode(String.self, forKey: .decision)
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
-        match = try c.decodeIfPresent(Match.self, forKey: .match)
-
+        pattern = try c.decodeIfPresent(String.self, forKey: .pattern)
         executable = try c.decodeIfPresent(String.self, forKey: .executable)
-            ?? match?.executable
-
-        if let explicitPattern = try c.decodeIfPresent(String.self, forKey: .pattern) {
-            pattern = explicitPattern
-        } else if let commandPattern = match?.commandPattern {
-            pattern = commandPattern
-        } else if let pathPattern = match?.pathPattern {
-            pattern = pathPattern
-        } else if let domain = match?.domain {
-            pattern = "*\(domain)*"
-        } else {
-            pattern = nil
-        }
-
-        label = try c.decodeIfPresent(String.self, forKey: .label)
-            ?? (try c.decodeIfPresent(String.self, forKey: .description))
-            ?? id
-
+        label = try c.decode(String.self, forKey: .label)
         scope = try c.decode(String.self, forKey: .scope)
         workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
@@ -181,6 +91,18 @@ struct PolicyRuleRecord: Decodable, Identifiable, Sendable {
             expiresAt = nil
         }
     }
+}
+
+struct PolicyRuleCreateRequest: Encodable, Sendable {
+    let decision: String
+    let label: String?
+    let tool: String?
+    let pattern: String?
+    let executable: String?
+    let scope: String
+    let workspaceId: String?
+    let sessionId: String?
+    let expiresAt: Double?
 }
 
 struct PolicyRulePatchRequest: Encodable, Sendable {

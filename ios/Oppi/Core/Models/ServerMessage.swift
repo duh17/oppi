@@ -3,7 +3,7 @@ import Foundation
 /// Messages received from the server over WebSocket.
 ///
 /// Manual Decodable with `type` discriminator. Unknown types decode to
-/// `.unknown` instead of throwing — forward-compatible with server additions.
+/// `.unknown` instead of throwing — future server additions remain non-fatal.
 enum ServerMessage: Sendable, Equatable {
     // Connection lifecycle
     case streamConnected(userName: String)
@@ -55,7 +55,7 @@ enum ServerMessage: Sendable, Equatable {
     // Errors
     case error(message: String, code: String?, fatal: Bool)
 
-    // Forward-compatibility: unknown server message types are skipped, not fatal.
+    // Unknown server message types are skipped, not fatal.
     case unknown(type: String)
 }
 
@@ -115,7 +115,7 @@ extension ServerMessage: Decodable {
         // error
         case error, code, fatal
         // permission_request
-        case id, sessionId, input, displaySummary, timeoutAt, expires, resolutionOptions
+        case id, sessionId, input, displaySummary, timeoutAt, expires
         // extension_ui_request
         case method, title, options, message, placeholder, prefill, timeout
         // extension_ui_notification
@@ -267,8 +267,7 @@ extension ServerMessage: Decodable {
                 displaySummary: try c.decode(String.self, forKey: .displaySummary),
                 reason: try c.decode(String.self, forKey: .reason),
                 timeoutAt: Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .timeoutAt) / 1000),
-                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true,
-                resolutionOptions: try c.decodeIfPresent(PermissionResolutionOptions.self, forKey: .resolutionOptions)
+                expires: try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true
             )
             self = .permissionRequest(perm)
 
@@ -323,18 +322,22 @@ extension ServerMessage: Decodable {
 struct StreamMessage: Sendable, Equatable {
     let sessionId: String?
     let streamSeq: Int?
+    let seq: Int?
+    let currentSeq: Int?
     let message: ServerMessage
 }
 
 extension StreamMessage: Decodable {
     enum CodingKeys: String, CodingKey {
-        case sessionId, streamSeq
+        case sessionId, streamSeq, seq, currentSeq
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
         streamSeq = try c.decodeIfPresent(Int.self, forKey: .streamSeq)
+        seq = try c.decodeIfPresent(Int.self, forKey: .seq)
+        currentSeq = try c.decodeIfPresent(Int.self, forKey: .currentSeq)
         message = try ServerMessage(from: decoder)
     }
 

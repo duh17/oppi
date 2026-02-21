@@ -128,7 +128,7 @@ export class LoopbackBridgeManager {
       const server = createServer((clientSocket) => {
         const upstream = connect({ host: BRIDGE_TARGET_HOST, port: targetPort });
 
-        const closeBoth = () => {
+        const closeBoth = (): void => {
           if (!clientSocket.destroyed) {
             clientSocket.destroy();
           }
@@ -145,12 +145,12 @@ export class LoopbackBridgeManager {
         upstream.pipe(clientSocket);
       });
 
-      const onError = (err: Error) => {
+      const onError = (err: Error): void => {
         server.removeListener("listening", onListening);
         reject(err);
       };
 
-      const onListening = () => {
+      const onListening = (): void => {
         server.removeListener("error", onError);
 
         const address = server.address();

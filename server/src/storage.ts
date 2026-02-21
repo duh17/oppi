@@ -24,6 +24,7 @@ import type {
   Workspace,
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
+  PolicyHeuristics,
 } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
@@ -68,8 +69,6 @@ function defaultAllowedCidrs(): string[] {
     "fe80::/10",
   ];
 }
-
-
 
 function createDefaultConfig(dataDir: string): ServerConfig {
   return {
@@ -135,7 +134,7 @@ function normalizeConfig(
     "pairingTokenExpiresAt",
     "authDeviceTokens",
     "pushDeviceTokens",
-    "deviceTokens", // legacy alias (migrated to pushDeviceTokens)
+    "deviceTokens", // deprecated alias (migrated to pushDeviceTokens)
     "liveActivityToken",
     "thinkingLevelByModel",
   ]);
@@ -148,7 +147,10 @@ function normalizeConfig(
     }
   }
 
-  const readNumber = (key: string, opts?: { min?: number; integer?: boolean }): number | undefined => {
+  const readNumber = (
+    key: string,
+    opts?: { min?: number; integer?: boolean },
+  ): number | undefined => {
     if (!(key in obj)) {
       changed = true;
       return undefined;
@@ -215,9 +217,9 @@ function normalizeConfig(
     config.defaultModel = model;
   }
 
-  // Accept legacy "sessionTimeout" as alias for sessionIdleTimeoutMs
-  const sessionIdleTimeoutMs = readNumber("sessionIdleTimeoutMs", { min: 1 })
-    ?? readNumber("sessionTimeout", { min: 1 });
+  // Accept "sessionTimeout" as an alias for sessionIdleTimeoutMs
+  const sessionIdleTimeoutMs =
+    readNumber("sessionIdleTimeoutMs", { min: 1 }) ?? readNumber("sessionTimeout", { min: 1 });
   if (sessionIdleTimeoutMs !== undefined) {
     config.sessionIdleTimeoutMs = sessionIdleTimeoutMs;
   }
@@ -400,7 +402,6 @@ function normalizeConfig(
       decision: "allow" | "ask" | "block";
       label?: string;
       reason?: string;
-      immutable?: boolean;
       match: {
         tool?: string;
         executable?: string;
@@ -416,15 +417,7 @@ function normalizeConfig(
         return null;
       }
 
-      const allowedPermKeys = new Set([
-        "id",
-        "decision",
-        "risk",
-        "label",
-        "reason",
-        "immutable",
-        "match",
-      ]);
+      const allowedPermKeys = new Set(["id", "decision", "risk", "label", "reason", "match"]);
 
       if (strictUnknown) {
         for (const key of Object.keys(raw)) {
@@ -443,7 +436,7 @@ function normalizeConfig(
       const decision = parseDecision(raw.decision, `${permPath}.decision`);
       if (!decision) return null;
 
-      // "risk" is accepted for backwards compatibility but ignored
+      // "risk" is ignored when present.
       let label: string | undefined;
       if ("label" in raw) {
         if (typeof raw.label === "string" && raw.label.trim().length > 0) {
@@ -464,16 +457,6 @@ function normalizeConfig(
         }
       }
 
-      let immutable: boolean | undefined;
-      if ("immutable" in raw) {
-        if (typeof raw.immutable === "boolean") {
-          immutable = raw.immutable;
-        } else {
-          errors.push(`${permPath}.immutable: expected boolean`);
-          changed = true;
-        }
-      }
-
       const match = parseMatch(raw.match, `${permPath}.match`);
       if (!match) return null;
 
@@ -482,7 +465,6 @@ function normalizeConfig(
         decision,
         label,
         reason,
-        immutable,
         match,
       };
     };
@@ -536,8 +518,8 @@ function normalizeConfig(
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
     // Parse heuristics (optional — omitted means use defaults)
-    let heuristics: import("./types.js").PolicyHeuristics | undefined;
-    if ("heuristics" in value && value.heuristics != null) {
+    let heuristics: PolicyHeuristics | undefined;
+    if ("heuristics" in value && value.heuristics !== undefined && value.heuristics !== null) {
       if (!isRecord(value.heuristics)) {
         errors.push(`${path}.heuristics: expected object`);
         changed = true;
@@ -637,14 +619,21 @@ function normalizeConfig(
 
       if ("allowedCidrs" in rawSecurity) {
         if (!hasTopLevelAllowedCidrs) {
-          const parsedLegacy = parseAllowedCidrs(rawSecurity.allowedCidrs, "config.security.allowedCidrs");
+          const parsedLegacy = parseAllowedCidrs(
+            rawSecurity.allowedCidrs,
+            "config.security.allowedCidrs",
+          );
           if (parsedLegacy) {
             config.allowedCidrs = parsedLegacy;
-            warnings.push("config.security.allowedCidrs is deprecated; migrated to config.allowedCidrs.");
+            warnings.push(
+              "config.security.allowedCidrs is deprecated; migrated to config.allowedCidrs.",
+            );
             changed = true;
           }
         } else {
-          warnings.push("config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs.");
+          warnings.push(
+            "config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs.",
+          );
           changed = true;
         }
       }
@@ -670,9 +659,10 @@ function normalizeConfig(
     config.pairingToken = obj.pairingToken;
   }
 
-  if ("pairingTokenExpiresAt" in obj
-    && typeof obj.pairingTokenExpiresAt === "number"
-    && Number.isFinite(obj.pairingTokenExpiresAt)
+  if (
+    "pairingTokenExpiresAt" in obj &&
+    typeof obj.pairingTokenExpiresAt === "number" &&
+    Number.isFinite(obj.pairingTokenExpiresAt)
   ) {
     config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
   }
@@ -689,21 +679,21 @@ function normalizeConfig(
     );
   }
 
-  // Legacy migration: `deviceTokens` historically mixed push + auth semantics.
-  // Safety-first migration maps legacy values to push storage only.
+  // Migration: `deviceTokens` historically mixed push + auth semantics.
+  // Safety-first handling maps values to push storage only.
   if ("deviceTokens" in obj && Array.isArray(obj.deviceTokens)) {
-    const legacyTokens = (obj.deviceTokens as unknown[]).filter(
+    const migratedTokens = (obj.deviceTokens as unknown[]).filter(
       (t): t is string => typeof t === "string",
     );
 
-    if (legacyTokens.length > 0) {
+    if (migratedTokens.length > 0) {
       warnings.push(
         "config.deviceTokens is deprecated; migrated to config.pushDeviceTokens (not used for API auth).",
       );
       changed = true;
 
       const mergedPushTokens = [...(config.pushDeviceTokens || [])];
-      for (const token of legacyTokens) {
+      for (const token of migratedTokens) {
         if (!mergedPushTokens.includes(token)) {
           mergedPushTokens.push(token);
         }
@@ -1050,8 +1040,31 @@ export class Storage {
     return session;
   }
 
-  saveSession(session: Session): void {
+  private readSessionRecord(path: string): {
+    session?: Session;
+    messages?: SessionMessage[];
+    hasLegacyMessages: boolean;
+  } | null {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+      if (!isRecord(raw)) {
+        return null;
+      }
 
+      const session = raw.session as Session | undefined;
+      const messages = Array.isArray(raw.messages) ? (raw.messages as SessionMessage[]) : undefined;
+
+      return {
+        session,
+        messages,
+        hasLegacyMessages: messages !== undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  saveSession(session: Session): void {
     const path = this.getSessionPath(session.id);
     const dir = dirname(path);
 
@@ -1059,18 +1072,7 @@ export class Storage {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    // Load existing to preserve messages
-    let messages: SessionMessage[] = [];
-    if (existsSync(path)) {
-      try {
-        const existing = JSON.parse(readFileSync(path, "utf-8"));
-        messages = existing.messages || [];
-      } catch (err) {
-        console.error(`[storage] Corrupt session file ${path}, messages will be lost:`, err);
-      }
-    }
-
-    const payload = JSON.stringify({ session, messages }, null, 2);
+    const payload = JSON.stringify({ session }, null, 2);
     writeFileSync(path, payload, { mode: 0o600 });
   }
 
@@ -1078,13 +1080,17 @@ export class Storage {
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return undefined;
 
-    try {
-      const data = JSON.parse(readFileSync(path, "utf-8"));
-      if (!data.session) return undefined;
-      return data.session;
-    } catch {
+    const record = this.readSessionRecord(path);
+    if (!record?.session) {
       return undefined;
     }
+
+    // Opportunistic one-way migration: {session,messages} -> {session}
+    if (record.hasLegacyMessages) {
+      this.saveSession(record.session);
+    }
+
+    return record.session;
   }
 
   listSessions(): Session[] {
@@ -1096,14 +1102,19 @@ export class Storage {
     for (const file of readdirSync(baseDir)) {
       if (!file.endsWith(".json")) continue;
 
-      try {
-        const data = JSON.parse(readFileSync(join(baseDir, file), "utf-8"));
-        const session = data.session as Session | undefined;
-        if (!session) continue;
-        sessions.push(session);
-      } catch (err) {
-        console.error(`[storage] Corrupt session file ${join(baseDir, file)}, skipping:`, err);
+      const path = join(baseDir, file);
+      const record = this.readSessionRecord(path);
+      const session = record?.session;
+      if (!session) {
+        console.error(`[storage] Corrupt session file ${path}, skipping`);
+        continue;
       }
+
+      if (record.hasLegacyMessages) {
+        this.saveSession(session);
+      }
+
+      sessions.push(session);
     }
 
     // Sort by last activity (most recent first)
@@ -1114,61 +1125,22 @@ export class Storage {
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return [];
 
-    try {
-      const data = JSON.parse(readFileSync(path, "utf-8"));
-      return data.messages || [];
-    } catch {
-      return [];
-    }
+    const record = this.readSessionRecord(path);
+    if (!record) return [];
+    return record.messages || [];
   }
 
   addSessionMessage(
     sessionId: string,
     message: Omit<SessionMessage, "id" | "sessionId">,
   ): SessionMessage {
-    const path = this.getSessionPath(sessionId);
-
-    const writeDir = dirname(path);
-    if (!existsSync(writeDir)) {
-      mkdirSync(writeDir, { recursive: true, mode: 0o700 });
-    }
-
-    let data = { session: null as Session | null, messages: [] as SessionMessage[] };
-    if (existsSync(path)) {
-      try {
-        data = JSON.parse(readFileSync(path, "utf-8"));
-      } catch (err) {
-        console.error(`[storage] Corrupt session file ${path}, data will be reset:`, err);
-      }
-    }
-
-    const fullMessage: SessionMessage = {
+    // Metadata-only storage: message history source-of-truth is pi JSONL.
+    // Keep this API as a compatibility shim for in-memory/session counters.
+    return {
       ...message,
       id: generateId(8),
       sessionId,
     };
-
-    data.messages.push(fullMessage);
-
-    // Update session stats
-    if (data.session) {
-      data.session.messageCount = data.messages.length;
-      data.session.lastActivity = Date.now();
-      data.session.lastMessage = message.content.slice(0, 100);
-
-      if (message.tokens) {
-        data.session.tokens.input += message.tokens.input;
-        data.session.tokens.output += message.tokens.output;
-      }
-      if (message.cost) {
-        data.session.cost += message.cost;
-      }
-    }
-
-    const payload = JSON.stringify(data, null, 2);
-    writeFileSync(path, payload, { mode: 0o600 });
-
-    return fullMessage;
   }
 
   deleteSession(sessionId: string): boolean {
@@ -1197,7 +1169,6 @@ export class Storage {
       description: req.description,
       icon: req.icon,
       skills: req.skills,
-      policy: req.policy,
       systemPrompt: req.systemPrompt,
       hostMount: req.hostMount,
       memoryEnabled: req.memoryEnabled,
@@ -1235,24 +1206,6 @@ export class Storage {
       skills: Array.isArray(raw.skills)
         ? raw.skills.filter((skill): skill is string => typeof skill === "string")
         : [],
-      policy: (() => {
-        if (!raw.policy || typeof raw.policy !== "object") {
-          return { permissions: [] };
-        }
-
-        const policyRaw = raw.policy as Record<string, unknown>;
-        const permissions = Array.isArray(policyRaw.permissions)
-          ? (policyRaw.permissions as NonNullable<Workspace["policy"]>["permissions"])
-          : [];
-
-        const fallbackRaw = policyRaw.fallback;
-        const fallback =
-          fallbackRaw === "allow" || fallbackRaw === "ask" || fallbackRaw === "block"
-            ? fallbackRaw
-            : undefined;
-
-        return fallback ? { permissions, fallback } : { permissions };
-      })(),
       allowedPaths: Array.isArray(raw.allowedPaths)
         ? (raw.allowedPaths as Workspace["allowedPaths"])
         : undefined,
@@ -1311,10 +1264,7 @@ export class Storage {
     return workspaces.sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  updateWorkspace(
-    workspaceId: string,
-    updates: UpdateWorkspaceRequest,
-  ): Workspace | undefined {
+  updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
     const workspace = this.getWorkspace(workspaceId);
     if (!workspace) return undefined;
 
@@ -1322,7 +1272,6 @@ export class Storage {
     if (updates.description !== undefined) workspace.description = updates.description;
     if (updates.icon !== undefined) workspace.icon = updates.icon;
     if (updates.skills !== undefined) workspace.skills = updates.skills;
-    if (updates.policy !== undefined) workspace.policy = updates.policy;
     if (updates.systemPrompt !== undefined) workspace.systemPrompt = updates.systemPrompt;
     if (updates.hostMount !== undefined) workspace.hostMount = updates.hostMount;
     if (updates.memoryEnabled !== undefined) workspace.memoryEnabled = updates.memoryEnabled;
@@ -1351,39 +1300,6 @@ export class Storage {
 
     rmSync(path);
     return true;
-  }
-
-  getWorkspacePolicy(workspaceId: string): Workspace["policy"] | undefined {
-    const workspace = this.getWorkspace(workspaceId);
-    if (!workspace) return undefined;
-    return workspace.policy || { permissions: [] };
-  }
-
-  setWorkspacePolicyPermissions(
-    workspaceId: string,
-    permissions: NonNullable<Workspace["policy"]>["permissions"],
-    fallback?: NonNullable<Workspace["policy"]>["fallback"],
-  ): Workspace | undefined {
-    const workspace = this.getWorkspace(workspaceId);
-    if (!workspace) return undefined;
-
-    const nextFallback = fallback ?? workspace.policy?.fallback;
-    workspace.policy = nextFallback ? { permissions, fallback: nextFallback } : { permissions };
-    workspace.updatedAt = Date.now();
-    this.saveWorkspace(workspace);
-    return workspace;
-  }
-
-  deleteWorkspacePolicyPermission(workspaceId: string, permissionId: string): Workspace | undefined {
-    const workspace = this.getWorkspace(workspaceId);
-    if (!workspace) return undefined;
-
-    const policy = workspace.policy || { permissions: [] };
-    const next = policy.permissions.filter((p) => p.id !== permissionId);
-    workspace.policy = policy.fallback ? { permissions: next, fallback: policy.fallback } : { permissions: next };
-    workspace.updatedAt = Date.now();
-    this.saveWorkspace(workspace);
-    return workspace;
   }
 
   /**

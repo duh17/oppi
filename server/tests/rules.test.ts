@@ -65,6 +65,30 @@ describe("RuleStore", () => {
     expect(rule.label).toBe("deny rm -rf");
   });
 
+  it("normalizes single-star file globs without dropping path separator", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(
+      makeRule({
+        tool: "read",
+        pattern: "/workspace/src/*",
+      }),
+    );
+
+    expect(rule.pattern).toBe("/workspace/src/*");
+  });
+
+  it("normalizes double-star file globs with preserved separator", () => {
+    const store = new RuleStore(rulesPath);
+    const rule = store.add(
+      makeRule({
+        tool: "read",
+        pattern: "/workspace/src/**.ts",
+      }),
+    );
+
+    expect(rule.pattern).toBe("/workspace/src/**.ts");
+  });
+
   it("keeps session rules in memory only", () => {
     const store = new RuleStore(rulesPath);
     store.add(makeRule({ scope: "session", sessionId: "s1" }));
@@ -170,8 +194,8 @@ describe("RuleStore", () => {
     expect(matches).toHaveLength(1);
   });
 
-  it("dedupes duplicates on reload and migrates legacy file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-rules-legacy-"));
+  it("dedupes duplicates on reload", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-rules-dedupe-"));
     const path = join(dir, "rules.json");
 
     writeFileSync(
@@ -180,22 +204,22 @@ describe("RuleStore", () => {
         [
           {
             id: "a",
-            effect: "allow",
+            decision: "allow",
             tool: "bash",
-            match: { executable: "git" },
+            executable: "git",
             scope: "global",
             source: "learned",
-            description: "legacy",
+            label: "allow git",
             createdAt: Date.now(),
           },
           {
             id: "b",
-            effect: "allow",
+            decision: "allow",
             tool: "bash",
-            match: { executable: "git" },
+            executable: "git",
             scope: "global",
             source: "learned",
-            description: "legacy",
+            label: "allow git",
             createdAt: Date.now(),
           },
         ],

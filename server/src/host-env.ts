@@ -26,13 +26,13 @@ export function wellKnownPathDirs(): string[] {
   const home = homedir();
   const candidates = [
     // Package managers & language toolchains
-    join(home, ".local", "bin"),               // uv, pipx
-    join(home, ".cargo", "bin"),               // rust / cargo
-    join(home, ".bun", "bin"),                 // bun
-    join(home, ".yarn", "bin"),                // yarn
-    join(home, ".deno", "bin"),                // deno
-    join(home, "go", "bin"),                   // go
-    join(home, ".go", "bin"),                  // go (alt)
+    join(home, ".local", "bin"), // uv, pipx
+    join(home, ".cargo", "bin"), // rust / cargo
+    join(home, ".bun", "bin"), // bun
+    join(home, ".yarn", "bin"), // yarn
+    join(home, ".deno", "bin"), // deno
+    join(home, "go", "bin"), // go
+    join(home, ".go", "bin"), // go (alt)
     // mise / asdf shims
     join(process.env.MISE_DATA_DIR || join(home, ".local", "share", "mise"), "shims"),
     // Homebrew (macOS)
@@ -128,11 +128,7 @@ export function buildHostEnv(overrides: Record<string, string>): Record<string, 
 
   // Build PATH: env file > well-known dirs > process.env.PATH
   const wellKnown = wellKnownPathDirs().join(":");
-  env.PATH = mergePath(
-    overrides.PATH || "",
-    wellKnown,
-    process.env.PATH || "",
-  );
+  env.PATH = mergePath(overrides.PATH || "", wellKnown, process.env.PATH || "");
 
   // Apply non-PATH overrides
   for (const [key, value] of Object.entries(overrides)) {
@@ -210,23 +206,21 @@ export function envShow(): void {
   const merged = buildHostEnv(overrides);
   const hasEnvFile = existsSync(ENV_FILE_PATH);
 
-  console.log(
-    `  Env file: ${hasEnvFile ? ENV_FILE_PATH : "none (using well-known dirs only)"}`,
-  );
+  console.log(`  Env file: ${hasEnvFile ? ENV_FILE_PATH : "none (using well-known dirs only)"}`);
   console.log("");
   console.log("  PATH entries:");
 
-  const envFilePaths = new Set(
-    (overrides.PATH || "").split(":").filter(Boolean),
-  );
+  const envFilePaths = new Set((overrides.PATH || "").split(":").filter(Boolean));
 
   for (const p of (merged.PATH || "").split(":")) {
     let tier: string;
     if (envFilePaths.has(p)) {
       tier = "●"; // from env file
     } else if (
-      p.includes(".local/bin") || p.includes(".cargo/bin") ||
-      p.includes(".bun/") || p.includes("homebrew")
+      p.includes(".local/bin") ||
+      p.includes(".cargo/bin") ||
+      p.includes(".bun/") ||
+      p.includes("homebrew")
     ) {
       tier = "◆"; // well-known bootstrap
     } else {

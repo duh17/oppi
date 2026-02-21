@@ -84,27 +84,26 @@ describe("RuleStore (unified)", () => {
     expect(reloaded.getAll()[0].id).toBe(rule.id);
   });
 
-  it("loads legacy rule format from disk", () => {
-    const { store, path } = makeStore();
+  it("loads persisted rule format from disk", () => {
+    const { path } = makeStore();
 
-    // Write a legacy-format rule directly to disk (simulates old rules.json)
     writeFileSync(
       path,
       JSON.stringify([
         {
-          id: "legacy-1",
-          effect: "deny",
+          id: "r1",
+          decision: "deny",
           tool: "bash",
-          match: { commandPattern: "git push*", executable: "git" },
+          pattern: "git push*",
+          executable: "git",
+          label: "Deny pushes",
           scope: "global",
-          description: "Deny pushes",
           source: "manual",
           createdAt: Date.now(),
         },
       ]),
     );
 
-    // Force reload
     const freshStore = new RuleStore(path);
     const rules = freshStore.getAll();
     expect(rules).toHaveLength(1);
@@ -130,6 +129,55 @@ describe("RuleStore (unified)", () => {
     const reloaded = new RuleStore(path);
     expect(reloaded.getForSession("s1")).toHaveLength(0);
     expect(reloaded.getAll()).toHaveLength(0);
+  });
+
+  it("dedupes exact duplicate rules", () => {
+    const { store } = makeStore();
+
+    const first = store.add({
+      tool: "bash",
+      decision: "ask",
+      pattern: "git push*",
+      scope: "global",
+      source: "manual",
+      label: "Ask on push",
+    });
+
+    const duplicate = store.add({
+      tool: "bash",
+      decision: "ask",
+      pattern: "git push*",
+      scope: "global",
+      source: "manual",
+      label: "Ask on push",
+    });
+
+    expect(duplicate.id).toBe(first.id);
+    expect(store.getAll()).toHaveLength(1);
+  });
+
+  it("rejects conflicting decisions for the same match key", () => {
+    const { store } = makeStore();
+
+    store.add({
+      tool: "bash",
+      decision: "allow",
+      pattern: "git push*",
+      scope: "global",
+      source: "manual",
+      label: "Allow push",
+    });
+
+    expect(() =>
+      store.add({
+        tool: "bash",
+        decision: "deny",
+        pattern: "git push*",
+        scope: "global",
+        source: "manual",
+        label: "Deny push",
+      }),
+    ).toThrow(/Conflicting decision/);
   });
 });
 
@@ -163,10 +211,10 @@ describe("evaluateWithRules", () => {
     store.add({
       tool: "bash",
       decision: "allow",
-      pattern: "git push*",
+      pattern: "git *",
       scope: "global",
       source: "manual",
-      label: "Allow pushes",
+      label: "Allow git",
     });
 
     store.add({
@@ -258,19 +306,19 @@ describe("evaluateWithRules", () => {
     store.add({
       tool: "read",
       decision: "allow",
-      pattern: "/workspace/src/**",
+      pattern: "/workspace/src/**.ts",
       scope: "global",
       source: "manual",
-      label: "Allow src",
+      label: "Allow src TypeScript",
     });
 
     store.add({
       tool: "read",
       decision: "ask",
-      pattern: "/workspace/src/**",
+      pattern: "/workspace/src/**in.ts",
       scope: "global",
       source: "manual",
-      label: "Ask src",
+      label: "Ask src *in.ts",
     });
 
     const decision = engine.evaluateWithRules(
@@ -353,7 +401,7 @@ describe("evaluateWithRules", () => {
     expect(decision.action).toBe("allow");
   });
 
-  it("auto-allows read-only inspection chains", () => {
+  it("falls back to default policy for read-only inspection chains", () => {
     const { store } = makeStore();
 
     const decision = engine.evaluateWithRules(
@@ -364,7 +412,7 @@ describe("evaluateWithRules", () => {
     );
 
     expect(decision.action).toBe("allow");
-    expect(decision.reason).toContain("Read-only shell inspection");
+    expect(decision.reason).toContain("No matching rule");
   });
 
   it("does not treat mutating find invocations as read-only inspection", () => {

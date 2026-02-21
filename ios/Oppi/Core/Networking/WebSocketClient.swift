@@ -36,7 +36,7 @@ final class WebSocketClient {
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var continuation: AsyncStream<StreamMessage>.Continuation?
-    private var inboundMetaQueue: [InboundMeta] = []
+    private var inboundMetaQueueBySessionID: [String: [InboundMeta]] = [:]
 
     /// Active subscriptions tracked for resubscription after reconnect.
     /// Key: sessionId, Value: subscription level.
@@ -172,8 +172,10 @@ final class WebSocketClient {
         switch message {
         case .subscribe(let sessionId, let level, _, _):
             activeSubscriptions[sessionId] = level
+            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
         case .unsubscribe(let sessionId, _):
             activeSubscriptions.removeValue(forKey: sessionId)
+            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
         default:
             break
         }
@@ -271,7 +273,7 @@ final class WebSocketClient {
 
         continuation?.finish()
         continuation = nil
-        inboundMetaQueue.removeAll(keepingCapacity: false)
+        inboundMetaQueueBySessionID.removeAll(keepingCapacity: false)
         activeSubscriptions.removeAll()
 
         status = .disconnected
@@ -353,9 +355,23 @@ final class WebSocketClient {
                         continue
                     }
 
-                    let inboundMeta = Self.extractInboundMeta(from: text)
+                    let inboundMeta = InboundMeta(seq: streamMessage.seq, currentSeq: streamMessage.currentSeq)
                     await MainActor.run {
-                        self?.inboundMetaQueue.append(inboundMeta)
+                        guard let self,
+                              let sessionId = streamMessage.sessionId,
+                              !sessionId.isEmpty,
+                              self.activeSubscriptions[sessionId] == .full else {
+                            return
+                        }
+
+                        var queue = self.inboundMetaQueueBySessionID[sessionId] ?? []
+                        queue.append(inboundMeta)
+                        // Cap per-session queue to prevent unbounded growth if
+                        // messages arrive faster than they are consumed.
+                        if queue.count > 100 {
+                            queue.removeFirst(queue.count - 100)
+                        }
+                        self.inboundMetaQueueBySessionID[sessionId] = queue
                     }
 
                     // First successful message = connected
@@ -467,9 +483,18 @@ final class WebSocketClient {
         }
     }
 
-    func consumeInboundMeta() -> InboundMeta? {
-        guard !inboundMetaQueue.isEmpty else { return nil }
-        return inboundMetaQueue.removeFirst()
+    func consumeInboundMeta(sessionId: String) -> InboundMeta? {
+        guard var queue = inboundMetaQueueBySessionID[sessionId], !queue.isEmpty else {
+            return nil
+        }
+
+        let meta = queue.removeFirst()
+        if queue.isEmpty {
+            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
+        } else {
+            inboundMetaQueueBySessionID[sessionId] = queue
+        }
+        return meta
     }
 
     /// Exponential backoff with jitter: 2^(attempt-1) seconds, capped at 30s, ±25% jitter.
@@ -485,18 +510,6 @@ final class WebSocketClient {
         let wholeMs = Double(components.seconds) * 1_000
         let fractionalMs = Double(components.attoseconds) / 1_000_000_000_000_000
         return max(1, Int((wholeMs + fractionalMs).rounded(.up)))
-    }
-
-    private static func extractInboundMeta(from text: String) -> InboundMeta {
-        guard let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return InboundMeta(seq: nil, currentSeq: nil)
-        }
-
-        let seq = (object["seq"] as? NSNumber)?.intValue
-            ?? (object["streamSeq"] as? NSNumber)?.intValue
-        let currentSeq = (object["currentSeq"] as? NSNumber)?.intValue
-        return InboundMeta(seq: seq, currentSeq: currentSeq)
     }
 
     /// Test seam for deterministic send/reconnect behavior tests.

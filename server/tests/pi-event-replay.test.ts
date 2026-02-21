@@ -1,5 +1,5 @@
 /**
- * Pi event replay tests — feed canonical pi RPC events through translatePiEvent
+ * Pi event replay tests — feed canonical pi SDK events through translatePiEvent
  * and verify the server produces correct ServerMessage output.
  *
  * Uses protocol/pi-events.json as the fixture. If pi changes its event format,
@@ -28,10 +28,9 @@ function loadEvents(): PiEvent[] {
 function makeContext(): TranslationContext {
   return {
     sessionId: "test-session",
-    toolCallIdMap: new Map(),
     partialResults: new Map(),
-    lastToolCallId: undefined,
     streamedAssistantText: "",
+    hasStreamedThinking: false,
   };
 }
 
@@ -239,6 +238,149 @@ describe("pi event replay", () => {
     expect(messages[0].type).toBe("retry_end");
   });
 
+  // ── SDK lifecycle events ──
+
+  it("turn_start → turn_start message", () => {
+    const ctx = makeContext();
+    const event = events.find((e) => e.type === "turn_start");
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe("turn_start");
+  });
+
+  it("turn_end → turn_end message", () => {
+    const ctx = makeContext();
+    const event = events.find((e) => e.type === "turn_end");
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe("turn_end");
+  });
+
+  it("message_start → empty (structural, no client payload)", () => {
+    const ctx = makeContext();
+    const event = events.find((e) => e.type === "message_start");
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  // ── message_update sub-events ──
+
+  it("message_update start → empty (stream initialization)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "start",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update text_start → empty (bookkeeping)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "text_start",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update text_end → empty (bookkeeping)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "text_end",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update thinking_start → empty (bookkeeping)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "thinking_start",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update thinking_end → empty (bookkeeping)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "thinking_end",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update toolcall_start → empty (redundant with tool_execution_start)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "toolcall_start",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update toolcall_delta → empty (redundant with tool_execution_update)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "toolcall_delta",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update toolcall_end → empty (redundant with tool_execution_end)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "toolcall_end",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update done → empty (message_end is authoritative)", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "done",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(0);
+  });
+
+  it("message_update error → error message with stream error", () => {
+    const ctx = makeContext();
+    const event = events.find(
+      (e) => e.type === "message_update" && (e.assistantMessageEvent as { type: string })?.type === "error",
+    );
+    expect(event).toBeDefined();
+    const messages = translatePiEvent(event, ctx);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe("error");
+    const msg = messages[0] as { error: string };
+    expect(msg.error).toContain("aborted");
+  });
+
   it("full session sequence produces coherent message stream", () => {
     const ctx = makeContext();
     const allMessages: ServerMessage[] = [];
@@ -256,10 +398,18 @@ describe("pi event replay", () => {
     const types = allMessages.map((m) => m.type);
     expect(types).toContain("agent_start");
     expect(types).toContain("agent_end");
+    expect(types).toContain("turn_start");
+    expect(types).toContain("turn_end");
     expect(types).toContain("text_delta");
+    expect(types).toContain("thinking_delta");
     expect(types).toContain("tool_start");
     expect(types).toContain("tool_output");
     expect(types).toContain("tool_end");
+    expect(types).toContain("compaction_start");
+    expect(types).toContain("compaction_end");
+    expect(types).toContain("retry_start");
+    expect(types).toContain("retry_end");
+    expect(types).toContain("error"); // from message_update error sub-event
   });
 });
 

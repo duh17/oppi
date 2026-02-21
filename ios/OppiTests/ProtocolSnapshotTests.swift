@@ -65,8 +65,9 @@ final class ProtocolSnapshotTests: XCTestCase {
                 // Verify we didn't fall through to .unknown
                 switch decoded {
                 case .unknown(let type):
-                    // stream_connected is server-only (stream mux), iOS doesn't use it
-                    if type != "stream_connected" {
+                    // Server-only message types iOS intentionally ignores.
+                    let allowedUnknown: Set<String> = ["stream_connected", "turn_start", "turn_end"]
+                    if !allowedUnknown.contains(type) {
                         failures.append("\(key): decoded as .unknown(\(type))")
                     }
                 default:
@@ -118,8 +119,9 @@ final class ProtocolSnapshotTests: XCTestCase {
         let stats = session.changeStats
         XCTAssertNotNil(stats)
         XCTAssertEqual(stats?.mutatingToolCalls, 3)
-        XCTAssertEqual(stats?.filesChanged, 2)
+        XCTAssertEqual(stats?.filesChanged, 6)
         XCTAssertEqual(stats?.changedFiles, ["src/main.ts", "README.md"])
+        XCTAssertEqual(stats?.changedFilesOverflow, 4)
         XCTAssertEqual(stats?.addedLines, 45)
         XCTAssertEqual(stats?.removedLines, 12)
     }
@@ -137,10 +139,6 @@ final class ProtocolSnapshotTests: XCTestCase {
         XCTAssertEqual(perm.tool, "bash")
         XCTAssertEqual(perm.displaySummary, "Run: rm -rf node_modules")
         XCTAssertEqual(perm.reason, "Destructive file operation")
-        XCTAssertNotNil(perm.resolutionOptions)
-        XCTAssertEqual(perm.resolutionOptions?.allowSession, true)
-        XCTAssertEqual(perm.resolutionOptions?.allowAlways, true)
-        XCTAssertEqual(perm.resolutionOptions?.denyAlways, true)
     }
 
     func testExtensionUIRequest() throws {

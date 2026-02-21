@@ -32,6 +32,12 @@ final class ChatActionHandler {
     /// Test seam: override auto title generation.
     var _generateSessionTitleForTesting: ((String) async -> String?)?
 
+    /// Test seam: override stop-turn transport.
+    var _sendStopForTesting: ((ServerConnection) async throws -> Void)?
+
+    /// Test seam: override force-stop transport.
+    var _sendStopSessionForTesting: ((ServerConnection) async throws -> Void)?
+
     private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
@@ -259,22 +265,20 @@ final class ChatActionHandler {
 
         Task { @MainActor in
             do {
-                try await connection.sendStop()
+                if let sendStopHook = self._sendStopForTesting {
+                    try await sendStopHook(connection)
+                } else {
+                    try await connection.sendStop()
+                }
             } catch {
                 isStopping = false
                 reducer.process(.error(sessionId: sessionId, message: "Failed to stop: \(error.localizedDescription)"))
                 return
             }
 
-            forceStopTask = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled else { return }
-                if let status = sessionStore.sessions.first(where: { $0.id == sessionId })?.status,
-                   status == .busy || status == .stopping {
-                    showForceStop = true
-                }
-            }
-
+            // Stop-turn must never escalate to stop-session automatically.
+            // If graceful stop fails, server emits stop_failed and the session
+            // remains alive for the next prompt.
             sessionManager.reconcileAfterStop(connection: connection, sessionStore: sessionStore)
         }
     }
@@ -290,7 +294,11 @@ final class ChatActionHandler {
 
         Task { @MainActor in
             do {
-                try await connection.sendStopSession()
+                if let sendStopSessionHook = self._sendStopSessionForTesting {
+                    try await sendStopSessionHook(connection)
+                } else {
+                    try await connection.sendStopSession()
+                }
                 reducer.appendSystemEvent("Session stopped")
             } catch {
                 if let api = connection.apiClient,

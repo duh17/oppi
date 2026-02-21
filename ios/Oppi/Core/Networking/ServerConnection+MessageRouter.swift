@@ -87,10 +87,20 @@ extension ServerConnection {
 
         // Agent events → pipeline
         case .agentStart:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status != .stopping {
+                current.status = .busy
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
             coalescer.receive(.agentStart(sessionId: sessionId))
             startSilenceWatchdog()
 
         case .agentEnd:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status == .busy {
+                current.status = .ready
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
             coalescer.receive(.agentEnd(sessionId: sessionId))
             stopSilenceWatchdog()
 

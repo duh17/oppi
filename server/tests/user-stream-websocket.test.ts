@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { UserStreamMux, type StreamContext } from "../src/stream.js";
+import { UserStreamMux, startServerPing, type StreamContext } from "../src/stream.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 
 function makeSession(id: string): Session {
@@ -91,6 +91,7 @@ function makeHarness(options?: {
       catchUpComplete: boolean;
     }
   >;
+  ensureSessionContextWindow?: (session: Session) => Session;
 }): Harness {
   const sessions = options?.sessions ?? [makeSession("s1", "owner")];
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
@@ -119,11 +120,7 @@ function makeHarness(options?: {
   });
 
   const handleClientMessage = vi.fn(
-    async (
-      _session: Session,
-      _msg: ClientMessage,
-      send: (msg: ServerMessage) => void,
-    ) => {
+    async (_session: Session, _msg: ClientMessage, send: (msg: ServerMessage) => void) => {
       send({ type: "agent_start" });
     },
   );
@@ -156,7 +153,8 @@ function makeHarness(options?: {
       getPendingForUser: vi.fn(() => []),
       resolveDecision: vi.fn(() => true),
     } as unknown as StreamContext["gate"],
-    ensureSessionContextWindow: (session: Session) => session,
+    ensureSessionContextWindow:
+      options?.ensureSessionContextWindow ?? ((session: Session) => session),
     resolveWorkspaceForSession: () => undefined,
     handleClientMessage,
     trackConnection: vi.fn(),
@@ -203,10 +201,50 @@ describe("/stream websocket behavior", () => {
     harness.sessionCallbacks.get("s2")?.({ type: "agent_end" });
 
     const delivered = ws.sent.slice(base);
-    expect(delivered).toContainEqual({ type: "text_delta", delta: "active-delta", sessionId: "s1" });
+    expect(delivered).toContainEqual({
+      type: "text_delta",
+      delta: "active-delta",
+      sessionId: "s1",
+    });
     expect(delivered).toContainEqual({ type: "agent_start", sessionId: "s1" });
     expect(delivered).toContainEqual({ type: "agent_end", sessionId: "s2" });
-    expect(delivered.find((msg) => msg.type === "text_delta" && msg.sessionId === "s2")).toBeUndefined();
+    expect(
+      delivered.find((msg) => msg.type === "text_delta" && msg.sessionId === "s2"),
+    ).toBeUndefined();
+  });
+
+  it("normalizes stale context window on streamed state events", async () => {
+    const staleSession: Session = {
+      ...makeSession("s1"),
+      model: "gpt-5.3-codex/gpt-5.3-codex",
+      contextWindow: 200000,
+    };
+
+    const harness = makeHarness({
+      sessions: [staleSession],
+      ensureSessionContextWindow: (session: Session) => {
+        if (session.model?.includes("gpt-5.3-codex") && session.contextWindow === 200000) {
+          return { ...session, contextWindow: 272000 };
+        }
+        return session;
+      },
+    });
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+
+    ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
+    await flushQueue();
+
+    const callback = harness.sessionCallbacks.get("s1");
+    expect(callback).toBeTruthy();
+    callback?.({ type: "state", session: staleSession });
+
+    const latestState = [...ws.sent].reverse().find((msg) => msg.type === "state");
+    expect(latestState?.type).toBe("state");
+    if (latestState?.type === "state") {
+      expect(latestState.session.contextWindow).toBe(272000);
+    }
   });
 
   it("handles duplicate subscribe and idempotent unsubscribe", async () => {
@@ -280,45 +318,8 @@ describe("/stream websocket behavior", () => {
     ).toBeTruthy();
   });
 
-  it("drops high-volume deltas under backpressure but preserves lifecycle events", async () => {
-    const harness = makeHarness();
-    const ws = new FakeWebSocket();
-
-    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
-
-    ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
-    await flushQueue();
-
-    const callback = harness.sessionCallbacks.get("s1");
-    expect(callback).toBeTruthy();
-
-    ws.bufferedAmount = 70 * 1024;
-    const base = ws.sent.length;
-
-    callback?.({ type: "text_delta", delta: "x" });
-    callback?.({ type: "thinking_delta", delta: "y" });
-    callback?.({ type: "tool_output", output: "z" });
-    callback?.({
-      type: "permission_request",
-      id: "perm-1",
-      sessionId: "s1",
-      tool: "bash",
-      input: { command: "rm -rf /" },
-      displaySummary: "danger",
-      risk: "high",
-      reason: "needs approval",
-      timeoutAt: Date.now() + 60_000,
-      resolutionOptions: {
-        allowSession: true,
-        allowAlways: true,
-        denyAlways: true,
-      },
-    });
-    callback?.({ type: "agent_start" });
-
-    const delivered = ws.sent.slice(base);
-    expect(delivered.map((msg) => msg.type)).toEqual(["permission_request", "agent_start"]);
-  });
+  // Backpressure dropping was intentionally removed — it was dropping tool output
+  // and thinking deltas that the client needs. All events are delivered unconditionally.
 
   it("reconnect + re-subscribe with sinceSeq is deterministic", async () => {
     const catchUpEvents: ServerMessage[] = [
@@ -400,5 +401,92 @@ describe("/stream websocket behavior", () => {
     expect(normalize(ws2.sent)).toEqual(normalize(ws1.sent));
 
     expect(harness.getCatchUp).toHaveBeenCalledWith("s1", 5);
+  });
+});
+
+describe("server-side ping keepalive", () => {
+  it("terminates connection when pong is not received", async () => {
+    const pings: Array<() => void> = [];
+    let terminated = false;
+
+    const fakeWs = {
+      on: vi.fn((event: string, handler: () => void) => {
+        // Don't register a pong handler — simulates no pong
+        if (event === "pong") {
+          // Intentionally do NOT call handler — pong never fires
+        }
+      }),
+      ping: vi.fn(() => {
+        // No-op — client doesn't respond
+      }),
+      terminate: vi.fn(() => {
+        terminated = true;
+      }),
+    };
+
+    vi.useFakeTimers();
+    try {
+      const stop = startServerPing(fakeWs as unknown as WebSocket, "test", 100);
+
+      // First interval tick: alive is true → set alive=false, send ping
+      vi.advanceTimersByTime(100);
+      expect(fakeWs.ping).toHaveBeenCalledTimes(1);
+      expect(terminated).toBe(false);
+
+      // Second tick: alive is still false (no pong) → terminate
+      vi.advanceTimersByTime(100);
+      expect(terminated).toBe(true);
+      expect(fakeWs.terminate).toHaveBeenCalledTimes(1);
+
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays alive when pong is received", async () => {
+    let pongHandler: (() => void) | null = null;
+    let terminated = false;
+
+    const fakeWs = {
+      on: vi.fn((event: string, handler: () => void) => {
+        if (event === "pong") {
+          pongHandler = handler;
+        }
+      }),
+      ping: vi.fn(),
+      terminate: vi.fn(() => {
+        terminated = true;
+      }),
+    };
+
+    vi.useFakeTimers();
+    try {
+      const stop = startServerPing(fakeWs as unknown as WebSocket, "test", 100);
+
+      // Tick 1: send ping
+      vi.advanceTimersByTime(100);
+      expect(fakeWs.ping).toHaveBeenCalledTimes(1);
+
+      // Simulate pong received
+      pongHandler?.();
+
+      // Tick 2: alive was reset → send another ping (not terminate)
+      vi.advanceTimersByTime(100);
+      expect(fakeWs.ping).toHaveBeenCalledTimes(2);
+      expect(terminated).toBe(false);
+
+      // Pong again
+      pongHandler?.();
+
+      // Tick 3: still alive
+      vi.advanceTimersByTime(100);
+      expect(fakeWs.ping).toHaveBeenCalledTimes(3);
+      expect(terminated).toBe(false);
+
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

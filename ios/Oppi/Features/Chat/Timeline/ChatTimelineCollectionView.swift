@@ -137,6 +137,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         return UICollectionViewCompositionalLayout(section: section)
     }
 
+    @MainActor
     final class Coordinator: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
         private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
@@ -212,15 +213,17 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         }
 
         deinit {
-            let observedAudioPlayer = audioPlayer
-            let canceled = toolOutputLoadState.cancelAll()
-            _toolOutputCanceledCountForTesting += canceled
-            cancelAllToolOutputRetryWork()
-            NotificationCenter.default.removeObserver(
-                self,
-                name: AudioPlayerService.stateDidChangeNotification,
-                object: observedAudioPlayer
-            )
+            MainActor.assumeIsolated {
+                let observedAudioPlayer = audioPlayer
+                let canceled = toolOutputLoadState.cancelAll()
+                _toolOutputCanceledCountForTesting += canceled
+                cancelAllToolOutputRetryWork()
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: AudioPlayerService.stateDidChangeNotification,
+                    object: observedAudioPlayer
+                )
+            }
         }
 
         func configureDataSource(collectionView: UICollectionView) {
@@ -230,7 +233,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 let configureStartNs = ChatTimelinePerf.timestampNs()
                 guard let self,
                       let item = self.currentItemByID[itemID],
-                      let toolOutputStore = self.toolOutputStore,
+                      self.toolOutputStore != nil,
                       self.reducer != nil,
                       self.toolArgsStore != nil,
                       self.connection != nil,
