@@ -167,7 +167,7 @@ extension ServerConnection {
             coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
 
         // RPC results → pipeline (for model changes, stats, etc.)
-        case .rpcResult(let command, let requestId, let success, let data, let error):
+        case .commandResult(let command, let requestId, let success, let data, let error):
             handleRPCResult(
                 command: command,
                 requestId: requestId,
@@ -275,7 +275,7 @@ extension ServerConnection {
         syncThinkingLevelFromRPC(command: command, success: success, data: data)
 
         coalescer.receive(
-            .rpcResult(
+            .commandResult(
                 sessionId: sessionId,
                 command: command,
                 requestId: requestId,
