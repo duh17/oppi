@@ -320,7 +320,8 @@ export class SessionManager extends EventEmitter {
       this.runtimeManager.reserveSessionStart(identity);
 
       try {
-        const useSdk = this.config.sessionBackend === "sdk";
+        const useSdk =
+          this.config.sessionBackend === "sdk" || process.env.OPPI_SESSION_BACKEND === "sdk";
 
         let proc: ChildProcess | null = null;
         let sdkBackend: SdkBackend | undefined;
