@@ -1,71 +1,76 @@
 import SwiftUI
 
-/// Workspace management list, grouped by server.
+/// Workspace management list for a single server.
 ///
-/// Reached from Settings or workspace picker. Each server section shows
-/// its workspaces with edit/delete and a per-server create button.
+/// Reached from ServerDetailView. Shows the server's workspaces
+/// with edit/delete and a create button.
 struct WorkspaceListView: View {
+    let server: PairedServer
+
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerConnection.self) private var connection
-    @Environment(ServerStore.self) private var serverStore
-    @State private var createOnServer: PairedServer?
+    @State private var showCreate = false
+
+    private var workspaces: [Workspace] {
+        coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
+    }
 
     var body: some View {
         List {
-            ForEach(serverStore.servers) { server in
-                Section(server.name) {
-                    let workspaces = coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
-                    if workspaces.isEmpty {
-                        Text("No workspaces")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(workspaces) { workspace in
-                            NavigationLink {
-                                WorkspaceEditView(workspace: workspace)
-                                    .onAppear { coordinator.switchToServer(server) }
-                            } label: {
-                                WorkspaceRowView(
-                                    workspace: workspace,
-                                    badgeIcon: server.resolvedBadgeIcon,
-                                    badgeColor: server.resolvedBadgeColor
-                                )
-                            }
-                        }
-                        .onDelete { offsets in
-                            Task { await deleteWorkspaces(at: offsets, serverId: server.id) }
-                        }
-                    }
+            ForEach(workspaces) { workspace in
+                NavigationLink {
+                    WorkspaceEditView(workspace: workspace)
+                        .onAppear { coordinator.switchToServer(server) }
+                } label: {
+                    WorkspaceRowView(
+                        workspace: workspace,
+                        badgeIcon: server.resolvedBadgeIcon,
+                        badgeColor: server.resolvedBadgeColor
+                    )
                 }
+            }
+            .onDelete { offsets in
+                Task { await deleteWorkspaces(at: offsets) }
             }
         }
         .navigationTitle("Workspaces")
-        .sheet(item: $createOnServer) { server in
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showCreate = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showCreate) {
             WorkspaceCreateView(server: server)
         }
         .refreshable {
-            await coordinator.refreshAllServers()
+            if let conn = coordinator.connection(for: server.id),
+               let api = conn.apiClient {
+                await conn.workspaceStore.loadServer(serverId: server.id, api: api)
+            }
         }
         .overlay {
-            if serverStore.servers.allSatisfy({ (coordinator.connection(for: $0.id)?.workspaceStore.workspaces ?? []).isEmpty }) {
+            if workspaces.isEmpty {
                 ContentUnavailableView(
                     "No Workspaces",
                     systemImage: "square.grid.2x2",
-                    description: Text("Tap + on a server section to create one.")
+                    description: Text("Tap + to create one.")
                 )
             }
         }
     }
 
-    private func deleteWorkspaces(at offsets: IndexSet, serverId: String) async {
-        guard let conn = coordinator.connection(for: serverId) else { return }
-        let workspaces = conn.workspaceStore.workspaces
+    private func deleteWorkspaces(at offsets: IndexSet) async {
+        guard let conn = coordinator.connection(for: server.id) else { return }
         guard let api = conn.apiClient else { return }
         let toDelete = offsets.map { workspaces[$0] }
 
         // Optimistic removal
         for workspace in toDelete {
-            conn.workspaceStore.remove(id: workspace.id, serverId: serverId)
+            conn.workspaceStore.remove(id: workspace.id, serverId: server.id)
         }
 
         // Server-side delete
