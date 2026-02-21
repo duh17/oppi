@@ -7,7 +7,6 @@ If you find a security issue, open an issue on GitHub.
 ## Privacy
 
 - No user accounts or personal data collected
-- No analytics or telemetry — the server has zero phone-home behavior
+- No analytics or telemetry
 - Sentry crash reporting on iOS is disabled by default
-- All data stays on your machine
 - See [`ios/Oppi/Resources/PrivacyInfo.xcprivacy`](ios/Oppi/Resources/PrivacyInfo.xcprivacy) for the Apple Privacy Manifest
