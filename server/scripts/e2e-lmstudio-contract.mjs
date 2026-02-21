@@ -291,6 +291,10 @@ function requireEventOrder(before, after, label) {
   }
 }
 
+function isCommandResultType(type) {
+  return type === "command_result" || type === "rpc_result";
+}
+
 function validateContractResult(result) {
   const events = result.events;
   const connected = findFirst(events, (e) => e.direction === "in" && e.type === "connected");
@@ -302,7 +306,7 @@ function validateContractResult(result) {
     events,
     (e) =>
       e.direction === "in" &&
-      e.type === "rpc_result" &&
+      isCommandResultType(e.type) &&
       e.requestId === PROMPT_REQUEST_ID &&
       e.success === true,
   );
@@ -587,7 +591,7 @@ async function subscribeUserStreamSession(connection, { sessionId, sinceSeq, req
     connection,
     (event) =>
       event.direction === "in"
-      && event.type === "rpc_result"
+      && isCommandResultType(event.type)
       && event.command === "subscribe"
       && event.requestId === requestId
       && event.sessionId === sessionId,
@@ -637,7 +641,7 @@ async function sendUserStreamPrompt(connection, { sessionId, requestId, message 
     connection,
     (event) =>
       event.direction === "in"
-      && event.type === "rpc_result"
+      && isCommandResultType(event.type)
       && event.requestId === requestId
       && event.command === "prompt"
       && event.sessionId === sessionId,
@@ -685,7 +689,7 @@ async function sendUserStreamCommandAndWaitRpc(
     connection,
     (event) =>
       event.direction === "in"
-      && event.type === "rpc_result"
+      && isCommandResultType(event.type)
       && event.requestId === requestId
       && event.command === type
       && event.sessionId === sessionId,
@@ -1073,7 +1077,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "prompt"
         && event.requestId === "req-turn-dedupe-1"
         && event.sessionId === sessionId,
@@ -1120,7 +1124,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "prompt"
         && event.requestId === "req-turn-dedupe-2"
         && event.sessionId === sessionId,
@@ -1155,7 +1159,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "prompt"
         && event.requestId === "req-turn-conflict-1"
         && event.sessionId === sessionId,
@@ -1216,7 +1220,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "prompt"
         && event.requestId === "req-stop-long-prompt"
         && event.sessionId === sessionId,
@@ -1253,7 +1257,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "stop"
         && event.requestId === "req-stop-1"
         && event.sessionId === sessionId,
@@ -1277,7 +1281,7 @@ async function runUserStreamTurnAndStopContract({ streamWsUrl, deviceToken, sess
       stream,
       (event) =>
         event.direction === "in"
-        && event.type === "rpc_result"
+        && isCommandResultType(event.type)
         && event.command === "stop"
         && event.requestId === "req-stop-2"
         && event.sessionId === sessionId,
@@ -1544,7 +1548,7 @@ async function runWebSocketContract({ wsUrl, deviceToken, expectedSessionId }) {
         return;
       }
 
-      if (type === "rpc_result" && msg.requestId === PROMPT_REQUEST_ID) {
+      if (isCommandResultType(type) && msg.requestId === PROMPT_REQUEST_ID) {
         if (msg.success !== true) {
           done(makeError(`prompt rpc_result not successful: ${msg.error || "unknown"}`));
           return;
