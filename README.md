@@ -31,12 +31,18 @@ The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly —
 
 ```bash
 git clone https://github.com/duh17/Oppi.git
-cd oppi/server
+cd Oppi/server
 npm install
-npm start
+npm run build
+npm link
 ```
 
 Requires Node.js 20+ and a [pi](https://github.com/badlogic/pi-mono) auth setup (`pi login`).
+
+```bash
+oppi init      # first-time setup
+oppi serve     # start server
+```
 
 Pair your phone:
 
@@ -44,10 +50,10 @@ Pair your phone:
 oppi pair
 ```
 
-Scan the QR in the iOS app. If your phone and server aren't on the same network:
+Scan the QR in the iOS app. Your phone and server need to be on the same local network. If they aren't, pass a reachable hostname:
 
 ```bash
-oppi pair --host my-mac.tailnet.ts.net
+oppi pair --host my-machine.local
 ```
 
 ## Commands

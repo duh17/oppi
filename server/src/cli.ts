@@ -119,7 +119,8 @@ function getLocalIp(): string | null {
 
 function resolveInviteHost(hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
-  return getTailscaleHostname() || getTailscaleIp() || getLocalHostname() || getLocalIp();
+  // Prefer local network; fall back to Tailscale if no LAN host found.
+  return getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
 }
 
 function shortHostLabel(host: string): string {
@@ -139,9 +140,8 @@ async function cmdServe(storage: Storage): Promise<void> {
   const localHostname = getLocalHostname();
   const localIp = getLocalIp();
 
-  if (!tailscaleHostname && !tailscaleIp) {
-    console.log(c.yellow("  ⚠️  Tailscale not connected (local network still works)"));
-    console.log(c.dim("     Run 'tailscale up' if you want remote/tailnet access"));
+  if (tailscaleHostname || tailscaleIp) {
+    console.log(c.dim("  Tailscale detected — remote access available"));
     console.log("");
   }
 
@@ -188,17 +188,17 @@ async function cmdServe(storage: Storage): Promise<void> {
   await server.start();
 
   console.log("");
-  if (tailscaleHostname) {
-    console.log(`  Tailscale: ${c.cyan(tailscaleHostname)}:${config.port}`);
-  }
-  if (tailscaleIp) {
-    console.log(`  Tail IP:   ${c.dim(tailscaleIp)}:${config.port}`);
-  }
   if (localHostname) {
-    console.log(`  Local:     ${c.dim(localHostname)}:${config.port}`);
+    console.log(`  Local:     ${c.cyan(localHostname)}:${config.port}`);
   }
   if (localIp) {
     console.log(`  LAN IP:    ${c.dim(localIp)}:${config.port}`);
+  }
+  if (tailscaleHostname) {
+    console.log(`  Tailscale: ${c.dim(tailscaleHostname)}:${config.port}`);
+  }
+  if (tailscaleIp) {
+    console.log(`  Tail IP:   ${c.dim(tailscaleIp)}:${config.port}`);
   }
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
@@ -238,8 +238,8 @@ async function cmdPair(
 
   if (hostOverride?.trim()) {
     console.log(c.dim(`  (using host override: ${inviteHost})`));
-  } else if (!inviteHost.endsWith(".ts.net")) {
-    console.log(c.dim(`  (using local-network host: ${inviteHost})`));
+  } else {
+    console.log(c.dim(`  (auto-detected host: ${inviteHost})`));
   }
 
   // Build unsigned v3 pairing payload.
@@ -320,16 +320,6 @@ function cmdStatus(storage: Storage): void {
   console.log(`  Data:       ${c.dim(storage.getDataDir())}`);
   console.log("");
 
-  console.log("  " + c.bold("Tailscale"));
-  console.log("");
-  if (hostname) {
-    console.log(`  Hostname:  ${c.green(hostname)}`);
-    console.log(`  IP:        ${ip || c.dim("unknown")}`);
-  } else {
-    console.log(`  Status:    ${c.yellow("Not connected")}`);
-  }
-  console.log("");
-
   console.log("  " + c.bold("Local Network"));
   console.log("");
   if (localHostname || localIp) {
@@ -337,6 +327,16 @@ function cmdStatus(storage: Storage): void {
     console.log(`  IP:        ${localIp || c.dim("unknown")}`);
   } else {
     console.log(`  Status:    ${c.yellow("No active LAN interface detected")}`);
+  }
+  console.log("");
+
+  console.log("  " + c.bold("Tailscale"));
+  console.log("");
+  if (hostname) {
+    console.log(`  Hostname:  ${c.green(hostname)}`);
+    console.log(`  IP:        ${ip || c.dim("unknown")}`);
+  } else {
+    console.log(`  Status:    ${c.dim("Not connected")}`);
   }
   console.log("");
 

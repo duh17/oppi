@@ -192,7 +192,7 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
 
   if (wildcardBind) {
     warnings.push(
-      `host=${config.host} listens on all interfaces; ensure access is constrained by tailnet ACLs/firewall rules.`,
+      `host=${config.host} listens on all interfaces; ensure access is constrained by firewall rules.`,
     );
   }
 
