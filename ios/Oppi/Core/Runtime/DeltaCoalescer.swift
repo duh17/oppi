@@ -42,7 +42,7 @@ final class DeltaCoalescer {
              .compactionEnd,
              .retryStart,
              .retryEnd,
-             .rpcResult:
+             .commandResult:
             flushNow()
             onFlush?([event])
         }

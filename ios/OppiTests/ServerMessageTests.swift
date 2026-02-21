@@ -485,15 +485,15 @@ struct ServerMessageTests {
         #expect(notifyType == "info")
     }
 
-    // MARK: - RPC Result
+    // MARK: - Command Result
 
-    @Test func decodesRpcResult() throws {
+    @Test func decodesCommandResult() throws {
         let json = """
-        {"type":"rpc_result","command":"set_model","requestId":"req-1","success":true,"data":{"id":"claude-sonnet-4"}}
+        {"type":"command_result","command":"set_model","requestId":"req-1","success":true,"data":{"id":"claude-sonnet-4"}}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .rpcResult(let command, let requestId, let success, let data, let error) = msg else {
-            Issue.record("Expected .rpcResult")
+        guard case .commandResult(let command, let requestId, let success, let data, let error) = msg else {
+            Issue.record("Expected .commandResult")
             return
         }
         #expect(command == "set_model")
@@ -503,18 +503,33 @@ struct ServerMessageTests {
         #expect(error == nil)
     }
 
-    @Test func decodesRpcResultFailure() throws {
+    @Test func decodesCommandResultFailure() throws {
         let json = """
-        {"type":"rpc_result","command":"bash","success":false,"error":"Permission denied"}
+        {"type":"command_result","command":"bash","success":false,"error":"Permission denied"}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .rpcResult(let command, _, let success, _, let error) = msg else {
-            Issue.record("Expected .rpcResult")
+        guard case .commandResult(let command, _, let success, _, let error) = msg else {
+            Issue.record("Expected .commandResult")
             return
         }
         #expect(command == "bash")
         #expect(!success)
         #expect(error == "Permission denied")
+    }
+
+    @Test func decodesLegacyRpcResult() throws {
+        // Backward compat: old servers still send "rpc_result"
+        let json = """
+        {"type":"rpc_result","command":"get_state","requestId":"r-2","success":true}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .commandResult(let command, let requestId, let success, _, _) = msg else {
+            Issue.record("Expected .commandResult from legacy rpc_result")
+            return
+        }
+        #expect(command == "get_state")
+        #expect(requestId == "r-2")
+        #expect(success)
     }
 
     // MARK: - Compaction
