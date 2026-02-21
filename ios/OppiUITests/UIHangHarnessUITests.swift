@@ -263,21 +263,6 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 2)
     }
 
-    @objc
-    func testHarnessScreenshotState() throws {
-        launchHarness(noStream: true)
-
-        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
-        expandAll.tap()
-
-        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
-        topButton.tap()
-
-        Thread.sleep(forTimeInterval: 12)
-    }
-
     // MARK: - Launch
 
     private func launchHarness(noStream: Bool, includeVisualFixtures: Bool = false) {
