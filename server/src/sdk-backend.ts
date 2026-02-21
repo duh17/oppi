@@ -77,6 +77,8 @@ export interface SdkBackendConfig {
   workspaceId?: string;
   /** Whether to enable the permission gate. Default: true if gate is provided. */
   permissionGate?: boolean;
+  /** Resolved skill directory paths for this workspace. */
+  skillPaths?: string[];
 }
 
 /**
@@ -135,15 +137,27 @@ export class SdkBackend {
 
     // Resource loader — suppress auto-discovery, load only what we need.
     // Extension factories (permission gate) are injected here.
+    // Pi's auto-discovered permission-gate extension is filtered out since
+    // oppi has its own policy engine (GateServer). Without this, both gates
+    // run and the pi extension blocks commands it considers "dangerous" with
+    // no UI to approve them (ctx.hasUI is false in oppi sessions).
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
       settingsManager,
       additionalExtensionPaths: [],
+      additionalSkillPaths: config.skillPaths ?? [],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
       extensionFactories,
+      extensionsOverride: (base) => ({
+        ...base,
+        extensions: base.extensions.filter(
+          (ext) =>
+            !ext.path.includes("permission-gate") && !ext.resolvedPath.includes("permission-gate"),
+        ),
+      }),
     });
     await loader.reload();
 
