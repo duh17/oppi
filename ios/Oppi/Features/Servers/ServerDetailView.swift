@@ -7,11 +7,15 @@ import SwiftUI
 struct ServerDetailView: View {
     let server: PairedServer
 
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
+    @Environment(\.dismiss) private var dismiss
 
     @State private var info: ServerInfo?
     @State private var isLoading = true
     @State private var error: String?
+    @State private var showRemoveConfirmation = false
 
     private var pairedServer: PairedServer {
         serverStore.server(for: server.id) ?? server
@@ -82,7 +86,7 @@ struct ServerDetailView: View {
 
             Section("Workspaces") {
                 NavigationLink {
-                    WorkspaceListView()
+                    WorkspaceListView(server: pairedServer)
                 } label: {
                     Label("Manage Workspaces", systemImage: "square.grid.2x2")
                 }
@@ -90,6 +94,18 @@ struct ServerDetailView: View {
 
             Section("Connection") {
                 LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showRemoveConfirmation = true
+                } label: {
+                    Label("Remove Paired Server", systemImage: "trash")
+                }
+            } header: {
+                Text("Danger Zone")
+            } footer: {
+                Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
             }
         }
         .navigationTitle(pairedServer.name)
@@ -99,6 +115,18 @@ struct ServerDetailView: View {
         }
         .task {
             await load()
+        }
+        .confirmationDialog(
+            removeDialogTitle,
+            isPresented: $showRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(removeDialogButtonTitle, role: .destructive) {
+                removeServer()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(removeDialogMessage)
         }
     }
 
@@ -114,6 +142,39 @@ struct ServerDetailView: View {
             get: { pairedServer.resolvedBadgeColor },
             set: { serverStore.setBadgeColor(id: pairedServer.id, to: $0) }
         )
+    }
+
+    private var removingLastServer: Bool {
+        serverStore.servers.count == 1 && serverStore.servers.first?.id == pairedServer.id
+    }
+
+    private var removeDialogTitle: String {
+        if removingLastServer {
+            return "Remove your only paired server?"
+        }
+        return "Remove \(pairedServer.name)?"
+    }
+
+    private var removeDialogButtonTitle: String {
+        removingLastServer ? "Remove Last Server" : "Remove Server"
+    }
+
+    private var removeDialogMessage: String {
+        if removingLastServer {
+            return "This is the only paired server on this device. Removing it will disconnect Oppi and return you to onboarding. You'll need to pair again before using the app."
+        }
+        return "This removes the server from this iPhone only. It does not delete anything on the server, and you can pair it again later."
+    }
+
+    private func removeServer() {
+        coordinator.removeServer(id: pairedServer.id)
+
+        if serverStore.servers.isEmpty {
+            navigation.showOnboarding = true
+            return
+        }
+
+        dismiss()
     }
 
     private func load() async {
