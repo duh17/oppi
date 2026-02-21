@@ -73,15 +73,6 @@ restore_caller_env "ASC_KEY_PATH" "$CALLER_HAS_ASC_KEY_PATH" "$CALLER_ASC_KEY_PA
 restore_caller_env "OPPI_TEAM_ID" "$CALLER_HAS_OPPI_TEAM_ID" "$CALLER_OPPI_TEAM_ID" "${OPPI_TEAM_ID-}"
 
 TEAM_ID="${OPPI_TEAM_ID:-AZAQMY4SPZ}"
-LOCAL_ENV_FILE="$IOS_DIR/.env.testflight.local"
-
-# Optional local env file (gitignored) for developer-specific TestFlight config.
-if [[ -f "$LOCAL_ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$LOCAL_ENV_FILE"
-  set +a
-fi
 
 BUILD_ONLY=0
 BUMP=0
@@ -346,6 +337,9 @@ async function asc(method, path, query = undefined, body = undefined) {
 
   if (!res.ok) {
     const detail = json?.errors?.[0]?.detail || text.slice(0, 240);
+    if (res.status === 409) {
+      return { _conflict: true, status: 409, detail };
+    }
     throw new Error(`${method} ${url.pathname} failed (${res.status}): ${detail}`);
   }
 
@@ -383,15 +377,34 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     throw new Error(`build ${buildNumber} not found for app ${bundleId} within ${waitSeconds}s`);
   }
 
-  const patchResp = await asc("PATCH", `/v1/builds/${build.id}`, undefined, {
-    data: {
-      type: "builds",
-      id: build.id,
-      attributes: {
-        usesNonExemptEncryption,
+  // Check if compliance is already set on this build
+  const currentEncryption = build.attributes?.usesNonExemptEncryption;
+  if (currentEncryption !== null && currentEncryption !== undefined) {
+    console.log(
+      `   export compliance already set: build ${buildNumber}, usesNonExemptEncryption=${currentEncryption}`,
+    );
+  } else {
+    const patchResp = await asc("PATCH", `/v1/builds/${build.id}`, undefined, {
+      data: {
+        type: "builds",
+        id: build.id,
+        attributes: {
+          usesNonExemptEncryption,
+        },
       },
-    },
-  });
+    });
+
+    if (patchResp?._conflict) {
+      console.log(
+        `   export compliance already set (409): build ${buildNumber}`,
+      );
+    } else {
+      const patched = patchResp?.data?.attributes || {};
+      console.log(
+        `   export compliance set: build ${buildNumber}, usesNonExemptEncryption=${patched.usesNonExemptEncryption ?? usesNonExemptEncryption}`,
+      );
+    }
+  }
 
   const detailsResp = await asc("GET", "/v1/buildBetaDetails", {
     "filter[build]": build.id,
@@ -399,11 +412,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   });
 
   const detail = detailsResp?.data?.[0]?.attributes || {};
-  const patched = patchResp?.data?.attributes || {};
-
-  console.log(
-    `   export compliance set: build ${buildNumber}, usesNonExemptEncryption=${patched.usesNonExemptEncryption ?? usesNonExemptEncryption}`,
-  );
   if (detail.internalBuildState || detail.externalBuildState) {
     console.log(
       `   beta states: internal=${detail.internalBuildState ?? "unknown"}, external=${detail.externalBuildState ?? "unknown"}`,

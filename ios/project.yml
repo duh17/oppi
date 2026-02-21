@@ -44,7 +44,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 7
+        CURRENT_PROJECT_VERSION: 9
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
@@ -118,7 +118,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 7
+        CURRENT_PROJECT_VERSION: 9
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         GENERATE_INFOPLIST_FILE: true
