@@ -1,15 +1,15 @@
 # oppi-server
 
-Self-hosted server for supervising [pi](https://github.com/badlogic/pi-mono) sessions from the iOS app.
+Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/badlogic/pi-mono) to run agent sessions in-process.
 
 ## Quickstart
 
 ```bash
 # 1. Install
-git clone https://github.com/niceda/oppi && cd oppi/server
+git clone https://github.com/duh17/oppi && cd oppi/server
 npm install && npm run build && npm link
 
-# 2. Set up pi auth (so the server can call LLM APIs)
+# 2. Set up pi auth (needed for LLM API calls)
 pi login
 
 # 3. Initialize and start
@@ -21,12 +21,12 @@ oppi pair "MyMac"  # generates QR code / deep link
                    # scan in the iOS app
 ```
 
-That's it. Create a workspace in the app and start a session.
+Create a workspace in the app and start a session.
 
 ## Requirements
 
 - Node.js 20+
-- [pi](https://github.com/badlogic/pi-mono) CLI installed and logged in (`pi login`)
+- [pi](https://github.com/badlogic/pi-mono) CLI installed (`pi login` for LLM auth)
 - macOS or Linux
 
 ## Docker

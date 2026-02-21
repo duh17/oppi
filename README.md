@@ -8,31 +8,28 @@
   Native iOS client for <a href="https://github.com/badlogic/pi-mono">pi</a> coding sessions, supervised from your phone.
 </p>
 
-<!-- screenshots: uncomment when images are in docs/images/
-<p align="center">
-  <img src="docs/images/screenshot-chat.png" width="220" />
-  <img src="docs/images/screenshot-diff.png" width="220" />
-  <img src="docs/images/screenshot-permission.png" width="220" />
-</p>
--->
+See [screenshots and demo video](docs/demo/).
 
 ---
 
 ## How it works
 
 ```
-┌─────────┐         WSS / HTTPS         ┌──────────────┐       stdio        ┌─────┐
-│  iPhone  │  ◄───────────────────────►  │  oppi-server │  ◄──────────────►  │ pi  │
-│  (Oppi)  │    stream, approvals, UI    │  (Node.js)   │   spawn, manage    │ CLI │
-└─────────┘                              └──────────────┘                    └─────┘
-                                               │
-                                          permission gate
-                                          (TCP, per-session)
+┌─────────┐        WSS / HTTPS        ┌──────────────┐
+│  iPhone  │  ◄──────────────────────► │  oppi-server │
+│  (Oppi)  │   stream, approvals, UI  │  (Node.js)   │
+└─────────┘                            └──────┬───────┘
+                                              │
+                                      pi SDK (in-process)
+                                      createAgentSession()
+                                              │
+                                       ┌──────┴───────┐
+                                       │ LLM provider  │
+                                       │ + tools       │
+                                       └──────────────-┘
 ```
 
-The server spawns and manages `pi` processes on your machine. The iOS app connects over WebSocket to stream tool calls, render output, and handle permission approvals. A per-session TCP permission gate lets the pi extension ask the server before executing risky operations.
-
-All execution stays on your machine.
+The server embeds the [pi SDK](https://github.com/badlogic/pi-mono) directly — no separate CLI process. Each session runs an in-process agent with tool execution, streaming, and a per-session permission gate. The iOS app connects over WebSocket to stream tool calls, render diffs and output, and handle permission approvals.
 
 ## Install
 
@@ -42,7 +39,7 @@ oppi init
 oppi serve
 ```
 
-Requires Node.js 20+ and [pi](https://github.com/badlogic/pi-mono) CLI installed and logged in.
+Requires Node.js 20+ and a [pi](https://github.com/badlogic/pi-mono) auth setup (`pi login`).
 
 Pair your phone:
 
@@ -58,12 +55,17 @@ oppi pair --host my-mac.tailnet.ts.net
 
 ## Features
 
-- Markdown rendering with syntax-highlighted code blocks
-- Inline diffs — see what the agent changed, line by line
-- Permission gate — approve or deny tool calls from your phone
-- Themes (Tokyo Night variants + Nord built in, or import your own)
-- Workspaces and session management
-- image input
+- **In-process pi agent** — SDK-based, no CLI spawning
+- **Permission gate** — approve or deny tool calls from your phone
+- **Policy engine** — auto-allow safe operations, prompt for risky ones
+- **Streaming diffs** — see what the agent changed, line by line
+- **ANSI terminal rendering** — colored terminal output preserved
+- **Custom extension rendering** — structured tool output cards
+- **Markdown + syntax highlighting** — full code block rendering
+- **Themes** — Tokyo Night, Nord, or import your own
+- **Workspaces** — isolated project contexts with skills
+- **Reconnect replay** — catches up missed events after disconnect
+- **Image input** — attach photos from your camera roll
 
 ## Commands
 
@@ -83,7 +85,6 @@ oppi config set <k> <v>    update config
 - [Config schema](server/docs/config-schema.md)
 - [Theme file guide](docs/theme-system.md)
 - [Permission gate policy guide](server/docs/policy-engine.md)
-- [Security & privacy](SECURITY.md)
 
 ## License
 
