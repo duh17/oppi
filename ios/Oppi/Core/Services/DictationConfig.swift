@@ -13,7 +13,7 @@ struct DictationConfig: Codable, Equatable, Sendable {
     /// Whether dictation is enabled (shows mic button in composer).
     var enabled: Bool
 
-    /// Base URL of the STT server (e.g. `http://mac-studio:8321`).
+    /// Base URL of the STT server (e.g. `http://my-server:8321`).
     /// Must expose `POST /v1/audio/transcriptions`.
     var endpointURL: String
 

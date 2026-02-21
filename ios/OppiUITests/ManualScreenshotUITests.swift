@@ -40,7 +40,7 @@ final class ManualScreenshotUITests: XCTestCase {
         if connectButton.waitForExistence(timeout: 4) {
             connectButton.tap()
 
-            let hostField = app.textFields["Host (e.g. mac-studio.local)"]
+            let hostField = app.textFields["Host (e.g. my-mac.local)"]
             XCTAssertTrue(hostField.waitForExistence(timeout: 8))
             hostField.tap()
             hostField.typeText(host)

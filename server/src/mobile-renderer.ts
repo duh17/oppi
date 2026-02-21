@@ -50,7 +50,7 @@ function recordField(
   return asRecord(v?.[key]);
 }
 
-/** Shorten long paths for display: /Users/chenda/workspace/foo → ~/workspace/foo */
+/** Shorten long paths for display: /Users/alice/workspace/foo → ~/workspace/foo */
 function shortenPath(p: string): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (home && p.startsWith(home)) {
