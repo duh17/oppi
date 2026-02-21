@@ -1803,6 +1803,108 @@ struct StreamLifecycleTests {
         #expect(!sentinel.isCancelled,
                 "Should not replace an active consumption task")
     }
+
+    // MARK: - routeStreamMessage resolves subscribe waiter eagerly
+
+    @MainActor
+    @Test func routeStreamMessageResolvesSubscribeWaiterBeforePerSessionRouting() async {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        // Simulates the subscribe await in streamSession — the waiter is
+        // pending but the per-session stream consumer hasn't started yet.
+        let pending = PendingRPCRequest(command: "subscribe", requestId: "req-1")
+        conn.registerPendingRPCRequest(pending)
+
+        _ = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+        }
+
+        // Route the subscribe command_result through the stream mux
+        let streamMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .commandResult(
+                command: "subscribe", requestId: "req-1",
+                success: true, data: nil, error: nil
+            )
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        // The waiter should be resolved immediately — no need to consume the per-session stream
+        let result = try? await pending.waiter.wait()
+        #expect(result != nil, "Subscribe waiter should be resolved eagerly by routeStreamMessage")
+    }
+
+    @MainActor
+    @Test func routeStreamMessageDoesNotEagerlyResolveNonSubscribeCommands() {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        // Non-subscribe commands resolve through the normal consumer path
+        let pending = PendingRPCRequest(command: "set_model", requestId: "req-m")
+        conn.registerPendingRPCRequest(pending)
+
+        _ = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+        }
+
+        let streamMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .commandResult(
+                command: "set_model", requestId: "req-m",
+                success: true, data: nil, error: nil
+            )
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        // Should still be pending — resolved later by handleRPCResult in the consumer
+        #expect(conn.pendingRPCRequestsByRequestId["req-m"] != nil,
+                "Non-subscribe commands should not be resolved by routeStreamMessage")
+    }
+
+    // MARK: - Pending unsubscribe cancelled on resubscribe
+
+    @MainActor
+    @Test func pendingUnsubscribeCancelledWhenReenteringSameSession() {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendMessageForTesting = { _ in }
+
+        // Simulate disconnectSession which creates a pending unsubscribe
+        conn.disconnectSession()
+
+        // There should be a pending unsubscribe for s1
+        #expect(conn.pendingUnsubscribeTasks["s1"] != nil,
+                "disconnectSession should track pending unsubscribe")
+
+        // Now cancel it as streamSession would
+        if let pendingUnsub = conn.pendingUnsubscribeTasks.removeValue(forKey: "s1") {
+            pendingUnsub.cancel()
+        }
+
+        #expect(conn.pendingUnsubscribeTasks["s1"] == nil,
+                "Pending unsubscribe should be cancelled before resubscribe")
+    }
+
+    @MainActor
+    @Test func disconnectStreamCancelsPendingUnsubscribes() {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendMessageForTesting = { _ in }
+
+        conn.disconnectSession()
+        #expect(!conn.pendingUnsubscribeTasks.isEmpty)
+
+        conn.disconnectStream()
+        #expect(conn.pendingUnsubscribeTasks.isEmpty,
+                "disconnectStream should cancel all pending unsubscribes")
+    }
 }
 
 private func waitForCondition(

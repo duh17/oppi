@@ -111,6 +111,11 @@ final class ServerConnection {
     /// ChatSessionManager checks this to suppress auto-reconnect.
     var fatalSetupError = false
 
+    /// Tracked unsubscribe tasks — keyed by sessionId.
+    /// Cancelled before resubscribing the same session to prevent the
+    /// fire-and-forget unsubscribe from racing past the new subscribe.
+    var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
+
     init() {
         // Wire coalescer to reducer (batch) + Live Activity (throttled).
         // Single renderVersion bump per flush, not per event.
@@ -209,6 +214,10 @@ final class ServerConnection {
             cont.finish()
         }
         sessionContinuations.removeAll()
+        for (_, task) in pendingUnsubscribeTasks {
+            task.cancel()
+        }
+        pendingUnsubscribeTasks.removeAll()
         wsClient?.disconnect()
     }
 
@@ -223,6 +232,13 @@ final class ServerConnection {
             return
         }
 
+        // Resolve pending subscribe/unsubscribe waiters directly from stream
+        // routing, BEFORE yielding to the per-session stream. This prevents a
+        // deadlock where streamSession() awaits a subscribe command_result
+        // that only gets consumed after the per-session stream loop starts —
+        // which can't start until streamSession() returns.
+        resolveSubscribeWaiters(message)
+
         // Route to per-session continuation if active
         if let sessionId, let cont = sessionContinuations[sessionId] {
             cont.yield(message)
@@ -233,6 +249,24 @@ final class ServerConnection {
         if let sessionId, sessionId != activeSessionId {
             handleCrossSessionMessage(message, sessionId: sessionId)
         }
+    }
+
+    /// Eagerly resolve subscribe/unsubscribe command results from stream routing.
+    ///
+    /// Only these two commands need eager resolution — they're sent in
+    /// `streamSession()` before the per-session stream consumer starts.
+    /// Other commands (set_model, get_fork_messages, etc.) are sent while
+    /// the consumer is running and resolve normally through `handleRPCResult`.
+    private func resolveSubscribeWaiters(_ message: ServerMessage) {
+        guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
+              let requestId,
+              command == "subscribe" || command == "unsubscribe" else {
+            return
+        }
+        _ = resolvePendingRPCResult(
+            command: command, requestId: requestId,
+            success: success, data: data, error: error
+        )
     }
 
     /// Handle `/stream` (re)connection — re-subscribe all tracked sessions.
@@ -382,6 +416,13 @@ final class ServerConnection {
             unsubscribeSession(previousSessionId)
         }
 
+        // Cancel any pending unsubscribe for THIS session to prevent a
+        // fire-and-forget unsubscribe (from disconnectSession) from racing
+        // past the subscribe we're about to send.
+        if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
+            pendingUnsub.cancel()
+        }
+
         activeSessionId = sessionId
         toolMapper.reset()
         thinkingLevel = .medium  // Reset to default; overwritten by session.thinkingLevel on connect
@@ -420,15 +461,22 @@ final class ServerConnection {
     }
 
     /// Unsubscribe from a specific session.
+    ///
+    /// The send is tracked so `streamSession()` can cancel it before
+    /// resubscribing the same session — preventing the fire-and-forget
+    /// unsubscribe from arriving after a newer subscribe.
     private func unsubscribeSession(_ sessionId: String) {
         sessionContinuations[sessionId]?.finish()
         sessionContinuations.removeValue(forKey: sessionId)
 
-        Task {
-            try? await wsClient?.send(.unsubscribe(
+        pendingUnsubscribeTasks[sessionId]?.cancel()
+        pendingUnsubscribeTasks[sessionId] = Task { [weak self] in
+            guard !Task.isCancelled else { return }
+            try? await self?.wsClient?.send(.unsubscribe(
                 sessionId: sessionId,
                 requestId: UUID().uuidString
             ))
+            self?.pendingUnsubscribeTasks.removeValue(forKey: sessionId)
         }
     }
 
