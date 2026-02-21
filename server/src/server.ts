@@ -350,6 +350,7 @@ export class Server {
     this.push = createPushClient(apnsConfig);
     this.sessions = new SessionManager(storage, this.gate);
     this.sessions.contextWindowResolver = (modelId: string) => this.getContextWindow(modelId);
+    this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
 
     // Create the user stream mux (handles /stream WS, event rings, replay)
     this.streamMux = new UserStreamMux({
@@ -913,6 +914,28 @@ export class Server {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
     }
+  }
+
+  /**
+   * Resolve workspace skill names to host directory paths.
+   * Checks both built-in skills (SkillRegistry) and user skills (UserSkillStore).
+   */
+  private resolveSkillPaths(skillNames: string[]): string[] {
+    const paths: string[] = [];
+    for (const name of skillNames) {
+      const builtInPath = this.skillRegistry.getPath(name);
+      if (builtInPath) {
+        paths.push(builtInPath);
+        continue;
+      }
+      const userPath = this.userSkillStore.getPath(name);
+      if (userPath) {
+        paths.push(userPath);
+        continue;
+      }
+      console.warn(`[skills] Workspace skill not found: "${name}"`);
+    }
+    return paths;
   }
 
   private getContextWindow(modelId: string): number {
