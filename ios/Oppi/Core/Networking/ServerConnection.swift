@@ -370,7 +370,11 @@ final class ServerConnection {
     /// Returns an `AsyncStream<ServerMessage>` that yields events for this session.
     /// The `/stream` WebSocket is opened if not already connected.
     /// The caller owns stream consumption and task lifecycle.
-    func streamSession(_ sessionId: String, workspaceId: String) -> AsyncStream<ServerMessage>? {
+    ///
+    /// Awaits the subscribe `command_result` before returning so that
+    /// subsequent commands (prompt, stop, etc.) never race ahead of the
+    /// subscription on the server side.
+    func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<ServerMessage>? {
         guard let wsClient else { return nil }
 
         // Unsubscribe previous full session (if any)
@@ -399,13 +403,17 @@ final class ServerConnection {
             }
         }
 
-        // Subscribe at full level
-        Task {
-            try? await wsClient.send(.subscribe(
-                sessionId: sessionId,
-                level: .full,
-                requestId: UUID().uuidString
-            ))
+        // Subscribe at full level — await server confirmation before returning
+        // so commands sent after this call don't race the subscription.
+        do {
+            _ = try await sendRPCCommandAwaitingResult(
+                command: "subscribe",
+                timeout: .seconds(10)
+            ) { requestId in
+                .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
+            }
+        } catch {
+            logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
 
         return perSessionStream
