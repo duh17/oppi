@@ -31,7 +31,7 @@ struct DictationSettingsView: View {
                         Text("Server URL")
                             .font(.caption)
                             .foregroundStyle(.themeComment)
-                        TextField("http://mac-studio:8321", text: $config.endpointURL)
+                        TextField("http://my-server:8321", text: $config.endpointURL)
                             .keyboardType(.URL)
                             .autocapitalization(.none)
                             .autocorrectionDisabled()

@@ -58,7 +58,7 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     },
     stream_connected: {
       type: "stream_connected",
-      userName: "mac-studio",
+      userName: "my-server",
     },
     state: {
       type: "state",
@@ -157,15 +157,15 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     },
 
     // RPC responses
-    rpc_result_success: {
-      type: "rpc_result",
+    command_result_success: {
+      type: "command_result",
       command: "get_state",
       requestId: "req-002",
       success: true,
       data: { model: { provider: "anthropic", id: "claude-sonnet-4-0" } },
     },
-    rpc_result_error: {
-      type: "rpc_result",
+    command_result_error: {
+      type: "command_result",
       command: "set_model",
       requestId: "req-003",
       success: false,
@@ -317,7 +317,7 @@ describe("protocol snapshots", () => {
       "tool_output",
       "tool_end",
       "turn_ack",
-      "rpc_result",
+      "command_result",
       "compaction_start",
       "compaction_end",
       "retry_start",

@@ -153,7 +153,7 @@ describe("host preset: host-control flows gated", () => {
   it("asks for build-install script after cd ios", () => {
     expect(
       policy.evaluate(
-        bash("cd ios && scripts/build-install.sh --launch --device 00000000-0000-0000-0000-000000000000"),
+        bash("cd ios && scripts/build-install.sh --launch --device AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
       ).action,
     ).toBe("ask");
   });
