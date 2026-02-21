@@ -143,11 +143,11 @@ describe.skipIf(!hasZbar)("QR encoder conformance (zbar)", () => {
   it("decodes realistic invite JSON (unsigned v3)", () => {
     const invite = JSON.stringify({
       v: 3,
-      host: "mac-studio.taila3ebc.ts.net",
+      host: "my-server.tail12345.ts.net",
       port: 7749,
       token: "",
       pairingToken: "pt_testtoken1234567890",
-      name: "mac-studio",
+      name: "my-server",
       fingerprint: "sha256:rHLwUOOWstvDHskxjWWWY2EQxQnouizidfxV7r3EWPw",
     });
     expect(zbarDecode(encode(invite))).toBe(invite);

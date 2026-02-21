@@ -333,10 +333,10 @@ struct ServerCredentialsTests {
     }
 
     @Test func baseURLWithHostname() {
-        let creds = ServerCredentials(host: "mac-studio.ts.net", port: 7749, token: "sk_test", name: "Test")
+        let creds = ServerCredentials(host: "my-server.ts.net", port: 7749, token: "sk_test", name: "Test")
         let url = creds.baseURL
         #expect(url != nil)
-        #expect(url?.absoluteString == "http://mac-studio.ts.net:7749")
+        #expect(url?.absoluteString == "http://my-server.ts.net:7749")
     }
 
     @Test func webSocketURLValid() {
@@ -402,11 +402,11 @@ struct ServerCredentialsInviteSecurityTests {
     private func defaultPayloadV3() -> InvitePayloadV3Fixture {
         InvitePayloadV3Fixture(
             v: 3,
-            host: "mac-studio.taila3ebc.ts.net",
+            host: "my-server.tail12345.ts.net",
             port: 7749,
             token: "",
             pairingToken: "pt_test_invite",
-            name: "mac-studio",
+            name: "my-server",
             fingerprint: "sha256:test-fingerprint"
         )
     }
@@ -468,7 +468,7 @@ struct ServerCredentialsInviteSecurityTests {
     @Test func decodeInvitePayloadRejectsUnsignedPayload() {
         let unsigned = """
         {
-            "host": "mac-studio.taila3ebc.ts.net",
+            "host": "my-server.tail12345.ts.net",
             "port": 7749,
             "token": "sk_test_unsigned",
             "name": "unsigned"
