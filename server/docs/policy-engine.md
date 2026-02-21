@@ -12,11 +12,11 @@ For each tool call, the gate can:
 The decision comes from:
 1. built-in safety checks
 2. your rules (`~/.config/oppi/rules.json`)
-3. default fallback (`ask`)
+3. default fallback (`allow`)
 
-## Recommended mode (default)
+## Default mode (YOLO-ish)
 
-Keep this in `~/.config/oppi/config.json`:
+Out of the box, the gate is on with `fallback: "allow"`:
 
 ```json
 {
@@ -24,7 +24,7 @@ Keep this in `~/.config/oppi/config.json`:
 }
 ```
 
-This is the safe default for daily use.
+Most tool calls auto-run. Built-in heuristics still catch dangerous patterns (credential exfil, pipe-to-shell, sudo) and route those to your phone. Use at your own risk — it's what I do.
 
 ## Simple rules example
 
@@ -83,19 +83,18 @@ You can tune built-in checks under `policy.heuristics` in config:
 
 Valid values: `"allow"`, `"ask"`, `"block"`, or `false` (disable that heuristic).
 
-## YOLO mode (not recommended)
+## Locking it down
 
-If you want zero prompts, disable the gate:
+To require approval for everything that isn't explicitly allowed by a rule, set the policy fallback:
 
 ```json
 {
-  "permissionGate": false
+  "permissionGate": true,
+  "policy": {
+    "fallback": "ask"
+  }
 }
 ```
-
-This effectively allows everything the model asks to run.
-
-Use only if you accept the risk.
 
 ## Audit log
 
