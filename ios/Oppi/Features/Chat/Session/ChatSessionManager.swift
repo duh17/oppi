@@ -130,14 +130,14 @@ final class ChatSessionManager {
     private func openSessionStream(
         connection: ServerConnection,
         sessionStore: SessionStore
-    ) -> AsyncStream<ServerMessage>? {
+    ) async -> AsyncStream<ServerMessage>? {
         if let streamForTesting = _streamSessionForTesting?(sessionId) {
             connection._setActiveSessionIdForTesting(sessionId)
             return streamForTesting
         }
 
         guard let workspaceId = resolveWorkspaceId(from: sessionStore) else { return nil }
-        return connection.streamSession(sessionId, workspaceId: workspaceId)
+        return await connection.streamSession(sessionId, workspaceId: workspaceId)
     }
 
     private func markSyncStarted() {
@@ -258,7 +258,7 @@ final class ChatSessionManager {
             return
         }
 
-        guard let stream = openSessionStream(connection: connection, sessionStore: sessionStore) else {
+        guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
             reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
             return
