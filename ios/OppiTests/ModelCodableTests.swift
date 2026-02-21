@@ -465,17 +465,17 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds == nil)
     }
 
-    @Test func decodeInvitePayloadRejectsLegacyUnsignedPayload() {
-        let legacy = """
+    @Test func decodeInvitePayloadRejectsUnsignedPayload() {
+        let unsigned = """
         {
             "host": "mac-studio.taila3ebc.ts.net",
             "port": 7749,
-            "token": "sk_legacy",
-            "name": "legacy"
+            "token": "sk_test_unsigned",
+            "name": "unsigned"
         }
         """
 
-        let creds = ServerCredentials.decodeInvitePayload(legacy)
+        let creds = ServerCredentials.decodeInvitePayload(unsigned)
         #expect(creds == nil)
     }
 }
@@ -687,16 +687,13 @@ struct SkillInfoCodableTests {
         {
             "name": "searxng",
             "description": "Private web search",
-            "containerSafe": true,
-            "hasScripts": false,
             "path": "/Users/me/.pi/agent/skills/searxng"
         }
         """
         let skill = try JSONDecoder().decode(SkillInfo.self, from: json.data(using: .utf8)!)
         #expect(skill.name == "searxng")
         #expect(skill.description == "Private web search")
-        #expect(skill.containerSafe == true)
-        #expect(skill.hasScripts == false)
+        #expect(skill.builtIn == true)
         #expect(skill.id == "searxng")
     }
 
@@ -705,9 +702,8 @@ struct SkillInfoCodableTests {
         {
             "name": "tmux",
             "description": "Terminal multiplexer",
-            "containerSafe": false,
-            "hasScripts": true,
-            "path": "/path/to/tmux"
+            "path": "/path/to/tmux",
+            "builtIn": false
         }
         """
         let original = try JSONDecoder().decode(SkillInfo.self, from: json.data(using: .utf8)!)

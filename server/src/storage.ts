@@ -19,7 +19,6 @@ import { generateId } from "./id.js";
 import { defaultPolicy } from "./policy.js";
 import type {
   Session,
-  SessionMessage,
   ServerConfig,
   Workspace,
   CreateWorkspaceRequest,
@@ -126,15 +125,11 @@ function normalizeConfig(
     "allowedCidrs",
     "policy",
 
-    "security",
-    "identity",
-    "invite",
     "token",
     "pairingToken",
     "pairingTokenExpiresAt",
     "authDeviceTokens",
     "pushDeviceTokens",
-    "deviceTokens", // deprecated alias (migrated to pushDeviceTokens)
     "liveActivityToken",
     "thinkingLevelByModel",
   ]);
@@ -276,12 +271,10 @@ function normalizeConfig(
     return parsed;
   };
 
-  let hasTopLevelAllowedCidrs = false;
   if (!("allowedCidrs" in obj)) {
     changed = true;
     config.allowedCidrs = allowedCidrsDefaults;
   } else {
-    hasTopLevelAllowedCidrs = true;
     const parsed = parseAllowedCidrs(obj.allowedCidrs, "config.allowedCidrs");
     if (parsed) config.allowedCidrs = parsed;
   }
@@ -583,73 +576,6 @@ function normalizeConfig(
     changed = true;
   }
 
-  if ("security" in obj) {
-    const rawSecurity = obj.security;
-    if (!isRecord(rawSecurity)) {
-      errors.push("config.security: expected object");
-      changed = true;
-    } else {
-      const allowed = new Set([
-        "profile",
-        "requireTlsOutsideTailnet",
-        "allowInsecureHttpInTailnet",
-        "requirePinnedServerIdentity",
-        "allowedCidrs",
-      ]);
-      if (strictUnknown) {
-        for (const key of Object.keys(rawSecurity)) {
-          if (!allowed.has(key)) {
-            errors.push(`config.security.${key}: unknown key`);
-          }
-        }
-      }
-
-      const deprecatedKeys = [
-        "profile",
-        "requireTlsOutsideTailnet",
-        "allowInsecureHttpInTailnet",
-        "requirePinnedServerIdentity",
-      ] as const;
-      for (const key of deprecatedKeys) {
-        if (key in rawSecurity) {
-          warnings.push(`config.security.${key} is deprecated and ignored.`);
-          changed = true;
-        }
-      }
-
-      if ("allowedCidrs" in rawSecurity) {
-        if (!hasTopLevelAllowedCidrs) {
-          const parsedLegacy = parseAllowedCidrs(
-            rawSecurity.allowedCidrs,
-            "config.security.allowedCidrs",
-          );
-          if (parsedLegacy) {
-            config.allowedCidrs = parsedLegacy;
-            warnings.push(
-              "config.security.allowedCidrs is deprecated; migrated to config.allowedCidrs.",
-            );
-            changed = true;
-          }
-        } else {
-          warnings.push(
-            "config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs.",
-          );
-          changed = true;
-        }
-      }
-    }
-  }
-
-  if ("identity" in obj) {
-    warnings.push("config.identity is deprecated and ignored.");
-    changed = true;
-  }
-
-  if ("invite" in obj) {
-    warnings.push("config.invite is deprecated and ignored.");
-    changed = true;
-  }
-
   // Pairing/auth/push runtime state — passthrough (no strict schema validation, optional)
   if ("token" in obj && typeof obj.token === "string") {
     config.token = obj.token;
@@ -677,29 +603,6 @@ function normalizeConfig(
     config.pushDeviceTokens = (obj.pushDeviceTokens as unknown[]).filter(
       (t): t is string => typeof t === "string",
     );
-  }
-
-  // Migration: `deviceTokens` historically mixed push + auth semantics.
-  // Safety-first handling maps values to push storage only.
-  if ("deviceTokens" in obj && Array.isArray(obj.deviceTokens)) {
-    const migratedTokens = (obj.deviceTokens as unknown[]).filter(
-      (t): t is string => typeof t === "string",
-    );
-
-    if (migratedTokens.length > 0) {
-      warnings.push(
-        "config.deviceTokens is deprecated; migrated to config.pushDeviceTokens (not used for API auth).",
-      );
-      changed = true;
-
-      const mergedPushTokens = [...(config.pushDeviceTokens || [])];
-      for (const token of migratedTokens) {
-        if (!mergedPushTokens.includes(token)) {
-          mergedPushTokens.push(token);
-        }
-      }
-      config.pushDeviceTokens = mergedPushTokens;
-    }
   }
 
   if ("liveActivityToken" in obj && typeof obj.liveActivityToken === "string") {
@@ -1040,30 +943,6 @@ export class Storage {
     return session;
   }
 
-  private readSessionRecord(path: string): {
-    session?: Session;
-    messages?: SessionMessage[];
-    hasLegacyMessages: boolean;
-  } | null {
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-      if (!isRecord(raw)) {
-        return null;
-      }
-
-      const session = raw.session as Session | undefined;
-      const messages = Array.isArray(raw.messages) ? (raw.messages as SessionMessage[]) : undefined;
-
-      return {
-        session,
-        messages,
-        hasLegacyMessages: messages !== undefined,
-      };
-    } catch {
-      return null;
-    }
-  }
-
   saveSession(session: Session): void {
     const path = this.getSessionPath(session.id);
     const dir = dirname(path);
@@ -1080,17 +959,14 @@ export class Storage {
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return undefined;
 
-    const record = this.readSessionRecord(path);
-    if (!record?.session) {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+      if (!isRecord(raw)) return undefined;
+      const session = raw.session as Session | undefined;
+      return session;
+    } catch {
       return undefined;
     }
-
-    // Opportunistic one-way migration: {session,messages} -> {session}
-    if (record.hasLegacyMessages) {
-      this.saveSession(record.session);
-    }
-
-    return record.session;
   }
 
   listSessions(): Session[] {
@@ -1103,44 +979,27 @@ export class Storage {
       if (!file.endsWith(".json")) continue;
 
       const path = join(baseDir, file);
-      const record = this.readSessionRecord(path);
-      const session = record?.session;
-      if (!session) {
+      try {
+        const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+        if (!isRecord(raw)) {
+          console.error(`[storage] Corrupt session file ${path}, skipping`);
+          continue;
+        }
+
+        const session = raw.session as Session | undefined;
+        if (!session) {
+          console.error(`[storage] Corrupt session file ${path}, skipping`);
+          continue;
+        }
+
+        sessions.push(session);
+      } catch {
         console.error(`[storage] Corrupt session file ${path}, skipping`);
-        continue;
       }
-
-      if (record.hasLegacyMessages) {
-        this.saveSession(session);
-      }
-
-      sessions.push(session);
     }
 
     // Sort by last activity (most recent first)
     return sessions.sort((a, b) => b.lastActivity - a.lastActivity);
-  }
-
-  getSessionMessages(sessionId: string): SessionMessage[] {
-    const path = this.getSessionPath(sessionId);
-    if (!existsSync(path)) return [];
-
-    const record = this.readSessionRecord(path);
-    if (!record) return [];
-    return record.messages || [];
-  }
-
-  addSessionMessage(
-    sessionId: string,
-    message: Omit<SessionMessage, "id" | "sessionId">,
-  ): SessionMessage {
-    // Metadata-only storage: message history source-of-truth is pi JSONL.
-    // Keep this API as a compatibility shim for in-memory/session counters.
-    return {
-      ...message,
-      id: generateId(8),
-      sessionId,
-    };
   }
 
   deleteSession(sessionId: string): boolean {

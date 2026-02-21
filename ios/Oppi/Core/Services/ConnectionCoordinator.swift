@@ -38,7 +38,7 @@ final class ConnectionCoordinator {
     /// Prevents crashes from nil environment injection.
     private let disconnectedSentinel = ServerConnection()
 
-    // Legacy compatibility: `connection` forwards to `activeConnection`.
+    // Convenience: `connection` forwards to `activeConnection`.
     var connection: ServerConnection { activeConnection }
 
     init(serverStore: ServerStore) {

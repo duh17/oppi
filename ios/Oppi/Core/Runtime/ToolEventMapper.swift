@@ -3,8 +3,7 @@ import Foundation
 /// Maps server tool events to client-side tool event IDs.
 ///
 /// Prefers the server-provided `toolCallId` (from pi RPC) when available.
-/// Falls back to synthetic UUIDs for backward compatibility with servers
-/// that don't yet send `toolCallId`.
+/// Falls back to synthetic UUIDs for servers that omit `toolCallId`.
 ///
 /// v1 assumption: tool events are strictly sequential (one open tool at a time).
 @MainActor

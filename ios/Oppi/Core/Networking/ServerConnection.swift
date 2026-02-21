@@ -830,7 +830,7 @@ final class ServerConnection {
         }
 
         if success {
-            // Backward compatibility for servers that only emit rpc_result.
+            // Handle servers that only emit rpc_result without stage events.
             if pending.latestStage == nil {
                 pending.latestStage = .dispatched
                 pending.notifyStage(.dispatched)

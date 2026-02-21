@@ -281,29 +281,29 @@ struct MultiServerStoreTests {
         #expect(loadedSk1?.first?.name == "fetch")
         #expect(loadedSk2?.first?.name == "search")
 
-        // Legacy (non-namespaced) still works independently
-        let legacyWs = await cache.loadWorkspaces()
-        #expect(legacyWs == nil)
+        // Non-namespaced cache is independent
+        let globalWs = await cache.loadWorkspaces()
+        #expect(globalWs == nil)
     }
 
-    @Test func cacheNamespacingDoesNotCollideWithLegacy() async throws {
+    @Test func cacheNamespacingDoesNotCollideWithGlobal() async throws {
         let fileManager = FileManager.default
-        let base = fileManager.temporaryDirectory.appending(path: "cache-legacy-test-\(UUID().uuidString)")
+        let base = fileManager.temporaryDirectory.appending(path: "cache-ns-test-\(UUID().uuidString)")
         let root = base.appending(path: "cache-root")
         defer { try? fileManager.removeItem(at: base) }
 
         let cache = TimelineCache(rootURL: root)
 
-        let legacyWs = [makeWorkspace(id: "w-legacy", name: "Legacy")]
+        let globalWs = [makeWorkspace(id: "w-global", name: "Global")]
         let serverWs = [makeWorkspace(id: "w-server", name: "Namespaced")]
 
-        await cache.saveWorkspaces(legacyWs)
+        await cache.saveWorkspaces(globalWs)
         await cache.saveWorkspaces(serverWs, serverId: "sha256:xxx")
 
-        let loadedLegacy = await cache.loadWorkspaces()
+        let loadedGlobal = await cache.loadWorkspaces()
         let loadedServer = await cache.loadWorkspaces(serverId: "sha256:xxx")
 
-        #expect(loadedLegacy?.first?.name == "Legacy")
+        #expect(loadedGlobal?.first?.name == "Global")
         #expect(loadedServer?.first?.name == "Namespaced")
     }
 
@@ -332,8 +332,6 @@ struct MultiServerStoreTests {
         SkillInfo(
             name: name,
             description: "desc",
-            containerSafe: true,
-            hasScripts: false,
             path: "/tmp/\(name)",
             builtIn: true
         )

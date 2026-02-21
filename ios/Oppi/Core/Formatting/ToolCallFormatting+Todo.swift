@@ -93,7 +93,7 @@ extension ToolCallFormatting {
         )
     }
 
-    /// Backward-compatible helper for append-only callers.
+    /// Convenience helper for append-only callers.
     static func todoAppendDiffPresentation(
         args: [String: JSONValue]?,
         argsSummary: String

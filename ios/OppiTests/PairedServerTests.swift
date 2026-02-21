@@ -138,16 +138,16 @@ struct PairedServerTests {
         #expect(abs(decoded.addedAt.timeIntervalSince(original.addedAt)) < 1)
     }
 
-    @Test("Decodes legacy payload without badge customization")
-    func decodesLegacyPayloadWithoutBadgeFields() throws {
+    @Test("Decodes payload without badge customization")
+    func decodesPayloadWithoutBadgeFields() throws {
         let json = """
         {
-          "id": "sha256:legacy",
-          "name": "legacy-server",
-          "host": "legacy.local",
+          "id": "sha256:minimal",
+          "name": "minimal-server",
+          "host": "minimal.local",
           "port": 7749,
-          "token": "sk_legacy",
-          "fingerprint": "sha256:legacy",
+          "token": "sk_minimal",
+          "fingerprint": "sha256:minimal",
           "addedAt": "2026-02-01T00:00:00Z",
           "sortOrder": 0
         }

@@ -44,7 +44,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         URL(string: "http://\(host):\(port)")
     }
 
-    /// WebSocket URL for a specific session (legacy per-session path).
+    /// WebSocket URL for a specific session (per-session path).
     ///
     /// Workspace-scoped v2 path only.
     func webSocketURL(sessionId: String, workspaceId: String) -> URL? {

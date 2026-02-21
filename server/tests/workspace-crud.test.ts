@@ -109,7 +109,7 @@ describe("Storage.createWorkspace", () => {
     expect(ids.size).toBe(3);
   });
 
-  it("does not expose deprecated runtime field", () => {
+  it("does not expose runtime field", () => {
     const ws = storage.createWorkspace({
       name: "no-runtime",
       skills: [],
@@ -667,7 +667,7 @@ describe("Workspace full lifecycle", () => {
     expect(storage.listWorkspaces().find((w) => w.id === ws.id)).toBeUndefined();
   });
 
-  it("create workspace omits deprecated runtime key", () => {
+  it("create workspace omits runtime key", () => {
     const ws = storage.createWorkspace(createReq({ name: "Admin" }));
     const reloaded = storage.getWorkspace(ws.id);
 

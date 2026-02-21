@@ -317,7 +317,7 @@ extension ClientMessage: Encodable {
 
 /// Wraps a `ClientMessage` with a `sessionId` for the `/stream` multiplexed protocol.
 ///
-/// On the legacy per-session WebSocket, the session is implicit in the URL.
+/// On the per-session WebSocket, the session is implicit in the URL.
 /// On `/stream`, session-scoped commands must include `sessionId` at the top level.
 struct SessionScopedMessage: Encodable, Sendable {
     let sessionId: String

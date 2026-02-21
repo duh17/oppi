@@ -646,7 +646,7 @@ struct CommonMarkTests {
     }
 }
 
-// MARK: - Streaming Parser Backward Compat
+// MARK: - Streaming Parser Edge Cases
 
 /// Ensures the streaming `parseCodeBlocks` function remains unchanged.
 @Suite("parseCodeBlocks (streaming)")

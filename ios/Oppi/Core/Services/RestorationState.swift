@@ -17,7 +17,7 @@ struct RestorationState: Codable {
     /// ID of the topmost visible chat item when the app was backgrounded.
     let scrollAnchorItemId: String?
     /// Whether the user was scrolled to the bottom of the chat timeline.
-    /// `nil` treated as `true` for backward compatibility with v1 states.
+    /// Defaults to `true` when absent.
     let wasNearBottom: Bool?
     let timestamp: Date
 
