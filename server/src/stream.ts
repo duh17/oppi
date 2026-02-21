@@ -81,13 +81,6 @@ export function startServerPing(
   return () => clearInterval(timer);
 }
 
-// ─── Backpressure ───
-
-/** High-water mark (bytes) above which ephemeral frames are dropped. */
-export const SEND_HWM_BYTES = 64 * 1024;
-
-export const DROPPABLE_TYPES = new Set(["text_delta", "thinking_delta", "tool_output"]);
-
 // ─── Stream Mux ───
 
 export class UserStreamMux {
@@ -185,7 +178,6 @@ export class UserStreamMux {
 
     let msgSent = 0;
     let msgRecv = 0;
-    let msgDropped = 0;
     const subscriptions = new Map<string, UserStreamSubscription>();
     let fullSessionId: string | null = null;
     let queue: Promise<void> = Promise.resolve();
@@ -193,13 +185,6 @@ export class UserStreamMux {
     const send = (msg: ServerMessage): void => {
       if (ws.readyState !== WebSocket.OPEN) {
         console.warn(`${ts()} [ws] DROP ${msg.type} → /stream (readyState=${ws.readyState})`);
-        return;
-      }
-
-      // Backpressure: skip high-frequency ephemeral frames when the send
-      // buffer is congested. Durable events are always delivered.
-      if (DROPPABLE_TYPES.has(msg.type) && ws.bufferedAmount > SEND_HWM_BYTES) {
-        msgDropped++;
         return;
       }
 
@@ -471,7 +456,7 @@ export class UserStreamMux {
       stopPing();
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv}${msgDropped > 0 ? ` dropped=${msgDropped}` : ""})`,
+        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
       );
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);
