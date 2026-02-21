@@ -1239,6 +1239,13 @@ export class SessionManager extends EventEmitter {
       }
 
       this.sendCommand(key, { type: "abort" });
+      // Also kill any running bash process — abort() only cancels the LLM turn,
+      // not a long-running child process spawned by the bash tool.
+      try {
+        active.sdkBackend.abortBash();
+      } catch {
+        // no bash running — fine
+      }
       this.scheduleAbortStopTimeout(key, active);
     });
   }
@@ -1849,6 +1856,7 @@ export class SessionManager extends EventEmitter {
 
       try {
         void current.sdkBackend.abort();
+        current.sdkBackend.abortBash();
       } catch {
         // process may have already exited
       }
