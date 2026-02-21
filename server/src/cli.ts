@@ -473,13 +473,6 @@ function cmdToken(storage: Storage, action: string | undefined): void {
   const mode = action || "help";
 
   if (mode === "rotate") {
-    if (!storage.isPaired()) {
-      console.log(c.red("  Error: server is not paired yet."));
-      console.log(c.dim("  Run 'oppi pair' first."));
-      console.log("");
-      process.exit(1);
-    }
-
     storage.rotateToken();
 
     console.log(c.green("  ✓ Bearer token rotated."));
@@ -570,15 +563,17 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   // Create storage (auto-creates dirs + default config)
   const storage = new Storage(dataDir);
 
-  // Apply user choices
+  // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0
   storage.updateConfig({
     port,
     defaultModel,
     maxSessionsGlobal,
   });
+  storage.rotateToken();
 
   console.log("");
   console.log(c.green("  ✓ Config written to ") + c.dim(storage.getConfigPath()));
+  console.log(c.green("  ✓ Owner token generated"));
 
   // 4. Generate identity keys
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
