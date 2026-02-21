@@ -24,6 +24,7 @@ const ROUTES = {
   policyRules: /^\/policy\/rules$/,
   policyRuleDetail: /^\/policy\/rules\/([^/]+)$/,
   policyAudit: /^\/policy\/audit$/,
+  policyFallback: /^\/policy\/fallback$/,
 };
 
 describe("Workspace-scoped API routes", () => {
@@ -130,5 +131,8 @@ describe("Workspace-scoped API routes", () => {
   it("matches policy audit route", () => {
     expect("/policy/audit".match(ROUTES.policyAudit)).toBeTruthy();
   });
-});
 
+  it("matches policy fallback route", () => {
+    expect("/policy/fallback".match(ROUTES.policyFallback)).toBeTruthy();
+  });
+});

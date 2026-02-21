@@ -291,6 +291,24 @@ actor APIClient {
 
     // MARK: - Safety Policy
 
+    /// Get the global default fallback action when no rule matches.
+    func getPolicyFallback() async throws -> PolicyFallbackDecision {
+        let data = try await get("/policy/fallback")
+        return try JSONDecoder().decode(PolicyFallbackResponse.self, from: data).fallback
+    }
+
+    /// Update the global default fallback action when no rule matches.
+    func patchPolicyFallback(_ fallback: PolicyFallbackDecision) async throws -> PolicyFallbackDecision {
+        struct Body: Encodable { let fallback: String }
+        let (data, response) = try await request(
+            "PATCH",
+            path: "/policy/fallback",
+            body: Body(fallback: fallback.rawValue)
+        )
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(PolicyFallbackResponse.self, from: data).fallback
+    }
+
     /// List effective learned/manual policy rules visible to the user.
     func listPolicyRules(workspaceId: String? = nil) async throws -> [PolicyRuleRecord] {
         var route = "/policy/rules"
