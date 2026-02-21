@@ -739,9 +739,7 @@ private struct WorkspacePolicyView: View {
     let workspace: Workspace
 
     @Environment(ServerConnection.self) private var connection
-    @Environment(ServerStore.self) private var serverStore
 
-    @State private var policy: WorkspacePolicyResponse?
     @State private var rules: [PolicyRuleRecord] = []
     @State private var auditEntries: [PolicyAuditEntry] = []
     @State private var isLoading = false
@@ -749,31 +747,13 @@ private struct WorkspacePolicyView: View {
     @State private var rememberedRuleDraft: RememberedRuleDraft?
     @State private var pendingDeleteRule: PolicyRuleRecord?
 
-    private var policyBadgeIcon: ServerBadgeIcon {
-        guard let currentServerId = connection.currentServerId,
-              let server = serverStore.server(for: currentServerId) else {
-            return .defaultValue
-        }
-        return server.resolvedBadgeIcon
-    }
-
-    private var policyBadgeColor: ServerBadgeColor {
-        guard let currentServerId = connection.currentServerId,
-              let server = serverStore.server(for: currentServerId) else {
-            return .defaultValue
-        }
-        return server.resolvedBadgeColor
-    }
-
     var body: some View {
         List {
-            if let policy {
-                summarySection(policy)
-            } else if isLoading {
+            if isLoading && rules.isEmpty && auditEntries.isEmpty {
                 Section {
                     HStack {
                         Spacer()
-                        ProgressView("Loading workspace policy…")
+                        ProgressView("Loading safety rules…")
                         Spacer()
                     }
                 }
@@ -844,6 +824,15 @@ private struct WorkspacePolicyView: View {
         }
         .navigationTitle("Safety Rules")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    rememberedRuleDraft = RememberedRuleDraft(workspaceId: workspace.id)
+                } label: {
+                    Label("Add Rule", systemImage: "plus")
+                }
+            }
+        }
         .refreshable {
             await loadAll()
         }
@@ -872,7 +861,7 @@ private struct WorkspacePolicyView: View {
                 pendingDeleteRule = nil
             }
         } message: { rule in
-            Text("Remove remembered rule \(rule.description)?")
+            Text("Remove remembered rule \(rule.label)?")
         }
         .alert("Policy Error", isPresented: Binding(
             get: { error != nil },
@@ -881,41 +870,6 @@ private struct WorkspacePolicyView: View {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "Unknown error")
-        }
-    }
-
-    @ViewBuilder
-    private func summarySection(_ policy: WorkspacePolicyResponse) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    RuntimeBadge(compact: true, icon: policyBadgeIcon, badgeColor: policyBadgeColor)
-                    Menu {
-                        ForEach(["allow", "ask", "block"], id: \.self) { option in
-                            let title = option == "block" ? "DENY" : option.uppercased()
-                            Button {
-                                Task { await updateWorkspaceFallback(option) }
-                            } label: {
-                                if option == policy.effectivePolicy.fallback {
-                                    Label(title, systemImage: "checkmark")
-                                } else {
-                                    Text(title)
-                                }
-                            }
-                            .disabled(option == policy.effectivePolicy.fallback)
-                        }
-                    } label: {
-                        let defaultLabel = policy.effectivePolicy.fallback == "block"
-                            ? "DENY"
-                            : policy.effectivePolicy.fallback.uppercased()
-                        policyChip("Default action: \(defaultLabel)", color: .themeBlue)
-                    }
-                    Spacer()
-                }
-            }
-            .padding(.vertical, 2)
-        } header: {
-            Text(workspace.name)
         }
     }
 
@@ -981,38 +935,12 @@ private struct WorkspacePolicyView: View {
         defer { isLoading = false }
 
         do {
-            async let policyTask = api.getWorkspacePolicy(workspaceId: workspace.id)
             async let rulesTask = api.listPolicyRules(workspaceId: workspace.id)
             async let auditTask = api.listPolicyAudit(workspaceId: workspace.id, limit: 80)
 
-            policy = try await policyTask
             rules = try await rulesTask
             auditEntries = try await auditTask
             error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func updateWorkspaceFallback(_ fallback: String) async {
-        guard let api = connection.apiClient else { return }
-
-        do {
-            let updatedPolicy = try await api.patchWorkspacePolicy(
-                workspaceId: workspace.id,
-                fallback: fallback
-            )
-
-            if let current = policy {
-                policy = WorkspacePolicyResponse(
-                    workspaceId: current.workspaceId,
-                    globalPolicy: current.globalPolicy,
-                    workspacePolicy: updatedPolicy,
-                    effectivePolicy: current.effectivePolicy
-                )
-            }
-
-            await loadAll()
         } catch {
             self.error = error.localizedDescription
         }
@@ -1022,7 +950,11 @@ private struct WorkspacePolicyView: View {
         guard let api = connection.apiClient else { return }
 
         do {
-            _ = try await api.patchPolicyRule(ruleId: draft.ruleId, request: draft.asPatchRequest())
+            if let ruleId = draft.ruleId {
+                _ = try await api.patchPolicyRule(ruleId: ruleId, request: draft.asPatchRequest())
+            } else {
+                _ = try await api.createPolicyRule(request: draft.asCreateRequest(defaultWorkspaceId: workspace.id))
+            }
             rememberedRuleDraft = nil
             await loadAll()
         } catch {
@@ -1046,8 +978,9 @@ private struct WorkspacePolicyView: View {
 
 private struct RememberedRuleDraft: Identifiable {
     let id = UUID()
-    let ruleId: String
+    let ruleId: String?
     let scope: String
+    let workspaceId: String?
     var decision: String
     var label: String
     var tool: String
@@ -1057,11 +990,41 @@ private struct RememberedRuleDraft: Identifiable {
     init(rule: PolicyRuleRecord) {
         ruleId = rule.id
         scope = rule.scope
+        workspaceId = rule.workspaceId
         decision = rule.decision
         label = rule.label
         tool = rule.tool ?? ""
         executable = rule.executable ?? ""
         pattern = rule.pattern ?? ""
+    }
+
+    init(workspaceId: String) {
+        ruleId = nil
+        scope = "workspace"
+        self.workspaceId = workspaceId
+        decision = "ask"
+        label = ""
+        tool = ""
+        executable = ""
+        pattern = ""
+    }
+
+    func asCreateRequest(defaultWorkspaceId: String) -> PolicyRuleCreateRequest {
+        let workspaceScopeId = scope == "workspace"
+            ? (workspaceId ?? defaultWorkspaceId)
+            : nil
+
+        return PolicyRuleCreateRequest(
+            decision: decision,
+            label: nonEmpty(label),
+            tool: nonEmpty(tool),
+            pattern: nonEmpty(pattern),
+            executable: nonEmpty(executable),
+            scope: scope,
+            workspaceId: workspaceScopeId,
+            sessionId: nil,
+            expiresAt: nil
+        )
     }
 
     func asPatchRequest() -> PolicyRulePatchRequest {
@@ -1094,7 +1057,11 @@ private struct RememberedRuleEditorView: View {
     var body: some View {
         Form {
             Section("Rule") {
-                LabeledContent("Rule ID", value: draft.ruleId)
+                if let ruleId = draft.ruleId {
+                    LabeledContent("Rule ID", value: ruleId)
+                } else {
+                    LabeledContent("Rule ID", value: "New rule")
+                }
                 LabeledContent("Scope", value: draft.scope.capitalized)
 
                 Picker("Decision", selection: $draft.decision) {
@@ -1118,7 +1085,7 @@ private struct RememberedRuleEditorView: View {
                     .autocorrectionDisabled(true)
             }
         }
-        .navigationTitle("Edit Remembered Rule")
+        .navigationTitle(draft.ruleId == nil ? "Add Remembered Rule" : "Edit Remembered Rule")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

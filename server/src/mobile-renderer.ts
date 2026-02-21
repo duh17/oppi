@@ -39,6 +39,17 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
+}
+
+function recordField(
+  v: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> | undefined {
+  return asRecord(v?.[key]);
+}
+
 /** Shorten long paths for display: /Users/chenda/workspace/foo → ~/workspace/foo */
 function shortenPath(p: string): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
@@ -59,10 +70,14 @@ function firstLine(s: string, max = 80): string {
 const bash: MobileToolRenderer = {
   renderCall(args) {
     const cmd = firstLine(str(args.command));
-    return [{ text: "$ ", style: "bold" }, { text: cmd, style: "accent" }];
+    return [
+      { text: "$ ", style: "bold" },
+      { text: cmd, style: "accent" },
+    ];
   },
-  renderResult(details: any, isError) {
-    const code = details?.exitCode;
+  renderResult(details: unknown, isError) {
+    const payload = asRecord(details);
+    const code = num(payload?.exitCode);
     if (isError || (typeof code === "number" && code !== 0)) {
       return [{ text: `exit ${code ?? "?"}`, style: "error" }];
     }
@@ -86,11 +101,14 @@ const read: MobileToolRenderer = {
     }
     return segs;
   },
-  renderResult(details: any, isError) {
+  renderResult(details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
-    const trunc = details?.truncation;
-    if (trunc?.truncated) {
-      return [{ text: `${trunc.outputLines}/${trunc.totalLines} lines`, style: "warning" }];
+    const payload = asRecord(details);
+    const trunc = recordField(payload, "truncation");
+    if (trunc?.truncated === true) {
+      const outputLines = num(trunc.outputLines) ?? "?";
+      const totalLines = num(trunc.totalLines) ?? "?";
+      return [{ text: `${outputLines}/${totalLines} lines`, style: "warning" }];
     }
     return [];
   },
@@ -105,9 +123,10 @@ const edit: MobileToolRenderer = {
     ];
     return segs;
   },
-  renderResult(details: any, isError) {
+  renderResult(details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
-    const line = details?.firstChangedLine;
+    const payload = asRecord(details);
+    const line = num(payload?.firstChangedLine);
     if (typeof line === "number") {
       return [{ text: `applied :${line}`, style: "success" }];
     }
@@ -123,7 +142,7 @@ const write: MobileToolRenderer = {
       { text: path || "…", style: "accent" },
     ];
   },
-  renderResult(_details: any, isError) {
+  renderResult(_details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
     return [{ text: "✓", style: "success" }];
   },
@@ -142,14 +161,15 @@ const grep: MobileToolRenderer = {
     if (glob) segs.push({ text: ` (${glob})`, style: "dim" });
     return segs;
   },
-  renderResult(details: any, isError) {
+  renderResult(details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
-    const limit = details?.matchLimitReached;
-    const trunc = details?.truncation;
-    if (limit || trunc?.truncated) {
+    const payload = asRecord(details);
+    const limit = num(payload?.matchLimitReached);
+    const trunc = recordField(payload, "truncation");
+    if ((typeof limit === "number" && limit > 0) || trunc?.truncated === true) {
       const parts: string[] = [];
-      if (limit) parts.push(`${limit} match limit`);
-      if (trunc?.truncated) parts.push("truncated");
+      if (typeof limit === "number" && limit > 0) parts.push(`${limit} match limit`);
+      if (trunc?.truncated === true) parts.push("truncated");
       return [{ text: parts.join(", "), style: "warning" }];
     }
     return [];
@@ -166,14 +186,15 @@ const find: MobileToolRenderer = {
       { text: ` in ${path}`, style: "muted" },
     ];
   },
-  renderResult(details: any, isError) {
+  renderResult(details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
-    const limit = details?.resultLimitReached;
-    const trunc = details?.truncation;
-    if (limit || trunc?.truncated) {
+    const payload = asRecord(details);
+    const limit = num(payload?.resultLimitReached);
+    const trunc = recordField(payload, "truncation");
+    if ((typeof limit === "number" && limit > 0) || trunc?.truncated === true) {
       const parts: string[] = [];
-      if (limit) parts.push(`${limit} result limit`);
-      if (trunc?.truncated) parts.push("truncated");
+      if (typeof limit === "number" && limit > 0) parts.push(`${limit} result limit`);
+      if (trunc?.truncated === true) parts.push("truncated");
       return [{ text: parts.join(", "), style: "warning" }];
     }
     return [];
@@ -188,14 +209,15 @@ const ls: MobileToolRenderer = {
       { text: path, style: "accent" },
     ];
   },
-  renderResult(details: any, isError) {
+  renderResult(details: unknown, isError) {
     if (isError) return []; // error icon is sufficient
-    const limit = details?.entryLimitReached;
-    const trunc = details?.truncation;
-    if (limit || trunc?.truncated) {
+    const payload = asRecord(details);
+    const limit = num(payload?.entryLimitReached);
+    const trunc = recordField(payload, "truncation");
+    if ((typeof limit === "number" && limit > 0) || trunc?.truncated === true) {
       const parts: string[] = [];
-      if (limit) parts.push(`${limit} entry limit`);
-      if (trunc?.truncated) parts.push("truncated");
+      if (typeof limit === "number" && limit > 0) parts.push(`${limit} entry limit`);
+      if (trunc?.truncated === true) parts.push("truncated");
       return [{ text: parts.join(", "), style: "warning" }];
     }
     return [];
@@ -205,18 +227,23 @@ const ls: MobileToolRenderer = {
 const todo: MobileToolRenderer = {
   renderCall(args) {
     const action = str(args.action);
-    const segs: StyledSegment[] = [{ text: "todo ", style: "bold" }, { text: action, style: "accent" }];
+    const segs: StyledSegment[] = [
+      { text: "todo ", style: "bold" },
+      { text: action, style: "accent" },
+    ];
     const title = str(args.title);
     if (title) segs.push({ text: ` "${firstLine(title, 50)}"`, style: "muted" });
     const id = str(args.id);
     if (id) segs.push({ text: ` ${id}`, style: "dim" });
     return segs;
   },
-  renderResult(details: any, isError) {
-    if (isError || details?.error) return []; // error icon is sufficient
-    const action = str(details?.action);
+  renderResult(details: unknown, isError) {
+    const payload = asRecord(details);
+    if (isError || payload?.error) return []; // error icon is sufficient
+    const action = str(payload?.action);
     if (action === "list" || action === "list-all") {
-      const count = Array.isArray(details?.todos) ? details.todos.length : 0;
+      const todos = payload?.todos;
+      const count = Array.isArray(todos) ? todos.length : 0;
       return [{ text: `${count} todo(s)`, style: "success" }];
     }
     return [{ text: "✓", style: "success" }];
@@ -254,7 +281,11 @@ export class MobileRendererRegistry {
   /** Register multiple renderers from a sidecar module. */
   registerAll(renderers: Record<string, MobileToolRenderer>): void {
     for (const [name, renderer] of Object.entries(renderers)) {
-      if (renderer && typeof renderer.renderCall === "function" && typeof renderer.renderResult === "function") {
+      if (
+        renderer &&
+        typeof renderer.renderCall === "function" &&
+        typeof renderer.renderResult === "function"
+      ) {
         this.renderers.set(name, renderer);
       }
     }
@@ -348,16 +379,23 @@ export class MobileRendererRegistry {
       }
 
       for (const [toolName, renderer] of Object.entries(renderers)) {
-        const r = renderer as any;
-        if (r && typeof r.renderCall === "function" && typeof r.renderResult === "function") {
-          this.renderers.set(toolName, r);
+        const candidate = asRecord(renderer);
+        const renderCall = candidate?.renderCall;
+        const renderResult = candidate?.renderResult;
+
+        if (typeof renderCall === "function" && typeof renderResult === "function") {
+          this.renderers.set(toolName, {
+            renderCall: (args) => renderCall(args) as StyledSegment[],
+            renderResult: (details, isError) => renderResult(details, isError) as StyledSegment[],
+          });
           loaded.push(toolName);
         } else {
           errors.push(`${filePath}: "${toolName}" missing renderCall or renderResult`);
         }
       }
-    } catch (err: any) {
-      errors.push(`${filePath}: ${err?.message || String(err)}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`${filePath}: ${message}`);
     }
 
     return { loaded, errors };

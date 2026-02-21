@@ -78,7 +78,7 @@ final class ServerConnection {
     var thinkingLevel: ThinkingLevel = .medium
 
     /// Cached slash command metadata for composer autocomplete.
-    internal(set) var slashCommands: [SlashCommand] = []
+    var slashCommands: [SlashCommand] = []
 
     /// Cached model list — populated eagerly on connect, survives sheet open/close.
     var cachedModels: [ModelInfo] = []
@@ -236,30 +236,84 @@ final class ServerConnection {
     }
 
     /// Handle `/stream` (re)connection — re-subscribe all tracked sessions.
+    ///
+    /// Retries the active session subscribe with backoff. If all retries
+    /// fail, surfaces a system event so the user can tap to reconnect.
+    /// Notification-level sessions are best-effort (single attempt).
     private func handleStreamReconnected() {
-        guard let wsClient else { return }
+        guard wsClient != nil else { return }
 
-        // Re-subscribe active session at full level
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.resubscribeTrackedSessions()
+        }
+    }
+
+    private static let resubscribeMaxAttempts = 3
+    private static let resubscribeBaseDelay: Duration = .milliseconds(500)
+
+    private func resubscribeTrackedSessions() async {
+        guard wsClient != nil else { return }
+
+        // Re-subscribe active session at full level (most important)
         if let activeSessionId {
-            Task {
-                try? await wsClient.send(.subscribe(
-                    sessionId: activeSessionId,
-                    level: .full,
-                    requestId: UUID().uuidString
-                ))
+            let ok = await resubscribeWithRetry(
+                sessionId: activeSessionId,
+                level: .full,
+                maxAttempts: Self.resubscribeMaxAttempts
+            )
+            if !ok {
+                logger.error("Resubscription failed for active session \(activeSessionId, privacy: .public)")
+                ClientLog.error(
+                    "WebSocket",
+                    "Resubscription failed for active session",
+                    metadata: ["sessionId": activeSessionId]
+                )
+                reducer.appendSystemEvent("Connection recovered but session sync failed")
             }
         }
 
-        // Re-subscribe notification-level sessions
+        // Re-subscribe notification-level sessions (best-effort, single attempt)
         for (sessionId, _) in sessionContinuations where sessionId != activeSessionId {
-            Task {
-                try? await wsClient.send(.subscribe(
+            _ = await resubscribeWithRetry(
+                sessionId: sessionId,
+                level: .notifications,
+                maxAttempts: 1
+            )
+        }
+    }
+
+    /// Send a subscribe command with retry.
+    ///
+    /// Returns `true` if the send succeeded on any attempt.
+    /// Only retries the WebSocket *send* — server-side subscribe failures
+    /// (session not found, etc.) come back as `rpc_result` errors and are
+    /// handled by the existing message routing.
+    private func resubscribeWithRetry(
+        sessionId: String,
+        level: StreamSubscriptionLevel,
+        maxAttempts: Int
+    ) async -> Bool {
+        for attempt in 1...maxAttempts {
+            guard let wsClient else { return false }
+            do {
+                try await wsClient.send(.subscribe(
                     sessionId: sessionId,
-                    level: .notifications,
+                    level: level,
                     requestId: UUID().uuidString
                 ))
+                return true
+            } catch {
+                let delayMs = Int(500 * attempt)
+                logger.warning(
+                    "Resubscribe attempt \(attempt)/\(maxAttempts) failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+                if attempt < maxAttempts {
+                    try? await Task.sleep(for: .milliseconds(delayMs))
+                }
             }
         }
+        return false
     }
 
     /// Handle notification-level events from non-active sessions

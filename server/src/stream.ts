@@ -30,7 +30,7 @@ export interface StreamContext {
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   handleClientMessage: (
-        session: Session,
+    session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
   ) => Promise<void>;
@@ -42,7 +42,51 @@ function ts(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 23);
 }
 
-const STREAM_MAX_BUFFERED_BYTES = 64 * 1024;
+// ─── Keepalive ───
+
+/** Default server-side ping interval (seconds). */
+const PING_INTERVAL_MS = 30_000;
+
+/**
+ * Start a server-initiated ping/pong keepalive for a WebSocket.
+ *
+ * Sends a WS ping every `intervalMs`. If a pong is not received before
+ * the next ping fires, the connection is terminated — which triggers
+ * the `close` event and runs existing cleanup.
+ *
+ * Returns a cleanup function that stops the timer.
+ */
+export function startServerPing(
+  ws: WebSocket,
+  label: string,
+  intervalMs = PING_INTERVAL_MS,
+): () => void {
+  let alive = true;
+
+  ws.on("pong", () => {
+    alive = true;
+  });
+
+  const timer = setInterval(() => {
+    if (!alive) {
+      console.log(`${ts()} [ws] Ping timeout — terminating ${label}`);
+      clearInterval(timer);
+      ws.terminate();
+      return;
+    }
+    alive = false;
+    ws.ping();
+  }, intervalMs);
+
+  return () => clearInterval(timer);
+}
+
+// ─── Backpressure ───
+
+/** High-water mark (bytes) above which ephemeral frames are dropped. */
+export const SEND_HWM_BYTES = 64 * 1024;
+
+export const DROPPABLE_TYPES = new Set(["text_delta", "thinking_delta", "tool_output"]);
 
 // ─── Stream Mux ───
 
@@ -79,17 +123,6 @@ export class UserStreamMux {
     }
   }
 
-  isBackpressureDroppable(msg: ServerMessage): boolean {
-    switch (msg.type) {
-      case "text_delta":
-      case "thinking_delta":
-      case "tool_output":
-        return true;
-      default:
-        return false;
-    }
-  }
-
   // ─── Sequence Tracking ───
 
   nextUserStreamSeq(): number {
@@ -103,9 +136,7 @@ export class UserStreamMux {
     return this.streamRing;
   }
 
-  getUserStreamCatchUp(
-    sinceSeq: number,
-  ): {
+  getUserStreamCatchUp(sinceSeq: number): {
     events: ServerMessage[];
     currentSeq: number;
     catchUpComplete: boolean;
@@ -118,9 +149,7 @@ export class UserStreamMux {
     for (const event of events) {
       const seq = event.streamSeq;
       if (typeof seq !== "number" || !Number.isInteger(seq) || seq <= expected) {
-        throw new Error(
-          `Invalid stream replay ordering: expected > ${expected}, got ${seq}`,
-        );
+        throw new Error(`Invalid stream replay ordering: expected > ${expected}, got ${seq}`);
       }
       expected = seq;
     }
@@ -152,8 +181,11 @@ export class UserStreamMux {
     console.log(`${ts()} [ws] Connected: ${this.ctx.storage.getOwnerName()} → /stream`);
     this.ctx.trackConnection(ws);
 
+    const stopPing = startServerPing(ws, `/stream (${this.ctx.storage.getOwnerName()})`);
+
     let msgSent = 0;
     let msgRecv = 0;
+    let msgDropped = 0;
     const subscriptions = new Map<string, UserStreamSubscription>();
     let fullSessionId: string | null = null;
     let queue: Promise<void> = Promise.resolve();
@@ -164,11 +196,10 @@ export class UserStreamMux {
         return;
       }
 
-      if (ws.bufferedAmount > STREAM_MAX_BUFFERED_BYTES && this.isBackpressureDroppable(msg)) {
-        const scope = msg.sessionId ? ` session=${msg.sessionId}` : "";
-        console.warn(
-          `${ts()} [ws] DROP ${msg.type} → /stream (backpressure buffered=${ws.bufferedAmount}${scope})`,
-        );
+      // Backpressure: skip high-frequency ephemeral frames when the send
+      // buffer is congested. Durable events are always delivered.
+      if (DROPPABLE_TYPES.has(msg.type) && ws.bufferedAmount > SEND_HWM_BYTES) {
+        msgDropped++;
         return;
       }
 
@@ -269,7 +300,15 @@ export class UserStreamMux {
             return;
           }
 
-          sendForSession(sessionId, msg);
+          const outbound =
+            msg.type === "state"
+              ? {
+                  ...msg,
+                  session: this.ctx.ensureSessionContextWindow(msg.session),
+                }
+              : msg;
+
+          sendForSession(sessionId, outbound);
         };
 
         const unsubscribe = this.ctx.sessions.subscribe(sessionId, callback);
@@ -307,7 +346,6 @@ export class UserStreamMux {
             reason: pending.reason,
             timeoutAt: pending.timeoutAt,
             expires: pending.expires ?? true,
-            resolutionOptions: pending.resolutionOptions,
           });
         }
 
@@ -344,7 +382,9 @@ export class UserStreamMux {
         .then(async () => {
           const msg = JSON.parse(data.toString()) as ClientMessage;
           msgRecv++;
-          console.log(`${ts()} [ws] RECV ${msg.type} from ${this.ctx.storage.getOwnerName()} → /stream`);
+          console.log(
+            `${ts()} [ws] RECV ${msg.type} from ${this.ctx.storage.getOwnerName()} → /stream`,
+          );
 
           switch (msg.type) {
             case "subscribe": {
@@ -368,7 +408,12 @@ export class UserStreamMux {
 
             case "permission_response": {
               const scope = msg.scope || "once";
-              const resolved = this.ctx.gate.resolveDecision(msg.id, msg.action, scope, msg.expiresInMs);
+              const resolved = this.ctx.gate.resolveDecision(
+                msg.id,
+                msg.action,
+                scope,
+                msg.expiresInMs,
+              );
               if (!resolved) {
                 send({ type: "error", error: `Permission request not found: ${msg.id}` });
                 return;
@@ -423,15 +468,17 @@ export class UserStreamMux {
     });
 
     ws.on("close", (code, reason) => {
+      stopPing();
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
+        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv}${msgDropped > 0 ? ` dropped=${msgDropped}` : ""})`,
       );
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);
     });
 
     ws.on("error", (err) => {
+      stopPing();
       console.error(`${ts()} [ws] Error: ${this.ctx.storage.getOwnerName()} → /stream:`, err);
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);

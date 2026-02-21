@@ -430,6 +430,86 @@ struct ChatSessionManagerTests {
     }
 
     @MainActor
+    @Test func busyHistoryReloadDoesNotClobberLiveStreamingRows() async {
+        let sessionId = "busy-reload-\(UUID().uuidString)"
+        let workspaceId = "w-live"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(120))
+            return (
+                makeSession(id: sessionId, status: .busy, workspaceId: workspaceId),
+                [
+                    TraceEvent(
+                        id: "trace-assistant",
+                        type: .assistant,
+                        timestamp: "2026-02-11T00:00:00Z",
+                        text: "TRACE_RELOAD_MARKER",
+                        tool: nil,
+                        args: nil,
+                        output: nil,
+                        toolCallId: nil,
+                        toolName: nil,
+                        isError: nil,
+                        thinking: nil
+                    ),
+                ]
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeCredentials())
+
+        let reducer = connection.reducer
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeSession(id: sessionId, status: .busy, workspaceId: workspaceId))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+
+        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy, workspaceId: workspaceId)))
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .thinkingDelta(delta: "live thinking"))
+        streams.yield(index: 0, message: .toolStart(tool: "read", args: [:], toolCallId: "tc-live", callSegments: nil))
+
+        #expect(await waitForCondition(timeoutMs: 500) {
+            await MainActor.run {
+                reducer.items.contains { item in
+                    if case .toolCall(let id, _, _, _, _, _, _) = item {
+                        return id == "tc-live"
+                    }
+                    return false
+                }
+            }
+        })
+
+        // Wait for deferred history reload attempt to complete.
+        try? await Task.sleep(for: .milliseconds(220))
+
+        #expect(reducer.items.contains { item in
+            if case .toolCall(let id, _, _, _, _, _, _) = item {
+                return id == "tc-live"
+            }
+            return false
+        })
+
+        #expect(!reducer.items.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("TRACE_RELOAD_MARKER")
+            }
+            return false
+        })
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @MainActor
     @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
         let sessionId = "catch-stop-ok-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
@@ -752,11 +832,11 @@ struct ChatSessionManagerTests {
         .init(host: "localhost", port: 7749, token: "sk_test", name: "Test")
     }
 
-    private func makeSession(id: String, status: SessionStatus = .ready) -> Session {
+    private func makeSession(id: String, status: SessionStatus = .ready, workspaceId: String? = nil) -> Session {
         let now = Date()
         return Session(
             id: id,
-            workspaceId: nil,
+            workspaceId: workspaceId,
             workspaceName: nil,
             name: "Session",
             status: status,

@@ -24,7 +24,7 @@
       "$ref": "#/$defs/decision"
     },
     "guardrails": {
-      "description": "Immutable safety blocks. Always evaluated first; cannot be overridden by learned permissions.",
+      "description": "Safety rules evaluated before permissions.",
       "type": "array",
       "items": { "$ref": "#/$defs/permission" }
     },
@@ -112,10 +112,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500
-        },
-        "immutable": {
-          "type": "boolean",
-          "default": false
         },
         "match": { "$ref": "#/$defs/match" }
       }

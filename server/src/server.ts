@@ -18,9 +18,14 @@ import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
-import { UserStreamMux } from "./stream.js";
+import { UserStreamMux, startServerPing, SEND_HWM_BYTES, DROPPABLE_TYPES } from "./stream.js";
 import { RouteHandler, type ModelInfo } from "./routes.js";
-import { PolicyEngine, defaultPolicy, defaultPresetRules } from "./policy.js";
+import {
+  PolicyEngine,
+  defaultPolicy,
+  policyRulesFromDeclarativeConfig,
+  policyRuntimeConfig,
+} from "./policy.js";
 import { GateServer, type PendingDecision } from "./gate.js";
 import { RuleStore } from "./rules.js";
 import { AuditLog } from "./audit.js";
@@ -110,7 +115,9 @@ function isWildcardBindHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::";
 }
 
-export function normalizeRemoteAddress(remoteAddress: string | undefined): { ip: string; family: "ipv4" | "ipv6" } | null {
+export function normalizeRemoteAddress(
+  remoteAddress: string | undefined,
+): { ip: string; family: "ipv4" | "ipv6" } | null {
   if (!remoteAddress) return null;
 
   const trimmed = remoteAddress.trim();
@@ -262,6 +269,11 @@ function parseCompactTokenCount(raw: string): number | null {
   return Math.round(value);
 }
 
+/** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
+function normalizeModelToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 /** Parse `pi --list-models` table output into model records. */
 function parseModelTable(output: string): ModelInfo[] {
   const models: ModelInfo[] = [];
@@ -388,11 +400,15 @@ export class Server {
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
-    this.policy = new PolicyEngine(config.policy || defaultPolicy());
+    const configuredPolicy = config.policy || defaultPolicy();
+
+    // Runtime policy engine only handles fallback + heuristics.
+    // Allow/ask/deny rules live in RuleStore (single runtime source of truth).
+    this.policy = new PolicyEngine(policyRuntimeConfig(configuredPolicy));
 
     // v2 policy infrastructure
     const ruleStore = new RuleStore(join(dataDir, "rules.json"));
-    ruleStore.seedIfEmpty(defaultPresetRules());
+    ruleStore.seedIfEmpty(policyRulesFromDeclarativeConfig(configuredPolicy));
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
@@ -416,10 +432,8 @@ export class Server {
       sessions: this.sessions,
       gate: this.gate,
       ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (session) =>
-        this.resolveWorkspaceForSession(session),
-      handleClientMessage: (session, msg, send) =>
-        this.handleClientMessage(session, msg, send),
+      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
+      handleClientMessage: (session, msg, send) => this.handleClientMessage(session, msg, send),
       trackConnection: (ws) => this.trackConnection(ws),
       untrackConnection: (ws) => this.untrackConnection(ws),
     });
@@ -431,13 +445,11 @@ export class Server {
         return;
       }
 
-      const streamSeq = this.streamMux.recordUserStreamEvent(
-        payload.sessionId,
-        payload.event,
-      );
-
-      payload.event.streamSeq = streamSeq;
-      payload.event.sessionId = payload.event.sessionId ?? payload.sessionId;
+      // Record in user-level stream ring (creates its own copy with streamSeq).
+      // Do NOT mutate payload.event — it's the same object reference stored in
+      // the per-session EventRing. The streamSeq is only relevant for the
+      // user-level stream ring, not per-session catch-up.
+      this.streamMux.recordUserStreamEvent(payload.sessionId, payload.event);
     });
 
     // Create route handler (dispatch + all HTTP business logic)
@@ -449,8 +461,7 @@ export class Server {
       userSkillStore: this.userSkillStore,
       streamMux: this.streamMux,
       ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
-      resolveWorkspaceForSession: (session) =>
-        this.resolveWorkspaceForSession(session),
+      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
       refreshModelCatalog: () => this.refreshModelCatalog(),
       getModelCatalog: () => this.modelCatalog,
@@ -515,6 +526,9 @@ export class Server {
     // Prime model catalog in background so first picker open is fast.
     void this.refreshModelCatalog(true);
 
+    // Heal stale persisted contextWindow fallbacks before any client connects.
+    this.healPersistedSessionContextWindows();
+
     const securityWarnings = formatStartupSecurityWarnings(config);
     for (const warning of securityWarnings) {
       console.warn(`[startup][security] ${warning}`);
@@ -522,10 +536,17 @@ export class Server {
 
     return new Promise((resolve) => {
       this.httpServer.listen(config.port, config.host, () => {
-        console.log(`🚀 oppi listening on ${config.host}:${config.port}`);
+        console.log(`🚀 oppi listening on ${config.host}:${this.port}`);
         resolve();
       });
     });
+  }
+
+  /** Actual listening port (may differ from config when config.port is 0). */
+  get port(): number {
+    const addr = this.httpServer.address();
+    if (addr && typeof addr === "object") return addr.port;
+    return this.storage.getConfig().port;
   }
 
   async stop(): Promise<void> {
@@ -553,7 +574,6 @@ export class Server {
       reason: pending.reason,
       timeoutAt: pending.timeoutAt,
       expires: pending.expires ?? true,
-      resolutionOptions: pending.resolutionOptions,
     };
 
     this.broadcastToUser(msg);
@@ -782,7 +802,7 @@ export class Server {
       activeTool: update.activeTool !== undefined ? update.activeTool : current.activeTool,
       lastEvent: update.lastEvent !== undefined ? update.lastEvent : current.lastEvent,
       end: Boolean(current.end || update.end),
-      priority: (Math.max(current.priority ?? 5, update.priority ?? 5) as 5 | 10),
+      priority: Math.max(current.priority ?? 5, update.priority ?? 5) as 5 | 10,
     };
 
     this.liveActivityPending = merged;
@@ -828,7 +848,12 @@ export class Server {
     }
 
     const staleDate = Date.now() + 2 * 60 * 1000;
-    void this.push.sendLiveActivityUpdate(token, liveActivityPayload, staleDate, pending.priority ?? 5);
+    void this.push.sendLiveActivityUpdate(
+      token,
+      liveActivityPayload,
+      staleDate,
+      pending.priority ?? 5,
+    );
   }
 
   private buildLiveActivityContentState(
@@ -873,18 +898,18 @@ export class Server {
       }
     };
 
-    return sessions
-      .slice()
-      .sort((a, b) => {
-        const priority = score(b.status) - score(a.status);
-        if (priority !== 0) {
-          return priority;
-        }
-        return b.lastActivity - a.lastActivity;
-      })[0];
+    return sessions.slice().sort((a, b) => {
+      const priority = score(b.status) - score(a.status);
+      if (priority !== 0) {
+        return priority;
+      }
+      return b.lastActivity - a.lastActivity;
+    })[0];
   }
 
-  private mapSessionStatusToLiveActivity(status: Session["status"] | undefined): LiveActivityStatus {
+  private mapSessionStatusToLiveActivity(
+    status: Session["status"] | undefined,
+  ): LiveActivityStatus {
     switch (status) {
       case "busy":
         return "busy";
@@ -986,15 +1011,50 @@ export class Server {
   }
 
   private getContextWindow(modelId: string): number {
-    const known = this.modelCatalog.find(
-      (m) => m.id === modelId || m.id.endsWith(`/${modelId}`),
-    )?.contextWindow;
+    const trimmed = modelId.trim();
+    const tail = trimmed.includes("/") ? trimmed.substring(trimmed.lastIndexOf("/") + 1) : trimmed;
+
+    const candidates = new Set<string>([trimmed, tail].filter((v) => v.length > 0));
+    const normalizedCandidates = new Set(
+      Array.from(candidates)
+        .map((v) => normalizeModelToken(v))
+        .filter((v) => v.length > 0),
+    );
+
+    const known = this.modelCatalog.find((m) => {
+      if (candidates.has(m.id) || candidates.has(m.name)) {
+        return true;
+      }
+
+      for (const candidate of candidates) {
+        if (m.id.endsWith(`/${candidate}`)) {
+          return true;
+        }
+      }
+
+      const normalizedId = normalizeModelToken(m.id);
+      const normalizedName = normalizeModelToken(m.name);
+      const normalizedTail = normalizeModelToken(m.id.substring(m.id.lastIndexOf("/") + 1));
+
+      for (const candidate of normalizedCandidates) {
+        if (
+          candidate === normalizedId ||
+          candidate === normalizedName ||
+          candidate === normalizedTail
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    })?.contextWindow;
+
     if (known) {
       return known;
     }
 
     // Generic model-id fallback, e.g. "...-272k" / "..._128k".
-    const match = modelId.match(/(\d{2,4})k\b/i);
+    const match = trimmed.match(/(\d{2,4})k\b/i);
     if (match) {
       const thousands = Number.parseInt(match[1], 10);
       if (Number.isFinite(thousands) && thousands > 0) {
@@ -1016,8 +1076,15 @@ export class Server {
   private ensureSessionContextWindow(session: Session): Session {
     let changed = false;
 
-    if (!session.contextWindow || session.contextWindow <= 0) {
-      session.contextWindow = this.getContextWindow(session.model || "");
+    const resolved = this.getContextWindow(session.model || "");
+    const current = session.contextWindow;
+
+    if (!current || current <= 0) {
+      session.contextWindow = resolved;
+      changed = true;
+    } else if (current !== resolved && current === 200000) {
+      // Heal stale fallback values after model-ID normalization fixes.
+      session.contextWindow = resolved;
       changed = true;
     }
 
@@ -1026,6 +1093,25 @@ export class Server {
     }
 
     return session;
+  }
+
+  private healPersistedSessionContextWindows(): void {
+    const sessions = this.storage.listSessions();
+    let healedCount = 0;
+
+    for (const session of sessions) {
+      const before = session.contextWindow;
+      this.ensureSessionContextWindow(session);
+      if (session.contextWindow !== before) {
+        healedCount += 1;
+      }
+    }
+
+    if (healedCount > 0) {
+      console.log(
+        `${ts()} [models] healed context windows for ${healedCount} persisted session(s)`,
+      );
+    }
   }
 
   private isValidMemoryNamespace(namespace: string): boolean {
@@ -1066,7 +1152,9 @@ export class Server {
     const method = req.method || "GET";
 
     if (!this.isSourceAllowed(req.socket.remoteAddress)) {
-      console.log(`${ts()} [auth] 403 ${method} ${path} — source ip not in allowedCidrs (${req.socket.remoteAddress ?? "unknown"})`);
+      console.log(
+        `${ts()} [auth] 403 ${method} ${path} — source ip not in allowedCidrs (${req.socket.remoteAddress ?? "unknown"})`,
+      );
       this.error(res, 403, "Forbidden");
       return;
     }
@@ -1144,7 +1232,9 @@ export class Server {
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     if (!this.isSourceAllowed((socket as Socket).remoteAddress)) {
-      console.log(`${ts()} [auth] 403 WS upgrade ${url.pathname} — source ip not in allowedCidrs (${(socket as Socket).remoteAddress ?? "unknown"})`);
+      console.log(
+        `${ts()} [auth] 403 WS upgrade ${url.pathname} — source ip not in allowedCidrs (${(socket as Socket).remoteAddress ?? "unknown"})`,
+      );
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
@@ -1180,9 +1270,11 @@ export class Server {
 
     const workspaceId = wsMatch[1];
     const sessionId = wsMatch[2];
-    const session = this.storage.getSession(sessionId);
+    const session = this.findSessionById(sessionId);
     if (!session) {
-      console.log(`${ts()} [ws] 404 session not found: ${sessionId} (user=${this.storage.getOwnerName()})`);
+      console.log(
+        `${ts()} [ws] 404 session not found: ${sessionId} (user=${this.storage.getOwnerName()})`,
+      );
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -1203,16 +1295,33 @@ export class Server {
   }
 
   private async handleWebSocket(ws: WebSocket, session: Session): Promise<void> {
-    console.log(`${ts()} [ws] Connected: ${this.storage.getOwnerName()} → ${session.id} (status=${session.status})`);
+    console.log(
+      `${ts()} [ws] Connected: ${this.storage.getOwnerName()} → ${session.id} (status=${session.status})`,
+    );
     this.trackConnection(ws);
+
+    const stopPing = startServerPing(ws, `${session.id} (${this.storage.getOwnerName()})`);
 
     let msgSent = 0;
     let msgRecv = 0;
+    let msgDropped = 0;
 
     const send = (msg: ServerMessage): void => {
+      const outbound =
+        msg.type === "state"
+          ? {
+              ...msg,
+              session: this.ensureSessionContextWindow(msg.session),
+            }
+          : msg;
+
       if (ws.readyState === WebSocket.OPEN) {
+        if (DROPPABLE_TYPES.has(outbound.type) && ws.bufferedAmount > SEND_HWM_BYTES) {
+          msgDropped++;
+          return;
+        }
         msgSent++;
-        ws.send(JSON.stringify(msg), { compress: false });
+        ws.send(JSON.stringify(outbound), { compress: false });
       } else {
         console.warn(`${ts()} [ws] DROP ${msg.type} → ${session.id} (readyState=${ws.readyState})`);
       }
@@ -1222,7 +1331,7 @@ export class Server {
     // Without this, the iOS client sends a prompt while pi is still
     // loading and the message is silently dropped — causing a hang.
     let ready = false;
-    let hydratedSession: Session = session;
+    let hydratedSession: Session = this.ensureSessionContextWindow(session);
     const messageQueue: ClientMessage[] = [];
 
     ws.on("message", async (data) => {
@@ -1250,15 +1359,17 @@ export class Server {
     let unsubscribe: (() => void) | null = null;
 
     ws.on("close", (code, reason) => {
+      stopPing();
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
+        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv}${msgDropped > 0 ? ` dropped=${msgDropped}` : ""})`,
       );
       unsubscribe?.();
       this.untrackConnection(ws);
     });
 
     ws.on("error", (err) => {
+      stopPing();
       console.error(`${ts()} [ws] Error: ${this.storage.getOwnerName()} → ${session.id}:`, err);
       unsubscribe?.();
       this.untrackConnection(ws);
@@ -1270,7 +1381,7 @@ export class Server {
       console.log(`${ts()} [ws] SEND connected → ${session.id}`);
       send({
         type: "connected",
-        session,
+        session: hydratedSession,
         currentSeq: this.sessions.getCurrentSeq(session.id),
       });
 
@@ -1281,7 +1392,8 @@ export class Server {
         `${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"})...`,
       );
       const startTime = Date.now();
-      const activeSession = await this.sessions.startSession(session.id,
+      const activeSession = await this.sessions.startSession(
+        session.id,
         this.storage.getOwnerName(),
         workspace,
       );
@@ -1312,7 +1424,6 @@ export class Server {
           reason: pending.reason,
           timeoutAt: pending.timeoutAt,
           expires: pending.expires ?? true,
-          resolutionOptions: pending.resolutionOptions,
         });
       }
 

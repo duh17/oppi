@@ -35,9 +35,7 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   try {
     const raw = JSON.parse(readFileSync(apnsConfigPath, "utf-8"));
     if (!raw.keyPath || !raw.keyId || !raw.teamId || !raw.bundleId) {
-      console.log(
-        c.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"),
-      );
+      console.log(c.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"));
       return undefined;
     }
     return raw as APNsConfig;
@@ -52,9 +50,7 @@ function printHeader(): void {
   console.log("");
   console.log(c.boldMagenta("  ╭─────────────────────────────────────╮"));
   console.log(
-    c.boldMagenta("  │") +
-      c.bold("              π  oppi                   ") +
-      c.boldMagenta("│"),
+    c.boldMagenta("  │") + c.bold("              π  oppi                   ") + c.boldMagenta("│"),
   );
   console.log(c.boldMagenta("  ╰─────────────────────────────────────╯"));
   console.log("");
@@ -390,7 +386,10 @@ function cmdDoctor(storage: Storage): void {
   try {
     const mode = statSync(storage.getConfigPath()).mode & 0o777;
     if ((mode & 0o077) !== 0) {
-      checks.push({ level: "warn", message: `config file permissions are ${mode.toString(8)} (recommend 600)` });
+      checks.push({
+        level: "warn",
+        message: `config file permissions are ${mode.toString(8)} (recommend 600)`,
+      });
     } else {
       checks.push({ level: "pass", message: "config file permissions are private" });
     }
@@ -401,7 +400,10 @@ function cmdDoctor(storage: Storage): void {
   try {
     const mode = statSync(storage.getDataDir()).mode & 0o777;
     if ((mode & 0o077) !== 0) {
-      checks.push({ level: "warn", message: `data dir permissions are ${mode.toString(8)} (recommend 700)` });
+      checks.push({
+        level: "warn",
+        message: `data dir permissions are ${mode.toString(8)} (recommend 700)`,
+      });
     } else {
       checks.push({ level: "pass", message: "data dir permissions are private" });
     }
@@ -416,7 +418,10 @@ function cmdDoctor(storage: Storage): void {
   }
 
   if ((host === "0.0.0.0" || host === "::") && allowedCidrs.length > 0) {
-    checks.push({ level: "warn", message: "wildcard bind in use; rely on CIDR/firewall for exposure control" });
+    checks.push({
+      level: "warn",
+      message: "wildcard bind in use; rely on CIDR/firewall for exposure control",
+    });
   }
   if (loopback && allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
     checks.push({ level: "warn", message: "loopback bind with wide CIDRs is inconsistent" });
@@ -431,7 +436,10 @@ function cmdDoctor(storage: Storage): void {
 
   const nodeMajor = Number(process.versions.node.split(".")[0] || "0");
   if (nodeMajor < 22) {
-    checks.push({ level: "warn", message: `Node.js ${process.versions.node} detected (recommend >= 22)` });
+    checks.push({
+      level: "warn",
+      message: `Node.js ${process.versions.node} detected (recommend >= 22)`,
+    });
   } else {
     checks.push({ level: "pass", message: `Node.js ${process.versions.node}` });
   }
@@ -589,7 +597,9 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   console.log(c.bold("  Next steps:"));
   console.log("");
   console.log(`    ${c.cyan("1.")} oppi serve              ${c.dim("Start the server")}`);
-  console.log(`    ${c.cyan("2.")} oppi pair ${c.dim('"YourName"')}     ${c.dim("Generate pairing QR")}`);
+  console.log(
+    `    ${c.cyan("2.")} oppi pair ${c.dim('"YourName"')}     ${c.dim("Generate pairing QR")}`,
+  );
   console.log(`    ${c.cyan("3.")} Scan QR in Oppi app     ${c.dim("Connect your phone")}`);
   console.log("");
 }
@@ -598,17 +608,20 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
 /** Settable config keys and their types for `oppi config set`. */
 const SETTABLE_KEYS: Record<string, { type: "number" | "string" | "boolean"; desc: string }> = {
-  port:                     { type: "number",  desc: "Server port" },
-  host:                     { type: "string",  desc: "Bind address" },
-  defaultModel:             { type: "string",  desc: "Default model for new sessions" },
-  maxSessionsGlobal:        { type: "number",  desc: "Max concurrent sessions" },
-  maxSessionsPerWorkspace:  { type: "number",  desc: "Max sessions per workspace" },
-  sessionIdleTimeoutMs:     { type: "number",  desc: "Session idle timeout (ms)" },
-  workspaceIdleTimeoutMs:   { type: "number",  desc: "Workspace idle timeout (ms)" },
-  approvalTimeoutMs:        { type: "number",  desc: "Permission approval timeout (ms)" },
+  port: { type: "number", desc: "Server port" },
+  host: { type: "string", desc: "Bind address" },
+  defaultModel: { type: "string", desc: "Default model for new sessions" },
+  maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
+  maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
+  sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
+  workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
+  approvalTimeoutMs: { type: "number", desc: "Permission approval timeout (ms)" },
 };
 
-function coerceValue(raw: string, type: "number" | "string" | "boolean"): number | string | boolean {
+function coerceValue(
+  raw: string,
+  type: "number" | "string" | "boolean",
+): number | string | boolean {
   switch (type) {
     case "number": {
       const n = Number(raw);

@@ -10,7 +10,6 @@
       "risk": "critical",
       "label": "Block secret credential files",
       "reason": "Never allow direct reads of private key material",
-      "immutable": true,
       "match": {
         "tool": "read",
         "pathMatches": "*identity_ed25519*"
@@ -22,7 +21,6 @@
       "risk": "critical",
       "label": "Block destructive root delete",
       "reason": "Prevents catastrophic filesystem deletion",
-      "immutable": true,
       "match": {
         "tool": "bash",
         "executable": "rm",

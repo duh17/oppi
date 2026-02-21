@@ -95,7 +95,9 @@ interface ParsedEntry {
 }
 
 export function buildWorkspaceGraph(options: BuildWorkspaceGraphOptions): WorkspaceGraphResponse {
-  const sessions = options.sessions.filter((session) => session.workspaceId === options.workspaceId);
+  const sessions = options.sessions.filter(
+    (session) => session.workspaceId === options.workspaceId,
+  );
   const activeSessionIds = options.activeSessionIds ?? new Set<string>();
 
   const candidateFiles = new Set<string>();
@@ -141,7 +143,10 @@ export function buildWorkspaceGraph(options: BuildWorkspaceGraphOptions): Worksp
         activeSessionIds: new Set<string>(),
       });
     } else {
-      if (header.timestampMs !== 0 && (existing.createdAt === 0 || header.timestampMs < existing.createdAt)) {
+      if (
+        header.timestampMs !== 0 &&
+        (existing.createdAt === 0 || header.timestampMs < existing.createdAt)
+      ) {
         existing.createdAt = header.timestampMs;
       }
 
@@ -188,7 +193,8 @@ export function buildWorkspaceGraph(options: BuildWorkspaceGraphOptions): Worksp
 
       node.attachedSessionIds.add(session.id);
 
-      const isCurrent = session.piSessionId === node.id || session.piSessionFile === node.sessionFile;
+      const isCurrent =
+        session.piSessionId === node.id || session.piSessionFile === node.sessionFile;
       if (isCurrent && activeSessionIds.has(session.id)) {
         node.activeSessionIds.add(session.id);
       }
@@ -448,7 +454,9 @@ function buildEntryGraph(piSessionId: string, path: string): WorkspaceEntryGraph
     });
   }
 
-  const rootEntryId = parsedEntries.find((entry) => !entry.parentId || !nodeIds.has(entry.parentId))?.id;
+  const rootEntryId = parsedEntries.find(
+    (entry) => !entry.parentId || !nodeIds.has(entry.parentId),
+  )?.id;
   const leafEntryId = parsedEntries[parsedEntries.length - 1]?.id;
 
   return {

@@ -34,11 +34,11 @@ struct ClientMessageTests {
         let msg = ClientMessage.permissionResponse(
             id: "perm2",
             action: .allow,
-            scope: .workspace,
+            scope: .global,
             expiresInMs: 3_600_000
         )
         let json = try decode(msg)
-        #expect(json["scope"] as? String == "workspace")
+        #expect(json["scope"] as? String == "global")
         #expect(json["expiresInMs"] as? Int == 3_600_000)
     }
 

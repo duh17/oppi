@@ -308,6 +308,22 @@ describe("session-protocol state mutation helpers", () => {
     });
   });
 
+  it("caps changedFiles and tracks overflow", () => {
+    const session = makeSession();
+
+    for (let i = 0; i < 105; i += 1) {
+      updateSessionChangeStats(session, "write", {
+        path: `src/file-${i}.ts`,
+        content: "x",
+      });
+    }
+
+    expect(session.changeStats).toBeDefined();
+    expect(session.changeStats?.filesChanged).toBe(105);
+    expect(session.changeStats?.changedFiles.length).toBe(100);
+    expect(session.changeStats?.changedFilesOverflow).toBe(5);
+  });
+
   it("applies assistant message_end usage and persistence", () => {
     const session = makeSession();
     const addMessage = vi.fn();
@@ -364,7 +380,9 @@ describe("composeModelId", () => {
   });
 
   it("does not double-prefix when model already starts with provider", () => {
-    expect(composeModelId("anthropic", "anthropic/claude-sonnet-4-0")).toBe("anthropic/claude-sonnet-4-0");
+    expect(composeModelId("anthropic", "anthropic/claude-sonnet-4-0")).toBe(
+      "anthropic/claude-sonnet-4-0",
+    );
   });
 
   it("handles lmstudio local models", () => {

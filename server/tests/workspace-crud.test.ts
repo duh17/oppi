@@ -177,7 +177,7 @@ describe("Storage.getWorkspace", () => {
     expect(storage.getWorkspace(ws.id)).toBeUndefined();
   });
 
-  it("loads legacy records that still include runtime metadata", () => {
+  it("loads records that still include runtime metadata", () => {
     const ws = storage.createWorkspace(createReq());
     const path = join(dataDir, "workspaces", `${ws.id}.json`);
 
@@ -294,24 +294,6 @@ describe("Storage.updateWorkspace", () => {
     const updated = storage.updateWorkspace(ws.id, { skills: ["fetch", "web-browser"] });
 
     expect(updated!.skills).toEqual(["fetch", "web-browser"]);
-  });
-
-  it("updates policy permissions", () => {
-    const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, {
-      policy: {
-        permissions: [
-          {
-            id: "allow-npm-test",
-            decision: "allow",
-            match: { tool: "bash", executable: "npm", commandMatches: "npm test*" },
-          },
-        ],
-      },
-    });
-
-    expect(updated!.policy?.permissions).toHaveLength(1);
-    expect(updated!.policy?.permissions[0]?.id).toBe("allow-npm-test");
   });
 
   it("updates systemPrompt", () => {
@@ -549,22 +531,22 @@ describe("Storage.ensureDefaultWorkspaces", () => {
   });
 });
 
-// ─── Storage: legacy workspace compatibility ───
+// ─── Storage: runtime-key handling ───
 
-describe("Storage legacy workspace compatibility", () => {
-  it("list loads records even when legacy runtime key is present", () => {
+describe("Storage runtime-key handling", () => {
+  it("list loads records when runtime key is present", () => {
     const good = storage.createWorkspace(createReq({ name: "good" }));
-    const legacy = storage.createWorkspace(createReq({ name: "legacy" }));
-    const legacyPath = join(dataDir, "workspaces", `${legacy.id}.json`);
+    const oldRecord = storage.createWorkspace(createReq({ name: "old-record" }));
+    const oldRecordPath = join(dataDir, "workspaces", `${oldRecord.id}.json`);
 
-    const raw = JSON.parse(readFileSync(legacyPath, "utf-8"));
+    const raw = JSON.parse(readFileSync(oldRecordPath, "utf-8"));
     raw.runtime = "host";
-    writeFileSync(legacyPath, JSON.stringify(raw));
+    writeFileSync(oldRecordPath, JSON.stringify(raw));
 
     const list = storage.listWorkspaces();
     expect(list.map((w) => w.id)).toContain(good.id);
-    expect(list.map((w) => w.id)).toContain(legacy.id);
-    expect(Object.prototype.hasOwnProperty.call(list.find((w) => w.id == legacy.id)!, "runtime")).toBe(false);
+    expect(list.map((w) => w.id)).toContain(oldRecord.id);
+    expect(Object.prototype.hasOwnProperty.call(list.find((w) => w.id == oldRecord.id)!, "runtime")).toBe(false);
   });
 });
 

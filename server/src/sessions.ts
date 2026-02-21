@@ -378,9 +378,15 @@ export class SessionManager extends EventEmitter {
     if (
       data.type === "agent_start" ||
       data.type === "agent_end" ||
+      data.type === "turn_start" ||
+      data.type === "turn_end" ||
       data.type === "message_end" ||
       data.type === "tool_execution_start" ||
-      data.type === "tool_execution_end"
+      data.type === "tool_execution_end" ||
+      data.type === "auto_compaction_start" ||
+      data.type === "auto_compaction_end" ||
+      data.type === "auto_retry_start" ||
+      data.type === "auto_retry_end"
     ) {
       const tool = data.toolName ? ` tool=${data.toolName}` : "";
       console.log(
@@ -779,22 +785,14 @@ export class SessionManager extends EventEmitter {
     if (!active) return;
 
     try {
-      const sdkState = active.sdkBackend.getState();
-      const snapshot = {
-        sessionFile: sdkState.sessionFile,
-        sessionId: active.sdkBackend.sessionId,
-        model: sdkState.model
-          ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
-          : undefined,
-        thinkingLevel: sdkState.thinkingLevel,
-      };
+      const snapshot = active.sdkBackend.getStateSnapshot();
       if (this.applyPiStateSnapshot(active.session, snapshot)) {
         this.persistSessionNow(key, active.session);
       }
 
       await this.applyRememberedThinkingLevel(key, active);
     } catch {
-      // Non-fatal; history falls back to stored SessionMessage list.
+      // Non-fatal; history remains recoverable from pi trace metadata/files.
     }
   }
 
@@ -810,15 +808,7 @@ export class SessionManager extends EventEmitter {
     if (!active) return null;
 
     try {
-      const sdkState = active.sdkBackend.getState();
-      const snapshot = {
-        sessionFile: sdkState.sessionFile,
-        sessionId: active.sdkBackend.sessionId,
-        model: sdkState.model
-          ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
-          : undefined,
-        thinkingLevel: sdkState.thinkingLevel,
-      };
+      const snapshot = active.sdkBackend.getStateSnapshot();
       if (this.applyPiStateSnapshot(active.session, snapshot)) {
         this.persistSessionNow(key, active.session);
       }
@@ -975,17 +965,41 @@ export class SessionManager extends EventEmitter {
       typeof rawProvider === "string" && typeof rawModelId === "string"
         ? composeModelId(rawProvider, rawModelId)
         : rawModelId;
-    if (
-      typeof fullModelId === "string" &&
-      fullModelId.length > 0 &&
-      session.model !== fullModelId
-    ) {
-      session.model = fullModelId;
-      if (this.contextWindowResolver) {
-        session.contextWindow = this.contextWindowResolver(fullModelId);
+    if (typeof fullModelId === "string" && fullModelId.length > 0) {
+      let effectiveModelId = fullModelId;
+      if (
+        this.contextWindowResolver &&
+        typeof session.model === "string" &&
+        session.model.length > 0
+      ) {
+        const candidateWindow = this.contextWindowResolver(fullModelId);
+        const existingWindow = this.contextWindowResolver(session.model);
+
+        // Guard against malformed SDK model payloads (e.g. provider/model both
+        // reported as display labels) that would downgrade a known non-200k
+        // model back to fallback 200k on reconnect.
+        if (candidateWindow === 200000 && existingWindow !== 200000) {
+          effectiveModelId = session.model;
+        }
       }
-      this.persistWorkspaceLastUsedModel(session);
-      changed = true;
+
+      if (session.model !== effectiveModelId) {
+        session.model = effectiveModelId;
+        this.persistWorkspaceLastUsedModel(session);
+        changed = true;
+      }
+
+      if (this.contextWindowResolver) {
+        const resolved = this.contextWindowResolver(effectiveModelId);
+        const current = session.contextWindow;
+        if (
+          current !== resolved &&
+          (resolved !== 200000 || !current || current <= 0 || current === 200000)
+        ) {
+          session.contextWindow = resolved;
+          changed = true;
+        }
+      }
     }
 
     const observedThinkingLevel =
@@ -1220,6 +1234,18 @@ export class SessionManager extends EventEmitter {
         return;
       }
 
+      // If nothing is currently streaming, treat abort as immediately satisfied.
+      // This prevents false timeout errors when users tap Stop right after a
+      // turn already ended.
+      if (active.session.status !== "busy") {
+        this.broadcast(key, {
+          type: "stop_confirmed",
+          source: "user",
+          reason: "Session already idle",
+        });
+        return;
+      }
+
       if (!this.beginPendingStop(key, active, "abort", "user")) {
         return;
       }
@@ -1321,7 +1347,24 @@ export class SessionManager extends EventEmitter {
 
       // Model
       case "set_model": {
-        const result = await backend.setModel(command.model as string);
+        const modelFromCommand =
+          typeof command.model === "string" && command.model.trim().length > 0
+            ? command.model.trim()
+            : undefined;
+        const modelFromParts =
+          typeof command.provider === "string" &&
+          command.provider.trim().length > 0 &&
+          typeof command.modelId === "string" &&
+          command.modelId.trim().length > 0
+            ? composeModelId(command.provider.trim(), command.modelId.trim())
+            : undefined;
+
+        const model = modelFromCommand ?? modelFromParts;
+        if (!model) {
+          throw new Error("Invalid set_model payload: expected model or provider+modelId");
+        }
+
+        const result = await backend.setModel(model);
         if (!result.success) throw new Error(result.error);
         return result;
       }

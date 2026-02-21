@@ -403,168 +403,6 @@ struct APIClientTests {
         #expect(ws.id == "w2")
     }
 
-    @Test func getWorkspacePolicyForWorkspace() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspaces/w1/policy")
-            return self.mockResponse(json: """
-            {
-              "workspaceId": "w1",
-              "globalPolicy": {
-                "schemaVersion": 1,
-                "fallback": "ask",
-                "guardrails": [
-                  {
-                    "id":"hard-1",
-                    "decision":"block",
-                    "match": {"tool":"read", "pathMatches":"*auth.json*"}
-                  }
-                ],
-                "permissions": []
-              },
-              "workspacePolicy": {
-                "permissions": [
-                  {
-                    "id":"allow-test",
-                    "decision":"allow",
-                    "match": {"tool":"bash", "commandMatches":"npm test*"}
-                  }
-                ]
-              },
-              "effectivePolicy": {
-                "fallback": "ask",
-                "guardrails": [
-                  {
-                    "id":"hard-1",
-                    "decision":"block",
-                    "match": {"tool":"read", "pathMatches":"*auth.json*"}
-                  }
-                ],
-                "permissions": [
-                  {
-                    "id":"allow-test",
-                    "decision":"allow",
-                    "match": {"tool":"bash", "commandMatches":"npm test*"}
-                  }
-                ]
-              }
-            }
-            """)
-        }
-
-        let response = try await client.getWorkspacePolicy(workspaceId: "w1")
-        #expect(response.workspaceId == "w1")
-        #expect(response.workspacePolicy.permissions.count == 1)
-        #expect(response.effectivePolicy.guardrails.count == 1)
-    }
-
-    @Test func patchWorkspacePolicyUpsertsPermission() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "PATCH")
-            #expect(request.url?.path == "/workspaces/w1/policy")
-
-            let body = self.requestBodyData(request)
-            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
-            let permissions = json?["permissions"] as? [[String: Any]]
-            #expect(permissions?.count == 1)
-            #expect(permissions?.first?["id"] as? String == "allow-test")
-
-            return self.mockResponse(json: """
-            {
-              "workspace": {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-              "policy": {
-                "permissions": [
-                  {
-                    "id":"allow-test",
-                    "decision":"allow",
-                    "match": {"tool":"bash","commandMatches":"npm test*"}
-                  }
-                ]
-              }
-            }
-            """)
-        }
-
-        let permission = PolicyPermissionRecord(
-            id: "allow-test",
-            decision: "allow",
-            label: nil,
-            reason: nil,
-            immutable: nil,
-            match: .init(
-                tool: "bash",
-                executable: nil,
-                commandMatches: "npm test*",
-                pathMatches: nil,
-                pathWithin: nil,
-                domain: nil
-            )
-        )
-
-        let policy = try await client.patchWorkspacePolicy(workspaceId: "w1", permissions: [permission])
-        #expect(policy.permissions.count == 1)
-        #expect(policy.permissions[0].id == "allow-test")
-    }
-
-    @Test func patchWorkspacePolicyFallback() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "PATCH")
-            #expect(request.url?.path == "/workspaces/w1/policy")
-
-            let body = self.requestBodyData(request)
-            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-                Issue.record("Expected JSON body")
-                return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
-            }
-            #expect(json["fallback"] as? String == "ask")
-
-            return self.mockResponse(json: """
-            {
-              "workspace": {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-              "policy": {
-                "fallback": "ask",
-                "permissions": []
-              }
-            }
-            """)
-        }
-
-        let policy = try await client.patchWorkspacePolicy(workspaceId: "w1", fallback: "ask")
-        #expect(policy.fallback == "ask")
-        #expect(policy.permissions.isEmpty)
-    }
-
-    @Test func deleteWorkspacePolicyPermissionRemovesPermission() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "DELETE")
-            #expect(request.url?.path == "/workspaces/w1/policy/permissions/allow-test")
-
-            return self.mockResponse(json: """
-            {
-              "workspace": {"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0},
-              "policy": {"permissions": []}
-            }
-            """)
-        }
-
-        let policy = try await client.deleteWorkspacePolicyPermission(
-            workspaceId: "w1",
-            permissionId: "allow-test"
-        )
-        #expect(policy.permissions.isEmpty)
-    }
-
     @Test func listPolicyRulesDecodesResponse() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -576,13 +414,14 @@ struct APIClientTests {
               "rules": [
                 {
                   "id":"r1",
-                  "effect":"allow",
+                  "decision":"allow",
                   "tool":"bash",
+                  "pattern":"git status*",
+                  "executable":"git",
                   "scope":"global",
                   "source":"learned",
-                  "description":"Allow git operations",
-                  "createdAt":1700000000000,
-                  "match":{"executable":"git"}
+                  "label":"Allow git status",
+                  "createdAt":1700000000000
                 }
               ]
             }
@@ -592,6 +431,7 @@ struct APIClientTests {
         let rules = try await client.listPolicyRules()
         #expect(rules.count == 1)
         #expect(rules[0].id == "r1")
+        #expect(rules[0].decision == "allow")
         #expect(rules[0].scope == "global")
     }
 
@@ -620,14 +460,14 @@ struct APIClientTests {
             {
               "rule": {
                 "id":"r1",
-                "effect":"deny",
+                "decision":"deny",
                 "tool":"bash",
+                "pattern":"git push*",
                 "scope":"workspace",
                 "workspaceId":"w1",
                 "source":"learned",
-                "description":"Block git push",
-                "createdAt":1700000000000,
-                "match":{"commandPattern":"git push*"}
+                "label":"Block git push",
+                "createdAt":1700000000000
               }
             }
             """)
@@ -645,7 +485,7 @@ struct APIClientTests {
         )
 
         #expect(updated.id == "r1")
-        #expect(updated.effect == "deny")
+        #expect(updated.decision == "deny")
         #expect(updated.scope == "workspace")
     }
 

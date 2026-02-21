@@ -13,12 +13,10 @@ struct WorkspaceNavTarget: Hashable {
 /// on demand and navigates to the workspace detail.
 struct WorkspaceHomeView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerConnection.self) private var connection
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(PermissionStore.self) private var permissionStore
     @Environment(ServerStore.self) private var serverStore
 
     @State private var createOnServer: PairedServer?
+    @State private var collapsedServerIds: Set<String> = []
 
     private var servers: [PairedServer] {
         serverStore.servers
@@ -77,49 +75,69 @@ struct WorkspaceHomeView: View {
         let freshness = serverConn?.workspaceStore.freshnessState(forServer: serverId) ?? .offline
         let freshnessLabel = serverConn?.workspaceStore.freshnessLabel(forServer: serverId) ?? "Offline"
         let isUnreachable = freshness == .offline
+        let isCollapsed = collapsedServerIds.contains(serverId)
 
         Section {
-            if workspaces.isEmpty && !isUnreachable {
-                Text("No workspaces")
-                    .font(.subheadline)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(workspaces) { workspace in
-                    NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
-                        WorkspaceHomeRow(
-                            workspace: workspace,
-                            activeCount: activeCount(for: workspace.id, serverId: serverId),
-                            stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
-                            hasAttention: hasAttention(for: workspace.id, serverId: serverId),
-                            isUnreachable: isUnreachable,
-                            badgeIcon: server.resolvedBadgeIcon,
-                            badgeColor: server.resolvedBadgeColor
-                        )
+            if !isCollapsed {
+                if workspaces.isEmpty && !isUnreachable {
+                    Text("No workspaces")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(workspaces) { workspace in
+                        NavigationLink(value: WorkspaceNavTarget(serverId: serverId, workspace: workspace)) {
+                            WorkspaceHomeRow(
+                                workspace: workspace,
+                                activeCount: activeCount(for: workspace.id, serverId: serverId),
+                                stoppedCount: stoppedCount(for: workspace.id, serverId: serverId),
+                                hasAttention: hasAttention(for: workspace.id, serverId: serverId),
+                                isUnreachable: isUnreachable,
+                                badgeIcon: server.resolvedBadgeIcon,
+                                badgeColor: server.resolvedBadgeColor
+                            )
+                        }
+                        .disabled(isUnreachable)
                     }
-                    .disabled(isUnreachable)
                 }
             }
         } header: {
-            HStack(spacing: 0) {
-                NavigationLink(value: server) {
+            HStack(spacing: 8) {
+                Button {
+                    toggleServerExpansion(for: serverId)
+                } label: {
                     ServerSectionHeader(
                         server: server,
                         freshnessState: freshness,
-                        freshnessLabel: freshnessLabel
+                        freshnessLabel: freshnessLabel,
+                        isCollapsed: isCollapsed
                     )
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
+
+                NavigationLink(value: server) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 30, height: 30)
+                        .background(.quaternary.opacity(0.45), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Server settings for \(server.name)")
 
                 Button {
                     createOnServer = server
                 } label: {
                     Image(systemName: "plus")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                        .padding(.leading, 8)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.themeBlue)
+                        .frame(width: 32, height: 32)
+                        .background(.quaternary.opacity(0.55), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Create workspace on \(server.name)")
                 .disabled(isUnreachable)
+                .opacity(isUnreachable ? 0.5 : 1)
             }
         }
     }
@@ -180,6 +198,16 @@ struct WorkspaceHomeView: View {
         sessionsFor(workspaceId, serverId: serverId).map(\.lastActivity).max() ?? .distantPast
     }
 
+    private func toggleServerExpansion(for serverId: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if collapsedServerIds.contains(serverId) {
+                collapsedServerIds.remove(serverId)
+            } else {
+                collapsedServerIds.insert(serverId)
+            }
+        }
+    }
+
     private func refresh(force: Bool) async {
         // Unified path: coordinator handles single- and multi-server refresh
         await coordinator.refreshAllServers()
@@ -192,9 +220,16 @@ private struct ServerSectionHeader: View {
     let server: PairedServer
     let freshnessState: FreshnessState
     let freshnessLabel: String
+    let isCollapsed: Bool
 
     var body: some View {
         HStack(spacing: 8) {
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                .animation(.easeInOut(duration: 0.2), value: isCollapsed)
+
             HStack(spacing: 6) {
                 RuntimeBadge(
                     compact: true,
@@ -209,14 +244,9 @@ private struct ServerSectionHeader: View {
             Spacer()
 
             FreshnessChip(state: freshnessState, label: freshnessLabel)
-
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)
     }
-
 }
 
 // MARK: - Workspace Home Row

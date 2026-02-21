@@ -261,7 +261,9 @@ export class APNsClient {
 
           // Handle specific APNs errors
           if (responseStatus === 410 || reason === "Unregistered") {
-            console.warn(`[apns] Device token expired/unregistered: ${redactTokenForLog(deviceToken)}`);
+            console.warn(
+              `[apns] Device token expired/unregistered: ${redactTokenForLog(deviceToken)}`,
+            );
             // Caller should remove this token
           }
 
@@ -396,5 +398,3 @@ export function createPushClient(config?: APNsConfig): PushClient {
     return new NoopAPNsClient();
   }
 }
-
-

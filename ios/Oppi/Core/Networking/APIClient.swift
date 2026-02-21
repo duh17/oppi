@@ -291,35 +291,6 @@ actor APIClient {
 
     // MARK: - Safety Policy
 
-    /// Fetch merged policy for a workspace (global + workspace + effective).
-    func getWorkspacePolicy(workspaceId: String) async throws -> WorkspacePolicyResponse {
-        let data = try await get("/workspaces/\(workspaceId)/policy")
-        return try JSONDecoder().decode(WorkspacePolicyResponse.self, from: data)
-    }
-
-    /// Patch workspace-scoped policy settings (permissions and/or fallback).
-    func patchWorkspacePolicy(
-        workspaceId: String,
-        permissions: [PolicyPermissionRecord]? = nil,
-        fallback: String? = nil
-    ) async throws -> WorkspacePolicyRecord {
-        guard permissions != nil || fallback != nil else {
-            throw APIError.server(status: 400, message: "permissions or fallback required")
-        }
-
-        let body = WorkspacePolicyPatchRequest(permissions: permissions, fallback: fallback)
-        let (data, response) = try await request("PATCH", path: "/workspaces/\(workspaceId)/policy", body: body)
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(WorkspacePolicyMutationResponse.self, from: data).policy
-    }
-
-    /// Delete a workspace policy permission by id.
-    func deleteWorkspacePolicyPermission(workspaceId: String, permissionId: String) async throws -> WorkspacePolicyRecord {
-        let (data, response) = try await request("DELETE", path: "/workspaces/\(workspaceId)/policy/permissions/\(permissionId)")
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(WorkspacePolicyMutationResponse.self, from: data).policy
-    }
-
     /// List effective learned/manual policy rules visible to the user.
     func listPolicyRules(workspaceId: String? = nil) async throws -> [PolicyRuleRecord] {
         var route = "/policy/rules"
@@ -329,6 +300,13 @@ actor APIClient {
         let data = try await get(route)
         struct Response: Decodable { let rules: [PolicyRuleRecord] }
         return try JSONDecoder().decode(Response.self, from: data).rules
+    }
+
+    /// Create a remembered policy rule.
+    func createPolicyRule(request body: PolicyRuleCreateRequest) async throws -> PolicyRuleRecord {
+        let (data, response) = try await request("POST", path: "/policy/rules", body: body)
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(PolicyRuleMutationResponse.self, from: data).rule
     }
 
     /// Update an existing remembered policy rule.

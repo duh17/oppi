@@ -82,7 +82,8 @@ function normalizePathPattern(pattern: string): string {
   if (!prefix) return expanded;
 
   const normalizedPrefix = normalize(resolve(prefix));
-  return `${normalizedPrefix}${suffix}`;
+  const needsSlash = prefix.endsWith("/") && !normalizedPrefix.endsWith("/");
+  return `${normalizedPrefix}${needsSlash ? "/" : ""}${suffix}`;
 }
 
 interface NormalizedRuleInput {
@@ -105,9 +106,8 @@ function normalizeRuleInput(input: RuleInput): NormalizedRuleInput {
       ? input.scope
       : "global";
 
-  const tool = typeof input.tool === "string" && input.tool.trim().length > 0
-    ? input.tool.trim()
-    : "*";
+  const tool =
+    typeof input.tool === "string" && input.tool.trim().length > 0 ? input.tool.trim() : "*";
 
   const normalized: NormalizedRuleInput = {
     tool,
@@ -145,43 +145,19 @@ function parseDecision(value: unknown): RuleDecision | null {
   return null;
 }
 
-/**
- * Parse a rule from disk. Handles both current and legacy formats:
- * - Legacy: effect/description/match fields → normalized to decision/label/executable/pattern
- * - Current: decision/label/executable/pattern fields used directly
- */
+/** Parse a rule from disk using the current on-disk rule shape. */
 function parseRuleFromDisk(raw: unknown): Rule | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.id !== "string") return null;
 
-  // Build a RuleInput, preferring current fields with legacy fallbacks for migration
   const input: RuleInput = {};
 
-  // tool
   if (typeof raw.tool === "string") input.tool = raw.tool;
-
-  // decision (current) or effect (legacy)
   if (typeof raw.decision === "string") input.decision = parseDecision(raw.decision) ?? undefined;
-  else if (typeof raw.effect === "string") input.decision = parseDecision(raw.effect) ?? undefined;
-
-  // label (current) or description (legacy)
   if (typeof raw.label === "string") input.label = raw.label;
-  else if (typeof raw.description === "string") input.label = raw.description;
-
-  // executable (current) or match.executable (legacy)
   if (typeof raw.executable === "string") input.executable = raw.executable;
-  else if (isRecord(raw.match) && typeof raw.match.executable === "string") input.executable = raw.match.executable;
+  if (typeof raw.pattern === "string") input.pattern = raw.pattern;
 
-  // pattern (current) or match.commandPattern/pathPattern/domain (legacy)
-  if (typeof raw.pattern === "string") {
-    input.pattern = raw.pattern;
-  } else if (isRecord(raw.match)) {
-    if (typeof raw.match.commandPattern === "string") input.pattern = raw.match.commandPattern;
-    else if (typeof raw.match.pathPattern === "string") input.pattern = raw.match.pathPattern;
-    else if (typeof raw.match.domain === "string") input.pattern = `*${raw.match.domain}*`;
-  }
-
-  // scope/metadata
   if (typeof raw.scope === "string") input.scope = raw.scope as RuleScope;
   if (typeof raw.sessionId === "string") input.sessionId = raw.sessionId;
   if (typeof raw.workspaceId === "string") input.workspaceId = raw.workspaceId;
@@ -209,6 +185,39 @@ function ruleSignature(rule: NormalizedRuleInput): string {
     workspaceId: rule.workspaceId || "",
     source: rule.source || "",
     expiresAt: rule.expiresAt || 0,
+  });
+}
+
+function ruleConflictKey(rule: {
+  tool: string;
+  scope: RuleScope;
+  pattern?: string;
+  executable?: string;
+  sessionId?: string;
+  workspaceId?: string;
+}): string {
+  return JSON.stringify({
+    tool: rule.tool,
+    scope: rule.scope,
+    pattern: rule.pattern || "",
+    executable: rule.executable || "",
+    sessionId: rule.sessionId || "",
+    workspaceId: rule.workspaceId || "",
+  });
+}
+
+function normalizedFromRule(rule: Rule): NormalizedRuleInput {
+  return normalizeRuleInput({
+    tool: rule.tool,
+    decision: rule.decision,
+    pattern: rule.pattern,
+    executable: rule.executable,
+    label: rule.label,
+    scope: rule.scope,
+    sessionId: rule.sessionId,
+    workspaceId: rule.workspaceId,
+    expiresAt: rule.expiresAt,
+    source: rule.source,
   });
 }
 
@@ -250,6 +259,13 @@ export class RuleStore {
       const normalized = normalizeRuleInput(input);
       const signature = ruleSignature(normalized);
       if (signatures.has(signature)) continue;
+
+      try {
+        this.assertNoConflictingDecision(normalized);
+      } catch {
+        // Existing user/manual decision wins over seed defaults.
+        continue;
+      }
 
       this.persisted.push({
         ...normalized,
@@ -314,6 +330,13 @@ export class RuleStore {
 
       if (exists) continue;
 
+      try {
+        this.assertNoConflictingDecision(normalized);
+      } catch {
+        // Keep explicit user decisions; skip conflicting workspace seeds.
+        continue;
+      }
+
       const created: Rule = {
         ...normalized,
         id: generateId(12),
@@ -333,6 +356,21 @@ export class RuleStore {
 
   add(input: RuleInput): Rule {
     const normalized = normalizeRuleInput(input);
+
+    if (normalized.scope === "session" && !normalized.sessionId) {
+      throw new Error("sessionId is required for session-scoped rules");
+    }
+    if (normalized.scope === "workspace" && !normalized.workspaceId) {
+      throw new Error("workspaceId is required for workspace-scoped rules");
+    }
+
+    this.assertNoConflictingDecision(normalized);
+
+    const duplicate = this.findDuplicate(normalized);
+    if (duplicate) {
+      return duplicate;
+    }
+
     const rule: Rule = {
       ...normalized,
       id: generateId(12),
@@ -429,6 +467,7 @@ export class RuleStore {
     const sessionIdx = this.sessionRules.findIndex((r) => r.id === id);
     if (sessionIdx >= 0) {
       const updated = applyPatch(this.sessionRules[sessionIdx]);
+      this.assertNoConflictingDecision(normalizedFromRule(updated), id);
       this.sessionRules[sessionIdx] = updated;
       return updated;
     }
@@ -436,6 +475,7 @@ export class RuleStore {
     const persistedIdx = this.persisted.findIndex((r) => r.id === id);
     if (persistedIdx >= 0) {
       const updated = applyPatch(this.persisted[persistedIdx]);
+      this.assertNoConflictingDecision(normalizedFromRule(updated), id);
       this.persisted[persistedIdx] = updated;
       this.save();
       return updated;
@@ -456,8 +496,9 @@ export class RuleStore {
 
   getForWorkspace(workspaceId: string): Rule[] {
     this.reloadIfChanged();
-    return this.persisted
-      .filter((r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId));
+    return this.persisted.filter(
+      (r) => r.scope === "global" || (r.scope === "workspace" && r.workspaceId === workspaceId),
+    );
   }
 
   getForSession(sessionId: string): Rule[] {
@@ -520,6 +561,42 @@ export class RuleStore {
 
   clearSessionRules(sessionId: string): void {
     this.sessionRules = this.sessionRules.filter((r) => r.sessionId !== sessionId);
+  }
+
+  private scopeBucket(scope: RuleScope): Rule[] {
+    return scope === "session" ? this.sessionRules : this.persisted;
+  }
+
+  private findDuplicate(normalized: NormalizedRuleInput): Rule | null {
+    const signature = ruleSignature(normalized);
+    const bucket = this.scopeBucket(normalized.scope);
+
+    for (const rule of bucket) {
+      if (ruleSignature(normalizedFromRule(rule)) === signature) {
+        return rule;
+      }
+    }
+
+    return null;
+  }
+
+  private assertNoConflictingDecision(
+    normalized: NormalizedRuleInput,
+    excludeRuleId?: string,
+  ): void {
+    const key = ruleConflictKey(normalized);
+    const bucket = this.scopeBucket(normalized.scope);
+
+    for (const rule of bucket) {
+      if (excludeRuleId && rule.id === excludeRuleId) continue;
+
+      if (ruleConflictKey(rule) !== key) continue;
+      if (rule.decision === normalized.decision) continue;
+
+      throw new Error(
+        `Conflicting decision for ${normalized.tool} rule (${normalized.scope} scope): existing ${rule.decision}, requested ${normalized.decision}`,
+      );
+    }
   }
 
   /** Get file mtime in ms, or 0 if missing. */

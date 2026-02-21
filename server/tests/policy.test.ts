@@ -276,7 +276,6 @@ describe("PolicyEngine (declarative config)", () => {
         id: "block-secret-read",
         decision: "block",
         risk: "critical",
-        immutable: true,
         match: { tool: "read", pathMatches: "*identity_ed25519*" },
       },
     ],
