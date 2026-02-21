@@ -81,6 +81,7 @@ export interface Session {
   contextWindow?: number; // model's total context window
 
   // Preview
+  firstMessage?: string; // first user message (immutable once set)
   lastMessage?: string;
 
   // Health

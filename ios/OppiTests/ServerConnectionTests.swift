@@ -40,6 +40,7 @@ struct ServerConnectionTests {
             cost: 0,
             contextTokens: nil,
             contextWindow: nil,
+            firstMessage: nil,
             lastMessage: nil,
             thinkingLevel: thinkingLevel
         )
@@ -1257,6 +1258,7 @@ struct ForegroundRecoveryTests {
             cost: 0,
             contextTokens: nil,
             contextWindow: nil,
+            firstMessage: nil,
             lastMessage: nil,
             thinkingLevel: nil
         )

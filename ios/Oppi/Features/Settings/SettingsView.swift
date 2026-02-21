@@ -10,7 +10,7 @@ struct SettingsView: View {
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
         forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
-    ) as? Bool ?? true
+    ) as? Bool ?? false
     @State private var showAddServer = false
     @State private var renameServerId: String?
     @State private var renameServerText = ""
@@ -102,8 +102,8 @@ struct SettingsView: View {
                 Text("Sessions")
             } footer: {
                 Text(
-                    "Uses the first prompt to generate a short title on device. "
-                        + "Enabled by default."
+                    "Uses the on-device model to generate a short title from the first prompt. "
+                        + "When off, the first message is shown instead."
                 )
             }
 

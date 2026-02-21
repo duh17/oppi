@@ -538,6 +538,11 @@ export function appendSessionMessage(
   session.lastMessage = message.content.slice(0, 100);
   session.lastActivity = message.timestamp;
 
+  // Capture first user message (immutable once set)
+  if (!session.firstMessage && message.role === "user") {
+    session.firstMessage = message.content.slice(0, 200);
+  }
+
   if (message.tokens) {
     session.tokens.input += message.tokens.input;
     session.tokens.output += message.tokens.output;

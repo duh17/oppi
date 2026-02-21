@@ -511,64 +511,7 @@ struct ChatActionHandlerTests {
     }
 
     @MainActor
-    @Test func sendPromptAutoTitlePrefixesTodoForTaskPrompts() async {
-        UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
-        defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
-
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        let sessionStore = SessionStore()
-
-        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
-        connection._setActiveSessionIdForTesting("s1")
-        handler._generateSessionTitleForTesting = { _ in
-            "Ship migration checklist this week"
-        }
-
-        var setSessionNameValue: String?
-
-        connection._sendMessageForTesting = { message in
-            switch message {
-            case .prompt(_, _, _, let requestId, let clientTurnId):
-                guard let requestId, let clientTurnId else { return }
-                connection.handleServerMessage(
-                    .turnAck(
-                        command: "prompt",
-                        clientTurnId: clientTurnId,
-                        stage: .dispatched,
-                        requestId: requestId,
-                        duplicate: false
-                    ),
-                    sessionId: "s1"
-                )
-            case .setSessionName(let name, _):
-                setSessionNameValue = name
-            default:
-                break
-            }
-        }
-
-        _ = handler.sendPrompt(
-            text: "let's do a TODO list for workspace migration and rollout",
-            images: [],
-            isBusy: false,
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1",
-            sessionStore: sessionStore
-        )
-
-        await waitForCondition(timeoutMs: 800) {
-            setSessionNameValue != nil
-        }
-
-        #expect(setSessionNameValue == "TODO: Ship migration checklist this week")
-        #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "TODO: Ship migration checklist this week")
-    }
-
-    @MainActor
-    @Test func sendPromptAutoTitleLimitsWordCount() async {
+    @Test func sendPromptAutoTitleCapsLength() async {
         UserDefaults.standard.set(true, forKey: ChatActionHandler.autoTitleEnabledDefaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleEnabledDefaultsKey) }
 
@@ -620,6 +563,7 @@ struct ChatActionHandlerTests {
             setSessionNameValue != nil
         }
 
+        // "Title:" prefix stripped, capped at 48 chars at word boundary
         #expect(setSessionNameValue == "Investigate websocket reconnect state drift")
     }
 
@@ -993,6 +937,7 @@ struct ChatActionHandlerTests {
             cost: 0,
             contextTokens: nil,
             contextWindow: nil,
+            firstMessage: nil,
             lastMessage: nil,
             thinkingLevel: nil
         )

@@ -33,10 +33,23 @@ struct Session: Identifiable, Sendable, Equatable {
     var contextTokens: Int?    // input+output+cacheRead+cacheWrite from last message
     var contextWindow: Int?    // model's total context window
 
+    var firstMessage: String?
     var lastMessage: String?
 
     // Agent config state (synced from pi get_state)
     var thinkingLevel: String?
+
+    /// Display title: name, first message preview, or session ID prefix.
+    var displayTitle: String {
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        if let firstMessage = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firstMessage.isEmpty {
+            return String(firstMessage.prefix(80))
+        }
+        return "Session \(String(id.prefix(8)))"
+    }
 }
 
 struct TokenUsage: Codable, Sendable, Equatable {
@@ -60,7 +73,7 @@ extension Session: Codable {
         case id, workspaceId, workspaceName
         case name, status, createdAt, lastActivity
         case model, messageCount, tokens, cost, changeStats
-        case contextTokens, contextWindow, lastMessage
+        case contextTokens, contextWindow, firstMessage, lastMessage
         case thinkingLevel
     }
 
@@ -78,6 +91,7 @@ extension Session: Codable {
         changeStats = try c.decodeIfPresent(SessionChangeStats.self, forKey: .changeStats)
         contextTokens = try c.decodeIfPresent(Int.self, forKey: .contextTokens)
         contextWindow = try c.decodeIfPresent(Int.self, forKey: .contextWindow)
+        firstMessage = try c.decodeIfPresent(String.self, forKey: .firstMessage)
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
         thinkingLevel = try c.decodeIfPresent(String.self, forKey: .thinkingLevel)
 
@@ -103,6 +117,7 @@ extension Session: Codable {
         try c.encodeIfPresent(changeStats, forKey: .changeStats)
         try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
         try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
+        try c.encodeIfPresent(firstMessage, forKey: .firstMessage)
         try c.encodeIfPresent(lastMessage, forKey: .lastMessage)
         try c.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
