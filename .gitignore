@@ -26,5 +26,6 @@ session-traces/
 
 # General
 *.tsbuildinfo
+*.tgz
 .DS_Store
 server/coverage/
