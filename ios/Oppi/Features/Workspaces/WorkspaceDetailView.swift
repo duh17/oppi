@@ -398,34 +398,22 @@ struct WorkspaceDetailView: View {
             }
             ToolbarItemGroup(placement: .bottomBar) {
                 Button { showEditWorkspace = true } label: {
-                    HStack(spacing: 8) {
-                        WorkspaceIcon(icon: currentWorkspace.icon, size: 18)
-                            .frame(width: 28, height: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(currentWorkspace.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? currentWorkspace.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.themeFg)
+                    HStack(spacing: 6) {
+                        WorkspaceIcon(icon: currentWorkspace.icon, size: 16)
+                            .frame(width: 24, height: 24)
+                        Text("\(currentWorkspace.skills.count) skills")
+                            .font(.caption2)
+                            .foregroundStyle(.themeComment)
+                        if let model = currentWorkspace.defaultModel {
+                            Text(model.split(separator: "/").last.map(String.init) ?? model)
+                                .font(.caption2)
+                                .foregroundStyle(.themeComment)
                                 .lineLimit(1)
-                                .truncationMode(.tail)
-                            HStack(spacing: 6) {
-                                RuntimeBadge(compact: true, icon: serverBadgeIcon, badgeColor: serverBadgeColor)
-                                Text("\(currentWorkspace.skills.count) skills")
-                                    .font(.caption2)
-                                    .foregroundStyle(.themeComment)
-                                if let model = currentWorkspace.defaultModel {
-                                    Text(model.split(separator: "/").last.map(String.init) ?? model)
-                                        .font(.caption2)
-                                        .foregroundStyle(.themeComment)
-                                        .lineLimit(1)
-                                }
-                            }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.themeComment)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 Spacer()
                 Button { showWorkspacePolicy = true } label: {
