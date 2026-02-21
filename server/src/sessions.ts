@@ -195,6 +195,9 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
 
+  /** Injected by the server to resolve skill names to host directory paths. */
+  skillPathResolver: ((skillNames: string[]) => string[]) | null = null;
+
   // Persist active session metadata in batches to avoid sync I/O on every event.
   private dirtySessions: Set<string> = new Set();
   private saveTimer: NodeJS.Timeout | null = null;
@@ -288,6 +291,10 @@ export class SessionManager extends EventEmitter {
 
       try {
         const useGate = this.config.permissionGate !== false;
+        const skillPaths =
+          workspace?.skills && this.skillPathResolver
+            ? this.skillPathResolver(workspace.skills)
+            : [];
         const sdkBackend = await SdkBackend.create({
           session,
           workspace,
@@ -296,6 +303,7 @@ export class SessionManager extends EventEmitter {
           gate: useGate ? this.gate : undefined,
           workspaceId: identity.workspaceId,
           permissionGate: useGate,
+          skillPaths,
         });
 
         const activeSession: ActiveSession = {
