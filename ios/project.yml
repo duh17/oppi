@@ -160,15 +160,8 @@ schemes:
         Oppi: all
         OppiActivityExtension: all
         OppiTests: [test]
-    test:
-      targets:
-        - OppiTests
-
-  OppiUIReliability:
-    build:
-      targets:
-        Oppi: all
         OppiUITests: [test]
     test:
       targets:
+        - OppiTests
         - OppiUITests
