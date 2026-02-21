@@ -2,7 +2,7 @@
 
 Config file: `~/.config/oppi/config.json` (or `$OPPI_DATA_DIR/config.json`)
 
-Created by `oppi init`.
+Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
 
 ## Fields
 

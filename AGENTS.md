@@ -20,9 +20,8 @@ server/        Server runtime (Node.js/TypeScript)
 
 ```bash
 # Server
-cd server && npm install
+cd server && npm install        # also builds via prepare script
 cd server && npm test
-cd server && npm run build
 cd server && npm run check    # typecheck + lint + format — fix ALL errors before committing
 cd server && npm start
 

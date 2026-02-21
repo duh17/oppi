@@ -131,8 +131,20 @@ function shortHostLabel(host: string): string {
 
 // ─── Commands ───
 
-async function cmdServe(storage: Storage): Promise<void> {
+async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   printHeader();
+
+  // Auto-init: generate owner token + identity keys if this is a fresh install.
+  if (!storage.isPaired()) {
+    storage.rotateToken();
+    console.log(c.green("  ✓ First run — owner token generated"));
+  }
+  ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
+
+  // Capture host env if interactive shell and not already captured.
+  if (process.env.PATH && process.env.PATH.includes("/homebrew/")) {
+    envInit();
+  }
 
   const config = storage.getConfig();
   const tailscaleHostname = getTailscaleHostname();
@@ -203,29 +215,34 @@ async function cmdServe(storage: Storage): Promise<void> {
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
 
-  if (!storage.isPaired()) {
-    console.log(c.yellow("  Server not paired yet."));
-    console.log(c.dim("  Run 'oppi pair' to generate pairing QR."));
-  } else {
+  if (storage.isPaired()) {
     console.log(c.green("  ✓ Paired"));
+    console.log("");
+    console.log(c.green("  Waiting for connections..."));
+    console.log(c.dim("  Press Ctrl+C to stop"));
+    console.log(c.dim("  Run 'oppi pair' to re-pair or add devices."));
+    console.log("");
+  } else {
+    // First run: show pairing QR inline so user doesn't need a separate command.
+    console.log("");
+    showPairingQR(storage, undefined, pairHost);
+    console.log(c.green("  Server is running. Scan QR above, then Ctrl+C when done."));
+    console.log("");
   }
-
-  console.log("");
-  console.log(c.green("  Waiting for connections..."));
-  console.log(c.dim("  Press Ctrl+C to stop"));
-  console.log("");
 }
 
-async function cmdPair(
+/**
+ * Show the pairing QR code + deep link. Reusable by both `pair` and `serve`.
+ * Returns true if QR was shown, false if host detection failed.
+ */
+function showPairingQR(
   storage: Storage,
-  requestedName: string | undefined,
+  requestedName?: string,
   hostOverride?: string,
   showToken = false,
-): Promise<void> {
-  printHeader();
-
+): boolean {
   const config = storage.getConfig();
-  const token = storage.ensurePaired();
+  storage.ensurePaired();
   const pairingToken = storage.issuePairingToken(90_000);
   const inviteHost = resolveInviteHost(hostOverride);
 
@@ -233,7 +250,7 @@ async function cmdPair(
     console.log(c.red("  Error: Could not determine pairing host"));
     console.log(c.dim("  Pass --host <hostname-or-ip>, e.g. --host my-mac.local"));
     console.log("");
-    process.exit(1);
+    return false;
   }
 
   if (hostOverride?.trim()) {
@@ -246,7 +263,6 @@ async function cmdPair(
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
-    // Pairing v3 no longer ships long-lived auth token in invite payload.
     token: "",
     pairingToken,
     name: requestedName?.trim() || shortHostLabel(inviteHost),
@@ -270,11 +286,6 @@ async function cmdPair(
     invite: Buffer.from(inviteJson, "utf-8").toString("base64url"),
   }).toString()}`;
 
-  console.log(c.dim("  (pairing format: v3-unsigned)"));
-  console.log(c.dim("  (includes one-time pairingToken for /pair bootstrap; expires in ~90s)"));
-  console.log(c.dim("  (owner/admin token is NOT embedded in QR payload)"));
-
-  // Display
   console.log(`  📱 Pair with ${c.bold(shortHostLabel(inviteHost))}`);
   console.log("");
   console.log("  Scan this QR code in Oppi:");
@@ -296,12 +307,23 @@ async function cmdPair(
   if (showToken) {
     console.log(c.yellow("  ⚠️  Manual token display enabled (--show-token)"));
     console.log(c.dim("  Owner token:"));
-    console.log(`  ${c.dim(token)}`);
+    console.log(`  ${c.dim(storage.getToken() ?? "(none)")}`);
     console.log("");
-  } else {
-    console.log(c.dim("  Manual token output hidden by default."));
-    console.log(c.dim("  Use --show-token only for emergency/manual setup."));
-    console.log("");
+  }
+
+  return true;
+}
+
+async function cmdPair(
+  storage: Storage,
+  requestedName: string | undefined,
+  hostOverride?: string,
+  showToken = false,
+): Promise<void> {
+  printHeader();
+
+  if (!showPairingQR(storage, requestedName, hostOverride, showToken)) {
+    process.exit(1);
   }
 }
 
@@ -858,7 +880,7 @@ async function main(): Promise<void> {
   switch (command) {
     case "serve":
     case "start":
-      await cmdServe(storage);
+      await cmdServe(storage, flags.host);
       break;
 
     case "pair":

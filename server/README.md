@@ -6,19 +6,14 @@ Server for [Oppi](../README.md). Embeds the [pi SDK](https://github.com/badlogic
 
 ```bash
 # 1. Install
-git clone https://github.com/duh17/oppi && cd oppi/server
-npm install && npm run build && npm link
+git clone https://github.com/duh17/Oppi.git && cd Oppi/server
+npm install
 
 # 2. Set up pi auth (needed for LLM API calls)
 pi login
 
-# 3. Initialize and start
-oppi init          # creates config + generates auth token
-oppi serve         # starts server on 0.0.0.0:7749
-
-# 4. Pair your phone
-oppi pair "MyMac"  # generates QR code / deep link
-                   # scan in the iOS app
+# 3. Start (auto-inits config + shows pairing QR on first run)
+npx oppi serve
 ```
 
 Create a workspace in the app and start a session.
@@ -34,30 +29,27 @@ Create a workspace in the app and start a session.
 ```bash
 docker run -d --name oppi -p 7749:7749 node:22-bookworm sleep infinity
 docker cp oppi-server/. oppi:/opt/oppi-server/
-docker exec -w /opt/oppi-server oppi sh -c "npm install && npm run build && npm link"
+docker exec -w /opt/oppi-server oppi sh -c "npm install"
 
 # Copy pi auth into the container
 docker exec oppi mkdir -p /root/.pi/agent
 docker cp ~/.pi/agent/auth.json oppi:/root/.pi/agent/
 
-# Init, serve, pair
-docker exec oppi oppi init --yes
-docker exec -d oppi oppi serve
-docker exec oppi oppi pair "Docker" --host <your-hostname> --port 7749
+# Start (auto-inits + shows pairing QR)
+docker exec -w /opt/oppi-server oppi npx oppi serve --host <your-hostname>
 ```
 
 ## Commands
 
 ```bash
-oppi init                    # first-time setup (config + auth token)
-oppi serve                   # start server
-oppi pair [name]             # generate pairing QR / deep link
-oppi status                  # show running sessions
-oppi config show             # show config
-oppi config set <key> <val>  # update config
-oppi token rotate            # rotate owner bearer token
-oppi env init                # capture shell PATH for sessions
-oppi env show                # show resolved session PATH
+npx oppi serve [--host <h>]      # start server (auto-inits on first run)
+npx oppi pair [name]             # regenerate pairing QR
+npx oppi status                  # show running sessions
+npx oppi config show             # show config
+npx oppi config set <key> <val>  # update config
+npx oppi token rotate            # rotate owner bearer token
+npx oppi env init                # capture shell PATH for sessions
+npx oppi env show                # show resolved session PATH
 ```
 
 ## Configuration
