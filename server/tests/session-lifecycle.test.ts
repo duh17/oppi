@@ -3,7 +3,6 @@
  * cleanup, prompt/steer/follow_up commands, extension UI protocol, and
  * turn dedupe. Complements stop-lifecycle.test.ts (stop/abort flows).
  */
-import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
@@ -11,6 +10,7 @@ import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
+import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -39,26 +39,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeProcessStub(): {
-  process: ChildProcess;
-  stdinWrite: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
-} {
-  const stdinWrite = vi.fn();
-  const proc = {
-    stdin: { write: stdinWrite, writable: true },
-    killed: false,
-  } as unknown as ChildProcess;
-
-  const kill = vi.fn(() => {
-    (proc as { killed: boolean }).killed = true;
-    return true;
-  });
-  (proc as { kill: typeof kill }).kill = kill;
-
-  return { process: proc, stdinWrite, kill };
-}
-
 function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
   const storage = {
     getConfig: () => TEST_CONFIG,
@@ -68,7 +48,7 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
   } as unknown as Storage;
 
   const gate = {
-    destroySessionSocket: vi.fn(),
+    destroySessionGuard: vi.fn(),
     getGuardState: vi.fn(() => "guarded"),
   } as unknown as GateServer;
 
@@ -77,19 +57,19 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
   // Disable idle timers for deterministic tests.
   (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
-  const { process, stdinWrite, kill } = makeProcessStub();
+  const { sdkBackend, abort, dispose, prompt: sdkPrompt } = makeSdkBackendStub();
   const session = makeSession(sessionOverrides);
 
   // Inject active session directly into the manager.
   const active = {
     session,
-    process,
+    sdkBackend,
     workspaceId: session.workspaceId ?? "w1",
     subscribers: new Set<(msg: ServerMessage) => void>(),
-    pendingResponses: new Map(),
     pendingUIRequests: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
+    hasStreamedThinking: false,
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     seq: 0,
@@ -109,18 +89,20 @@ function makeManagerHarness(sessionOverrides: Partial<Session> = {}) {
     session,
     events,
     active,
-    stdinWrite,
-    kill,
+    sdkBackend,
+    sdkPrompt,
+    abort,
+    dispose,
     storage,
     gate,
   };
 }
 
-// Helper to call handleRpcLine which is private
-function feedRpcLine(manager: SessionManager, key: string, data: unknown): void {
-  (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
+// Helper to call handlePiEvent which is private
+function feedEvent(manager: SessionManager, key: string, data: unknown): void {
+  (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
     key,
-    JSON.stringify(data),
+    data,
   );
 }
 
@@ -187,7 +169,7 @@ describe("SessionManager catch-up", () => {
     const { manager } = makeManagerHarness({ status: "busy" });
 
     // Feed an agent_end event — which is durable
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     const result = manager.getCatchUp("s1", 0);
     expect(result!.currentSeq).toBeGreaterThan(0);
@@ -201,7 +183,7 @@ describe("SessionManager subscribe", () => {
   it("subscriber receives broadcast events", () => {
     const { manager, events } = makeManagerHarness({ status: "busy" });
 
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     // Should receive state and agent_end messages
     expect(events.length).toBeGreaterThan(0);
@@ -215,14 +197,14 @@ describe("SessionManager subscribe", () => {
       laterEvents.push(msg);
     });
 
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
     const countBeforeUnsub = laterEvents.length;
 
     unsub();
 
     // Re-set status to busy so we can trigger another event
     session.status = "busy";
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     expect(laterEvents.length).toBe(countBeforeUnsub);
   });
@@ -237,71 +219,7 @@ describe("SessionManager subscribe", () => {
 
 // ─── RPC Response Correlation ───
 
-describe("SessionManager RPC response correlation", () => {
-  it("correlates RPC response by id to pending handler", () => {
-    const { manager, active } = makeManagerHarness();
-
-    let resolved: unknown = undefined;
-    active.pendingResponses.set("rpc-42", (data: unknown) => {
-      resolved = data;
-    });
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      id: "rpc-42",
-      success: true,
-      data: { model: "claude" },
-    });
-
-    expect(resolved).toBeDefined();
-    expect(active.pendingResponses.has("rpc-42")).toBe(false);
-  });
-
-  it("broadcasts error for uncorrelated failed response with no pending", () => {
-    const { manager, events } = makeManagerHarness();
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      id: "rpc-999",
-      success: false,
-      error: "command not found",
-    });
-
-    expect(events.some((e) => e.type === "error")).toBe(true);
-  });
-
-  it("routes uncorrelated error to sole pending handler", () => {
-    const { manager, active, events } = makeManagerHarness();
-
-    let resolved: unknown = undefined;
-    active.pendingResponses.set("rpc-50", (data: unknown) => {
-      resolved = data;
-    });
-
-    // Uncorrelated (no id) error response with exactly one pending
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      success: false,
-      error: "parse error",
-    });
-
-    expect(resolved).toBeDefined();
-    expect(active.pendingResponses.size).toBe(0);
-  });
-
-  it("handles invalid JSON gracefully", () => {
-    const { manager, events } = makeManagerHarness();
-
-    // Direct call with invalid JSON
-    (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
-      "s1",
-      "this is not json{{{",
-    );
-
-    // Should not crash, no error event broadcast (just console.warn)
-    expect(events.some((e) => e.type === "session_ended")).toBe(false);
-  });
-});
+// RPC response correlation tests removed — SDK uses direct method calls.
 
 // ─── Extension UI Protocol ───
 
@@ -309,7 +227,7 @@ describe("SessionManager extension UI", () => {
   it("forwards fire-and-forget notification methods", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-1",
       method: "notify",
@@ -324,7 +242,7 @@ describe("SessionManager extension UI", () => {
   it("tracks dialog methods as pending UI requests", () => {
     const { manager, events, active } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-2",
       method: "select",
@@ -337,8 +255,8 @@ describe("SessionManager extension UI", () => {
     expect(uiReq).toBeDefined();
   });
 
-  it("respondToUIRequest sends response to stdin", () => {
-    const { manager, active, stdinWrite } = makeManagerHarness();
+  it("respondToUIRequest clears pending request", () => {
+    const { manager, active } = makeManagerHarness();
 
     // Set up a pending request
     active.pendingUIRequests.set("ui-3", {
@@ -357,7 +275,6 @@ describe("SessionManager extension UI", () => {
     const result = manager.respondToUIRequest("s1", response);
     expect(result).toBe(true);
     expect(active.pendingUIRequests.has("ui-3")).toBe(false);
-    expect(stdinWrite).toHaveBeenCalled();
   });
 
   it("respondToUIRequest returns false for unknown request", () => {
@@ -410,26 +327,13 @@ describe("SessionManager session end", () => {
 
     expect(events.some((e) => e.type === "session_ended")).toBe(true);
     expect(manager.isActive("s1")).toBe(false);
-    expect(gate.destroySessionSocket).toHaveBeenCalledWith("s1");
+    expect(gate.destroySessionGuard).toHaveBeenCalledWith("s1");
   });
 
-  it("rejects pending RPC responses on session end", () => {
+  // pendingResponses removed — SDK uses direct method calls.
+
+  it("clears pending UI requests on session end", () => {
     const { manager, active } = makeManagerHarness();
-
-    let rejectedData: unknown = undefined;
-    active.pendingResponses.set("rpc-99", (data: unknown) => {
-      rejectedData = data;
-    });
-
-    (manager as unknown as { handleSessionEnd: (key: string, reason: string) => void })
-      .handleSessionEnd("s1", "error");
-
-    expect(rejectedData).toBeDefined();
-    expect((rejectedData as { success: boolean }).success).toBe(false);
-  });
-
-  it("cancels pending UI requests on session end", () => {
-    const { manager, active, stdinWrite } = makeManagerHarness();
 
     active.pendingUIRequests.set("ui-10", {
       type: "extension_ui_request",
@@ -440,12 +344,7 @@ describe("SessionManager session end", () => {
     (manager as unknown as { handleSessionEnd: (key: string, reason: string) => void })
       .handleSessionEnd("s1", "completed");
 
-    // Should write cancellation to stdin
-    const cancelCall = stdinWrite.mock.calls.find((call: unknown[]) => {
-      const line = call[0] as string;
-      return line.includes("ui-10") && line.includes("cancelled");
-    });
-    expect(cancelCall).toBeDefined();
+    expect(active.pendingUIRequests.size).toBe(0);
   });
 
   it("saves session with stopped status", () => {
@@ -465,7 +364,7 @@ describe("SessionManager event translation", () => {
   it("agent_start sets session status to busy", () => {
     const { manager, session } = makeManagerHarness({ status: "ready" });
 
-    feedRpcLine(manager, "s1", { type: "agent_start" });
+    feedEvent(manager, "s1", { type: "agent_start" });
 
     expect(session.status).toBe("busy");
   });
@@ -473,7 +372,7 @@ describe("SessionManager event translation", () => {
   it("agent_end sets session status to ready", () => {
     const { manager, session } = makeManagerHarness({ status: "busy" });
 
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     expect(session.status).toBe("ready");
   });
@@ -481,7 +380,7 @@ describe("SessionManager event translation", () => {
   it("text_delta via message_update broadcasts to subscribers", () => {
     const { manager, events } = makeManagerHarness({ status: "busy" });
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "hello" },
     });
@@ -492,7 +391,7 @@ describe("SessionManager event translation", () => {
   it("tool_execution_start updates session change stats for write tool", () => {
     const { manager, session } = makeManagerHarness({ status: "busy" });
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "tool_execution_start",
       toolName: "write",
       args: { path: "/tmp/foo.ts", content: "hello" },
@@ -507,7 +406,7 @@ describe("SessionManager event translation", () => {
   it("message_end broadcasts message_end with role", () => {
     const { manager, events } = makeManagerHarness({ status: "busy" });
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -523,7 +422,7 @@ describe("SessionManager event translation", () => {
     const before = session.lastActivity;
 
     // Small delay to ensure timestamp differs
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     expect(session.lastActivity).toBeGreaterThanOrEqual(before);
   });
@@ -532,28 +431,27 @@ describe("SessionManager event translation", () => {
 // ─── Prompt / Steer / Follow-up ───
 
 describe("SessionManager prompt", () => {
-  it("sends prompt command to pi stdin", async () => {
-    const { manager, stdinWrite } = makeManagerHarness({ status: "ready" });
+  it("sends prompt to SDK backend", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
 
     await manager.sendPrompt("s1", "hello world");
 
-    // Should have written a JSON command to stdin
-    expect(stdinWrite).toHaveBeenCalled();
-    const written = stdinWrite.mock.calls.map((c: unknown[]) => c[0] as string).join("");
-    expect(written).toContain("prompt");
-    expect(written).toContain("hello world");
+    expect(sdkBackend.prompt).toHaveBeenCalledWith("hello world", expect.objectContaining({}));
   });
 
   it("sends images with prompt", async () => {
-    const { manager, stdinWrite } = makeManagerHarness({ status: "ready" });
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
 
     await manager.sendPrompt("s1", "look at this", {
       images: [{ type: "image", data: "base64data", mimeType: "image/png" }],
     });
 
-    const written = stdinWrite.mock.calls.map((c: unknown[]) => c[0] as string).join("");
-    expect(written).toContain("base64data");
-    expect(written).toContain("image/png");
+    expect(sdkBackend.prompt).toHaveBeenCalledWith(
+      "look at this",
+      expect.objectContaining({
+        images: [{ type: "image", data: "base64data", mimeType: "image/png" }],
+      }),
+    );
   });
 
   it("throws for nonexistent session", async () => {
@@ -562,15 +460,15 @@ describe("SessionManager prompt", () => {
   });
 
   it("deduplicates prompt with same clientTurnId", async () => {
-    const { manager, stdinWrite, events } = makeManagerHarness({ status: "ready" });
+    const { manager, sdkBackend, events } = makeManagerHarness({ status: "ready" });
 
     await manager.sendPrompt("s1", "hello", { clientTurnId: "turn-1" });
-    const firstCallCount = stdinWrite.mock.calls.length;
+    const firstCallCount = (sdkBackend.prompt as ReturnType<typeof vi.fn>).mock.calls.length;
 
     await manager.sendPrompt("s1", "hello", { clientTurnId: "turn-1" });
 
-    // Second call should NOT write another command
-    expect(stdinWrite.mock.calls.length).toBe(firstCallCount);
+    // Second call should NOT send another prompt
+    expect((sdkBackend.prompt as ReturnType<typeof vi.fn>).mock.calls.length).toBe(firstCallCount);
 
     // Should get turn_ack events with duplicate flag
     const acks = events.filter((e) => e.type === "turn_ack");
@@ -580,13 +478,14 @@ describe("SessionManager prompt", () => {
 
 describe("SessionManager steer", () => {
   it("sends steer command when busy", async () => {
-    const { manager, stdinWrite } = makeManagerHarness({ status: "busy" });
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
 
     await manager.sendSteer("s1", "focus on X");
 
-    const written = stdinWrite.mock.calls.map((c: unknown[]) => c[0] as string).join("");
-    expect(written).toContain("steer");
-    expect(written).toContain("focus on X");
+    expect(sdkBackend.prompt).toHaveBeenCalledWith(
+      "focus on X",
+      expect.objectContaining({ streamingBehavior: "steer" }),
+    );
   });
 
   it("throws if session is not busy", async () => {
@@ -605,13 +504,14 @@ describe("SessionManager steer", () => {
 
 describe("SessionManager follow_up", () => {
   it("sends follow_up command when busy", async () => {
-    const { manager, stdinWrite } = makeManagerHarness({ status: "busy" });
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
 
     await manager.sendFollowUp("s1", "also do Y");
 
-    const written = stdinWrite.mock.calls.map((c: unknown[]) => c[0] as string).join("");
-    expect(written).toContain("follow_up");
-    expect(written).toContain("also do Y");
+    expect(sdkBackend.prompt).toHaveBeenCalledWith(
+      "also do Y",
+      expect.objectContaining({ streamingBehavior: "followUp" }),
+    );
   });
 
   it("throws if session is not busy", async () => {
@@ -767,124 +667,15 @@ describe("SessionManager applyPiStateSnapshot", () => {
   });
 });
 
-// ─── RPC Response Dispatch ───
-
-describe("handleRpcLine response dispatch", () => {
-  it("dispatches correlated RPC success to pending handler", () => {
-    const { manager, active } = makeManagerHarness();
-    const result = vi.fn();
-    active.pendingResponses.set("req-42", result);
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      id: "req-42",
-      success: true,
-      command: "get_state",
-      data: { model: "test" },
-    });
-
-    expect(result).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, command: "get_state" }),
-    );
-    expect(active.pendingResponses.size).toBe(0);
-  });
-
-  it("dispatches correlated RPC failure to pending handler", () => {
-    const { manager, active } = makeManagerHarness();
-    const result = vi.fn();
-    active.pendingResponses.set("req-99", result);
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      id: "req-99",
-      success: false,
-      command: "set_thinking_level",
-      error: "unsupported",
-    });
-
-    expect(result).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false }),
-    );
-    expect(active.pendingResponses.size).toBe(0);
-  });
-
-  it("broadcasts error for orphaned failed response with id", () => {
-    const { manager, events } = makeManagerHarness();
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      id: "orphan-id",
-      success: false,
-      command: "unknown_cmd",
-      error: "bad request",
-    });
-
-    expect(events.some((e) => e.type === "error")).toBe(true);
-  });
-
-  it("attributes uncorrelated failure to single pending handler", () => {
-    const { manager, active } = makeManagerHarness();
-    const result = vi.fn();
-    active.pendingResponses.set("only-one", result);
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      success: false,
-      command: "set_model",
-      error: "model not found",
-    });
-
-    expect(result).toHaveBeenCalledWith(
-      expect.objectContaining({ success: false }),
-    );
-    expect(active.pendingResponses.size).toBe(0);
-  });
-
-  it("broadcasts error for uncorrelated failure with multiple pending", () => {
-    const { manager, active, events } = makeManagerHarness();
-    active.pendingResponses.set("a", vi.fn());
-    active.pendingResponses.set("b", vi.fn());
-
-    feedRpcLine(manager, "s1", {
-      type: "response",
-      success: false,
-      command: "rpc",
-      error: "ambiguous",
-    });
-
-    // Neither handler should be called — broadcast error instead
-    expect(events.some((e) => e.type === "error")).toBe(true);
-    expect(active.pendingResponses.size).toBe(2);
-  });
-
-  it("ignores invalid JSON lines", () => {
-    const { manager, events } = makeManagerHarness();
-    // Feed raw invalid JSON
-    (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
-      "s1",
-      "not valid json {{{",
-    );
-    expect(events.length).toBe(0);
-  });
-
-  it("ignores lines for unknown session", () => {
-    const { manager, events } = makeManagerHarness();
-    feedRpcLine(manager, "nonexistent", {
-      type: "response",
-      success: true,
-      command: "get_state",
-    });
-    expect(events.length).toBe(0);
-  });
-});
+// RPC response dispatch tests removed — SDK uses direct method calls.
 
 // ─── Event Translation & Broadcast ───
 
-describe("handleRpcLine event translation", () => {
+describe("handlePiEvent event translation", () => {
   it("broadcasts tool_execution_start event", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "tool_execution_start",
       toolName: "bash",
       toolCallId: "tc-1",
@@ -896,7 +687,7 @@ describe("handleRpcLine event translation", () => {
   it("broadcasts tool_execution_end event", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "tool_execution_end",
       toolName: "bash",
       toolCallId: "tc-1",
@@ -908,7 +699,7 @@ describe("handleRpcLine event translation", () => {
   it("broadcasts message_end with assistant content", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -923,7 +714,7 @@ describe("handleRpcLine event translation", () => {
   it("updates session status to busy on agent_start", () => {
     const { manager, session } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", { type: "agent_start" });
+    feedEvent(manager, "s1", { type: "agent_start" });
 
     expect(session.status).toBe("busy");
   });
@@ -932,7 +723,7 @@ describe("handleRpcLine event translation", () => {
     const { manager, session } = makeManagerHarness();
     session.status = "busy";
 
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     expect(session.status).toBe("ready");
   });
@@ -940,7 +731,7 @@ describe("handleRpcLine event translation", () => {
   it("broadcasts state after status-changing events", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", { type: "agent_start" });
+    feedEvent(manager, "s1", { type: "agent_start" });
 
     const stateEvents = events.filter((e) => e.type === "state");
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
@@ -949,7 +740,7 @@ describe("handleRpcLine event translation", () => {
   it("broadcasts text_delta for message_update with text_delta", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_update",
       assistantMessageEvent: { type: "text_delta", delta: "hello " },
     });
@@ -960,7 +751,7 @@ describe("handleRpcLine event translation", () => {
   it("broadcasts thinking_delta for message_update with thinking_delta", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_update",
       assistantMessageEvent: { type: "thinking_delta", delta: "let me think..." },
     });
@@ -975,7 +766,7 @@ describe("extension UI protocol", () => {
   it("forwards dialog UI request to subscribers", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-dialog-1",
       method: "select",
@@ -991,7 +782,7 @@ describe("extension UI protocol", () => {
   it("forwards fire-and-forget UI methods as notifications", () => {
     const { manager, events } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-notify-1",
       method: "notify",
@@ -1004,11 +795,11 @@ describe("extension UI protocol", () => {
     expect(manager.hasPendingUIRequest("s1", "ui-notify-1")).toBe(false);
   });
 
-  it("respondToUIRequest writes to stdin and clears pending", () => {
-    const { manager, stdinWrite } = makeManagerHarness();
+  it("respondToUIRequest clears pending request", () => {
+    const { manager } = makeManagerHarness();
 
     // Set up a pending dialog
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "extension_ui_request",
       id: "ui-resp-1",
       method: "confirm",
@@ -1021,7 +812,6 @@ describe("extension UI protocol", () => {
     });
 
     expect(ok).toBe(true);
-    expect(stdinWrite).toHaveBeenCalled();
     expect(manager.hasPendingUIRequest("s1", "ui-resp-1")).toBe(false);
   });
 
@@ -1044,9 +834,9 @@ describe("session catch-up", () => {
     const { manager, active } = makeManagerHarness();
 
     // Simulate some events by feeding agent_start/end
-    feedRpcLine(manager, "s1", { type: "agent_start" });
-    feedRpcLine(manager, "s1", { type: "text_delta", text: "hi" });
-    feedRpcLine(manager, "s1", { type: "agent_end" });
+    feedEvent(manager, "s1", { type: "agent_start" });
+    feedEvent(manager, "s1", { type: "text_delta", text: "hi" });
+    feedEvent(manager, "s1", { type: "agent_end" });
 
     const catchUp = manager.getCatchUp("s1", 0);
     expect(catchUp).not.toBeNull();
@@ -1066,7 +856,7 @@ describe("updateSessionFromEvent", () => {
     const { manager, session } = makeManagerHarness();
     const initialCount = session.messageCount;
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -1081,7 +871,7 @@ describe("updateSessionFromEvent", () => {
   it("updates tokens from message_end with assistant text", () => {
     const { manager, session } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -1097,7 +887,7 @@ describe("updateSessionFromEvent", () => {
   it("accumulates tokens across multiple message_end events", () => {
     const { manager, session } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -1106,7 +896,7 @@ describe("updateSessionFromEvent", () => {
       },
     });
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -1123,7 +913,7 @@ describe("updateSessionFromEvent", () => {
     const { manager, session } = makeManagerHarness();
     const before = session.lastActivity;
 
-    feedRpcLine(manager, "s1", { type: "agent_start" });
+    feedEvent(manager, "s1", { type: "agent_start" });
 
     expect(session.lastActivity).toBeGreaterThanOrEqual(before);
   });
@@ -1131,7 +921,7 @@ describe("updateSessionFromEvent", () => {
   it("updates context tokens from message_end usage", () => {
     const { manager, session } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",
@@ -1148,7 +938,7 @@ describe("updateSessionFromEvent", () => {
     const { manager, session } = makeManagerHarness();
     const initialCount = session.messageCount;
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: { role: "user", content: [{ type: "text", text: "hi" }] },
     });
@@ -1159,7 +949,7 @@ describe("updateSessionFromEvent", () => {
   it("updates cost from message_end usage", () => {
     const { manager, session } = makeManagerHarness();
 
-    feedRpcLine(manager, "s1", {
+    feedEvent(manager, "s1", {
       type: "message_end",
       message: {
         role: "assistant",

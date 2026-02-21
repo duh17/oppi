@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 import { EventRing } from "../src/event-ring.js";
 import { SessionManager } from "../src/sessions.js";
@@ -6,6 +6,7 @@ import { TurnDedupeCache } from "../src/turn-cache.js";
 import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
+import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -17,11 +18,6 @@ const TEST_CONFIG: ServerConfig = {
   workspaceIdleTimeoutMs: 1_800_000,
   maxSessionsPerWorkspace: 3,
   maxSessionsGlobal: 5,
-};
-
-type TestActiveSession = {
-  session: Session;
-  process: ChildProcess;
 };
 
 function makeSession(status: Session["status"] = "busy"): Session {
@@ -38,36 +34,7 @@ function makeSession(status: Session["status"] = "busy"): Session {
   };
 }
 
-function makeProcessStub(): {
-  process: ChildProcess;
-  stdinWrite: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
-} {
-  const stdinWrite = vi.fn();
-  const proc = {
-    stdin: {
-      write: stdinWrite,
-      writable: true,
-    },
-    killed: false,
-  } as unknown as ChildProcess;
-
-  const kill = vi.fn(() => {
-    (proc as { killed: boolean }).killed = true;
-    return true;
-  });
-  (proc as { kill: typeof kill }).kill = kill;
-
-  return { process: proc, stdinWrite, kill };
-}
-
-function makeManagerHarness(status: Session["status"] = "busy"): {
-  manager: SessionManager;
-  events: ServerMessage[];
-  active: TestActiveSession;
-  stdinWrite: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
-} {
+function makeManagerHarness(status: Session["status"] = "busy") {
   const storage = {
     getConfig: () => TEST_CONFIG,
     saveSession: vi.fn(),
@@ -75,26 +42,25 @@ function makeManagerHarness(status: Session["status"] = "busy"): {
   } as unknown as Storage;
 
   const gate = {
-    destroySessionSocket: vi.fn(),
+    destroySessionGuard: vi.fn(),
   } as unknown as GateServer;
 
   const manager = new SessionManager(storage, gate);
 
-  // Keep tests deterministic — we don't need idle timer behavior here.
   (manager as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
 
-  const { process, stdinWrite, kill } = makeProcessStub();
+  const { sdkBackend, abort, dispose } = makeSdkBackendStub();
   const session = makeSession(status);
 
   const active = {
     session,
-    process,
+    sdkBackend,
     workspaceId: "w1",
     subscribers: new Set<(msg: ServerMessage) => void>(),
-    pendingResponses: new Map(),
     pendingUIRequests: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
+    hasStreamedThinking: false,
     turnCache: new TurnDedupeCache(),
     pendingTurnStarts: [],
     seq: 0,
@@ -109,40 +75,35 @@ function makeManagerHarness(status: Session["status"] = "busy"): {
     events.push(msg);
   });
 
-  return {
-    manager,
-    events,
-    active: { session, process },
-    stdinWrite,
-    kill,
-  };
+  return { manager, events, session, sdkBackend, abort, dispose };
 }
 
 describe("stop lifecycle", () => {
   it("dedupes duplicate stop taps while graceful stop is pending", async () => {
-    const { manager, events, stdinWrite, active } = makeManagerHarness("busy");
+    const { manager, events, abort, session } = makeManagerHarness("busy");
+    const active = { session };
 
     await manager.sendAbort("s1");
     await manager.sendAbort("s1");
 
-    expect(stdinWrite).toHaveBeenCalledTimes(1);
+    expect(abort).toHaveBeenCalledTimes(1);
     const stopRequested = events.filter((event) => event.type === "stop_requested");
     expect(stopRequested).toHaveLength(1);
     expect(active.session.status).toBe("stopping");
   });
 
-  it("escalates abort timeout to SIGINT then gives up without killing session", async () => {
+  it("escalates abort timeout to second abort then gives up without killing session", async () => {
     vi.useFakeTimers();
     try {
-      const { manager, events, kill, active } = makeManagerHarness("busy");
+      const { manager, events, abort, session } = makeManagerHarness("busy");
 
       await manager.sendAbort("s1");
 
-      // Phase 1: after stopAbortTimeoutMs, sends SIGINT (not SIGTERM)
+      // Phase 1: after stopAbortTimeoutMs, calls abort() again
       vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
 
-      expect(kill).toHaveBeenCalledTimes(1);
-      expect(kill).toHaveBeenCalledWith("SIGINT");
+      // Initial abort + escalation abort
+      expect(abort).toHaveBeenCalledTimes(2);
 
       // Should broadcast a stop_requested from server about the interrupt
       const interruptRequested = events.find(
@@ -155,9 +116,9 @@ describe("stop lifecycle", () => {
       expect(manager.isActive("s1")).toBe(true);
       expect(events.some((event) => event.type === "session_ended")).toBe(false);
 
-      // Phase 2: after stopAbortSigintTimeoutMs, gives up but keeps session alive
+      // Phase 2: after stopAbortRetryTimeoutMs, gives up but keeps session alive
       vi.advanceTimersByTime(
-        (manager as unknown as { stopAbortSigintTimeoutMs: number }).stopAbortSigintTimeoutMs,
+        (manager as unknown as { stopAbortRetryTimeoutMs: number }).stopAbortRetryTimeoutMs,
       );
 
       const failed = events.find(
@@ -169,29 +130,29 @@ describe("stop lifecycle", () => {
       // Session stays alive — user can send another message or stop session explicitly
       expect(manager.isActive("s1")).toBe(true);
       expect(events.some((event) => event.type === "session_ended")).toBe(false);
-      expect(active.session.status).toBe("busy"); // restored from "stopping"
+      expect(session.status).toBe("busy"); // restored from "stopping"
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
   });
 
-  it("abort succeeds after SIGINT before second timeout", async () => {
+  it("abort succeeds after escalation before second timeout", async () => {
     vi.useFakeTimers();
     try {
-      const { manager, events, kill } = makeManagerHarness("busy");
+      const { manager, events, abort } = makeManagerHarness("busy");
       const key = "s1";
 
       await manager.sendAbort("s1");
 
-      // Phase 1 timeout: sends SIGINT
+      // Phase 1 timeout: calls abort() again
       vi.advanceTimersByTime((manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs);
-      expect(kill).toHaveBeenCalledWith("SIGINT");
+      expect(abort).toHaveBeenCalledTimes(2);
 
-      // Pi responds with agent_end after SIGINT interrupts the tool
-      (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
+      // Agent responds with agent_end after abort interrupts the tool
+      (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
         key,
-        JSON.stringify({ type: "agent_end" }),
+        { type: "agent_end" },
       );
 
       const confirmed = events.filter((event) => event.type === "stop_confirmed");
@@ -200,7 +161,7 @@ describe("stop lifecycle", () => {
 
       // Phase 2 timeout should be a no-op since abort already succeeded
       vi.advanceTimersByTime(
-        (manager as unknown as { stopAbortSigintTimeoutMs: number }).stopAbortSigintTimeoutMs,
+        (manager as unknown as { stopAbortRetryTimeoutMs: number }).stopAbortRetryTimeoutMs,
       );
 
       expect(events.some((event) => event.type === "stop_failed")).toBe(false);
@@ -212,31 +173,31 @@ describe("stop lifecycle", () => {
   });
 
   it("confirms graceful stop after tool loop drains to agent_end", async () => {
-    const { manager, events, active } = makeManagerHarness("busy");
+    const { manager, events, session } = makeManagerHarness("busy");
     const key = "s1";
 
     await manager.sendAbort("s1");
 
-    (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
       key,
-      JSON.stringify({
+      {
         type: "tool_execution_start",
         toolName: "bash",
         args: { command: "echo test" },
         toolCallId: "tc-1",
-      }),
+      },
     );
 
-    expect(active.session.status).toBe("stopping");
+    expect(session.status).toBe("stopping");
 
-    (manager as unknown as { handleRpcLine: (key: string, line: string) => void }).handleRpcLine(
+    (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
       key,
-      JSON.stringify({ type: "agent_end" }),
+      { type: "agent_end" },
     );
 
     const confirmed = events.filter((event) => event.type === "stop_confirmed");
     expect(confirmed).toHaveLength(1);
-    expect(active.session.status).toBe("ready");
+    expect(session.status).toBe("ready");
     expect(events.some((event) => event.type === "stop_failed")).toBe(false);
   });
 });

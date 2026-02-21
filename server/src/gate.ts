@@ -1,24 +1,12 @@
 /**
- * Permission gate — TCP server for pi extension communication.
+ * Permission gate — in-process tool call authorization.
  *
- * Each pi session gets its own TCP port on localhost. The permission-gate
- * extension inside the pi subprocess connects to that port.
- *
- * Protocol: newline-delimited JSON over TCP.
- *
- * Extension → Server:
- *   { type: "guard_ready", sessionId, extensionVersion }
- *   { type: "gate_check", tool, input, toolCallId }
- *   { type: "heartbeat" }
- *
- * Server → Extension:
- *   { type: "guard_ack", status: "ok" }
- *   { type: "gate_result", action: "allow" | "deny", reason? }
- *   { type: "heartbeat_ack" }
+ * Each pi session gets a virtual guard via createGuard().
+ * Tool calls are evaluated through checkToolCall() which runs the
+ * policy engine, checks learned rules, and emits approval_needed
+ * events for decisions that require user input.
  */
 
-import { createServer, type Server as NetServer, type Socket } from "node:net";
-import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { generateId } from "./id.js";
 import type { PolicyEngine } from "./policy.js";
@@ -35,11 +23,6 @@ export interface SessionGuard {
   sessionId: string;
   workspaceId: string;
   state: GuardState;
-  port: number;
-  server: NetServer;
-  client: Socket | null;
-  lastHeartbeat: number;
-  heartbeatTimer: NodeJS.Timeout | null;
 }
 
 export interface PendingDecision {
@@ -62,33 +45,11 @@ interface GateResponse {
   reason?: string;
 }
 
-// Messages from extension
-interface GuardReadyMsg {
-  type: "guard_ready";
-  sessionId: string;
-  extensionVersion: string;
-}
-
-interface GateCheckMsg {
-  type: "gate_check";
-  tool: string;
-  input: Record<string, unknown>;
-  toolCallId: string;
-}
-
-interface HeartbeatMsg {
-  type: "heartbeat";
-}
-
-type ExtensionMessage = GuardReadyMsg | GateCheckMsg | HeartbeatMsg;
-
 // ─── Constants ───
 
-const HEARTBEAT_TIMEOUT_MS = 45_000; // Extension sends every 15s, we expect within 45s
 const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
-const TCP_HOST = "127.0.0.1"; // Localhost only — extension connects from same machine
 
 // ─── Gate Server ───
 
@@ -140,62 +101,11 @@ export class GateServer extends EventEmitter {
   }
 
   /**
-   * Create a TCP socket for a session. Returns a promise that resolves to the port number.
-   * The session's permission-gate extension connects to this port.
+   * Destroy a session's guard and clean up pending decisions.
    */
-  async createSessionSocket(sessionId: string, workspaceId: string = ""): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const server = createServer((client) => {
-        this.handleConnection(sessionId, client);
-      });
-
-      // Listen on localhost with a dynamic port (0 = OS assigns)
-      server.listen(0, TCP_HOST, () => {
-        const addr = server.address();
-        const port = typeof addr === "object" && addr ? addr.port : 0;
-        console.log(`[gate] TCP socket ready for ${sessionId}: ${TCP_HOST}:${port}`);
-
-        const guard: SessionGuard = {
-          sessionId,
-          workspaceId,
-          state: "unguarded",
-          port,
-          server,
-          client: null,
-          lastHeartbeat: Date.now(),
-          heartbeatTimer: null,
-        };
-
-        this.guards.set(sessionId, guard);
-        resolve(port);
-      });
-
-      server.on("error", (err) => {
-        console.error(`[gate] TCP socket error for ${sessionId}:`, err);
-        reject(err);
-      });
-    });
-  }
-
-  /**
-   * Destroy a session's gate socket and clean up pending decisions.
-   */
-  destroySessionSocket(sessionId: string): void {
+  destroySessionGuard(sessionId: string): void {
     const guard = this.guards.get(sessionId);
     if (!guard) return;
-
-    // Stop heartbeat timer
-    if (guard.heartbeatTimer) {
-      clearInterval(guard.heartbeatTimer);
-    }
-
-    // Close client connection
-    if (guard.client) {
-      guard.client.destroy();
-    }
-
-    // Close server
-    guard.server.close();
 
     // Reject all pending decisions for this session
     for (const [id, decision] of this.pending) {
@@ -210,7 +120,7 @@ export class GateServer extends EventEmitter {
     this.ruleStore.clearSessionRules(sessionId);
 
     this.guards.delete(sessionId);
-    console.log(`[gate] Destroyed socket for ${sessionId} (port ${guard.port})`);
+    console.log(`[gate] Destroyed guard for ${sessionId}`);
   }
 
   /**
@@ -349,31 +259,23 @@ export class GateServer extends EventEmitter {
   }
 
   /**
-   * Create a virtual guard for SDK sessions (no TCP socket needed).
-   * The guard starts in "guarded" state immediately since the extension
-   * factory runs in-process and doesn't need a TCP handshake.
+   * Create a guard for a session. Starts in "guarded" state immediately
+   * since the extension factory runs in-process.
    */
-  createVirtualGuard(sessionId: string, workspaceId: string = ""): void {
+  createGuard(sessionId: string, workspaceId: string = ""): void {
     // Clean up any existing guard first
     if (this.guards.has(sessionId)) {
-      this.destroySessionSocket(sessionId);
+      this.destroySessionGuard(sessionId);
     }
-
-    const dummyServer = createServer(); // Never listens — placeholder
 
     const guard: SessionGuard = {
       sessionId,
       workspaceId,
       state: "guarded",
-      port: 0,
-      server: dummyServer,
-      client: null,
-      lastHeartbeat: Date.now(),
-      heartbeatTimer: null,
     };
 
     this.guards.set(sessionId, guard);
-    console.log(`[gate] Virtual guard created for ${sessionId} (SDK mode)`);
+    console.log(`[gate] Guard created for ${sessionId}`);
     this.emit("guard_ready", { sessionId });
   }
 
@@ -420,133 +322,18 @@ export class GateServer extends EventEmitter {
   }
 
   /**
-   * Clean up all sockets on shutdown.
+   * Clean up all guards on shutdown.
    */
   async shutdown(): Promise<void> {
     const sessionIds = Array.from(this.guards.keys());
     for (const id of sessionIds) {
-      this.destroySessionSocket(id);
+      this.destroySessionGuard(id);
     }
-  }
-
-  // ─── Connection Handling ───
-
-  private handleConnection(sessionId: string, client: Socket): void {
-    const guard = this.guards.get(sessionId);
-    if (!guard) {
-      client.destroy();
-      return;
-    }
-
-    // Only one client per session
-    if (guard.client) {
-      guard.client.destroy();
-    }
-
-    guard.client = client;
-    guard.lastHeartbeat = Date.now();
-
-    console.log(`[gate] Extension connected for ${sessionId}`);
-
-    const rl = createInterface({ input: client });
-    rl.on("line", (line) => {
-      try {
-        const msg = JSON.parse(line) as ExtensionMessage;
-        this.handleMessage(sessionId, msg, client);
-      } catch (_err) {
-        console.warn(`[gate] Invalid message from ${sessionId}:`, line);
-      }
-    });
-
-    client.on("close", () => {
-      console.log(`[gate] Extension disconnected for ${sessionId}`);
-      if (guard.client === client) {
-        guard.client = null;
-        this.handleExtensionLost(sessionId);
-      }
-    });
-
-    client.on("error", (err) => {
-      console.error(`[gate] Client error for ${sessionId}:`, err.message);
-    });
-  }
-
-  private handleMessage(sessionId: string, msg: ExtensionMessage, client: Socket): void {
-    const guard = this.guards.get(sessionId);
-    if (!guard) return;
-
-    switch (msg.type) {
-      case "guard_ready":
-        this.handleGuardReady(guard, msg);
-        this.send(client, { type: "guard_ack", status: "ok" });
-        break;
-
-      case "gate_check":
-        this.handleGateCheck(guard, msg, client);
-        break;
-
-      case "heartbeat":
-        guard.lastHeartbeat = Date.now();
-        this.send(client, { type: "heartbeat_ack" });
-        break;
-
-      default:
-        console.warn(
-          `[gate] Unknown message type from ${sessionId}:`,
-          (msg as unknown as Record<string, unknown>).type,
-        );
-    }
-  }
-
-  private handleGuardReady(guard: SessionGuard, msg: GuardReadyMsg): void {
-    guard.state = "guarded";
-    guard.lastHeartbeat = Date.now();
-
-    // Start heartbeat monitoring
-    if (guard.heartbeatTimer) {
-      clearInterval(guard.heartbeatTimer);
-    }
-
-    guard.heartbeatTimer = setInterval(() => {
-      const elapsed = Date.now() - guard.lastHeartbeat;
-      if (elapsed > HEARTBEAT_TIMEOUT_MS) {
-        console.warn(`[gate] Heartbeat timeout for ${guard.sessionId} (${elapsed}ms)`);
-        this.handleExtensionLost(guard.sessionId);
-      }
-    }, HEARTBEAT_TIMEOUT_MS);
-
-    console.log(`[gate] Session ${guard.sessionId} is now GUARDED (ext v${msg.extensionVersion})`);
-    this.emit("guard_ready", { sessionId: guard.sessionId });
-  }
-
-  private async handleGateCheck(
-    guard: SessionGuard,
-    msg: GateCheckMsg,
-    client: Socket,
-  ): Promise<void> {
-    // Fail-safe: if not guarded, deny everything
-    if (guard.state !== "guarded") {
-      this.send(client, {
-        type: "gate_result",
-        action: "deny",
-        reason: `Session not guarded (state: ${guard.state})`,
-      });
-      return;
-    }
-
-    const req: GateRequest = {
-      tool: msg.tool,
-      input: msg.input,
-      toolCallId: msg.toolCallId,
-    };
-
-    const result = await this.evaluateGateCheck(guard, req);
-    this.send(client, { type: "gate_result", ...result });
   }
 
   /**
-   * Core gate check evaluation. Shared by TCP handleGateCheck and
-   * in-process checkToolCall (SDK mode).
+   * Core gate check evaluation — runs policy engine, checks rules,
+   * and emits approval_needed for decisions requiring user input.
    */
   private async evaluateGateCheck(
     guard: SessionGuard,
@@ -643,46 +430,12 @@ export class GateServer extends EventEmitter {
     return { action: response.action, reason: response.reason };
   }
 
-  private handleExtensionLost(sessionId: string): void {
-    const guard = this.guards.get(sessionId);
-    if (!guard) return;
-
-    if (guard.state === "guarded") {
-      guard.state = "fail_safe";
-      console.warn(`[gate] Session ${sessionId} entered FAIL_SAFE mode`);
-      this.emit("guard_lost", { sessionId });
-    }
-
-    // Deny all pending decisions for this session
-    for (const [id, pd] of this.pending) {
-      if (pd.sessionId === sessionId) {
-        this.auditLog.record({
-          sessionId: pd.sessionId,
-          workspaceId: pd.workspaceId,
-          tool: pd.tool,
-          displaySummary: pd.displaySummary,
-          decision: "deny",
-          resolvedBy: "extension_lost",
-          layer: "extension_lost",
-        });
-        pd.resolve({ action: "deny", reason: "Extension connection lost" });
-        this.cleanupPending(id);
-      }
-    }
-  }
-
   private cleanupPending(requestId: string): void {
     this.pending.delete(requestId);
     const timeout = this.pendingTimeouts.get(requestId);
     if (timeout) {
       clearTimeout(timeout);
       this.pendingTimeouts.delete(requestId);
-    }
-  }
-
-  private send(client: Socket, msg: Record<string, unknown>): void {
-    if (!client.destroyed) {
-      client.write(JSON.stringify(msg) + "\n");
     }
   }
 }
