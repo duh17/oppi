@@ -18,9 +18,9 @@ struct ModelPickerSheet: View {
 
     private var models: [ModelInfo] { connection.cachedModels }
 
-    /// Full provider/id key for matching.
+    /// Full provider/id key for matching (delegates to policy to avoid double-prefix).
     private func fullId(_ model: ModelInfo) -> String {
-        "\(model.provider)/\(model.id)"
+        ModelSwitchPolicy.fullModelID(for: model)
     }
 
     /// Models the user picked recently, ordered by recency.
@@ -172,7 +172,7 @@ private struct ModelRow: View {
                     }
                 }
 
-                Text("\(model.provider)/\(model.id)")
+                Text(ModelSwitchPolicy.fullModelID(for: model))
                     .font(.caption.monospaced())
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
