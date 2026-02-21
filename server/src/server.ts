@@ -12,7 +12,7 @@ import { type Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
@@ -20,6 +20,7 @@ import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
 import { UserStreamMux, startServerPing, SEND_HWM_BYTES, DROPPABLE_TYPES } from "./stream.js";
 import { RouteHandler, type ModelInfo } from "./routes.js";
+import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
   PolicyEngine,
   defaultPolicy,
@@ -223,119 +224,41 @@ interface PendingLiveActivityUpdate {
   priority?: 5 | 10;
 }
 
-// ─── Available Models ───
-
-const FALLBACK_MODELS: ModelInfo[] = [
-  {
-    id: "anthropic/claude-opus-4-6",
-    name: "claude-opus-4-6",
-    provider: "anthropic",
-    contextWindow: 200000,
-  },
-  {
-    id: "openai-codex/gpt-5.3-codex",
-    name: "gpt-5.3-codex",
-    provider: "openai-codex",
-    contextWindow: 272000,
-  },
-  {
-    id: "lmstudio/glm-4.7-flash-mlx",
-    name: "glm-4.7-flash-mlx",
-    provider: "lmstudio",
-    contextWindow: 128000,
-  },
-];
-
-/** Parse compact token counts like 200K, 196.6K, 1M. */
-function parseCompactTokenCount(raw: string): number | null {
-  const normalized = raw.trim().toLowerCase().replace(/,/g, "");
-  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
-  if (!match) {
-    return null;
-  }
-
-  const value = Number.parseFloat(match[1]);
-  if (!Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  const suffix = match[2];
-  if (suffix === "m") {
-    return Math.round(value * 1_000_000);
-  }
-  if (suffix === "k") {
-    return Math.round(value * 1_000);
-  }
-  return Math.round(value);
-}
+// ─── Available Models (via SDK ModelRegistry) ───
 
 /** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
 function normalizeModelToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Parse `pi --list-models` table output into model records. */
-function parseModelTable(output: string): ModelInfo[] {
-  const models: ModelInfo[] = [];
+/**
+ * Map SDK Model objects to the simplified ModelInfo shape for REST responses.
+ * Deduplicates by canonical `provider/modelId`.
+ */
+function sdkModelsToModelInfo(
+  sdkModels: Array<{ id: string; name: string; provider: string; contextWindow: number }>,
+): ModelInfo[] {
   const seen = new Set<string>();
-
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("provider")) {
-      continue;
-    }
-
-    const cols = trimmed
-      .split(/\s{2,}/)
-      .map((v) => v.trim())
-      .filter(Boolean);
-    if (cols.length < 3) {
-      continue;
-    }
-
-    const provider = cols[0];
-    const modelId = cols[1];
-    const contextRaw = cols[2];
-
-    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(provider)) {
-      continue;
-    }
-
-    const id = `${provider}/${modelId}`;
-
-    if (seen.has(id)) {
-      continue;
-    }
+  const result: ModelInfo[] = [];
+  for (const m of sdkModels) {
+    const id = `${m.provider}/${m.id}`;
+    if (seen.has(id)) continue;
     seen.add(id);
-
-    models.push({
+    result.push({
       id,
-      name: modelId,
-      provider,
-      contextWindow: parseCompactTokenCount(contextRaw) ?? 200000,
+      name: m.name || m.id,
+      provider: m.provider,
+      contextWindow: m.contextWindow || 200000,
     });
   }
-
-  return models;
+  return result;
 }
 
-/** Resolve the pi executable path for local model discovery. */
+/** Resolve the pi executable path for version detection. */
 function resolvePiExecutable(): string {
   const envPath = process.env.OPPI_PI_BIN;
   if (envPath && existsSync(envPath)) {
     return envPath;
-  }
-
-  try {
-    const discovered = execSync("which pi", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (discovered.length > 0) {
-      return discovered;
-    }
-  } catch {
-    // Fall through to known locations
   }
 
   for (const candidate of ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"]) {
@@ -376,10 +299,9 @@ export class Server {
   private wss: WebSocketServer;
 
   private readonly piExecutable: string;
-  private modelCatalog: ModelInfo[] = [...FALLBACK_MODELS];
+  private modelRegistry: ModelRegistry;
+  private modelCatalog: ModelInfo[] = [];
   private modelCatalogUpdatedAt = 0;
-  private modelCatalogRefresh: Promise<void> | null = null;
-  private readonly modelCatalogTtlMs = 30_000;
 
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
@@ -397,6 +319,11 @@ export class Server {
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
     this.piExecutable = resolvePiExecutable();
+
+    // SDK model registry — replaces pi --list-models CLI parsing
+    const agentDir = getAgentDir();
+    const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+    this.modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
@@ -421,9 +348,7 @@ export class Server {
     this.skillRegistry.watch(); // Live-reload: watch skill dirs for changes
 
     this.push = createPushClient(apnsConfig);
-    this.sessions = new SessionManager(storage, this.gate, {
-      resolveSkillPath: (name: string) => this.skillRegistry.getPath(name),
-    });
+    this.sessions = new SessionManager(storage, this.gate);
     this.sessions.contextWindowResolver = (modelId: string) => this.getContextWindow(modelId);
 
     // Create the user stream mux (handles /stream WS, event rings, replay)
@@ -463,7 +388,10 @@ export class Server {
       ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
-      refreshModelCatalog: () => this.refreshModelCatalog(),
+      refreshModelCatalog: () => {
+        this.refreshModelCatalog();
+        return Promise.resolve();
+      },
       getModelCatalog: () => this.modelCatalog,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
@@ -523,8 +451,8 @@ export class Server {
       throw new Error(startupSecurityError);
     }
 
-    // Prime model catalog in background so first picker open is fast.
-    void this.refreshModelCatalog(true);
+    // Prime model catalog so first picker open is fast.
+    this.refreshModelCatalog();
 
     // Heal stale persisted contextWindow fallbacks before any client connects.
     this.healPersistedSessionContextWindows();
@@ -962,52 +890,29 @@ export class Server {
     this.connections.delete(ws);
   }
 
-  private async refreshModelCatalog(force = false): Promise<void> {
-    const now = Date.now();
-    if (
-      !force &&
-      this.modelCatalog.length > 0 &&
-      now - this.modelCatalogUpdatedAt < this.modelCatalogTtlMs
-    ) {
-      return;
-    }
-
-    if (this.modelCatalogRefresh) {
-      await this.modelCatalogRefresh;
-      return;
-    }
-
-    this.modelCatalogRefresh = (async () => {
-      try {
-        const output = execFileSync(this.piExecutable, ["--list-models"], {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 15000,
-          maxBuffer: 2 * 1024 * 1024,
-        });
-
-        const models = parseModelTable(output);
-        if (models.length > 0) {
-          this.modelCatalog = models;
-          this.modelCatalogUpdatedAt = Date.now();
-          return;
-        }
-
-        console.warn(`${ts()} [models] parsed 0 models from pi --list-models`);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
-      }
-
-      // Prevent hammering refresh when pi list-models is unavailable.
-      if (this.modelCatalogUpdatedAt === 0) {
+  private refreshModelCatalog(): void {
+    try {
+      this.modelRegistry.refresh();
+      const available = this.modelRegistry.getAvailable();
+      if (available.length > 0) {
+        this.modelCatalog = sdkModelsToModelInfo(available);
         this.modelCatalogUpdatedAt = Date.now();
+        return;
       }
-    })().finally(() => {
-      this.modelCatalogRefresh = null;
-    });
 
-    await this.modelCatalogRefresh;
+      // Fall back to all registered models (includes those without auth)
+      const all = this.modelRegistry.getAll();
+      if (all.length > 0) {
+        this.modelCatalog = sdkModelsToModelInfo(all);
+        this.modelCatalogUpdatedAt = Date.now();
+        return;
+      }
+
+      console.warn(`${ts()} [models] SDK ModelRegistry returned 0 models`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
+    }
   }
 
   private getContextWindow(modelId: string): number {
@@ -1698,7 +1603,7 @@ export class Server {
       case "bash":
       case "abort_bash":
       case "get_commands":
-        await this.sessions.forwardRpcCommand(
+        await this.sessions.forwardClientCommand(
           session.id,
           msg as unknown as Record<string, unknown>,
           (msg as Record<string, unknown>).requestId as string | undefined,

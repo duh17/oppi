@@ -1,12 +1,13 @@
 /**
  * Session manager — pi agent lifecycle via SDK.
  *
- * Pi runs in-process via createAgentSession().
+ * Pi runs in-process via createAgentSession(). Tool calls are gated
+ * through the in-process permission extension factory.
  *
  * Handles:
  * - Session lifecycle (start, stop, idle timeout)
  * - Agent event → simplified WebSocket message translation
- * - In-process permission gate (via ExtensionFactory)
+ * - SDK command passthrough (model switching, compaction, etc.)
  */
 
 import { EventEmitter } from "node:events";
@@ -32,7 +33,7 @@ import { TurnDedupeCache, computeTurnPayloadHash } from "./turn-cache.js";
 import {
   translatePiEvent,
   extractAssistantText,
-  normalizeRpcError,
+  normalizeCommandError,
   updateSessionChangeStats,
   appendSessionMessage,
   applyMessageEndToSession,
@@ -190,7 +191,6 @@ export class SessionManager extends EventEmitter {
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
   private readonly mobileRenderers = new MobileRendererRegistry();
   private readonly eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
-  private readonly resolveSkillPath?: (name: string) => string | undefined;
 
   /** Injected by the server to resolve context window for a model ID. */
   contextWindowResolver: ((modelId: string) => number) | null = null;
@@ -200,16 +200,11 @@ export class SessionManager extends EventEmitter {
   private saveTimer: NodeJS.Timeout | null = null;
   private readonly saveDebounceMs = 1000;
 
-  constructor(
-    storage: Storage,
-    gate: GateServer,
-    opts?: { resolveSkillPath?: (name: string) => string | undefined },
-  ) {
+  constructor(storage: Storage, gate: GateServer) {
     super();
     this.storage = storage;
     this.config = storage.getConfig();
     this.gate = gate;
-    this.resolveSkillPath = opts?.resolveSkillPath;
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
 
     // Load user-provided mobile renderers (async, fire-and-forget at startup).
@@ -236,7 +231,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Start a new session — spawns pi as a local process.
+   * Start a new session — creates an in-process pi SDK session.
    */
   async startSession(
     sessionId: string,
@@ -649,17 +644,11 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    appendSessionMessage(
-      active.session,
-      {
-        role: "user",
-        content: message,
-        timestamp: opts?.timestamp ?? Date.now(),
-      },
-      (sid, msg) => {
-        this.storage.addSessionMessage(sid, msg);
-      },
-    );
+    appendSessionMessage(active.session, {
+      role: "user",
+      content: message,
+      timestamp: opts?.timestamp ?? Date.now(),
+    });
 
     const cmd: Record<string, unknown> = {
       type: "prompt",
@@ -681,7 +670,7 @@ export class SessionManager extends EventEmitter {
     console.log(
       `${ts()} [sdk] prompt → pi (session=${sessionId}, status=${active.session.status})`,
     );
-    this.sendRpcCommand(key, cmd);
+    this.sendCommand(key, cmd);
     this.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
   }
 
@@ -727,7 +716,7 @@ export class SessionManager extends EventEmitter {
 
     const cmd: Record<string, unknown> = { type: "steer", message };
     if (opts?.images?.length) cmd.images = opts.images;
-    this.sendRpcCommand(key, cmd);
+    this.sendCommand(key, cmd);
     this.markTurnDispatched(key, active, "steer", turn, opts?.requestId);
   }
 
@@ -771,7 +760,7 @@ export class SessionManager extends EventEmitter {
 
     const cmd: Record<string, unknown> = { type: "follow_up", message };
     if (opts?.images?.length) cmd.images = opts.images;
-    this.sendRpcCommand(key, cmd);
+    this.sendCommand(key, cmd);
     this.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
   }
 
@@ -875,10 +864,10 @@ export class SessionManager extends EventEmitter {
     }
 
     try {
-      await this.sendRpcCommandAsync(key, { type: "set_thinking_level", level: preferred }, 8_000);
+      await this.sendCommandAsync(key, { type: "set_thinking_level", level: preferred }, 8_000);
 
       try {
-        const state = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+        const state = await this.sendCommandAsync(key, { type: "get_state" }, 8_000);
         if (this.applyPiStateSnapshot(active.session, state)) {
           this.persistSessionNow(key, active.session);
         }
@@ -903,10 +892,10 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Run a raw pi SDK command against an active session and await response.
+   * Run a SDK command against an active session and await response.
    * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
    */
-  async runRpcCommand(
+  async runCommand(
     sessionId: string,
     command: Record<string, unknown>,
     timeoutMs = 30_000,
@@ -916,7 +905,7 @@ export class SessionManager extends EventEmitter {
       throw new Error(`Session not active: ${sessionId}`);
     }
 
-    return this.sendRpcCommandAsync(key, { ...command }, timeoutMs);
+    return this.sendCommandAsync(key, { ...command }, timeoutMs);
   }
 
   /**
@@ -1016,7 +1005,7 @@ export class SessionManager extends EventEmitter {
     // during bootstrap (get_state) when pi reports its factory-default level.
     // Persisting would clobber the user's real preference with the default,
     // making applyRememberedThinkingLevel a permanent no-op.
-    // Callers that handle user-initiated changes (forwardRpcCommand for
+    // Callers that handle user-initiated changes (forwardClientCommand for
     // set_thinking_level/cycle_thinking_level/cycle_model) persist explicitly.
 
     return changed;
@@ -1025,10 +1014,9 @@ export class SessionManager extends EventEmitter {
   // ─── SDK Passthrough ───
 
   /**
-   * Allowlisted SDK commands that can be forwarded from the client.
-   * Each maps to the pi SDK command type. Fire-and-forget commands
-   * (no response needed) are sent without correlation. Commands that
-   * return data are awaited and the result broadcast as rpc_result.
+   * Allowlisted commands that can be forwarded from the WS client.
+   * Each maps to a pi SDK method. Commands that return data are
+   * awaited and the result broadcast as an `rpc_result` message.
    */
   private static readonly SDK_PASSTHROUGH: ReadonlySet<string> = new Set([
     // State
@@ -1064,13 +1052,13 @@ export class SessionManager extends EventEmitter {
   ]);
 
   /**
-   * Forward a client WebSocket message to pi via SDK.
+   * Forward a client WebSocket command to the pi SDK.
    *
-   * Used for commands that map 1:1 to pi SDK (model switching,
+   * Used for commands that map 1:1 to SDK methods (model switching,
    * thinking level, session management, etc.). The response is
    * broadcast back as an `rpc_result` ServerMessage.
    */
-  async forwardRpcCommand(
+  async forwardClientCommand(
     sessionId: string,
     message: Record<string, unknown>,
     requestId?: string,
@@ -1085,7 +1073,7 @@ export class SessionManager extends EventEmitter {
     if (!active) throw new Error(`Session not active: ${sessionId}`);
 
     try {
-      let rpcData: unknown = await this.sendRpcCommandAsync(key, { ...message }, 30_000);
+      let rpcData: unknown = await this.sendCommandAsync(key, { ...message }, 30_000);
       const rpcObject = toRecord(rpcData);
 
       if (cmdType === "get_state") {
@@ -1175,7 +1163,7 @@ export class SessionManager extends EventEmitter {
       // Refresh state immediately so reconnect/resume uses the new branch.
       if (cmdType === "fork" || cmdType === "new_session" || cmdType === "switch_session") {
         try {
-          const refreshed = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+          const refreshed = await this.sendCommandAsync(key, { type: "get_state" }, 8_000);
           if (this.applyPiStateSnapshot(active.session, refreshed)) {
             this.persistSessionNow(key, active.session);
             this.broadcast(key, { type: "state", session: active.session });
@@ -1214,7 +1202,7 @@ export class SessionManager extends EventEmitter {
         command: cmdType,
         requestId,
         success: false,
-        error: normalizeRpcError(cmdType, rawError),
+        error: normalizeCommandError(cmdType, rawError),
       });
     }
   }
@@ -1222,7 +1210,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Abort the current agent operation.
    *
-   * Abort the current turn. Does NOT stop the session — the pi process
+   * Abort the current turn. Does NOT stop the session — the SDK backend
    * stays alive and ready for the next prompt.
    */
   async sendAbort(sessionId: string): Promise<void> {
@@ -1250,7 +1238,7 @@ export class SessionManager extends EventEmitter {
         return;
       }
 
-      this.sendRpcCommand(key, { type: "abort" });
+      this.sendCommand(key, { type: "abort" });
       this.scheduleAbortStopTimeout(key, active);
     });
   }
@@ -1276,7 +1264,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Send a fire-and-forget command to the SDK backend.
    */
-  sendRpcCommand(key: string, command: Record<string, unknown>): void {
+  sendCommand(key: string, command: Record<string, unknown>): void {
     const active = this.active.get(key);
     if (!active) return;
     this.routeSdkCommand(active.sdkBackend, command);
@@ -1286,7 +1274,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Send a command to the SDK backend and await the result.
    */
-  sendRpcCommandAsync(
+  sendCommandAsync(
     key: string,
     command: Record<string, unknown>,
     _timeoutMs = 10_000,
@@ -1469,9 +1457,7 @@ export class SessionManager extends EventEmitter {
         break;
 
       case "message_end":
-        applyMessageEndToSession(session, event.message, (sessionId, msg) => {
-          this.storage.addSessionMessage(sessionId, msg);
-        });
+        applyMessageEndToSession(session, event.message);
         break;
     }
 
