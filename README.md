@@ -6,7 +6,7 @@
 
 <p align="center">
   Supervise <a href="https://github.com/badlogic/pi-mono">pi</a> coding sessions from your phone.<br />
-  <a href="docs/demo/">Screenshots and demo video</a>
+  <a href="https://testflight.apple.com/join/yaRP9aed">TestFlight</a> · <a href="docs/demo/">Screenshots</a>
 </p>
 
 ## How it works
