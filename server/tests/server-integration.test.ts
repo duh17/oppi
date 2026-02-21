@@ -884,69 +884,108 @@ describe("auth token separation", () => {
 
 // ── Pairing Token Flow ──
 
+type PairingTestContext = {
+  storage: Storage;
+  baseUrl: string;
+};
+
+async function withIsolatedPairingServer(run: (ctx: PairingTestContext) => Promise<void>): Promise<void> {
+  const pairingDataDir = mkdtempSync(join(tmpdir(), "oppi-pairing-integration-"));
+  const pairingStorage = new Storage(pairingDataDir);
+  const isolatedPort = 20_000 + Math.floor(Math.random() * 20_000);
+  pairingStorage.updateConfig({
+    port: isolatedPort,
+    host: "127.0.0.1",
+  });
+  pairingStorage.ensurePaired();
+
+  process.env.OPPI_AUTH_PROXY_PORT = "0";
+  const pairingServer = new Server(pairingStorage);
+  await pairingServer.start();
+
+  try {
+    await run({
+      storage: pairingStorage,
+      baseUrl: `http://127.0.0.1:${pairingServer.port}`,
+    });
+  } finally {
+    await pairingServer.stop().catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+    rmSync(pairingDataDir, { recursive: true, force: true });
+  }
+}
+
 describe("pairing token flow", () => {
   it("issues dt token and rejects replay", async () => {
-    const pt = storage.issuePairingToken(90_000);
+    await withIsolatedPairingServer(async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {
+      const pt = pairingStorage.issuePairingToken(90_000);
 
-    const first = await fetch(`${baseUrl}/pair`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
-    });
-    expect(first.status).toBe(200);
-    const firstBody = (await first.json()) as { deviceToken: string };
-    expect(firstBody.deviceToken.startsWith("dt_")).toBe(true);
+      const first = await fetch(`${pairingBaseUrl}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+      });
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as { deviceToken: string };
+      expect(firstBody.deviceToken.startsWith("dt_")).toBe(true);
 
-    // Issued token works for auth
-    const auth = await fetch(`${baseUrl}/me`, {
-      headers: { Authorization: `Bearer ${firstBody.deviceToken}` },
-    });
-    expect(auth.status).toBe(200);
+      // Issued token works for auth
+      const auth = await fetch(`${pairingBaseUrl}/me`, {
+        headers: { Authorization: `Bearer ${firstBody.deviceToken}` },
+      });
+      expect(auth.status).toBe(200);
 
-    // Replay rejected
-    const replay = await fetch(`${baseUrl}/pair`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+      // Replay rejected
+      const replay = await fetch(`${pairingBaseUrl}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+      });
+      expect(replay.status).toBe(401);
     });
-    expect(replay.status).toBe(401);
   });
 
   it("rejects expired pairing token", async () => {
-    const pt = storage.issuePairingToken(1_000);
-    await new Promise((r) => setTimeout(r, 1_100));
+    await withIsolatedPairingServer(async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {
+      const pt = pairingStorage.issuePairingToken(1_000);
+      await new Promise((r) => setTimeout(r, 1_100));
 
-    const res = await fetch(`${baseUrl}/pair`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pairingToken: pt }),
+      const res = await fetch(`${pairingBaseUrl}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingToken: pt }),
+      });
+      expect(res.status).toBe(401);
     });
-    expect(res.status).toBe(401);
   });
 
   it("rejects missing pairingToken", async () => {
-    const res = await fetch(`${baseUrl}/pair`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+    await withIsolatedPairingServer(async ({ baseUrl: pairingBaseUrl }) => {
+      const res = await fetch(`${pairingBaseUrl}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(400);
     });
-    expect(res.status).toBe(400);
   });
 
   it("rate limits repeated invalid pairing attempts", async () => {
-    let sawRateLimit = false;
-    for (let i = 0; i < 8; i++) {
-      const res = await fetch(`${baseUrl}/pair`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairingToken: `pt_invalid_${i}` }),
-      });
-      if (res.status === 429) {
-        sawRateLimit = true;
-        break;
+    await withIsolatedPairingServer(async ({ baseUrl: pairingBaseUrl }) => {
+      let sawRateLimit = false;
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(`${pairingBaseUrl}/pair`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pairingToken: `pt_invalid_${i}` }),
+        });
+        if (res.status === 429) {
+          sawRateLimit = true;
+          break;
+        }
+        expect(res.status).toBe(401);
       }
-      expect(res.status).toBe(401);
-    }
-    expect(sawRateLimit).toBe(true);
+      expect(sawRateLimit).toBe(true);
+    });
   });
 });
