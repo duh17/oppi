@@ -30,6 +30,10 @@ cd server && npm start
 cd ios && xcodegen generate
 cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
 cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
+
+# iOS device deploy (ALWAYS use this script — never call devicectl directly)
+# Auto-discovers first connected paired iPhone. Pass -d <name|udid> to override.
+cd ios && bash scripts/build-install.sh --launch
 ```
 
 After code changes: run `npm run check` (server) or `xcodebuild build` + `test` (iOS). Get full output. Fix all errors, warnings, and infos before committing.
@@ -53,6 +57,8 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - `git clean -fd` — deletes untracked files
 - `git stash` — stashes ALL changes
 - `git push --force`
+- `xcrun devicectl device uninstall` — never uninstall the iOS app
+- Raw `devicectl device install` — use `ios/scripts/build-install.sh` instead
 
 ### GitHub Issues
 ```bash

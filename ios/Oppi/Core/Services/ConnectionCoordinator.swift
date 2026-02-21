@@ -166,7 +166,7 @@ final class ConnectionCoordinator {
             guard let api = conn.apiClient else { continue }
 
             // Workspace + skill catalogs
-            guard let server = serverStore.server(for: serverId) else { continue }
+            guard serverStore.server(for: serverId) != nil else { continue }
             await conn.workspaceStore.loadServer(serverId: serverId, api: api)
 
             // Sessions
@@ -220,6 +220,12 @@ final class ConnectionCoordinator {
 
     // MARK: - Cross-Server Queries
 
+    struct SessionLookupResult {
+        let session: Session
+        let serverId: String
+        let connection: ServerConnection
+    }
+
     /// All sessions across all servers, ordered by last activity.
     var allSessions: [Session] {
         connections.values
@@ -238,10 +244,10 @@ final class ConnectionCoordinator {
     }
 
     /// Find a session by ID across all servers.
-    func findSession(id: String) -> (session: Session, serverId: String, connection: ServerConnection)? {
+    func findSession(id: String) -> SessionLookupResult? {
         for (serverId, conn) in connections {
             if let session = conn.sessionStore.session(id: id) {
-                return (session, serverId, conn)
+                return SessionLookupResult(session: session, serverId: serverId, connection: conn)
             }
         }
         return nil

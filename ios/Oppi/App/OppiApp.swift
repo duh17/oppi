@@ -331,11 +331,9 @@ struct OppiApp: App {
             guard let coord else { return }
             Task { @MainActor in
                 // Find which server has this permission and respond via its connection
-                for (_, conn) in coord.connections {
-                    if conn.permissionStore.pending.contains(where: { $0.id == permissionId }) {
-                        try? await conn.respondToPermission(id: permissionId, action: action)
-                        return
-                    }
+                for (_, conn) in coord.connections where conn.permissionStore.pending.contains(where: { $0.id == permissionId }) {
+                    try? await conn.respondToPermission(id: permissionId, action: action)
+                    return
                 }
                 // Fallback: try active connection
                 try? await coord.activeConnection.respondToPermission(id: permissionId, action: action)

@@ -407,30 +407,34 @@ struct HighlightingTextEditor: UIViewRepresentable {
         @Binding var text: String
         weak var textView: UITextView?
         weak var storage: MarkdownTextStorage?
-        private var formatObserver: (any NSObjectProtocol)?
 
         init(text: Binding<String>) {
             _text = text
             super.init()
 
             // Listen for format actions from toolbar
-            formatObserver = NotificationCenter.default.addObserver(
-                forName: .editorFormatAction,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                guard let self,
-                      let action = notification.userInfo?["action"] as? FormatAction,
-                      let tv = self.textView else { return }
-                self.apply(action, to: tv)
-            }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleFormatActionNotification(_:)),
+                name: .editorFormatAction,
+                object: nil
+            )
         }
 
         func cleanup() {
-            if let observer = formatObserver {
-                NotificationCenter.default.removeObserver(observer)
-                formatObserver = nil
+            NotificationCenter.default.removeObserver(
+                self,
+                name: .editorFormatAction,
+                object: nil
+            )
+        }
+
+        @objc private func handleFormatActionNotification(_ notification: Notification) {
+            guard let action = notification.userInfo?["action"] as? FormatAction,
+                  let tv = textView else {
+                return
             }
+            apply(action, to: tv)
         }
 
         func textViewDidChange(_ textView: UITextView) {

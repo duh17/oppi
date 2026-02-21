@@ -30,19 +30,25 @@ struct FreshnessChip: View {
         }
     }
 
+    private var displayLabel: String {
+        guard label.hasPrefix("Updated ") else { return label }
+        return String(label.dropFirst("Updated ".count))
+    }
+
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.caption2)
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(tint)
-            Text(label)
+
+            Text(displayLabel)
                 .font(.caption2)
                 .foregroundStyle(.themeComment)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.55), in: Capsule())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(.quaternary.opacity(0.45), in: Capsule())
         .accessibilityLabel("\(state.accessibilityText). \(label)")
     }
 }

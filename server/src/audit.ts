@@ -12,12 +12,11 @@ import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync, renameSy
 import { dirname } from "node:path";
 import { generateId } from "./id.js";
 
-
 // ─── Types ───
 
 export interface UserChoice {
   action: "allow" | "deny";
-  scope: "once" | "session" | "workspace" | "global";
+  scope: "once" | "session" | "global";
   learnedRuleId?: string;
   expiresAt?: number;
 }

@@ -199,6 +199,17 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       ctx.streamedAssistantText = "";
       return [{ type: "agent_end" }];
 
+    case "turn_start":
+      return [{ type: "turn_start" }];
+
+    case "turn_end":
+      return [{ type: "turn_end" }];
+
+    case "message_start":
+      // Structural lifecycle marker. No payload needed for iOS —
+      // the message object arrives via message_end.
+      return [];
+
     case "message_update": {
       const evt = event.assistantMessageEvent;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
@@ -209,6 +220,15 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
         ctx.hasStreamedThinking = true;
         return [{ type: "thinking_delta", delta: evt.delta }];
       }
+      if (evt?.type === "error") {
+        const reason = evt.reason ?? "error";
+        const errorMsg =
+          typeof evt.error?.content === "string" ? evt.error.content : `Stream ${reason}`;
+        return [{ type: "error", error: errorMsg }];
+      }
+      // Other sub-events (start, text_start/end, thinking_start/end,
+      // toolcall_start/delta/end, done) are either redundant with
+      // top-level events or bookkeeping. No client action needed.
       return [];
     }
 
@@ -400,6 +420,8 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
 
 // ─── Change Stats ───
 
+const MAX_TRACKED_CHANGED_FILES = 100;
+
 export function updateSessionChangeStats(
   session: Session,
   rawToolName: unknown,
@@ -411,30 +433,50 @@ export function updateSessionChangeStats(
   }
 
   const existing = session.changeStats;
+  const dedupedChangedFiles = Array.isArray(existing?.changedFiles)
+    ? existing.changedFiles.filter((f) => typeof f === "string" && f.length > 0)
+    : [];
+
+  const filesChanged = Math.max(existing?.filesChanged ?? 0, dedupedChangedFiles.length);
+  const changedFilesOverflow = Math.max(
+    existing?.changedFilesOverflow ?? 0,
+    filesChanged - dedupedChangedFiles.length,
+  );
+
   const stats = {
     mutatingToolCalls: existing?.mutatingToolCalls ?? 0,
-    filesChanged: existing?.filesChanged ?? 0,
-    changedFiles: Array.isArray(existing?.changedFiles)
-      ? existing.changedFiles.filter((f) => typeof f === "string" && f.length > 0)
-      : [],
+    filesChanged,
+    changedFiles: dedupedChangedFiles,
+    changedFilesOverflow,
     addedLines: existing?.addedLines ?? 0,
     removedLines: existing?.removedLines ?? 0,
   };
-  stats.filesChanged = Math.max(stats.filesChanged, stats.changedFiles.length);
 
   stats.mutatingToolCalls += 1;
 
   const path = extractChangedFilePath(rawArgs);
   if (path && !stats.changedFiles.includes(path)) {
-    stats.changedFiles.push(path);
-    stats.filesChanged = stats.changedFiles.length;
+    stats.filesChanged += 1;
+
+    if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
+      stats.changedFiles.push(path);
+    } else {
+      stats.changedFilesOverflow += 1;
+    }
   }
 
   const { added, removed } = estimateLineDelta(toolName, rawArgs);
   stats.addedLines += added;
   stats.removedLines += removed;
 
-  session.changeStats = stats;
+  session.changeStats = {
+    mutatingToolCalls: stats.mutatingToolCalls,
+    filesChanged: stats.filesChanged,
+    changedFiles: stats.changedFiles,
+    ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),
+    addedLines: stats.addedLines,
+    removedLines: stats.removedLines,
+  };
 }
 
 export function extractChangedFilePath(rawArgs: unknown): string | null {

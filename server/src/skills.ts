@@ -176,7 +176,9 @@ export class SkillRegistry extends EventEmitter {
     }
 
     if (this.watchers.length > 0) {
-      console.log(`[skills] Watching ${this.watchers.length} director${this.watchers.length === 1 ? "y" : "ies"} for changes`);
+      console.log(
+        `[skills] Watching ${this.watchers.length} director${this.watchers.length === 1 ? "y" : "ies"} for changes`,
+      );
     }
   }
 
@@ -185,7 +187,9 @@ export class SkillRegistry extends EventEmitter {
     for (const w of this.watchers) {
       try {
         w.close();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     this.watchers = [];
     if (this.debounceTimer) {
@@ -578,7 +582,7 @@ export class UserSkillStore {
     return {
       name,
       description,
-      
+
       builtIn: false as const,
       createdAt: dirStat.mtimeMs,
       sizeBytes: totalSize,
@@ -590,7 +594,7 @@ export class UserSkillStore {
     let totalSize = 0;
     let fileCount = 0;
 
-    const walk = (d: string) => {
+    const walk = (d: string): void => {
       let entries: string[];
       try {
         entries = readdirSync(d);

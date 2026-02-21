@@ -4,16 +4,7 @@ import Foundation
 enum PermissionScope: String, Codable, Sendable {
     case once
     case session
-    case workspace
     case global
-}
-
-/// Server-advertised choices for how a permission can be resolved.
-struct PermissionResolutionOptions: Codable, Sendable, Equatable {
-    let allowSession: Bool
-    let allowAlways: Bool
-    let alwaysDescription: String?
-    let denyAlways: Bool
 }
 
 /// A permission request from the agent, awaiting user approval.
@@ -28,7 +19,6 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
     let reason: String
     let timeoutAt: Date
     let expires: Bool
-    let resolutionOptions: PermissionResolutionOptions?
 
     init(
         id: String,
@@ -38,8 +28,7 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
         displaySummary: String,
         reason: String,
         timeoutAt: Date,
-        expires: Bool = true,
-        resolutionOptions: PermissionResolutionOptions? = nil
+        expires: Bool = true
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -49,7 +38,6 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
         self.reason = reason
         self.timeoutAt = timeoutAt
         self.expires = expires
-        self.resolutionOptions = resolutionOptions
     }
 
     var hasExpiry: Bool { expires }
@@ -57,7 +45,7 @@ struct PermissionRequest: Identifiable, Sendable, Equatable {
 
 extension PermissionRequest: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, sessionId, tool, input, displaySummary, reason, timeoutAt, expires, resolutionOptions
+        case id, sessionId, tool, input, displaySummary, reason, timeoutAt, expires
     }
 
     init(from decoder: Decoder) throws {
@@ -72,7 +60,6 @@ extension PermissionRequest: Codable {
         let timeoutMs = try c.decode(Double.self, forKey: .timeoutAt)
         timeoutAt = Date(timeIntervalSince1970: timeoutMs / 1000)
         expires = try c.decodeIfPresent(Bool.self, forKey: .expires) ?? true
-        resolutionOptions = try c.decodeIfPresent(PermissionResolutionOptions.self, forKey: .resolutionOptions)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -85,7 +72,6 @@ extension PermissionRequest: Codable {
         try c.encode(reason, forKey: .reason)
         try c.encode(timeoutAt.timeIntervalSince1970 * 1000, forKey: .timeoutAt)
         try c.encode(expires, forKey: .expires)
-        try c.encodeIfPresent(resolutionOptions, forKey: .resolutionOptions)
     }
 }
 
@@ -113,6 +99,64 @@ struct PermissionResponseChoice: Sendable, Equatable {
 
     static func denyOnce() -> Self {
         Self(action: .deny, scope: .once, expiresInMs: nil)
+    }
+}
+
+struct PermissionApprovalOption: Identifiable, Sendable, Equatable {
+    let id: String
+    let title: String
+    let systemImage: String
+    let isDestructive: Bool
+    let choice: PermissionResponseChoice
+}
+
+enum PermissionApprovalPolicy {
+    static func isPolicyTool(_ tool: String) -> Bool {
+        tool.lowercased().hasPrefix("policy.")
+    }
+
+    static func options(for request: PermissionRequest) -> [PermissionApprovalOption] {
+        guard !isPolicyTool(request.tool) else { return [] }
+
+        return [
+            PermissionApprovalOption(
+                id: "allow-session",
+                title: "Allow this session",
+                systemImage: "clock",
+                isDestructive: false,
+                choice: PermissionResponseChoice(action: .allow, scope: .session)
+            ),
+            PermissionApprovalOption(
+                id: "allow-global",
+                title: "Allow always",
+                systemImage: "checkmark.circle",
+                isDestructive: false,
+                choice: PermissionResponseChoice(action: .allow, scope: .global)
+            ),
+            PermissionApprovalOption(
+                id: "deny-global",
+                title: "Deny always",
+                systemImage: "xmark.circle",
+                isDestructive: true,
+                choice: PermissionResponseChoice(action: .deny, scope: .global)
+            ),
+        ]
+    }
+
+    static func normalizedChoice(tool: String, choice: PermissionResponseChoice) -> PermissionResponseChoice {
+        if isPolicyTool(tool) {
+            return PermissionResponseChoice(action: choice.action, scope: .once, expiresInMs: nil)
+        }
+
+        if choice.action == .deny, choice.scope == .session {
+            return PermissionResponseChoice(action: .deny, scope: .once, expiresInMs: nil)
+        }
+
+        return choice
+    }
+
+    static func normalizedChoice(for request: PermissionRequest, choice: PermissionResponseChoice) -> PermissionResponseChoice {
+        normalizedChoice(tool: request.tool, choice: choice)
     }
 }
 

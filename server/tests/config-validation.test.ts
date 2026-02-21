@@ -71,8 +71,8 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(true);
   });
 
-  it("backfills defaults for legacy config in non-strict normalization", () => {
-    const legacy = {
+  it("backfills defaults for deprecated config shape in non-strict normalization", () => {
+    const priorConfig = {
       port: 7749,
       host: "0.0.0.0",
       dataDir: dir,
@@ -84,14 +84,14 @@ describe("Storage config validation", () => {
       maxSessionsGlobal: 5,
     };
 
-    const result = Storage.validateConfig(legacy, dir, false);
+    const result = Storage.validateConfig(priorConfig, dir, false);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
   });
 
-  it("migrates legacy security.allowedCidrs to top-level allowedCidrs", () => {
+  it("migrates deprecated security.allowedCidrs to top-level allowedCidrs", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       security: {
@@ -129,7 +129,7 @@ describe("Storage config validation", () => {
     ).toBe(true);
   });
 
-  it("accepts legacy transport/profile keys but warns they are ignored", () => {
+  it("accepts deprecated transport/profile keys but warns they are ignored", () => {
     const defaults = Storage.getDefaultConfig(dir);
     const raw = {
       ...defaults,
@@ -149,8 +149,8 @@ describe("Storage config validation", () => {
     expect(result.warnings.some((w) => w.includes("config.security.requireTlsOutsideTailnet is deprecated"))).toBe(true);
   });
 
-  it("loadConfig rewrites legacy config with top-level allowedCidrs", () => {
-    const legacy = {
+  it("loadConfig rewrites deprecated config shape with top-level allowedCidrs", () => {
+    const priorConfig = {
       port: 7749,
       host: "0.0.0.0",
       dataDir: dir,
@@ -165,7 +165,7 @@ describe("Storage config validation", () => {
       },
     };
 
-    writeFileSync(join(dir, "config.json"), JSON.stringify(legacy, null, 2));
+    writeFileSync(join(dir, "config.json"), JSON.stringify(priorConfig, null, 2));
 
     const storage = new Storage(dir);
     const config = storage.getConfig();
@@ -196,7 +196,6 @@ describe("Storage config validation", () => {
             id: "block-secret-files",
             decision: "block",
             risk: "critical",
-            immutable: true,
             match: { tool: "read", pathMatches: "*identity_ed25519*" },
           },
         ],

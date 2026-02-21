@@ -340,6 +340,26 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() {
+        let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .ready))
+
+        conn.handleServerMessage(.agentStart, sessionId: "s1")
+
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
+    }
+
+    @MainActor
+    @Test func routeAgentEndSetsSessionReadyWithoutStateMessage() {
+        let conn = makeConnection()
+        conn.sessionStore.upsert(makeSession(status: .busy))
+
+        conn.handleServerMessage(.agentEnd, sessionId: "s1")
+
+        #expect(conn.sessionStore.sessions.first?.status == .ready)
+    }
+
+    @MainActor
     @Test func routeThinkingDelta() {
         let conn = makeConnection()
 
@@ -900,7 +920,7 @@ struct ServerConnectionTests {
     }
 
     @MainActor
-    @Test func forkFromTimelineEntryParsesLegacyForkMessageIdField() async throws {
+    @Test func forkFromTimelineEntryParsesForkMessageIdField() async throws {
         let conn = makeConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
@@ -917,7 +937,7 @@ struct ServerConnectionTests {
                         data: .object([
                             "messages": .array([
                                 .object([
-                                    "id": .string("legacy-entry-123"),
+                                    "id": .string("fork-entry-123"),
                                     "text": .string("Original user prompt"),
                                 ]),
                             ]),
@@ -946,10 +966,10 @@ struct ServerConnectionTests {
             }
         }
 
-        try await conn.forkFromTimelineEntry("legacy-entry-123")
+        try await conn.forkFromTimelineEntry("fork-entry-123")
 
         #expect(sentTypes == ["get_fork_messages", "fork"])
-        #expect(forkEntryId == "legacy-entry-123")
+        #expect(forkEntryId == "fork-entry-123")
     }
 
     @MainActor
@@ -1606,6 +1626,8 @@ struct StreamLifecycleTests {
         let streamMsg = StreamMessage(
             sessionId: nil,
             streamSeq: nil,
+            seq: nil,
+            currentSeq: nil,
             message: .streamConnected(userName: "test")
         )
         conn.routeStreamMessage(streamMsg)
@@ -1640,11 +1662,13 @@ struct StreamLifecycleTests {
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "test", reason: "",
             timeoutAt: Date().addingTimeInterval(60),
-            expires: true, resolutionOptions: nil
+            expires: true
         )
         let streamMsg = StreamMessage(
             sessionId: "s1",
             streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
         conn.routeStreamMessage(streamMsg)
@@ -1668,11 +1692,13 @@ struct StreamLifecycleTests {
             id: "p2", sessionId: "s2", tool: "bash",
             input: [:], displaySummary: "cross-session", reason: "",
             timeoutAt: Date().addingTimeInterval(60),
-            expires: true, resolutionOptions: nil
+            expires: true
         )
         let streamMsg = StreamMessage(
             sessionId: "s2",
             streamSeq: 2,
+            seq: nil,
+            currentSeq: nil,
             message: .permissionRequest(permRequest)
         )
         conn.routeStreamMessage(streamMsg)

@@ -2,8 +2,8 @@
  * Read pi's JSONL session files and build session context.
  *
  * Pi saves full conversation history (including tool calls, tool results,
- * thinking, compaction, and branching) in JSONL files inside the sandbox:
- *   <sandboxBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/<timestamp>_<uuid>.jsonl
+ * thinking, compaction, and branching) in JSONL files under the trace base dir:
+ *   <traceBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/<timestamp>_<uuid>.jsonl
  *
  * This module reads those files and produces a structured session context
  * that iOS can render as a timeline — matching pi TUI's `buildSessionContext()`.
@@ -254,9 +254,7 @@ export function buildSessionContext(
 
 function formatCompactionEvent(entry: SessionEntry): TraceEvent {
   const summaryText = entry.summary || "Previous context was compacted";
-  const tokenInfo = entry.tokensBefore
-    ? ` (${entry.tokensBefore.toLocaleString()} tokens)`
-    : "";
+  const tokenInfo = entry.tokensBefore ? ` (${entry.tokensBefore.toLocaleString()} tokens)` : "";
 
   return {
     id: entry.id,
@@ -375,13 +373,13 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
 // ─── JSONL File Readers ───
 
 /**
- * Find and read the latest pi JSONL file for a workspace-scoped session sandbox.
+ * Find and read the latest pi JSONL file for a workspace-scoped session trace dir.
  *
  * Layout:
- *   <sandboxBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/*.jsonl
+ *   <traceBaseDir>/<workspaceId>/sessions/<sessionId>/agent/sessions/--work--/*.jsonl
  */
 export function readSessionTrace(
-  sandboxBaseDir: string,
+  traceBaseDir: string,
   sessionId: string,
   workspaceId?: string,
   options: TraceReadOptions = {},
@@ -389,7 +387,7 @@ export function readSessionTrace(
   if (!workspaceId) return null;
 
   const sessionsDir = join(
-    sandboxBaseDir,
+    traceBaseDir,
     workspaceId,
     "sessions",
     sessionId,
@@ -406,12 +404,12 @@ export function readSessionTrace(
  * Read a specific JSONL file by pi session UUID.
  */
 export function readSessionTraceByUuid(
-  sandboxBaseDir: string,
+  traceBaseDir: string,
   piSessionUuid: string,
   workspaceId?: string,
   options: TraceReadOptions = {},
 ): TraceEvent[] | null {
-  const candidateDirs = collectWorkspaceTraceDirs(sandboxBaseDir, workspaceId);
+  const candidateDirs = collectWorkspaceTraceDirs(traceBaseDir, workspaceId);
 
   for (const sessionsDir of candidateDirs) {
     if (!existsSync(sessionsDir)) continue;
@@ -424,12 +422,9 @@ export function readSessionTraceByUuid(
   return null;
 }
 
-function collectWorkspaceTraceDirs(
-  sandboxBaseDir: string,
-  workspaceId?: string,
-): string[] {
+function collectWorkspaceTraceDirs(traceBaseDir: string, workspaceId?: string): string[] {
   if (workspaceId) {
-    const workspaceSessionsDir = join(sandboxBaseDir, workspaceId, "sessions");
+    const workspaceSessionsDir = join(traceBaseDir, workspaceId, "sessions");
     if (!existsSync(workspaceSessionsDir)) return [];
 
     return readdirSync(workspaceSessionsDir).map((sessionDir) =>
@@ -437,7 +432,7 @@ function collectWorkspaceTraceDirs(
     );
   }
 
-  const baseDir = sandboxBaseDir;
+  const baseDir = traceBaseDir;
   if (!existsSync(baseDir)) return [];
 
   const traceDirs: string[] = [];

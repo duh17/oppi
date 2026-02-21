@@ -44,7 +44,10 @@ export function collectFileMutations(trace: TraceEvent[], reqPath: string): File
   return mutations;
 }
 
-export function reconstructBaselineFromCurrent(currentText: string, mutations: FileMutation[]): string {
+export function reconstructBaselineFromCurrent(
+  currentText: string,
+  mutations: FileMutation[],
+): string {
   let baseline = currentText;
 
   for (let i = mutations.length - 1; i >= 0; i -= 1) {
@@ -91,7 +94,10 @@ export function computeDiffLines(oldText: string, newText: string): DiffLine[] {
   return out;
 }
 
-export function computeLineDiffStatsFromLines(lines: DiffLine[]): { added: number; removed: number } {
+export function computeLineDiffStatsFromLines(lines: DiffLine[]): {
+  added: number;
+  removed: number;
+} {
   let added = 0;
   let removed = 0;
   for (const line of lines) {

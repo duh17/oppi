@@ -33,11 +33,7 @@ export const AUTH_PROXY_PORT = 7751;
 const ANTHROPIC_OAUTH_STUB_PREFIX = "sk-ant-oat01-proxy-";
 
 function resolveAuthProxyPort(explicitPort?: number): number {
-  if (
-    Number.isInteger(explicitPort)
-    && (explicitPort ?? 0) > 0
-    && (explicitPort ?? 0) <= 65_535
-  ) {
+  if (Number.isInteger(explicitPort) && (explicitPort ?? 0) > 0 && (explicitPort ?? 0) <= 65_535) {
     return explicitPort as number;
   }
 

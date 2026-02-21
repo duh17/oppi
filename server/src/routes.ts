@@ -33,7 +33,7 @@ import {
   findToolOutput,
   type TraceViewMode,
 } from "./trace.js";
-import { PolicyEngine, defaultPolicy, type PathAccess } from "./policy.js";
+
 import {
   collectFileMutations,
   reconstructBaselineFromCurrent,
@@ -51,7 +51,7 @@ import {
   validateCwdAlignment,
 } from "./local-sessions.js";
 import { getGitStatus } from "./git-status.js";
-import type { Rule } from "./rules.js";
+import type { Rule, RuleInput } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
   Session,
@@ -62,8 +62,6 @@ import type {
   PairDeviceRequest,
   ClientLogUploadRequest,
   ApiError,
-  PolicyPermission,
-  PolicyDecision,
 } from "./types.js";
 
 function ts(): string {
@@ -125,16 +123,14 @@ export class RouteHandler {
       return this.handleGetUserStreamEvents(url, res);
     if (path === "/permissions/pending" && method === "GET")
       return this.handleGetPendingPermissions(url, res);
-    if (path === "/policy/rules" && method === "GET")
-      return this.handleGetPolicyRules(url, res);
+    if (path === "/policy/rules" && method === "GET") return this.handleGetPolicyRules(url, res);
+    if (path === "/policy/rules" && method === "POST") return this.handleCreatePolicyRule(req, res);
     if (path.startsWith("/policy/rules/") && method === "PATCH")
       return this.handlePatchPolicyRule(path, req, res);
     if (path.startsWith("/policy/rules/") && method === "DELETE")
       return this.handleDeletePolicyRule(path, res);
-    if (path === "/policy/audit" && method === "GET")
-      return this.handleGetPolicyAudit(url, res);
-    if (path === "/pair" && method === "POST")
-      return this.handlePair(req, res);
+    if (path === "/policy/audit" && method === "GET") return this.handleGetPolicyAudit(url, res);
+    if (path === "/pair" && method === "POST") return this.handlePair(req, res);
     if (path === "/me" && method === "GET") return this.handleGetMe(res);
     if (path === "/server/info" && method === "GET") return this.handleGetServerInfo(res);
     if (path === "/models" && method === "GET") return this.handleListModels(res);
@@ -155,36 +151,17 @@ export class RouteHandler {
       return this.handleListDirectories(url, res);
 
     // Local pi sessions (TUI-started, not managed by oppi)
-    if (path === "/local-sessions" && method === "GET")
-      return this.handleListLocalSessions(res);
+    if (path === "/local-sessions" && method === "GET") return this.handleListLocalSessions(res);
 
     // Workspaces
     if (path === "/workspaces" && method === "GET") return this.handleListWorkspaces(res);
-    if (path === "/workspaces" && method === "POST")
-      return this.handleCreateWorkspace(req, res);
+    if (path === "/workspaces" && method === "POST") return this.handleCreateWorkspace(req, res);
 
     const wsMatch = path.match(/^\/workspaces\/([^/]+)$/);
     if (wsMatch) {
       if (method === "GET") return this.handleGetWorkspace(wsMatch[1], res);
       if (method === "PUT") return this.handleUpdateWorkspace(wsMatch[1], req, res);
       if (method === "DELETE") return this.handleDeleteWorkspace(wsMatch[1], res);
-    }
-
-    const wsPolicyMatch = path.match(/^\/workspaces\/([^/]+)\/policy$/);
-    if (wsPolicyMatch) {
-      if (method === "GET") return this.handleGetWorkspacePolicy(wsPolicyMatch[1], res);
-      if (method === "PATCH") return this.handlePatchWorkspacePolicy(wsPolicyMatch[1], req, res);
-    }
-
-    const wsPolicyPermissionDeleteMatch = path.match(
-      /^\/workspaces\/([^/]+)\/policy\/permissions\/([^/]+)$/,
-    );
-    if (wsPolicyPermissionDeleteMatch && method === "DELETE") {
-      return this.handleDeleteWorkspacePolicyPermission(
-        wsPolicyPermissionDeleteMatch[1],
-        decodeURIComponent(wsPolicyPermissionDeleteMatch[2]),
-        res,
-      );
     }
 
     const wsGitStatusMatch = path.match(/^\/workspaces\/([^/]+)\/git-status$/);
@@ -214,8 +191,7 @@ export class RouteHandler {
     const userSkillMatch = path.match(/^\/me\/skills\/([^/]+)$/);
     if (userSkillMatch) {
       if (method === "GET") return this.handleGetUserSkill(userSkillMatch[1], res);
-      if (method === "PUT")
-        return this.handlePutUserSkill(userSkillMatch[1], req, res);
+      if (method === "PUT") return this.handlePutUserSkill(userSkillMatch[1], req, res);
       if (method === "DELETE") return this.handleDeleteUserSkill(userSkillMatch[1], res);
     }
 
@@ -224,8 +200,7 @@ export class RouteHandler {
     const wsSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
     if (wsSessionsMatch) {
       if (method === "GET") return this.handleListWorkspaceSessions(wsSessionsMatch[1], res);
-      if (method === "POST")
-        return this.handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
+      if (method === "POST") return this.handleCreateWorkspaceSession(wsSessionsMatch[1], req, res);
     }
 
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
@@ -332,7 +307,9 @@ export class RouteHandler {
 
   private recordPairingFailure(source: string, now: number): void {
     const windowStart = now - RouteHandler.PAIRING_WINDOW_MS;
-    const failures = (this.pairingFailuresBySource.get(source) || []).filter((ts) => ts >= windowStart);
+    const failures = (this.pairingFailuresBySource.get(source) || []).filter(
+      (ts) => ts >= windowStart,
+    );
     failures.push(now);
     this.pairingFailuresBySource.set(source, failures);
 
@@ -374,7 +351,7 @@ export class RouteHandler {
   }
 
   private handleGetMe(res: ServerResponse): void {
-    // Keep a stable single-user identifier for iOS decode compatibility.
+    // Keep a stable single-user identifier for iOS decoding.
     this.json(res, {
       user: "owner",
       name: this.ctx.storage.getOwnerName(),
@@ -385,15 +362,15 @@ export class RouteHandler {
     const config = this.ctx.storage.getConfig();
     const workspaces = this.ctx.storage.listWorkspaces();
     const sessions = this.ctx.storage.listSessions();
-    const activeSessions = sessions.filter(
-      (s) => s.status !== "stopped" && s.status !== "error",
-    );
+    const activeSessions = sessions.filter((s) => s.status !== "stopped" && s.status !== "error");
 
     const uptimeSeconds = Math.floor((Date.now() - this.ctx.serverStartedAt) / 1000);
 
     let identity: { fingerprint: string; keyId: string; algorithm: "ed25519" } | null = null;
     try {
-      const material = ensureIdentityMaterial(identityConfigForDataDir(this.ctx.storage.getDataDir()));
+      const material = ensureIdentityMaterial(
+        identityConfigForDataDir(this.ctx.storage.getDataDir()),
+      );
       identity = {
         fingerprint: material.fingerprint,
         keyId: material.keyId,
@@ -513,10 +490,7 @@ export class RouteHandler {
     this.error(res, 404, "Skill not found");
   }
 
-  private async handleSaveUserSkill(
-    _req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleSaveUserSkill(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.error(res, 403, "Skill editing is disabled on remote clients");
   }
 
@@ -580,10 +554,7 @@ export class RouteHandler {
     this.json(res, { workspaces });
   }
 
-  private async handleCreateWorkspace(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleCreateWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.parseBody<CreateWorkspaceRequest>(req);
     if (!body.name) {
       this.error(res, 400, "name required");
@@ -617,33 +588,6 @@ export class RouteHandler {
       if (invalid.length > 0) {
         this.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
         return;
-      }
-    }
-
-    if (body.policy?.fallback !== undefined) {
-      if (
-        body.policy.fallback !== "allow" &&
-        body.policy.fallback !== "ask" &&
-        body.policy.fallback !== "block"
-      ) {
-        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
-        return;
-      }
-    }
-
-    if (body.policy?.permissions) {
-      for (const permission of body.policy.permissions) {
-        const validationError = this.validateWorkspacePolicyPermission(permission);
-        if (validationError) {
-          this.error(res, 400, validationError);
-          return;
-        }
-
-        const additiveError = this.validateAdditiveWorkspacePermission(permission);
-        if (additiveError) {
-          this.error(res, 400, additiveError);
-          return;
-        }
       }
     }
 
@@ -701,33 +645,6 @@ export class RouteHandler {
       }
     }
 
-    if (body.policy?.fallback !== undefined) {
-      if (
-        body.policy.fallback !== "allow" &&
-        body.policy.fallback !== "ask" &&
-        body.policy.fallback !== "block"
-      ) {
-        this.error(res, 400, "policy.fallback must be one of allow|ask|block");
-        return;
-      }
-    }
-
-    if (body.policy?.permissions) {
-      for (const permission of body.policy.permissions) {
-        const validationError = this.validateWorkspacePolicyPermission(permission);
-        if (validationError) {
-          this.error(res, 400, validationError);
-          return;
-        }
-
-        const additiveError = this.validateAdditiveWorkspacePermission(permission);
-        if (additiveError) {
-          this.error(res, 400, additiveError);
-          return;
-        }
-      }
-    }
-
     const updated = this.ctx.storage.updateWorkspace(wsId, body);
     if (!updated) {
       this.error(res, 404, "Workspace not found");
@@ -772,254 +689,7 @@ export class RouteHandler {
     this.json(res, status as unknown as Record<string, unknown>);
   }
 
-  private handleGetWorkspacePolicy(wsId: string, res: ServerResponse): void {
-    const workspace = this.ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      this.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const globalPolicy = this.ctx.storage.getConfig().policy;
-    const workspacePolicy = workspace.policy || { permissions: [] };
-
-    this.json(res, {
-      workspaceId: wsId,
-      globalPolicy,
-      workspacePolicy,
-      effectivePolicy: {
-        fallback: workspacePolicy.fallback ?? globalPolicy?.fallback ?? "ask",
-        guardrails: globalPolicy?.guardrails ?? [],
-        permissions: [...(globalPolicy?.permissions ?? []), ...workspacePolicy.permissions],
-      },
-    });
-  }
-
-  private refreshActiveWorkspaceSessionPolicies(workspace: Workspace): void {
-    const sessions = this.ctx.storage.listSessions();
-
-    const cwd = workspace.hostMount ? workspace.hostMount.replace(/^~/, homedir()) : homedir();
-    const allowedPaths: PathAccess[] = [
-      { path: cwd, access: "readwrite" },
-      { path: join(homedir(), ".pi"), access: "read" },
-    ];
-
-    if (workspace.allowedPaths) {
-      for (const entry of workspace.allowedPaths) {
-        allowedPaths.push({
-          path: entry.path.replace(/^~/, homedir()),
-          access: entry.access,
-        });
-      }
-    }
-
-    const globalPolicy = this.ctx.storage.getConfig().policy;
-    const mergedGlobalPolicy = globalPolicy
-      ? {
-          ...globalPolicy,
-          fallback: workspace.policy?.fallback ?? globalPolicy.fallback,
-          permissions: [...globalPolicy.permissions, ...(workspace.policy?.permissions || [])],
-        }
-      : undefined;
-
-    const policySource = mergedGlobalPolicy || defaultPolicy();
-    const allowedExecutables = workspace.allowedExecutables;
-
-    let refreshed = 0;
-
-    for (const session of sessions) {
-      if (session.workspaceId !== workspace.id) continue;
-      if (!this.ctx.sessions.isActive(session.id)) continue;
-
-      this.ctx.gate.setSessionPolicy(
-        session.id,
-        new PolicyEngine(policySource, { allowedPaths, allowedExecutables }),
-      );
-      refreshed += 1;
-    }
-
-    if (refreshed > 0) {
-      console.log(
-        `${ts()} [policy] refreshed session policy for workspace ${workspace.id} (${refreshed} active session${refreshed === 1 ? "" : "s"})`,
-      );
-    }
-  }
-
-  private async handlePatchWorkspacePolicy(
-    wsId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const workspace = this.ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      this.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const body = await this.parseBody<{
-      permissions?: PolicyPermission[];
-      fallback?: PolicyDecision;
-    }>(req);
-
-    const hasPermissions = Object.prototype.hasOwnProperty.call(body, "permissions");
-    const hasFallback = Object.prototype.hasOwnProperty.call(body, "fallback");
-
-    if (!hasPermissions && !hasFallback) {
-      this.error(res, 400, "permissions or fallback must be provided");
-      return;
-    }
-
-    if (hasPermissions && !Array.isArray(body.permissions)) {
-      this.error(res, 400, "permissions must be an array when provided");
-      return;
-    }
-
-    let fallback = workspace.policy?.fallback;
-    if (hasFallback) {
-      if (body.fallback !== "allow" && body.fallback !== "ask" && body.fallback !== "block") {
-        this.error(res, 400, "fallback must be one of allow|ask|block");
-        return;
-      }
-      fallback = body.fallback;
-    }
-
-    const incomingPermissions = body.permissions || [];
-    for (const permission of incomingPermissions) {
-      const validationError = this.validateWorkspacePolicyPermission(permission);
-      if (validationError) {
-        this.error(res, 400, validationError);
-        return;
-      }
-
-      const additiveError = this.validateAdditiveWorkspacePermission(permission);
-      if (additiveError) {
-        this.error(res, 400, additiveError);
-        return;
-      }
-    }
-
-    const existing = workspace.policy?.permissions || [];
-    const mergedById = new Map<string, PolicyPermission>();
-    for (const permission of existing) mergedById.set(permission.id, permission);
-    for (const permission of incomingPermissions) mergedById.set(permission.id, permission);
-
-    const updated = this.ctx.storage.setWorkspacePolicyPermissions(
-      wsId,
-      Array.from(mergedById.values()),
-      fallback,
-    );
-    if (!updated) {
-      this.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    this.refreshActiveWorkspaceSessionPolicies(updated);
-
-    this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
-  }
-
-  private handleDeleteWorkspacePolicyPermission(
-    wsId: string,
-    permissionId: string,
-    res: ServerResponse,
-  ): void {
-    const workspace = this.ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      this.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const updated = this.ctx.storage.deleteWorkspacePolicyPermission(wsId, permissionId);
-    if (!updated) {
-      this.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    this.refreshActiveWorkspaceSessionPolicies(updated);
-
-    this.json(res, { workspace: updated, policy: updated.policy || { permissions: [] } });
-  }
-
-  private validateWorkspacePolicyPermission(permission: PolicyPermission): string | null {
-    if (!permission || typeof permission !== "object") return "permission entry must be an object";
-    if (typeof permission.id !== "string" || !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(permission.id)) {
-      return "permission.id must be slug-like (3-64 chars)";
-    }
-
-    if (!["allow", "ask", "block"].includes(permission.decision)) {
-      return `permission ${permission.id}: decision must be one of allow|ask|block`;
-    }
-
-    if (!permission.match || typeof permission.match !== "object") {
-      return `permission ${permission.id}: match object required`;
-    }
-
-    const hasMatchField = [
-      permission.match.tool,
-      permission.match.executable,
-      permission.match.commandMatches,
-      permission.match.pathMatches,
-      permission.match.pathWithin,
-      permission.match.domain,
-    ].some((value) => typeof value === "string" && value.trim().length > 0);
-
-    if (!hasMatchField) {
-      return `permission ${permission.id}: at least one match field required`;
-    }
-
-    return null;
-  }
-
-  private permissionMatchKey(permission: PolicyPermission): string {
-    const match = permission.match;
-    return [
-      match.tool || "",
-      match.executable || "",
-      match.commandMatches || "",
-      match.pathMatches || "",
-      match.pathWithin || "",
-      match.domain || "",
-    ].join("|");
-  }
-
-  private decisionRank(decision: "allow" | "ask" | "block"): number {
-    // Lower is more permissive. Workspace overrides must not reduce strictness.
-    if (decision === "allow") return 0;
-    if (decision === "ask") return 1;
-    return 2;
-  }
-
-  private validateAdditiveWorkspacePermission(permission: PolicyPermission): string | null {
-    const globalPolicy = this.ctx.storage.getConfig().policy;
-    if (!globalPolicy) return null;
-
-    const key = this.permissionMatchKey(permission);
-
-    const matchingGuardrail = globalPolicy.guardrails.find(
-      (rule) => this.permissionMatchKey(rule) === key,
-    );
-    if (matchingGuardrail?.immutable) {
-      return `permission ${permission.id}: cannot override immutable global guardrail ${matchingGuardrail.id}`;
-    }
-
-    const matchingGlobalPermission = globalPolicy.permissions.find(
-      (rule) => this.permissionMatchKey(rule) === key,
-    );
-    if (!matchingGlobalPermission) return null;
-
-    const requested = this.decisionRank(permission.decision);
-    const baseline = this.decisionRank(matchingGlobalPermission.decision);
-    if (requested < baseline) {
-      return `permission ${permission.id}: cannot weaken global decision ${matchingGlobalPermission.decision} for matching rule ${matchingGlobalPermission.id}`;
-    }
-
-    return null;
-  }
-
-  private handleGetWorkspaceGraph(
-    workspaceId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
+  private handleGetWorkspaceGraph(workspaceId: string, url: URL, res: ServerResponse): void {
     const workspace = this.ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       this.error(res, 404, "Workspace not found");
@@ -1088,10 +758,7 @@ export class RouteHandler {
     this.json(res, { ok: true });
   }
 
-  private async handleDeleteDeviceToken(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleDeleteDeviceToken(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
       this.ctx.storage.removePushDeviceToken(body.deviceToken);
@@ -1227,7 +894,9 @@ export class RouteHandler {
       return;
     }
 
-    const body = await this.parseBody<{ name?: string; model?: string; piSessionFile?: string }>(req);
+    const body = await this.parseBody<{ name?: string; model?: string; piSessionFile?: string }>(
+      req,
+    );
 
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
@@ -1335,7 +1004,9 @@ export class RouteHandler {
             else if (Array.isArray(c)) {
               const t = c.find(
                 (x: unknown) =>
-                  typeof x === "object" && x !== null && (x as Record<string, unknown>).type === "text",
+                  typeof x === "object" &&
+                  x !== null &&
+                  (x as Record<string, unknown>).type === "text",
               ) as { text?: string } | undefined;
               if (t?.text) firstMessage = t.text;
             }
@@ -1388,6 +1059,7 @@ export class RouteHandler {
       this.json(res, { session: hydrated });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Resume failed";
+      console.error(`${ts()} [resume] Failed to resume session ${sessionId}:`, err);
       this.error(res, 500, message);
     }
   }
@@ -1458,17 +1130,18 @@ export class RouteHandler {
     this.ctx.storage.saveSession(forkSession);
 
     try {
-      await this.ctx.sessions.startSession(forkSession.id, this.ctx.storage.getOwnerName(), workspace);
-      await this.ctx.sessions.runRpcCommand(
+      await this.ctx.sessions.startSession(
         forkSession.id,
-        { type: "fork", entryId },
-        30_000,
+        this.ctx.storage.getOwnerName(),
+        workspace,
       );
+      await this.ctx.sessions.runRpcCommand(forkSession.id, { type: "fork", entryId }, 30_000);
       await this.ctx.sessions.refreshSessionState(forkSession.id);
     } catch (err: unknown) {
       await this.ctx.sessions.stopSession(forkSession.id).catch(() => {});
       this.ctx.storage.deleteSession(forkSession.id);
       const message = err instanceof Error ? err.message : "Fork failed";
+      console.error(`${ts()} [fork] Failed to fork session ${sourceSessionId}:`, err);
       this.error(res, 500, message);
       return;
     }
@@ -1477,10 +1150,7 @@ export class RouteHandler {
     this.json(res, { session: this.ctx.ensureSessionContextWindow(created) }, 201);
   }
 
-  private async handleStopSession(
-    sessionId: string,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleStopSession(sessionId: string, res: ServerResponse): Promise<void> {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -1506,11 +1176,7 @@ export class RouteHandler {
 
   // ─── Tool Output by ID ───
 
-  private handleGetToolOutput(
-    sessionId: string,
-    toolCallId: string,
-    res: ServerResponse,
-  ): void {
+  private handleGetToolOutput(sessionId: string, toolCallId: string, res: ServerResponse): void {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -1606,11 +1272,7 @@ export class RouteHandler {
     createReadStream(resolved).pipe(res);
   }
 
-  private handleGetSessionOverallDiff(
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
+  private handleGetSessionOverallDiff(sessionId: string, url: URL, res: ServerResponse): void {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -1672,18 +1334,24 @@ export class RouteHandler {
     }
   }
 
-  private legacySandboxBaseDir(): string {
+  private traceBaseDir(): string {
     const storageWithDataDir = this.ctx.storage as Storage & {
       getDataDir?: () => string;
     };
     const dataDir = storageWithDataDir.getDataDir?.() ?? process.cwd();
-    const sandboxesDir = join(dataDir, "sandboxes");
-    return existsSync(sandboxesDir) ? sandboxesDir : dataDir;
+
+    // Legacy compatibility: older runtimes stored workspace traces under
+    // <dataDir>/sandboxes/<workspaceId>/...; current layout is <dataDir>/<workspaceId>/...
+    const legacySandboxesDir = join(dataDir, "sandboxes");
+    return existsSync(legacySandboxesDir) ? legacySandboxesDir : dataDir;
   }
 
-  private loadSessionTrace(session: Session, traceView: TraceViewMode = "context") {
-    const sandboxBaseDir = this.legacySandboxBaseDir();
-    let trace = readSessionTrace(sandboxBaseDir, session.id, session.workspaceId, {
+  private loadSessionTrace(
+    session: Session,
+    traceView: TraceViewMode = "context",
+  ): ReturnType<typeof readSessionTrace> {
+    const traceBaseDir = this.traceBaseDir();
+    let trace = readSessionTrace(traceBaseDir, session.id, session.workspaceId, {
       view: traceView,
     });
 
@@ -1694,12 +1362,9 @@ export class RouteHandler {
       trace = readSessionTraceFromFile(session.piSessionFile, { view: traceView });
     }
     if ((!trace || trace.length === 0) && session.piSessionId) {
-      trace = readSessionTraceByUuid(
-        sandboxBaseDir,
-        session.piSessionId,
-        session.workspaceId,
-        { view: traceView },
-      );
+      trace = readSessionTraceByUuid(traceBaseDir, session.piSessionId, session.workspaceId, {
+        view: traceView,
+      });
     }
 
     return trace;
@@ -1720,13 +1385,9 @@ export class RouteHandler {
   private isRuleVisibleToUser(rule: Rule): boolean {
     switch (rule.scope) {
       case "session":
-        return rule.sessionId
-          ? Boolean(this.ctx.storage.getSession(rule.sessionId))
-          : false;
+        return rule.sessionId ? Boolean(this.ctx.storage.getSession(rule.sessionId)) : false;
       case "workspace":
-        return rule.workspaceId
-          ? Boolean(this.ctx.storage.getWorkspace(rule.workspaceId))
-          : false;
+        return rule.workspaceId ? Boolean(this.ctx.storage.getWorkspace(rule.workspaceId)) : false;
       case "global":
         return true; // single-owner: all rules are visible
       default:
@@ -1734,10 +1395,7 @@ export class RouteHandler {
     }
   }
 
-  private sessionBelongsToWorkspace(
-    sessionId: string | undefined,
-    workspaceId: string,
-  ): boolean {
+  private sessionBelongsToWorkspace(sessionId: string | undefined, workspaceId: string): boolean {
     if (!sessionId) return false;
     const session = this.ctx.storage.getSession(sessionId);
     return session?.workspaceId === workspaceId;
@@ -1796,7 +1454,6 @@ export class RouteHandler {
         reason: decision.reason,
         timeoutAt: decision.timeoutAt,
         expires: decision.expires ?? true,
-        resolutionOptions: decision.resolutionOptions,
       }));
 
     this.json(res, {
@@ -1821,9 +1478,7 @@ export class RouteHandler {
       return;
     }
 
-    let rules = this.ctx.gate.ruleStore
-      .getAll()
-      .filter((rule) => this.isRuleVisibleToUser(rule));
+    let rules = this.ctx.gate.ruleStore.getAll().filter((rule) => this.isRuleVisibleToUser(rule));
 
     if (workspaceId) {
       rules = rules.filter((rule) => {
@@ -1843,6 +1498,129 @@ export class RouteHandler {
     rules.sort((a, b) => b.createdAt - a.createdAt);
 
     this.json(res, { rules });
+  }
+
+  private async handleCreatePolicyRule(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.parseBody<Record<string, unknown>>(req);
+
+    const rawDecision = body.decision;
+    const decision =
+      rawDecision === "block"
+        ? "deny"
+        : rawDecision === "allow" || rawDecision === "ask" || rawDecision === "deny"
+          ? rawDecision
+          : null;
+    if (!decision) {
+      this.error(res, 400, 'decision must be one of "allow", "ask", "deny"');
+      return;
+    }
+
+    const rawScope = typeof body.scope === "string" ? body.scope : "global";
+    if (rawScope !== "session" && rawScope !== "workspace" && rawScope !== "global") {
+      this.error(res, 400, 'scope must be one of: "session", "workspace", "global"');
+      return;
+    }
+
+    const input: RuleInput = {
+      decision,
+      scope: rawScope,
+      source: "manual",
+    };
+
+    if (typeof body.tool === "string") {
+      const trimmed = body.tool.trim();
+      if (!trimmed) {
+        this.error(res, 400, "tool cannot be empty");
+        return;
+      }
+      input.tool = trimmed;
+    }
+
+    if (typeof body.pattern === "string") {
+      const trimmed = body.pattern.trim();
+      if (trimmed.length > 0) {
+        input.pattern = trimmed;
+      }
+    }
+
+    if (typeof body.executable === "string") {
+      const trimmed = body.executable.trim();
+      if (trimmed.length > 0) {
+        input.executable = trimmed;
+      }
+    }
+
+    if (typeof body.label === "string") {
+      const trimmed = body.label.trim();
+      if (trimmed.length > 0) {
+        input.label = trimmed;
+      }
+    }
+
+    if (body.expiresAt !== undefined) {
+      if (typeof body.expiresAt !== "number" || !Number.isFinite(body.expiresAt)) {
+        this.error(res, 400, "expiresAt must be a number");
+        return;
+      }
+      const expiresAt = Math.trunc(body.expiresAt);
+      if (expiresAt <= 0) {
+        this.error(res, 400, "expiresAt must be a positive timestamp");
+        return;
+      }
+      input.expiresAt = expiresAt;
+    }
+
+    if (typeof body.source === "string") {
+      if (body.source !== "preset" && body.source !== "learned" && body.source !== "manual") {
+        this.error(res, 400, 'source must be one of: "preset", "learned", "manual"');
+        return;
+      }
+      input.source = body.source;
+    }
+
+    if (rawScope === "workspace") {
+      if (typeof body.workspaceId !== "string" || body.workspaceId.trim().length === 0) {
+        this.error(res, 400, "workspaceId is required for workspace scope");
+        return;
+      }
+      const workspaceId = body.workspaceId.trim();
+      if (!this.ctx.storage.getWorkspace(workspaceId)) {
+        this.error(res, 404, "Workspace not found");
+        return;
+      }
+      input.workspaceId = workspaceId;
+    }
+
+    if (rawScope === "session") {
+      if (typeof body.sessionId !== "string" || body.sessionId.trim().length === 0) {
+        this.error(res, 400, "sessionId is required for session scope");
+        return;
+      }
+      const sessionId = body.sessionId.trim();
+      if (!this.ctx.storage.getSession(sessionId)) {
+        this.error(res, 404, "Session not found");
+        return;
+      }
+      input.sessionId = sessionId;
+    }
+
+    const tool =
+      typeof input.tool === "string" && input.tool.trim().length > 0 ? input.tool.trim() : "*";
+    if (tool === "*" && !input.pattern && !input.executable) {
+      this.error(res, 400, "rule must specify tool, pattern, or executable");
+      return;
+    }
+
+    let rule: Rule;
+    try {
+      rule = this.ctx.gate.ruleStore.add(input);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to create rule";
+      this.error(res, 400, message);
+      return;
+    }
+
+    this.json(res, { rule }, 201);
   }
 
   private async handlePatchPolicyRule(
@@ -1971,7 +1749,15 @@ export class RouteHandler {
       }
     }
 
-    const updated = this.ctx.gate.ruleStore.update(ruleId, updates);
+    let updated: Rule | null;
+    try {
+      updated = this.ctx.gate.ruleStore.update(ruleId, updates);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to update rule";
+      this.error(res, 400, message);
+      return;
+    }
+
     if (!updated) {
       this.error(res, 500, "Failed to update rule");
       return;
@@ -2012,9 +1798,7 @@ export class RouteHandler {
       return;
     }
 
-    console.log(
-      `[policy] Rule ${ruleId} deleted: ${rule.label || "(no label)"}`,
-    );
+    console.log(`[policy] Rule ${ruleId} deleted: ${rule.label || "(no label)"}`);
     this.json(res, { ok: true, deleted: ruleId });
   }
 
@@ -2071,11 +1855,7 @@ export class RouteHandler {
     this.json(res, { entries });
   }
 
-  private handleGetSessionEvents(
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
+  private handleGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -2108,11 +1888,7 @@ export class RouteHandler {
     return view === "full" ? "full" : "context";
   }
 
-  private async handleGetSession(
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleGetSession(sessionId: string, url: URL, res: ServerResponse): Promise<void> {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -2121,7 +1897,7 @@ export class RouteHandler {
 
     const traceView = this.resolveTraceView(url);
     const hydratedSession = this.ctx.ensureSessionContextWindow(session);
-    const sandboxBaseDir = this.legacySandboxBaseDir();
+    const traceBaseDir = this.traceBaseDir();
 
     let trace = this.loadSessionTrace(hydratedSession, traceView);
 
@@ -2131,12 +1907,9 @@ export class RouteHandler {
         trace = readSessionTraceFromFile(live.sessionFile, { view: traceView });
       }
       if ((!trace || trace.length === 0) && live?.sessionId) {
-        trace = readSessionTraceByUuid(
-        sandboxBaseDir,
-          live.sessionId,
-          hydratedSession.workspaceId,
-          { view: traceView },
-        );
+        trace = readSessionTraceByUuid(traceBaseDir, live.sessionId, hydratedSession.workspaceId, {
+          view: traceView,
+        });
       }
 
       const refreshed = this.ctx.storage.getSession(sessionId);
@@ -2151,10 +1924,7 @@ export class RouteHandler {
     this.json(res, { session: hydratedLatest, trace: trace || [] });
   }
 
-  private async handleDeleteSession(
-    sessionId: string,
-    res: ServerResponse,
-  ): Promise<void> {
+  private async handleDeleteSession(sessionId: string, res: ServerResponse): Promise<void> {
     const session = this.ctx.storage.getSession(sessionId);
     if (!session) {
       this.error(res, 404, "Session not found");
@@ -2197,20 +1967,14 @@ export class RouteHandler {
           return null;
         }
       })
-      .filter(
-        (t): t is { name: string; filename: string; colorScheme: string } =>
-          t !== null,
-      );
+      .filter((t): t is { name: string; filename: string; colorScheme: string } => t !== null);
   }
 
   private handleListThemes(res: ServerResponse): void {
     // Merge bundled + user themes. User themes override bundled by filename.
     const bundled = this.scanThemeDir(this.bundledThemesDir());
     const user = this.scanThemeDir(this.themesDir());
-    const byFilename = new Map<
-      string,
-      { name: string; filename: string; colorScheme: string }
-    >();
+    const byFilename = new Map<string, { name: string; filename: string; colorScheme: string }>();
     for (const t of bundled) byFilename.set(t.filename, t);
     for (const t of user) byFilename.set(t.filename, t);
     this.json(res, { themes: [...byFilename.values()] });

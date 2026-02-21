@@ -50,7 +50,8 @@ function rsComputeDivisor(degree: number): number[] {
 function rsComputeRemainder(data: readonly number[], divisor: readonly number[]): number[] {
   const result = divisor.map(() => 0);
   for (const b of data) {
-    const factor = b ^ (result.shift()!);
+    const shifted = result.shift();
+    const factor = b ^ (shifted ?? 0);
     result.push(0);
     divisor.forEach((coef, i) => (result[i] ^= rsMul(coef, factor)));
   }
@@ -84,17 +85,41 @@ const MODE_BYTE: Mode = {
 // ── Capacity tables ─────────────────────────────────────────────────
 
 const ECC_CODEWORDS_PER_BLOCK: number[][] = [
-  [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
-  [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
-  [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
-  [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+  [
+    -1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30,
+    30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  ],
+  [
+    -1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28,
+    28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+  ],
+  [
+    -1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30,
+    30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  ],
+  [
+    -1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30,
+    30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+  ],
 ];
 
 const NUM_ERROR_CORRECTION_BLOCKS: number[][] = [
-  [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
-  [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
-  [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
-  [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],
+  [
+    -1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14,
+    15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25,
+  ],
+  [
+    -1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23,
+    25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49,
+  ],
+  [
+    -1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34,
+    34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68,
+  ],
+  [
+    -1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35,
+    37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81,
+  ],
 ];
 
 function getNumRawDataModules(ver: number): number {
@@ -233,7 +258,12 @@ function buildQrCode(version: number, ecl: EccLevel, dataCodewords: number[]): b
   const numAlign = alignPos.length;
   for (let i = 0; i < numAlign; i++) {
     for (let j = 0; j < numAlign; j++) {
-      if ((i === 0 && j === 0) || (i === 0 && j === numAlign - 1) || (i === numAlign - 1 && j === 0)) continue;
+      if (
+        (i === 0 && j === 0) ||
+        (i === 0 && j === numAlign - 1) ||
+        (i === numAlign - 1 && j === 0)
+      )
+        continue;
       for (let dy = -2; dy <= 2; dy++) {
         for (let dx = -2; dx <= 2; dx++) {
           setFn(alignPos[i] + dx, alignPos[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
@@ -270,7 +300,10 @@ function buildQrCode(version: number, ecl: EccLevel, dataCodewords: number[]): b
   const rsDiv = rsComputeDivisor(blockEccLen);
   const blocks: number[][] = [];
   for (let i = 0, k = 0; i < numBlocks; i++) {
-    const dat = dataCodewords.slice(k, k + shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1));
+    const dat = dataCodewords.slice(
+      k,
+      k + shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1),
+    );
     k += dat.length;
     const ecc = rsComputeRemainder(dat, rsDiv);
     if (i < numShortBlocks) dat.push(0);
@@ -368,20 +401,42 @@ function drawFormatBits(
   set(8, size - 8, true); // Always dark
 }
 
-function applyMask(modules: boolean[][], isFunction: boolean[][], size: number, mask: number): void {
+function applyMask(
+  modules: boolean[][],
+  isFunction: boolean[][],
+  size: number,
+  mask: number,
+): void {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let invert: boolean;
       switch (mask) {
-        case 0: invert = (x + y) % 2 === 0; break;
-        case 1: invert = y % 2 === 0; break;
-        case 2: invert = x % 3 === 0; break;
-        case 3: invert = (x + y) % 3 === 0; break;
-        case 4: invert = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0; break;
-        case 5: invert = (x * y) % 2 + (x * y) % 3 === 0; break;
-        case 6: invert = ((x * y) % 2 + (x * y) % 3) % 2 === 0; break;
-        case 7: invert = ((x + y) % 2 + (x * y) % 3) % 2 === 0; break;
-        default: throw new Error("Unreachable");
+        case 0:
+          invert = (x + y) % 2 === 0;
+          break;
+        case 1:
+          invert = y % 2 === 0;
+          break;
+        case 2:
+          invert = x % 3 === 0;
+          break;
+        case 3:
+          invert = (x + y) % 3 === 0;
+          break;
+        case 4:
+          invert = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0;
+          break;
+        case 5:
+          invert = ((x * y) % 2) + ((x * y) % 3) === 0;
+          break;
+        case 6:
+          invert = (((x * y) % 2) + ((x * y) % 3)) % 2 === 0;
+          break;
+        case 7:
+          invert = (((x + y) % 2) + ((x * y) % 3)) % 2 === 0;
+          break;
+        default:
+          throw new Error("Unreachable");
       }
       if (!isFunction[y][x] && invert) modules[y][x] = !modules[y][x];
     }
@@ -487,7 +542,11 @@ function finderPenaltyTerminateAndCount(
   return finderPenaltyCountPatterns(runHistory, size);
 }
 
-function finderPenaltyAddHistory(currentRunLength: number, runHistory: number[], size: number): void {
+function finderPenaltyAddHistory(
+  currentRunLength: number,
+  runHistory: number[],
+  size: number,
+): void {
   if (runHistory[0] === 0) currentRunLength += size;
   runHistory.pop();
   runHistory.unshift(currentRunLength);

@@ -121,9 +121,9 @@ struct ContentView: View {
     private func serverLabel(for request: PermissionRequest) -> String? {
         guard coordinator.connections.count > 1 else { return nil }
         // Find which server owns this permission
-        for (serverId, conn) in coordinator.connections {
-            if conn.permissionStore.pending.contains(where: { $0.id == request.id }),
-               let server = coordinator.serverStore.server(for: serverId) {
+        for (serverId, conn) in coordinator.connections
+        where conn.permissionStore.pending.contains(where: { $0.id == request.id }) {
+            if let server = coordinator.serverStore.server(for: serverId) {
                 return server.name
             }
         }
@@ -165,10 +165,8 @@ struct ContentView: View {
 
     /// Find which server's connection holds a specific permission.
     private func findConnectionForPermission(id: String) -> ServerConnection? {
-        for (_, conn) in coordinator.connections {
-            if conn.permissionStore.pending.contains(where: { $0.id == id }) {
-                return conn
-            }
+        for (_, conn) in coordinator.connections where conn.permissionStore.pending.contains(where: { $0.id == id }) {
+            return conn
         }
         return nil
     }

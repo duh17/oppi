@@ -240,6 +240,10 @@ struct WorkspaceContextBar: View {
                         }
                     }
 
+                    let overflow = stats.changedFilesOverflow ?? max(0, stats.filesChanged - stats.changedFiles.count)
+                    let hiddenFromDisplayCap = max(0, stats.changedFiles.count - 10)
+                    let hiddenCount = hiddenFromDisplayCap + overflow
+
                     ForEach(stats.changedFiles.prefix(10), id: \.self) { file in
                         Text(file.shortenedPath)
                             .font(.caption2.monospaced())
@@ -247,8 +251,8 @@ struct WorkspaceContextBar: View {
                             .lineLimit(1)
                     }
 
-                    if stats.changedFiles.count > 10 {
-                        Text("... and \(stats.changedFiles.count - 10) more")
+                    if hiddenCount > 0 {
+                        Text("... and \(hiddenCount) more")
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
                     }

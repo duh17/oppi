@@ -37,9 +37,7 @@ export function getPiSessionsRoot(): string {
  * Resolves symlinks before checking. Returns the canonical path if valid,
  * or null with an error message if not.
  */
-export function validateLocalSessionPath(
-  filePath: string,
-): { path: string } | { error: string } {
+export function validateLocalSessionPath(filePath: string): { path: string } | { error: string } {
   const resolved = resolve(filePath);
 
   // Must end in .jsonl
@@ -80,10 +78,7 @@ export function validateLocalSessionPath(
  * Validate that a session's CWD is compatible with a workspace's hostMount.
  * The session CWD must equal or be a subdirectory of the workspace mount.
  */
-export function validateCwdAlignment(
-  sessionCwd: string,
-  workspaceHostMount: string,
-): boolean {
+export function validateCwdAlignment(sessionCwd: string, workspaceHostMount: string): boolean {
   const resolvedCwd = resolve(sessionCwd.replace(/^~/, homedir()));
   const resolvedMount = resolve(workspaceHostMount.replace(/^~/, homedir()));
 
@@ -198,7 +193,9 @@ async function extractSessionMetadata(
             } else if (Array.isArray(content)) {
               const text = content.find(
                 (c: unknown) =>
-                  typeof c === "object" && c !== null && (c as Record<string, unknown>).type === "text",
+                  typeof c === "object" &&
+                  c !== null &&
+                  (c as Record<string, unknown>).type === "text",
               ) as { text?: string } | undefined;
               if (text?.text) {
                 firstMessage = text.text.slice(0, 200);

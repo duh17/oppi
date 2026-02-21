@@ -54,7 +54,7 @@ struct GitStatus: Codable, Sendable, Equatable {
         totalFiles == 0
     }
 
-    static let empty = GitStatus(
+    static let empty = Self(
         isGitRepo: false,
         branch: nil,
         headSha: nil,

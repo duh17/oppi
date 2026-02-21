@@ -543,6 +543,41 @@ describe("SessionManager RPC passthrough", () => {
   });
 });
 
+// ─── SDK state bootstrap/refresh ───
+
+describe("SessionManager SDK state bootstrap", () => {
+  it("uses getStateSnapshot model/provider to resolve context window", async () => {
+    const { manager, session, sdkBackend } = makeManagerHarness();
+
+    manager.contextWindowResolver = (modelId: string) =>
+      modelId === "openai-codex/gpt-5.3-codex" ? 272_000 : 200_000;
+
+    (sdkBackend.getState as ReturnType<typeof vi.fn>).mockReturnValue({
+      model: "gpt-5.3-codex",
+      thinkingLevel: "medium",
+      isStreaming: false,
+      sessionFile: undefined,
+    });
+
+    (sdkBackend.getStateSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({
+      model: { provider: "openai-codex", id: "gpt-5.3-codex" },
+      thinkingLevel: "medium",
+      isStreaming: false,
+    });
+
+    await (
+      manager as unknown as {
+        bootstrapSessionState: (key: string) => Promise<void>;
+      }
+    ).bootstrapSessionState("s1");
+
+    expect(session.model).toBe("openai-codex/gpt-5.3-codex");
+    expect(session.contextWindow).toBe(272_000);
+    expect(sdkBackend.getStateSnapshot).toHaveBeenCalledTimes(1);
+    expect(sdkBackend.getState).not.toHaveBeenCalled();
+  });
+});
+
 // ─── applyPiStateSnapshot ───
 
 describe("SessionManager applyPiStateSnapshot", () => {
@@ -593,6 +628,40 @@ describe("SessionManager applyPiStateSnapshot", () => {
 
     expect(changed).toBe(true);
     expect(session.model).toBe("anthropic/claude-sonnet-4-0");
+  });
+
+  it("recomputes stale 200k context window when snapshot confirms model", () => {
+    const { manager, session } = makeManagerHarness();
+    manager.contextWindowResolver = (modelId: string) =>
+      modelId === "openai-codex/gpt-5.3-codex" ? 272_000 : 200_000;
+
+    session.model = "openai-codex/gpt-5.3-codex";
+    session.contextWindow = 200_000;
+
+    const changed = callApplySnapshot(manager, session, {
+      model: { provider: "openai-codex", id: "gpt-5.3-codex" },
+    });
+
+    expect(changed).toBe(true);
+    expect(session.model).toBe("openai-codex/gpt-5.3-codex");
+    expect(session.contextWindow).toBe(272_000);
+  });
+
+  it("does not downgrade known model when snapshot model payload is malformed", () => {
+    const { manager, session } = makeManagerHarness();
+    manager.contextWindowResolver = (modelId: string) =>
+      modelId === "openai-codex/gpt-5.3-codex" ? 272_000 : 200_000;
+
+    session.model = "openai-codex/gpt-5.3-codex";
+    session.contextWindow = 272_000;
+
+    const changed = callApplySnapshot(manager, session, {
+      model: { provider: "GPT-5.3 Codex", id: "GPT-5.3 Codex" },
+    });
+
+    expect(changed).toBe(false);
+    expect(session.model).toBe("openai-codex/gpt-5.3-codex");
+    expect(session.contextWindow).toBe(272_000);
   });
 
   it("applies session name", () => {

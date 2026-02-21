@@ -61,7 +61,7 @@ oppi pair --host my-mac.tailnet.ts.net
 - Markdown rendering with syntax-highlighted code blocks
 - Inline diffs — see what the agent changed, line by line
 - Permission gate — approve or deny tool calls from your phone
-- Themes (tokyo-night variants, or import your own)
+- Themes (Tokyo Night variants + Nord built in, or import your own)
 - Workspaces and session management
 - image input
 

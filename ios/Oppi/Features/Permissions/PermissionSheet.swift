@@ -213,14 +213,6 @@ private struct CommandBox: View {
 
 /// Allow/Deny action buttons for permission requests.
 private struct PermissionActionButtons: View {
-    private struct ExtraChoice: Identifiable {
-        let id: String
-        let title: String
-        let systemImage: String
-        let role: ButtonRole?
-        let choice: PermissionResponseChoice
-    }
-
     let request: PermissionRequest
     let onAction: (PermissionResponseChoice) -> Void
 
@@ -229,78 +221,12 @@ private struct PermissionActionButtons: View {
     private var allowTint: Color { .themeGreen }
     private var denyWidth: CGFloat { .infinity }
 
-    private var options: PermissionResolutionOptions {
-        request.resolutionOptions
-            ?? PermissionResolutionOptions(
-                allowSession: true,
-                allowAlways: false,
-                alwaysDescription: nil,
-                denyAlways: true
-            )
+    private var isPolicyTool: Bool {
+        PermissionApprovalPolicy.isPolicyTool(request.tool)
     }
 
-    private var extraChoices: [ExtraChoice] {
-        var choices: [ExtraChoice] = []
-
-        if options.allowSession {
-            choices.append(
-                ExtraChoice(
-                    id: "allow-session",
-                    title: "Allow this session",
-                    systemImage: "clock",
-                    role: nil,
-                    choice: PermissionResponseChoice(action: .allow, scope: .session)
-                )
-            )
-        }
-
-        if options.allowAlways {
-            let temporaryDurations: [(label: String, ms: Int)] = [
-                ("Allow for 1 hour", 60 * 60 * 1000),
-                ("Allow for 24 hours", 24 * 60 * 60 * 1000),
-                ("Allow for 7 days", 7 * 24 * 60 * 60 * 1000),
-            ]
-
-            for duration in temporaryDurations {
-                choices.append(
-                    ExtraChoice(
-                        id: "allow-temp-\(duration.ms)",
-                        title: duration.label,
-                        systemImage: "timer",
-                        role: nil,
-                        choice: PermissionResponseChoice(
-                            action: .allow,
-                            scope: .workspace,
-                            expiresInMs: duration.ms
-                        )
-                    )
-                )
-            }
-
-            choices.append(
-                ExtraChoice(
-                    id: "allow-forever",
-                    title: options.alwaysDescription ?? "Always allow in this workspace",
-                    systemImage: "checkmark.circle",
-                    role: nil,
-                    choice: PermissionResponseChoice(action: .allow, scope: .workspace)
-                )
-            )
-        }
-
-        if options.denyAlways {
-            choices.append(
-                ExtraChoice(
-                    id: "deny-forever",
-                    title: "Always deny in this workspace",
-                    systemImage: "xmark.circle",
-                    role: .destructive,
-                    choice: PermissionResponseChoice(action: .deny, scope: .workspace)
-                )
-            )
-        }
-
-        return choices
+    private var extraChoices: [PermissionApprovalOption] {
+        PermissionApprovalPolicy.options(for: request)
     }
 
     var body: some View {
@@ -319,7 +245,7 @@ private struct PermissionActionButtons: View {
                 HStack {
                     Menu {
                         ForEach(extraChoices) { item in
-                            Button(role: item.role) {
+                            Button(role: item.isDestructive ? .destructive : nil) {
                                 resolve(item.choice)
                             } label: {
                                 Label(item.title, systemImage: item.systemImage)
@@ -341,7 +267,7 @@ private struct PermissionActionButtons: View {
         Button {
             resolve(.denyOnce())
         } label: {
-            Text("Deny")
+            Text(isPolicyTool ? "Reject" : "Deny")
                 .font(.subheadline.bold())
                 .frame(maxWidth: denyWidth)
                 .padding(.vertical, 14)
@@ -358,7 +284,7 @@ private struct PermissionActionButtons: View {
                     Image(systemName: biometricIcon)
                         .font(.caption)
                 }
-                Text("Allow")
+                Text(isPolicyTool ? "Approve" : "Allow")
             }
             .font(.subheadline.bold())
             .frame(maxWidth: .infinity)
@@ -380,6 +306,6 @@ private struct PermissionActionButtons: View {
         isResolving = true
         let style: UIImpactFeedbackGenerator.FeedbackStyle = choice.action == .allow ? .light : .heavy
         UIImpactFeedbackGenerator(style: style).impactOccurred()
-        onAction(choice)
+        onAction(PermissionApprovalPolicy.normalizedChoice(for: request, choice: choice))
     }
 }

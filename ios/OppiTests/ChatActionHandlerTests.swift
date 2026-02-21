@@ -42,6 +42,72 @@ struct ChatActionHandlerTests {
         handler.cleanup() // idempotent
     }
 
+    @MainActor
+    @Test func stopTurnSendsStopCommandOnly() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        let sessionManager = ChatSessionManager(sessionId: "s1")
+
+        var session = makeSession(id: "s1", name: nil, messageCount: 0)
+        session.status = .busy
+        sessionStore.upsert(session)
+        connection._setActiveSessionIdForTesting("s1")
+
+        var sentStop = 0
+        var sentStopSession = 0
+
+        handler._sendStopForTesting = { _ in
+            sentStop += 1
+        }
+        handler._sendStopSessionForTesting = { _ in
+            sentStopSession += 1
+        }
+
+        handler.stop(
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionManager: sessionManager,
+            sessionId: "s1"
+        )
+
+        await waitForCondition(timeoutMs: 400) { sentStop > 0 }
+
+        #expect(sentStop == 1)
+        #expect(sentStopSession == 0)
+        #expect(!handler.showForceStop)
+    }
+
+    @MainActor
+    @Test func stopTurnNeverAutoShowsForceStop() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        let sessionManager = ChatSessionManager(sessionId: "s1")
+
+        var session = makeSession(id: "s1", name: nil, messageCount: 0)
+        session.status = .busy
+        sessionStore.upsert(session)
+        connection._setActiveSessionIdForTesting("s1")
+        handler._sendStopForTesting = { _ in }
+
+        handler.stop(
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionManager: sessionManager,
+            sessionId: "s1"
+        )
+
+        try? await Task.sleep(for: .milliseconds(250))
+
+        #expect(!handler.showForceStop)
+        #expect(!handler.isForceStopInFlight)
+    }
+
     // MARK: - Send Prompt Logic
 
     @MainActor

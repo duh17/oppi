@@ -79,6 +79,23 @@ function makeManagerHarness(status: Session["status"] = "busy") {
 }
 
 describe("stop lifecycle", () => {
+  it("confirms stop immediately when session is already idle", async () => {
+    const { manager, events, abort, session } = makeManagerHarness("ready");
+
+    await manager.sendAbort("s1");
+
+    expect(abort).not.toHaveBeenCalled();
+    expect(session.status).toBe("ready");
+
+    const confirmed = events.find(
+      (event): event is Extract<ServerMessage, { type: "stop_confirmed" }> =>
+        event.type === "stop_confirmed",
+    );
+    expect(confirmed?.source).toBe("user");
+    expect(confirmed?.reason).toBe("Session already idle");
+    expect(events.some((event) => event.type === "stop_failed")).toBe(false);
+  });
+
   it("dedupes duplicate stop taps while graceful stop is pending", async () => {
     const { manager, events, abort, session } = makeManagerHarness("busy");
     const active = { session };

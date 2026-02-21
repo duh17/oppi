@@ -72,6 +72,10 @@ final class ChatSessionManager {
     /// Test seam: override trace fetch for lifecycle snapshot flush.
     var _fetchTraceSnapshotForTesting: (() async -> [TraceEvent]?)?
 
+    /// Test seam: override session trace fetch used by loadHistory.
+    /// Lets tests exercise real history-apply logic without network.
+    var _fetchSessionTraceForTesting: ((_ workspaceId: String, _ sessionId: String) async throws -> (Session, [TraceEvent]))?
+
     /// Test seam: override trace save destination for lifecycle snapshot flush.
     var _saveTraceSnapshotForTesting: (([TraceEvent]) async -> Void)?
 
@@ -291,7 +295,7 @@ final class ChatSessionManager {
             }
 
             markSyncSucceeded()
-            let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta()
+            let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
 
             // Detect reconnection: a second `.connected` message means the WS
             // dropped and recovered. Prefer seq-based catch-up and only
@@ -598,11 +602,18 @@ final class ChatSessionManager {
         }
 
         do {
-            let (session, trace) = try await api.getSession(
-                workspaceId: workspaceId,
-                id: sessionId,
-                traceView: .full
-            )
+            let session: Session
+            let trace: [TraceEvent]
+            if let fetchHook = _fetchSessionTraceForTesting {
+                (session, trace) = try await fetchHook(workspaceId, sessionId)
+            } else {
+                (session, trace) = try await api.getSession(
+                    workspaceId: workspaceId,
+                    id: sessionId,
+                    traceView: .full
+                )
+            }
+
             guard !Task.isCancelled else { return nil }
             sessionStore.upsert(session)
             markSyncSucceeded()
@@ -616,16 +627,26 @@ final class ChatSessionManager {
                    cachedLastEventId == freshSignature.lastEventId {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
                 } else {
-                    reducer.loadSession(trace)
-                    needsInitialScroll = true
-                    let footprint = SentryService.currentFootprintMB()
-                    log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count)]")
-                    ClientLog.info("Memory", "Session loaded", metadata: [
-                        "footprintMB": footprint.map(String.init) ?? "n/a",
-                        "traceEvents": String(trace.count),
-                        "timelineItems": String(reducer.items.count),
-                        "sessionId": self.sessionId,
-                    ])
+                    // Avoid clobbering in-flight streaming rows (thinking/tool calls)
+                    // with a stale trace snapshot while the session is still running.
+                    let shouldDeferRebuild =
+                        (session.status == .busy || session.status == .stopping)
+                        && !reducer.items.isEmpty
+
+                    if shouldDeferRebuild {
+                        log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
+                    } else {
+                        reducer.loadSession(trace)
+                        needsInitialScroll = true
+                        let footprint = SentryService.currentFootprintMB()
+                        log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count)]")
+                        ClientLog.info("Memory", "Session loaded", metadata: [
+                            "footprintMB": footprint.map(String.init) ?? "n/a",
+                            "traceEvents": String(trace.count),
+                            "timelineItems": String(reducer.items.count),
+                            "sessionId": self.sessionId,
+                        ])
+                    }
                 }
             }
 

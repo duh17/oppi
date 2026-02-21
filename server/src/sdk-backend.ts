@@ -19,7 +19,7 @@ import {
 import { getModel, type KnownProvider, type ImageContent } from "@mariozechner/pi-ai";
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import { homedir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 
 import type { Session, Workspace } from "./types.js";
 import type { GateServer } from "./gate.js";
@@ -39,6 +39,28 @@ function parseModelId(modelId: string): { provider: string; model: string } | nu
   const slash = modelId.indexOf("/");
   if (slash <= 0) return null;
   return { provider: modelId.substring(0, slash), model: modelId.substring(slash + 1) };
+}
+
+/**
+ * Resolve workspace host mount into an absolute SDK cwd.
+ *
+ * Workspace hostMount is stored in display form (commonly "~/...").
+ * Node path APIs do not expand "~" and will treat it as a relative path,
+ * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
+ * before passing cwd into SDK components.
+ */
+export function resolveSdkSessionCwd(workspace?: Workspace): string {
+  const rawHostMount = workspace?.hostMount?.trim();
+  if (!rawHostMount) {
+    return homedir();
+  }
+
+  const expanded =
+    rawHostMount === "~" || rawHostMount.startsWith("~/")
+      ? rawHostMount.replace(/^~(?=\/|$)/, homedir())
+      : rawHostMount;
+
+  return resolve(expanded);
 }
 
 export interface SdkBackendConfig {
@@ -78,7 +100,7 @@ export class SdkBackend {
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
-    const cwd = workspace?.hostMount || homedir();
+    const cwd = resolveSdkSessionCwd(workspace);
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
@@ -139,25 +161,13 @@ export class SdkBackend {
       resourceLoader: loader,
     });
 
-    // Subscribe to agent events
+    // Subscribe to agent events — forward everything to the translation layer.
     const unsub = piSession.subscribe((event: AgentSessionEvent) => {
-      // Filter out session-level events not consumed by iOS
-      const type = event.type;
-      if (
-        type === "auto_compaction_start" ||
-        type === "auto_compaction_end" ||
-        type === "auto_retry_start" ||
-        type === "auto_retry_end"
-      ) {
-        console.log(`${ts()} [sdk] session event: ${type}`);
-        return;
-      }
-
       onEvent(event);
     });
 
     console.log(
-      `${ts()} [sdk] Session created: model=${piSession.model?.name}, thinking=${piSession.thinkingLevel}`,
+      `${ts()} [sdk] Session created: model=${piSession.model?.id ?? piSession.model?.name}, thinking=${piSession.thinkingLevel}`,
     );
 
     return new SdkBackend(piSession, unsub);
@@ -196,7 +206,13 @@ export class SdkBackend {
     await this.piSession.abort();
   }
 
-  async setModel(modelId: string): Promise<{ success: boolean; error?: string }> {
+  async setModel(modelId: string): Promise<{
+    success: boolean;
+    provider?: string;
+    id?: string;
+    name?: string;
+    error?: string;
+  }> {
     const parsed = parseModelId(modelId);
     if (!parsed) {
       return { success: false, error: `Invalid model ID: ${modelId}` };
@@ -205,7 +221,14 @@ export class SdkBackend {
     try {
       const model = getModel(parsed.provider as KnownProvider, parsed.model as never);
       await this.piSession.setModel(model);
-      return { success: true };
+
+      const activeModel = this.piSession.model;
+      return {
+        success: true,
+        provider: activeModel?.provider,
+        id: activeModel?.id,
+        name: activeModel?.name,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -226,7 +249,7 @@ export class SdkBackend {
     return {
       model: {
         provider: result.model.provider,
-        id: result.model.name,
+        id: result.model.id,
         name: result.model.name,
       },
       thinkingLevel: result.thinkingLevel,
@@ -299,7 +322,7 @@ export class SdkBackend {
     sessionFile: string | undefined;
   } {
     return {
-      model: this.piSession.model?.name,
+      model: this.piSession.model?.id,
       thinkingLevel: this.piSession.thinkingLevel,
       isStreaming: this.piSession.isStreaming,
       sessionFile: this.piSession.sessionFile,
@@ -314,7 +337,7 @@ export class SdkBackend {
       sessionFile: this.piSession.sessionFile,
       sessionId: this.piSession.sessionId,
       sessionName: this.piSession.sessionName,
-      model: m ? { provider: m.provider, id: m.name, name: m.name } : undefined,
+      model: m ? { provider: m.provider, id: m.id, name: m.name } : undefined,
       thinkingLevel: this.piSession.thinkingLevel,
       isStreaming: this.piSession.isStreaming,
       autoCompaction: this.piSession.autoCompactionEnabled,

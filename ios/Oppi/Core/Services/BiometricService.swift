@@ -27,7 +27,23 @@ final class BiometricService {
 
     private static let enabledKey = "\(AppIdentifiers.subsystem).biometric.enabled"
 
-    private init() {}
+    // Cached once on init — biometry type doesn't change during app lifetime.
+    private let cachedBiometricName: String
+
+    private init() {
+        let context = LAContext()
+        var error: NSError?
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            switch context.biometryType {
+            case .faceID: cachedBiometricName = "Face ID"
+            case .touchID: cachedBiometricName = "Touch ID"
+            case .opticID: cachedBiometricName = "Optic ID"
+            @unknown default: cachedBiometricName = "Biometrics"
+            }
+        } else {
+            cachedBiometricName = "Passcode"
+        }
+    }
 
     // MARK: - Capability Check
 
@@ -39,19 +55,8 @@ final class BiometricService {
     }
 
     /// Human-readable name for the biometric type (Face ID, Touch ID, Optic ID).
-    var biometricName: String {
-        let context = LAContext()
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            return "Passcode"
-        }
-        switch context.biometryType {
-        case .faceID: return "Face ID"
-        case .touchID: return "Touch ID"
-        case .opticID: return "Optic ID"
-        @unknown default: return "Biometrics"
-        }
-    }
+    /// Cached at init — Secure Enclave query runs once, not per-access.
+    var biometricName: String { cachedBiometricName }
 
     // MARK: - Authentication
 

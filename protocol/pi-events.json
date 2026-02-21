@@ -1,13 +1,42 @@
 {
   "_meta": {
-    "description": "Canonical pi RPC events — the JSON lines pi sends on stdout. Used to test server-side event translation (session-protocol.ts translatePiEvent).",
-    "generated": "2026-02-16T18:00:00Z",
-    "eventCount": 21
+    "description": "Canonical pi SDK events — emitted by AgentSession.subscribe(). Used to test server-side event translation (session-protocol.ts translatePiEvent).",
+    "generated": "2026-02-21T02:30:00Z",
+    "eventCount": 31
   },
   "events": [
     {
       "_label": "agent_start: pi begins processing a prompt",
       "type": "agent_start"
+    },
+    {
+      "_label": "turn_start: new turn begins within agent run",
+      "type": "turn_start"
+    },
+    {
+      "_label": "message_start: assistant message begins",
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": []
+      }
+    },
+    {
+      "_label": "message_update start: stream initialization",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "start",
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update text_start: text block begins",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_start",
+        "contentIndex": 0,
+        "partial": { "role": "assistant", "content": [] }
+      }
     },
     {
       "_label": "message_update text_delta: streaming assistant text",
@@ -23,6 +52,82 @@
       "assistantMessageEvent": {
         "type": "thinking_delta",
         "delta": "I need to analyze the code structure first..."
+      }
+    },
+    {
+      "_label": "message_update text_end: text block finishes",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_end",
+        "contentIndex": 0,
+        "content": "Let me help you with that. ",
+        "partial": { "role": "assistant", "content": [{ "type": "text", "text": "Let me help you with that. " }] }
+      }
+    },
+    {
+      "_label": "message_update thinking_start: thinking block begins",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_start",
+        "contentIndex": 1,
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update thinking_end: thinking block finishes",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "thinking_end",
+        "contentIndex": 1,
+        "content": "I need to analyze the code structure first...",
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update toolcall_start: tool call streaming begins",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_start",
+        "contentIndex": 2,
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update toolcall_delta: tool call args streaming",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 2,
+        "delta": "{\"command\":\"npm test\"}",
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update toolcall_end: tool call args complete",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_end",
+        "contentIndex": 2,
+        "toolCall": { "id": "tc-replay-001", "name": "bash", "args": "{\"command\":\"npm test\"}" },
+        "partial": { "role": "assistant", "content": [] }
+      }
+    },
+    {
+      "_label": "message_update done: stream completed normally",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "done",
+        "reason": "stop",
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Done." }] }
+      }
+    },
+    {
+      "_label": "message_update error: stream error (aborted/rate-limit)",
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "error",
+        "reason": "aborted",
+        "error": { "role": "assistant", "content": "Request aborted by user" }
       }
     },
     {
@@ -107,6 +212,15 @@
           "cost": { "total": 0.0045 }
         }
       }
+    },
+    {
+      "_label": "turn_end: turn completes (tool results delivered)",
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [{ "type": "text", "text": "Done." }]
+      },
+      "toolResults": []
     },
     {
       "_label": "agent_end: pi finishes processing",
