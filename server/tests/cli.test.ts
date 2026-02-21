@@ -165,7 +165,7 @@ describe("oppi pair", () => {
   it("generates QR code output", () => {
     const { stdout, exitCode } = run(["pair"]);
     // Pair should succeed or at least output something
-    // It may fail to find tailscale but should still output
+    // Host auto-detection may vary by environment but should still output
     expect(exitCode).toBe(0);
     // Should contain QR blocks or URL
     expect(stdout.length).toBeGreaterThan(50);

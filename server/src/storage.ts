@@ -55,7 +55,7 @@ function isValidCidr(value: string): boolean {
 }
 
 function defaultAllowedCidrs(): string[] {
-  // Loopback + RFC1918 + CGNAT (Tailscale IPv4 range) + link-local + ULA.
+  // Loopback + RFC1918 + CGNAT (covers Tailscale, carrier-grade NAT) + link-local + ULA.
   return [
     "127.0.0.0/8",
     "10.0.0.0/8",
