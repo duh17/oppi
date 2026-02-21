@@ -38,7 +38,6 @@ docker run -d \
 
     npm ci --prefer-offline --no-audit --no-fund >/tmp/npm-ci.log 2>&1
     npm install -g --prefer-offline --no-audit --no-fund @mariozechner/pi-coding-agent >/tmp/npm-pi.log 2>&1
-    npm run build >/tmp/npm-build.log 2>&1
 
     # fresh pi agent home (no custom extensions/skills)
     mkdir -p /pi-agent/extensions /pi-agent/skills /pi-agent/sessions /pi-agent/themes

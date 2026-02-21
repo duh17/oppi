@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js serve",
     "prepublishOnly": "npm run build",
