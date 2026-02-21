@@ -495,6 +495,13 @@ function cmdToken(storage: Storage, action: string | undefined): void {
   const mode = action || "help";
 
   if (mode === "rotate") {
+    if (!storage.isPaired()) {
+      console.log(c.red("  Error: server is not paired yet."));
+      console.log(c.dim("  Run 'oppi pair' first to generate owner credentials."));
+      console.log("");
+      process.exit(1);
+    }
+
     storage.rotateToken();
 
     console.log(c.green("  ✓ Bearer token rotated."));
