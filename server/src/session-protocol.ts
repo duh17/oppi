@@ -96,25 +96,16 @@ export function extractUsage(message: any): {
 }
 
 /**
- * Normalize noisy/low-level SDK errors into user-facing text.
+ * Normalize SDK errors into user-facing text.
  */
-export function normalizeRpcError(command: string, error: string): string {
+export function normalizeCommandError(command: string, error: string): string {
   const trimmed = error.trim();
-  const parsePrefix = "Failed to parse command:";
 
-  let normalized = trimmed;
-  if (trimmed.startsWith(parsePrefix)) {
-    const remainder = trimmed.slice(parsePrefix.length).trim();
-    if (remainder.length > 0) {
-      normalized = remainder;
-    }
-  }
-
-  if (command === "compact" && /already compacted/i.test(normalized)) {
+  if (command === "compact" && /already compacted/i.test(trimmed)) {
     return "Already compacted";
   }
 
-  return normalized;
+  return trimmed;
 }
 
 // ─── Event Translation ───
@@ -534,21 +525,15 @@ export function countLines(text: string): number {
   return text.split("\n").length;
 }
 
-// ─── Message Persistence ───
+// ─── Session Message Counters ───
 
 /**
- * Append a message to session storage and update in-memory session stats.
- *
- * Takes an `addMessage` callback so this module doesn't depend on Storage directly.
+ * Update in-memory session counters from a user/assistant message.
  */
 export function appendSessionMessage(
   session: Session,
   message: Omit<SessionMessage, "id" | "sessionId">,
-  addMessage: (sessionId: string, message: Omit<SessionMessage, "id" | "sessionId">) => void,
 ): void {
-  addMessage(session.id, message);
-
-  // Keep the active in-memory session aligned with persisted stats.
   session.messageCount += 1;
   session.lastMessage = message.content.slice(0, 100);
   session.lastActivity = message.timestamp;
@@ -566,13 +551,12 @@ export function appendSessionMessage(
 /**
  * Apply a pi `message_end` event to session state.
  *
- * Extracts usage/tokens, persists assistant messages, and updates context token count.
+ * Extracts usage/tokens and updates session counters/context token count.
  */
 export function applyMessageEndToSession(
   session: Session,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
   message: any,
-  addMessage: (sessionId: string, msg: Omit<SessionMessage, "id" | "sessionId">) => void,
 ): void {
   const role = message?.role;
 
@@ -585,18 +569,14 @@ export function applyMessageEndToSession(
   if (assistantText) {
     const tokens = usage ? { input: usage.input, output: usage.output } : undefined;
 
-    appendSessionMessage(
-      session,
-      {
-        role: "assistant",
-        content: assistantText,
-        timestamp: Date.now(),
-        model: session.model,
-        tokens,
-        cost: usage?.cost,
-      },
-      addMessage,
-    );
+    appendSessionMessage(session, {
+      role: "assistant",
+      content: assistantText,
+      timestamp: Date.now(),
+      model: session.model,
+      tokens,
+      cost: usage?.cost,
+    });
   } else if (usage) {
     session.tokens.input += usage.input;
     session.tokens.output += usage.output;

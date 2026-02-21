@@ -300,26 +300,8 @@ description: "First test skill"
 const SKILL_B = `---
 name: skill-b
 description: "Second test skill"
-container: true
 ---
 # Skill B
-`;
-
-const SKILL_HOST_ONLY = `---
-name: host-only
-description: "Host-only skill"
-container: false
----
-# Host Only
-Uses MLX and tmux send-keys.
-`;
-
-const SKILL_NO_CONTAINER_FIELD = `---
-name: heuristic-test
-description: "Has homebrew marker"
----
-# Heuristic
-Install via homebrew.
 `;
 
 describe("SkillRegistry", () => {
@@ -416,69 +398,29 @@ describe("SkillRegistry", () => {
       const dir2 = mkdtempSync(join(tmpdir(), "pi-skill-registry2-"));
       (registry as any).scanDirs = [scanDir, dir2];
 
-      makeSkillDir(scanDir, "shared", SKILL_A);
-      makeSkillDir(dir2, "shared", SKILL_B);
+      const SHARED_A = `---\nname: shared\ndescription: "First version"\n---\n# A\n`;
+      const SHARED_B = `---\nname: shared\ndescription: "Second version"\n---\n# B\n`;
+      makeSkillDir(scanDir, "shared", SHARED_A);
+      makeSkillDir(dir2, "shared", SHARED_B);
       registry.scan();
 
       // scanDir is first, so its version wins
-      expect(registry.get("shared")?.description).toBe("First test skill");
+      expect(registry.get("shared")?.description).toBe("First version");
 
       rmSync(dir2, { recursive: true, force: true });
     });
   });
 
-  describe("container compatibility", () => {
-    it("respects container: true in frontmatter", () => {
-      makeSkillDir(scanDir, "skill-b", SKILL_B);
-      registry.scan();
-      expect(registry.get("skill-b")?.containerSafe).toBe(true);
-    });
-
-    it("respects container: false in frontmatter", () => {
-      makeSkillDir(scanDir, "host-only", SKILL_HOST_ONLY);
-      registry.scan();
-      expect(registry.get("host-only")?.containerSafe).toBe(false);
-    });
-
-    it("falls back to heuristic when no frontmatter field", () => {
-      makeSkillDir(scanDir, "heuristic-test", SKILL_NO_CONTAINER_FIELD);
-      registry.scan();
-      // "homebrew" is a host-only marker
-      expect(registry.get("heuristic-test")?.containerSafe).toBe(false);
-    });
-
-    it("defaults to container-safe when no markers", () => {
-      makeSkillDir(scanDir, "clean", SKILL_A);
-      registry.scan();
-      expect(registry.get("clean")?.containerSafe).toBe(true);
-    });
-  });
-
-  describe("hasScripts", () => {
-    it("detects skills with scripts directory", () => {
-      const dir = makeSkillDir(scanDir, "with-scripts", SKILL_A);
-      mkdirSync(join(dir, "scripts"), { recursive: true });
-      writeFileSync(join(dir, "scripts", "run.sh"), "#!/bin/bash");
-      registry.scan();
-      expect(registry.get("with-scripts")?.hasScripts).toBe(true);
-    });
-
-    it("false when no scripts directory", () => {
-      makeSkillDir(scanDir, "no-scripts", SKILL_A);
-      registry.scan();
-      expect(registry.get("no-scripts")?.hasScripts).toBe(false);
-    });
-  });
-
   describe("getDetail", () => {
     it("returns SKILL.md content and file list", () => {
-      const dir = makeSkillDir(scanDir, "detailed", SKILL_A);
+      const DETAILED = `---\nname: detailed\ndescription: "A detailed skill"\n---\n# Detailed\n`;
+      const dir = makeSkillDir(scanDir, "detailed", DETAILED);
       writeFileSync(join(dir, "helper.py"), "print('hi')");
       registry.scan();
 
       const detail = registry.getDetail("detailed");
       expect(detail).toBeDefined();
-      expect(detail!.content).toContain("First test skill");
+      expect(detail!.content).toContain("A detailed skill");
       expect(detail!.files).toContain("SKILL.md");
       expect(detail!.files).toContain("helper.py");
     });
@@ -491,7 +433,8 @@ describe("SkillRegistry", () => {
 
   describe("getFileContent", () => {
     it("reads a file from a skill", () => {
-      const dir = makeSkillDir(scanDir, "readable", SKILL_A);
+      const READABLE = `---\nname: readable\ndescription: "A readable skill"\n---\n# Readable\n`;
+      const dir = makeSkillDir(scanDir, "readable", READABLE);
       writeFileSync(join(dir, "data.txt"), "hello");
       registry.scan();
 
@@ -499,7 +442,8 @@ describe("SkillRegistry", () => {
     });
 
     it("blocks path traversal", () => {
-      makeSkillDir(scanDir, "trapped", SKILL_A);
+      const TRAPPED = `---\nname: trapped\ndescription: "A trapped skill"\n---\n# Trapped\n`;
+      makeSkillDir(scanDir, "trapped", TRAPPED);
       registry.scan();
       expect(registry.getFileContent("trapped", "../../etc/passwd")).toBeUndefined();
     });
@@ -579,14 +523,15 @@ describe("SkillRegistry", () => {
 
   describe("registerUserSkills", () => {
     it("adds user skills to the registry", () => {
+      const CUSTOM = `---\nname: custom\ndescription: "A custom skill"\n---\n# Custom\n`;
       const userDir = mkdtempSync(join(tmpdir(), "pi-user-skill-"));
-      makeSkillDir(userDir, "custom", SKILL_A);
+      makeSkillDir(userDir, "custom", CUSTOM);
 
       registry.scan();
       registry.registerUserSkills([
         {
           name: "custom",
-          description: "Custom skill",
+          description: "A custom skill",
           builtIn: false,
           createdAt: Date.now(),
           sizeBytes: 100,
@@ -595,7 +540,7 @@ describe("SkillRegistry", () => {
       ]);
 
       expect(registry.get("custom")).toBeDefined();
-      expect(registry.get("custom")?.description).toBe("First test skill"); // re-parsed from SKILL.md
+      expect(registry.get("custom")?.description).toBe("A custom skill");
 
       rmSync(userDir, { recursive: true, force: true });
     });

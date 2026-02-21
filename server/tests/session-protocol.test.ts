@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Session } from "../src/types.js";
 import {
-  normalizeRpcError,
+  normalizeCommandError,
   translatePiEvent,
   updateSessionChangeStats,
   applyMessageEndToSession,
@@ -32,16 +32,16 @@ function makeCtx(): TranslationContext {
   };
 }
 
-describe("session-protocol normalizeRpcError", () => {
-  it("strips parse prefix from RPC errors", () => {
-    expect(normalizeRpcError("set_model", "Failed to parse command: Invalid payload")).toBe(
-      "Invalid payload",
+describe("session-protocol normalizeCommandError", () => {
+  it("normalizes compact already-compacted message", () => {
+    expect(normalizeCommandError("compact", "Already compacted for this turn")).toBe(
+      "Already compacted",
     );
   });
 
-  it("normalizes compact already-compacted message", () => {
-    expect(normalizeRpcError("compact", "Already compacted for this turn")).toBe(
-      "Already compacted",
+  it("passes through other errors unchanged", () => {
+    expect(normalizeCommandError("set_model", "Unknown model: foo/bar")).toBe(
+      "Unknown model: foo/bar",
     );
   });
 });
@@ -324,27 +324,21 @@ describe("session-protocol state mutation helpers", () => {
     expect(session.changeStats?.changedFilesOverflow).toBe(5);
   });
 
-  it("applies assistant message_end usage and persistence", () => {
+  it("applies assistant message_end usage to session counters", () => {
     const session = makeSession();
-    const addMessage = vi.fn();
 
-    applyMessageEndToSession(
-      session,
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "final answer" }],
-        usage: {
-          input: 5,
-          output: 7,
-          cacheRead: 2,
-          cacheWrite: 3,
-          cost: { total: 1.25 },
-        },
+    applyMessageEndToSession(session, {
+      role: "assistant",
+      content: [{ type: "text", text: "final answer" }],
+      usage: {
+        input: 5,
+        output: 7,
+        cacheRead: 2,
+        cacheWrite: 3,
+        cost: { total: 1.25 },
       },
-      addMessage,
-    );
+    });
 
-    expect(addMessage).toHaveBeenCalledTimes(1);
     expect(session.messageCount).toBe(1);
     expect(session.tokens).toEqual({ input: 5, output: 7 });
     expect(session.cost).toBe(1.25);
@@ -352,20 +346,14 @@ describe("session-protocol state mutation helpers", () => {
     expect(session.lastMessage).toBe("final answer");
   });
 
-  it("ignores user message_end for persistence", () => {
+  it("ignores user message_end for session counters", () => {
     const session = makeSession();
-    const addMessage = vi.fn();
 
-    applyMessageEndToSession(
-      session,
-      {
-        role: "user",
-        content: "hello",
-      },
-      addMessage,
-    );
+    applyMessageEndToSession(session, {
+      role: "user",
+      content: "hello",
+    });
 
-    expect(addMessage).not.toHaveBeenCalled();
     expect(session.messageCount).toBe(0);
   });
 });

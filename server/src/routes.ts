@@ -1135,7 +1135,7 @@ export class RouteHandler {
         this.ctx.storage.getOwnerName(),
         workspace,
       );
-      await this.ctx.sessions.runRpcCommand(forkSession.id, { type: "fork", entryId }, 30_000);
+      await this.ctx.sessions.runCommand(forkSession.id, { type: "fork", entryId }, 30_000);
       await this.ctx.sessions.refreshSessionState(forkSession.id);
     } catch (err: unknown) {
       await this.ctx.sessions.stopSession(forkSession.id).catch(() => {});
@@ -1338,12 +1338,7 @@ export class RouteHandler {
     const storageWithDataDir = this.ctx.storage as Storage & {
       getDataDir?: () => string;
     };
-    const dataDir = storageWithDataDir.getDataDir?.() ?? process.cwd();
-
-    // Legacy compatibility: older runtimes stored workspace traces under
-    // <dataDir>/sandboxes/<workspaceId>/...; current layout is <dataDir>/<workspaceId>/...
-    const legacySandboxesDir = join(dataDir, "sandboxes");
-    return existsSync(legacySandboxesDir) ? legacySandboxesDir : dataDir;
+    return storageWithDataDir.getDataDir?.() ?? process.cwd();
   }
 
   private loadSessionTrace(

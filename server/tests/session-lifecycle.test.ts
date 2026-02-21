@@ -530,7 +530,7 @@ describe("SessionManager RPC passthrough", () => {
     const { manager } = makeManagerHarness();
 
     await expect(
-      manager.forwardRpcCommand("s1", { type: "evil_command" }),
+      manager.forwardClientCommand("s1", { type: "evil_command" }),
     ).rejects.toThrow("not allowed");
   });
 
@@ -538,7 +538,7 @@ describe("SessionManager RPC passthrough", () => {
     const { manager } = makeManagerHarness();
 
     await expect(
-      manager.forwardRpcCommand("nonexistent", { type: "get_state" }),
+      manager.forwardClientCommand("nonexistent", { type: "get_state" }),
     ).rejects.toThrow("not active");
   });
 });

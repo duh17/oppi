@@ -1,7 +1,0 @@
-{
-  "name": "permission-gate",
-  "version": "1.0.0",
-  "description": "Pi Remote permission gate extension",
-  "type": "module",
-  "main": "index.ts"
-}

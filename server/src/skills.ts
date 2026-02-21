@@ -2,8 +2,7 @@
  * Skill registry — discovers and catalogs available skills from the host
  * and manages user-created skills.
  *
- * Built-in skills: Scans ~/.pi/agent/skills/ for SKILL.md files, extracts
- * metadata, and determines container compatibility. Workspaces reference
+ * Built-in skills: Discovered via pi SDK loadSkills(). Workspaces reference
  * skills by name from this pool.
  *
  * User skills: Stored in ~/.config/oppi/skills/<name>/ with a
@@ -26,6 +25,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { EventEmitter } from "node:events";
+import { loadSkills, type Skill } from "@mariozechner/pi-coding-agent";
 
 // ─── Types ───
 
@@ -34,10 +34,6 @@ export interface SkillInfo {
   name: string;
   /** Human-readable description from SKILL.md frontmatter. */
   description: string;
-  /** Whether this skill can run inside an Apple container. */
-  containerSafe: boolean;
-  /** Whether the skill has executable scripts (needs bin shims). */
-  hasScripts: boolean;
   /** Host filesystem path to the skill directory. */
   path: string;
 }
@@ -51,20 +47,14 @@ export interface SkillDetail {
   files: string[];
 }
 
-/** Markers in SKILL.md that indicate host-only requirements. */
-const HOST_ONLY_MARKERS = [
-  "MLX",
-  "mlx",
-  "lmstudio",
-  "LM Studio",
-  "/Users/",
-  "homebrew",
-  "my-mac",
-  "mac-mini",
-  // tmux-based skills spawn panes on the host
-  "tmux send-keys",
-  "tmux new-window",
-];
+/** Map SDK Skill to our SkillInfo. */
+function sdkSkillToInfo(skill: Skill): SkillInfo {
+  return {
+    name: skill.name,
+    description: skill.description,
+    path: skill.baseDir,
+  };
+}
 
 // ─── Skill Registry ───
 
@@ -90,8 +80,9 @@ export class SkillRegistry extends EventEmitter {
 
   /**
    * Scan host skill directories and build the registry.
-   * Idempotent — safe to call anytime. Emits "skills:changed" if the
-   * catalog changed since the last scan.
+   * Delegates discovery to the pi SDK loadSkills(), then maps results
+   * to our SkillInfo shape. Idempotent — safe to call anytime.
+   * Emits "skills:changed" if the catalog changed since the last scan.
    */
   scan(): SkillsChangedEvent {
     const prevNames = new Set(this.skills.keys());
@@ -101,35 +92,24 @@ export class SkillRegistry extends EventEmitter {
 
     this.skills.clear();
 
+    // Use SDK loadSkills for each scan directory
     for (const dir of this.scanDirs) {
       if (!existsSync(dir)) continue;
 
-      let entries: string[];
       try {
-        entries = readdirSync(dir);
-      } catch {
-        continue;
-      }
+        const result = loadSkills({
+          skillPaths: [dir],
+          includeDefaults: false,
+        });
 
-      for (const entry of entries) {
-        const skillDir = join(dir, entry);
-        try {
-          if (!statSync(skillDir).isDirectory()) continue;
-        } catch {
-          // Dangling symlink or permission error — skip
-          continue;
+        for (const skill of result.skills) {
+          // First dir wins on name collision (same as before)
+          if (this.skills.has(skill.name)) continue;
+          this.skills.set(skill.name, sdkSkillToInfo(skill));
         }
-
-        const skillMd = join(skillDir, "SKILL.md");
-        if (!existsSync(skillMd)) continue;
-
-        // Skip if already registered (first dir wins)
-        if (this.skills.has(entry)) continue;
-
-        const info = this.parseSkill(entry, skillDir, skillMd);
-        if (info) {
-          this.skills.set(entry, info);
-        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[skills] Failed to scan ${dir}: ${message}`);
       }
     }
 
@@ -218,31 +198,32 @@ export class SkillRegistry extends EventEmitter {
     return this.skills.get(name);
   }
 
-  /** Get the host path for a skill (for syncing into containers). */
+  /** Get the host path for a skill. */
   getPath(name: string): string | undefined {
     return this.skills.get(name)?.path;
   }
 
-  /** Get skill names that are safe to use in containers. */
-  listContainerSafe(): SkillInfo[] {
-    return this.list().filter((s) => s.containerSafe);
-  }
-
   /**
    * Register user skills into the registry so they're discoverable
-   * by name (used by workspace skill lists and sandbox sync).
+   * by name (used by workspace skill lists).
    *
-   * User skills are registered with the same parsing as built-ins.
-   * They can shadow built-in skills (user skill takes precedence).
+   * User skills can shadow built-in skills (user skill takes precedence).
    */
   registerUserSkills(skills: UserSkill[]): void {
     for (const us of skills) {
       const skillMd = join(us.path, "SKILL.md");
       if (!existsSync(skillMd)) continue;
 
-      const info = this.parseSkill(us.name, us.path, skillMd);
-      if (info) {
-        this.skills.set(us.name, info);
+      try {
+        const result = loadSkills({
+          skillPaths: [us.path],
+          includeDefaults: false,
+        });
+        for (const skill of result.skills) {
+          this.skills.set(skill.name, sdkSkillToInfo(skill));
+        }
+      } catch {
+        // Skip malformed user skills
       }
     }
   }
@@ -300,50 +281,6 @@ export class SkillRegistry extends EventEmitter {
   /** Recursively list files in a skill directory (relative paths). */
   private listFiles(baseDir: string): string[] {
     return listFilesRecursive(baseDir);
-  }
-
-  private parseSkill(name: string, dir: string, skillMdPath: string): SkillInfo | null {
-    const content = readFileSync(skillMdPath, "utf-8");
-
-    // Extract description from YAML frontmatter
-    const description = this.extractDescription(content);
-    if (!description) {
-      console.warn(`[skills] Skipping "${name}" — no description in SKILL.md`);
-      return null;
-    }
-
-    // Check for executable scripts
-    const scriptsDir = join(dir, "scripts");
-    const hasScripts = existsSync(scriptsDir) && readdirSync(scriptsDir).length > 0;
-
-    // Determine container compatibility
-    const containerSafe = this.isContainerSafe(name, content);
-
-    return {
-      name,
-      description,
-      containerSafe,
-      hasScripts,
-      path: dir,
-    };
-  }
-
-  private extractDescription(content: string): string {
-    return extractDescription(content);
-  }
-
-  private isContainerSafe(name: string, content: string): boolean {
-    // 1. Explicit frontmatter: `container: true/false`
-    const containerFlag = extractFrontmatterField(content, "container");
-    if (containerFlag === "true") return true;
-    if (containerFlag === "false") return false;
-
-    // 2. Heuristic: check for host-only markers in content
-    for (const marker of HOST_ONLY_MARKERS) {
-      if (content.includes(marker)) return false;
-    }
-
-    return true;
   }
 }
 
