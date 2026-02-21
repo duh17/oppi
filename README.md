@@ -50,7 +50,7 @@ Pair your phone:
 oppi pair
 ```
 
-Scan the QR in Oppi. If your phone and server aren't on the same network:
+Scan the QR in the iOS app. If your phone and server aren't on the same network:
 
 ```bash
 oppi pair --host my-mac.tailnet.ts.net
@@ -81,7 +81,8 @@ oppi config set <k> <v>    update config
 
 - [Server README](server/README.md)
 - [Config schema](server/docs/config-schema.md)
-- [Theme system](docs/theme-system.md)
+- [Theme file guide](docs/theme-system.md)
+- [Permission gate policy guide](server/docs/policy-engine.md)
 - [Security & privacy](SECURITY.md)
 
 ## License

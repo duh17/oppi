@@ -1,6 +1,6 @@
 # oppi-server
 
-Self-hosted server for supervising [pi](https://github.com/badlogic/pi-mono) sessions from the Oppi iOS app.
+Self-hosted server for supervising [pi](https://github.com/badlogic/pi-mono) sessions from the iOS app.
 
 ## Quickstart
 
@@ -18,7 +18,7 @@ oppi serve         # starts server on 0.0.0.0:7749
 
 # 4. Pair your phone
 oppi pair "MyMac"  # generates QR code / deep link
-                   # scan in Oppi iOS app
+                   # scan in the iOS app
 ```
 
 That's it. Create a workspace in the app and start a session.

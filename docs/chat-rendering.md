@@ -1,10 +1,9 @@
 # Chat Rendering
 
-Oppi renders agent conversations as a scrollable timeline of typed rows — assistant text, user messages, tool calls, compaction markers, and system events. Tool calls are the most complex: they have collapsed and expanded states, server-provided styled segments, and per-tool rendering logic.
+The app renders agent conversations as a scrollable timeline of typed rows — assistant text, user messages, tool calls, compaction markers, and system events. Tool calls are the most complex: they have collapsed and expanded states, server-provided styled segments, and per-tool rendering logic.
 
 This document covers the full rendering pipeline from server events to pixels.
 
-Related design plan: `docs/design/chat-interaction-unification-plan.md` (UIKit-first hot-path unification for copy/expand/full-screen behavior).
 
 ## Architecture Overview
 
@@ -12,7 +11,7 @@ Related design plan: `docs/design/chat-interaction-unification-plan.md` (UIKit-f
 Pi CLI (RPC)
   │  tool_execution_start, tool_execution_end
   ▼
-Oppi Server (session-protocol.ts)
+Server (session-protocol.ts)
   │  MobileRendererRegistry pre-renders StyledSegment[]
   │  Attaches callSegments to tool_start, resultSegments to tool_end
   ▼
@@ -90,11 +89,11 @@ Segments are attached to existing `tool_start` and `tool_end` WebSocket messages
   "type": "tool_end",
   "tool": "recall",
   "toolCallId": "tc-002",
-  "details": { "matches": 5, "topHeader": "Design doc" },
+  "details": { "matches": 5, "topHeader": "Implementation notes" },
   "resultSegments": [
     { "text": "5 match(es)", "style": "success" },
     { "text": " — top: ", "style": "muted" },
-    { "text": "[0.85] Design doc", "style": "dim" }
+    { "text": "[0.85] Implementation notes", "style": "dim" }
   ]
 }
 ```
