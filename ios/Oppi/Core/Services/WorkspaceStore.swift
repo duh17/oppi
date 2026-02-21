@@ -46,9 +46,9 @@ struct ServerSyncState: Sendable {
 /// Observable store for workspaces and the available skill pool.
 ///
 /// Canonical source of truth is per-server storage (`workspacesByServer`,
-/// `skillsByServer`). The legacy `workspaces` / `skills` API is now just an
-/// active-server view over that same storage, so single- and multi-server
-/// flows share one data path.
+/// `skillsByServer`). The `workspaces` / `skills` computed properties are
+/// active-server convenience views over that same storage, so single- and
+/// multi-server flows share one data path.
 @MainActor @Observable
 final class WorkspaceStore {
     // MARK: - Active server context
@@ -78,27 +78,27 @@ final class WorkspaceStore {
     /// Test seam: inject isolated cache instance.
     var _cacheForTesting: TimelineCache?
 
-    // MARK: - Active-server compatibility API
+    // MARK: - Active-server convenience API
 
-    /// Active server workspaces (legacy API).
+    /// Active server workspaces.
     var workspaces: [Workspace] {
         get { workspacesByServer[activeKey] ?? [] }
         set { workspacesByServer[activeKey] = newValue }
     }
 
-    /// Active server skills (legacy API).
+    /// Active server skills.
     var skills: [SkillInfo] {
         get { skillsByServer[activeKey] ?? [] }
         set { skillsByServer[activeKey] = newValue }
     }
 
-    /// Active server loaded state (legacy API).
+    /// Active server loaded state.
     var isLoaded: Bool {
         get { serverLoaded[activeKey] ?? false }
         set { serverLoaded[activeKey] = newValue }
     }
 
-    /// Active server freshness (legacy API).
+    /// Active server freshness.
     var lastSuccessfulSyncAt: Date? {
         get { serverFreshness[activeKey]?.lastSuccessfulSyncAt }
         set {
@@ -108,7 +108,7 @@ final class WorkspaceStore {
         }
     }
 
-    /// Active server syncing flag (legacy API).
+    /// Active server syncing flag.
     var isSyncing: Bool {
         get { serverFreshness[activeKey]?.isSyncing ?? false }
         set {
@@ -118,7 +118,7 @@ final class WorkspaceStore {
         }
     }
 
-    /// Active server last-failure flag (legacy API).
+    /// Active server last-failure flag.
     var lastSyncFailed: Bool {
         get { serverFreshness[activeKey]?.lastSyncFailed ?? false }
         set {
@@ -252,16 +252,16 @@ final class WorkspaceStore {
 
     // MARK: - Loading
 
-    /// Load workspaces + skills for the active server (compatibility wrapper).
+    /// Load workspaces + skills for the active server.
     ///
     /// Uses cache immediately when first loading this server, then refreshes
     /// from network. Single- and multi-server paths share `loadServer`.
     func load(api: APIClient) async {
-        await loadServer(serverId: activeKey, api: api, allowLegacyFallback: true)
+        await loadServer(serverId: activeKey, api: api)
     }
 
     /// Load workspaces + skills for a specific server.
-    func loadServer(serverId: String, api: APIClient, allowLegacyFallback: Bool = false) async {
+    func loadServer(serverId: String, api: APIClient) async {
         let cache = _cacheForTesting ?? TimelineCache.shared
 
         if !serverId.isEmpty && !serverOrder.contains(serverId) {
@@ -274,11 +274,7 @@ final class WorkspaceStore {
 
         // Show cached data immediately on first load for this server.
         if serverLoaded[serverId] != true {
-            let cached = await loadCachedCatalog(
-                serverId: serverId,
-                cache: cache,
-                allowLegacyFallback: allowLegacyFallback
-            )
+            let cached = await loadCachedCatalog(serverId: serverId, cache: cache)
 
             if let cws = cached.workspaces {
                 workspacesByServer[serverId] = cws
@@ -290,21 +286,6 @@ final class WorkspaceStore {
             let hasCachedData = (cached.workspaces?.isEmpty == false) || (cached.skills?.isEmpty == false)
             if hasCachedData {
                 serverLoaded[serverId] = true
-            }
-
-            // Opportunistic cache migration: legacy → namespaced.
-            if cached.usedLegacy, !serverId.isEmpty {
-                let capturedServerId = serverId
-                let cachedWorkspaces = cached.workspaces
-                let cachedSkills = cached.skills
-                Task.detached {
-                    if let cachedWorkspaces {
-                        await cache.saveWorkspaces(cachedWorkspaces, serverId: capturedServerId)
-                    }
-                    if let cachedSkills {
-                        await cache.saveSkills(cachedSkills, serverId: capturedServerId)
-                    }
-                }
             }
         }
 
@@ -368,15 +349,10 @@ final class WorkspaceStore {
             }
         }
 
-        let allowLegacyFallback = servers.count == 1
         for server in servers {
             guard let baseURL = server.baseURL else { continue }
             let api = APIClient(baseURL: baseURL, token: server.token)
-            await loadServer(
-                serverId: server.id,
-                api: api,
-                allowLegacyFallback: allowLegacyFallback
-            )
+            await loadServer(serverId: server.id, api: api)
         }
     }
 
@@ -385,7 +361,6 @@ final class WorkspaceStore {
     private struct CachedCatalog {
         var workspaces: [Workspace]?
         var skills: [SkillInfo]?
-        var usedLegacy = false
     }
 
     private func ensureFreshness(for serverId: String) {
@@ -414,8 +389,7 @@ final class WorkspaceStore {
 
     private func loadCachedCatalog(
         serverId: String,
-        cache: TimelineCache,
-        allowLegacyFallback: Bool
+        cache: TimelineCache
     ) async -> CachedCatalog {
         if serverId.isEmpty {
             async let ws = cache.loadWorkspaces()
@@ -423,26 +397,8 @@ final class WorkspaceStore {
             return await CachedCatalog(workspaces: ws, skills: sk)
         }
 
-        async let namespacedWs = cache.loadWorkspaces(serverId: serverId)
-        async let namespacedSk = cache.loadSkills(serverId: serverId)
-        var catalog = await CachedCatalog(workspaces: namespacedWs, skills: namespacedSk)
-
-        if allowLegacyFallback, catalog.workspaces == nil || catalog.skills == nil {
-            async let legacyWs = cache.loadWorkspaces()
-            async let legacySk = cache.loadSkills()
-            let fallbackWs = await legacyWs
-            let fallbackSk = await legacySk
-
-            if catalog.workspaces == nil, let fallbackWs {
-                catalog.workspaces = fallbackWs
-                catalog.usedLegacy = true
-            }
-            if catalog.skills == nil, let fallbackSk {
-                catalog.skills = fallbackSk
-                catalog.usedLegacy = true
-            }
-        }
-
-        return catalog
+        async let ws = cache.loadWorkspaces(serverId: serverId)
+        async let sk = cache.loadSkills(serverId: serverId)
+        return await CachedCatalog(workspaces: ws, skills: sk)
     }
 }

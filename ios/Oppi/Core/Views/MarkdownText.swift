@@ -682,10 +682,6 @@ enum FlatSegment: Sendable {
     }
 }
 
-// NOTE: Legacy CommonMarkView (~190 lines) removed 2026-02-10.
-// Caused 7-60s layout freezes from deep VStack + AnyView nesting.
-// Replaced by FlatMarkdownView above. See git history if needed.
-
 // MARK: - Code Block Views
 
 /// Shared chrome for code block containers.

@@ -35,7 +35,7 @@ enum ReleaseFeatures {
 /// SwiftUI implementations are retained as opt-in fallbacks for debugging and
 /// future parity checks while native UIKit replacements converge.
 enum HotPathRenderGates {
-    /// Enable legacy SwiftUI hosted expanded tool content (todo/read-media) in
+    /// Enable SwiftUI hosted expanded tool content (todo/read-media) in
     /// timeline rows. Disabled by default to enforce UIKit-first hot paths.
     ///
     /// Debug override:

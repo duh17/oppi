@@ -736,7 +736,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     func resolvePermission(id: String, outcome: PermissionOutcome, tool: String, summary: String) {
         let resolved = ChatItem.permissionResolved(id: id, outcome: outcome, tool: tool, summary: summary)
         if let idx = indexForID(id) {
-            // Replace old inline card (trace replay or legacy)
+            // Replace old inline card (trace replay or prior state)
             items[idx] = resolved
         } else {
             // New flow: permission was never inline — append the marker

@@ -86,18 +86,7 @@ private struct SkillRow: View {
                     .font(.system(.body, design: .monospaced, weight: .medium))
                     .foregroundStyle(isEnabled ? .themeFg : .themeComment)
 
-                if skill.hasScripts {
-                    Image(systemName: "terminal")
-                        .font(.caption2)
-                        .foregroundStyle(.themeBlue)
-                }
-
-                if !skill.containerSafe {
-                    Image(systemName: "desktopcomputer")
-                        .font(.caption2)
-                        .foregroundStyle(.themeOrange)
-                        .accessibilityLabel("Needs local tools")
-                }
+            
             }
 
             Text(skill.description)
