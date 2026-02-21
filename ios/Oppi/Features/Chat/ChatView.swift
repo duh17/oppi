@@ -62,11 +62,7 @@ struct ChatView: View {
     }
 
     private var sessionDisplayName: String {
-        let trimmed = session?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty {
-            return trimmed
-        }
-        return "Session \(String(sessionId.prefix(8)))"
+        session?.displayTitle ?? "Session \(String(sessionId.prefix(8)))"
     }
 
     private var isBusy: Bool {

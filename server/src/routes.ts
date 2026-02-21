@@ -51,6 +51,7 @@ import {
   validateCwdAlignment,
 } from "./local-sessions.js";
 import { getGitStatus } from "./git-status.js";
+import { defaultPolicy } from "./policy-presets.js";
 import type { Rule, RuleInput } from "./rules.js";
 import type { AuditEntry } from "./audit.js";
 import type {
@@ -123,6 +124,9 @@ export class RouteHandler {
       return this.handleGetUserStreamEvents(url, res);
     if (path === "/permissions/pending" && method === "GET")
       return this.handleGetPendingPermissions(url, res);
+    if (path === "/policy/fallback" && method === "GET") return this.handleGetPolicyFallback(res);
+    if (path === "/policy/fallback" && method === "PATCH")
+      return this.handlePatchPolicyFallback(req, res);
     if (path === "/policy/rules" && method === "GET") return this.handleGetPolicyRules(url, res);
     if (path === "/policy/rules" && method === "POST") return this.handleCreatePolicyRule(req, res);
     if (path.startsWith("/policy/rules/") && method === "PATCH")
@@ -927,10 +931,10 @@ export class RouteHandler {
         return;
       }
 
-      // Extract name from the local session JSONL if not explicitly provided
+      // Extract name and first message from the local session JSONL
+      const localMeta = await this.readLocalSessionMeta(validation.path);
       let sessionName = body.name;
       if (!sessionName) {
-        const localMeta = await this.readLocalSessionMeta(validation.path);
         sessionName = localMeta?.name || localMeta?.firstMessage?.slice(0, 80);
       }
 
@@ -939,6 +943,9 @@ export class RouteHandler {
 
       session.workspaceId = workspace.id;
       session.workspaceName = workspace.name;
+      if (localMeta?.firstMessage) {
+        session.firstMessage = localMeta.firstMessage.slice(0, 200);
+      }
       session.piSessionFile = validation.path;
       session.piSessionFiles = [validation.path];
       this.ctx.storage.saveSession(session);
@@ -1455,6 +1462,44 @@ export class RouteHandler {
       pending,
       serverTime,
     });
+  }
+
+  private handleGetPolicyFallback(res: ServerResponse): void {
+    this.json(res, { fallback: this.ctx.gate.getDefaultFallback() });
+  }
+
+  private async handlePatchPolicyFallback(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await this.parseBody<Record<string, unknown>>(req);
+    const rawFallback = body.fallback;
+
+    const normalizedFallback =
+      rawFallback === "block" || rawFallback === "deny" || rawFallback === "denied"
+        ? "deny"
+        : rawFallback === "allow" || rawFallback === "ask"
+          ? rawFallback
+          : null;
+
+    if (!normalizedFallback) {
+      this.error(res, 400, 'fallback must be one of "allow", "ask", "deny"');
+      return;
+    }
+
+    const persistedFallback: "allow" | "ask" | "block" =
+      normalizedFallback === "deny" ? "block" : normalizedFallback;
+
+    const currentConfig = this.ctx.storage.getConfig();
+    const nextPolicy = {
+      ...(currentConfig.policy || defaultPolicy()),
+      fallback: persistedFallback,
+    };
+
+    this.ctx.storage.updateConfig({ policy: nextPolicy });
+    this.ctx.gate.setDefaultFallback(normalizedFallback);
+
+    this.json(res, { fallback: normalizedFallback });
   }
 
   private handleGetPolicyRules(url: URL, res: ServerResponse): void {

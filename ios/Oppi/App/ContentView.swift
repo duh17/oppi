@@ -108,11 +108,8 @@ struct ContentView: View {
     }
 
     private func sessionLabel(for sessionId: String) -> String {
-        // Search across ALL servers for the session name
-        if let found = coordinator.findSession(id: sessionId),
-           let name = found.session.name?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !name.isEmpty {
-            return name
+        if let found = coordinator.findSession(id: sessionId) {
+            return found.session.displayTitle
         }
         return "Session \(String(sessionId.prefix(8)))"
     }
