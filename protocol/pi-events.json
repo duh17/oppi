@@ -185,8 +185,8 @@
       "toolName": "remember",
       "toolCallId": "tc-replay-ext",
       "result": {
-        "content": [{ "type": "text", "text": "Saved to journal: 2026-02-18-mac-studio.md" }],
-        "details": { "file": "2026-02-18-mac-studio.md", "redacted": false }
+        "content": [{ "type": "text", "text": "Saved to journal: 2026-02-18-session.md" }],
+        "details": { "file": "2026-02-18-session.md", "redacted": false }
       },
       "isError": false
     },

@@ -12,18 +12,18 @@ struct PairedServerTests {
     @Test("Init from credentials with fingerprint")
     func initFromCredentialsWithFingerprint() {
         let creds = ServerCredentials(
-            host: "mac-studio.ts.net",
+            host: "my-server.ts.net",
             port: 7749,
             token: "sk_test123",
-            name: "mac-studio",
+            name: "my-server",
             serverFingerprint: "sha256:testfp123"
         )
 
         let server = PairedServer(from: creds)
         #expect(server != nil)
         #expect(server?.id == "sha256:testfp123")
-        #expect(server?.name == "mac-studio")
-        #expect(server?.host == "mac-studio.ts.net")
+        #expect(server?.name == "my-server")
+        #expect(server?.host == "my-server.ts.net")
         #expect(server?.port == 7749)
         #expect(server?.token == "sk_test123")
         #expect(server?.fingerprint == "sha256:testfp123")
@@ -80,10 +80,10 @@ struct PairedServerTests {
     @Test("Update credentials preserves identity and metadata")
     func updateCredentials() {
         let originalCreds = ServerCredentials(
-            host: "mac-studio.ts.net",
+            host: "my-server.ts.net",
             port: 7749,
             token: "sk_old",
-            name: "mac-studio",
+            name: "my-server",
             serverFingerprint: "sha256:fp1"
         )
 
