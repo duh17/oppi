@@ -25,18 +25,20 @@ How Oppi handles pi extensions end-to-end: discovery, selection, spawning, mobil
 │                                                      │
 │  extension-loader.ts                                 │
 │    listHostExtensions()  → GET /extensions            │
-│    resolveWorkspaceExtensions()  → --extension flags  │
+│    resolveWorkspaceExtensions()  → extension paths    │
 │                                                      │
 │  mobile-renderer.ts                                  │
 │    Built-in renderers (bash, read, edit, write, …)   │
 │    + ~/.pi/agent/mobile-renderers/ → StyledSegment[]  │
 │                                                      │
-│  session-spawn.ts                                    │
-│    pi --mode rpc                                     │
-│      --no-extensions              ← suppress auto    │
-│      --extension permission-gate  ← always loaded    │
-│      --extension memory.ts        ← workspace picks  │
-│      --extension todos.ts                            │
+│  sdk-backend.ts                                      │
+│    createAgentSession({                              │
+│      extensionsOverride: [                           │
+│        permission-gate,   ← always loaded            │
+│        memory.ts,         ← workspace picks          │
+│        todos.ts                                      │
+│      ]                                               │
+│    })                                                │
 │                                                      │
 │  session-protocol.ts                                 │
 │    tool_execution_start → renderCall(toolName, args)  │
@@ -82,14 +84,14 @@ Results are served via `GET /extensions` to the iOS app.
 
 iOS `WorkspaceEditView` shows discovered extensions as toggleable checkboxes. Selected names are stored in `workspace.extensions: string[]`. The text field also supports manual entry for extensions not auto-discovered.
 
-### 3. Spawning
+### 3. Session Creation
 
-When a session starts (`session-spawn.ts`):
+When a session starts (`sdk-backend.ts`):
 
-1. `--no-extensions` suppresses pi's auto-discovery of `~/.pi/agent/extensions/`
-2. `--extension <path>` is added for permission-gate (always)
-3. `resolveWorkspaceExtensions(workspace.extensions)` resolves names → paths
-4. Each resolved extension gets `--extension <path>`
+1. `extensionsOverride` is set on `createAgentSession()` — this replaces pi's default auto-discovery
+2. Permission-gate extension is always included
+3. `resolveWorkspaceExtensions(workspace.extensions)` resolves names → absolute paths
+4. Each resolved extension is added to the override array
 
 This gives oppi full control over which extensions load per workspace.
 
@@ -257,7 +259,7 @@ Open iOS → workspace settings → toggle the new extension on.
 
 ### permission-gate
 
-Always loaded by `session-spawn.ts`. Never appears in `GET /extensions`. Connects to oppi-server via TCP localhost socket to route tool approvals through the iOS app.
+Always loaded by `sdk-backend.ts`. Never appears in `GET /extensions`. Connects to oppi-server via TCP localhost socket to route tool approvals through the iOS app.
 
 Located at: `server/extensions/permission-gate/`
 
@@ -273,7 +275,7 @@ To add a new built-in tool renderer, add it to `BUILTIN_RENDERERS` in `mobile-re
 |------|---------|
 | `server/src/extension-loader.ts` | Discovery, validation, resolution of host extensions |
 | `server/src/mobile-renderer.ts` | `MobileRendererRegistry`, built-in renderers, user renderer loading |
-| `server/src/session-spawn.ts` | Pi spawn args including `--extension` flags |
+| `server/src/sdk-backend.ts` | Agent session creation including `extensionsOverride` |
 | `server/src/session-protocol.ts` | Injects `callSegments`/`resultSegments` into WS messages |
 | `~/.pi/agent/extensions/*.ts` | Pi extensions (auto-discovered) |
 | `~/.pi/agent/mobile-renderers/*.ts` | User-provided mobile renderers |
@@ -288,7 +290,7 @@ Oppi reuses pi's extension system verbatim — same TypeScript format, same `Ext
 
 | Aspect | Pi (Terminal) | Oppi (Mobile) |
 |--------|--------------|---------------|
-| Discovery | Auto-discovers `~/.pi/agent/extensions/` | Suppressed; explicit `--extension` flags |
+| Discovery | Auto-discovers `~/.pi/agent/extensions/` | Suppressed; explicit `extensionsOverride` array |
 | Rendering | TUI `Component` objects via `renderCall`/`renderResult` | `StyledSegment[]` via `~/.pi/agent/mobile-renderers/` |
 | UI interaction | `ctx.ui.confirm()`, `ctx.ui.select()` etc. | Forwarded via RPC → WS → iOS native dialogs |
 | Permission gate | Interactive TUI confirm dialog | TCP socket → iOS push notification + banner |
