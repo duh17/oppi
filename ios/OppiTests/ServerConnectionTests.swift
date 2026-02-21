@@ -203,7 +203,7 @@ struct ServerConnectionTests {
         conn.handleServerMessage(.connected(session: session), sessionId: "s1")
 
         conn.handleServerMessage(
-            .rpcResult(
+            .commandResult(
                 command: "get_commands",
                 requestId: nil,
                 success: true,
@@ -539,7 +539,7 @@ struct ServerConnectionTests {
 
                 if let requestId = sent.requestId {
                     conn.handleServerMessage(
-                        .rpcResult(
+                        .commandResult(
                             command: sent.command,
                             requestId: requestId,
                             success: true,
@@ -810,7 +810,7 @@ struct ServerConnectionTests {
 
                 if let requestId = sent.requestId {
                     conn.handleServerMessage(
-                        .rpcResult(
+                        .commandResult(
                             command: sent.command,
                             requestId: requestId,
                             success: false,
@@ -846,7 +846,7 @@ struct ServerConnectionTests {
             conn._setActiveSessionIdForTesting("s1")
             conn._sendAckTimeoutForTesting = .milliseconds(120)
 
-            // Simulate successful socket write with no rpc_result ack arriving.
+            // Simulate successful socket write with no command_result ack arriving.
             conn._sendMessageForTesting = { _ in }
 
             do {
@@ -878,7 +878,7 @@ struct ServerConnectionTests {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
                         success: true,
@@ -899,7 +899,7 @@ struct ServerConnectionTests {
                 sentTypes.append("fork")
                 forkEntryId = entryId
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "fork",
                         requestId: requestId,
                         success: true,
@@ -931,7 +931,7 @@ struct ServerConnectionTests {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
                         success: true,
@@ -952,7 +952,7 @@ struct ServerConnectionTests {
                 sentTypes.append("fork")
                 forkEntryId = entryId
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "fork",
                         requestId: requestId,
                         success: true,
@@ -984,7 +984,7 @@ struct ServerConnectionTests {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
                         success: true,
@@ -1005,7 +1005,7 @@ struct ServerConnectionTests {
                 sentTypes.append("fork")
                 forkEntryId = entryId
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "fork",
                         requestId: requestId,
                         success: true,
@@ -1036,7 +1036,7 @@ struct ServerConnectionTests {
             case .getForkMessages(let requestId):
                 sentTypes.append("get_fork_messages")
                 conn.handleServerMessage(
-                    .rpcResult(
+                    .commandResult(
                         command: "get_fork_messages",
                         requestId: requestId,
                         success: true,
@@ -1709,6 +1709,63 @@ struct StreamLifecycleTests {
         #expect(conn.permissionStore.pending.count == 1,
                 "Cross-session permission should be added to store")
         #expect(conn.permissionStore.pending.first?.id == "p2")
+    }
+
+    @MainActor
+    @Test func respondToCrossSessionPermissionDoesNotPolluteActiveTimeline() async throws {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendMessageForTesting = { _ in }  // stub WS send
+
+        // Add a permission belonging to a DIFFERENT session
+        let crossPerm = PermissionRequest(
+            id: "xp1", sessionId: "s2", tool: "bash",
+            input: [:], displaySummary: "cross-session cmd", reason: "",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true
+        )
+        conn.permissionStore.add(crossPerm)
+
+        // Approve it while viewing session s1
+        try await conn.respondToPermission(id: "xp1", action: .allow)
+
+        // The "Allowed" marker must NOT appear in the active session's timeline
+        let hasMarker = conn.reducer.items.contains {
+            if case .permissionResolved(let id, _, _, _) = $0 { return id == "xp1" }
+            return false
+        }
+        #expect(!hasMarker,
+                "Cross-session permission approval should not inject marker into active session timeline")
+
+        // Permission should still be removed from the store
+        #expect(conn.permissionStore.pending.isEmpty,
+                "Permission should be consumed from store after response")
+    }
+
+    @MainActor
+    @Test func respondToSameSessionPermissionInjectsMarker() async throws {
+        let conn = makeConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        conn._sendMessageForTesting = { _ in }
+
+        // Add a permission for the ACTIVE session
+        let perm = PermissionRequest(
+            id: "sp1", sessionId: "s1", tool: "bash",
+            input: [:], displaySummary: "same-session cmd", reason: "",
+            timeoutAt: Date().addingTimeInterval(60),
+            expires: true
+        )
+        conn.permissionStore.add(perm)
+
+        try await conn.respondToPermission(id: "sp1", action: .allow)
+
+        // The marker SHOULD appear for the active session
+        let hasMarker = conn.reducer.items.contains {
+            if case .permissionResolved(let id, _, _, _) = $0 { return id == "sp1" }
+            return false
+        }
+        #expect(hasMarker,
+                "Same-session permission approval should inject marker into active timeline")
     }
 
     // MARK: - reconnectIfNeeded restarts dead stream

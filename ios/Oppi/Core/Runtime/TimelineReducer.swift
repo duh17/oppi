@@ -671,7 +671,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
 
         // RPC results — model changes get a system event, others are silent
-        case .rpcResult(_, let command, _, let success, _, let error):
+        case .commandResult(_, let command, _, let success, _, let error):
             if !success, let err = error {
                 items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(err)"))
             } else if command == "set_model" || command == "cycle_model" {

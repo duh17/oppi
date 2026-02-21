@@ -7,7 +7,7 @@ import UIKit
 ///
 /// Manual Encodable to match server's `ClientMessage` union type with `type` discriminator.
 /// Every case includes an optional `requestId` for response correlation — the server
-/// returns `rpc_result` with the same `requestId` for commands forwarded to pi RPC.
+/// returns `command_result` with the same `requestId` for forwarded commands.
 enum ClientMessage: Sendable {
     // ── Prompting ──
     case prompt(message: String, images: [ImageAttachment]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)

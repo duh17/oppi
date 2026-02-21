@@ -819,8 +819,36 @@ export class Storage {
     return pairingToken;
   }
 
+  /**
+   * Reload pairing-related fields from disk.
+   *
+   * The `oppi pair` CLI runs in a separate process and writes a fresh
+   * pairingToken + expiry to config.json.  The running server must pick
+   * those up so that POST /pair succeeds without a restart.
+   *
+   * Only pairing fields are merged — everything else stays in-memory to
+   * avoid clobbering runtime state (auth tokens, push tokens, etc.).
+   */
+  private reloadPairingFromDisk(): void {
+    try {
+      if (!existsSync(this.configPath)) return;
+      const raw = JSON.parse(readFileSync(this.configPath, "utf-8")) as Record<string, unknown>;
+
+      if (typeof raw.pairingToken === "string" && raw.pairingToken !== this.config.pairingToken) {
+        this.config.pairingToken = raw.pairingToken;
+        this.config.pairingTokenExpiresAt =
+          typeof raw.pairingTokenExpiresAt === "number" ? raw.pairingTokenExpiresAt : undefined;
+      }
+    } catch {
+      // Disk read failed — proceed with in-memory state.
+    }
+  }
+
   /** Consume pairing token atomically and issue a long-lived auth device token. */
   consumePairingToken(candidate: string): string | null {
+    // Reload from disk in case `oppi pair` wrote a token in another process.
+    this.reloadPairingFromDisk();
+
     const pairingToken = this.config.pairingToken;
     const expiresAt = this.config.pairingTokenExpiresAt;
 

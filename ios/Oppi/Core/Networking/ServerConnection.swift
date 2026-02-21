@@ -39,7 +39,7 @@ final class ServerConnection {
     var activeSessionId: String?
 
     /// Pending prompt/steer/follow-up acknowledgements keyed by requestId.
-    /// Resolved by `turn_ack` stage progress (preferred) and `rpc_result` fallback.
+    /// Resolved by `turn_ack` stage progress (preferred) and `command_result` fallback.
     var pendingTurnSendsByRequestId: [String: PendingTurnSend] = [:]
     var pendingTurnRequestIdByClientTurnId: [String: String] = [:]
     static let sendAckTimeoutDefault: Duration = .seconds(4)
@@ -287,7 +287,7 @@ final class ServerConnection {
     ///
     /// Returns `true` if the send succeeded on any attempt.
     /// Only retries the WebSocket *send* — server-side subscribe failures
-    /// (session not found, etc.) come back as `rpc_result` errors and are
+    /// (session not found, etc.) come back as `command_result` errors and are
     /// handled by the existing message routing.
     private func resubscribeWithRetry(
         sessionId: String,
@@ -552,7 +552,12 @@ final class ServerConnection {
 
         let outcome: PermissionOutcome = normalizedChoice.action == .allow ? .allowed : .denied
         if let request = permissionStore.take(id: id) {
-            reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
+            // Only inject the resolved marker into the timeline if this permission
+            // belongs to the currently active session. Otherwise we'd pollute the
+            // wrong session's timeline (cross-session permission approval).
+            if request.sessionId == activeSessionId {
+                reducer.resolvePermission(id: id, outcome: outcome, tool: request.tool, summary: request.displaySummary)
+            }
         }
         if ReleaseFeatures.pushNotificationsEnabled {
             PermissionNotificationService.shared.cancelNotification(permissionId: id)
@@ -830,7 +835,7 @@ final class ServerConnection {
         }
 
         if success {
-            // Handle servers that only emit rpc_result without stage events.
+            // Handle servers that only emit command_result without stage events.
             if pending.latestStage == nil {
                 pending.latestStage = .dispatched
                 pending.notifyStage(.dispatched)

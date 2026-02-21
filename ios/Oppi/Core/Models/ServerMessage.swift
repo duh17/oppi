@@ -29,8 +29,8 @@ enum ServerMessage: Sendable, Equatable {
     // Turn delivery acknowledgements
     case turnAck(command: String, clientTurnId: String, stage: TurnAckStage, requestId: String?, duplicate: Bool)
 
-    // RPC responses (from forwarded commands)
-    case rpcResult(command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
+    // Command responses (from forwarded commands)
+    case commandResult(command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
 
     // Compaction
     case compactionStart(reason: String)
@@ -120,7 +120,7 @@ extension ServerMessage: Decodable {
         case method, title, options, message, placeholder, prefill, timeout
         // extension_ui_notification
         case notifyType, statusKey, statusText
-        // rpc_result
+        // command_result
         case command, requestId, success, data
         // compaction
         case aborted, willRetry, summary, tokensBefore
@@ -220,13 +220,13 @@ extension ServerMessage: Decodable {
                 duplicate: duplicate
             )
 
-        case "rpc_result":
+        case "command_result", "rpc_result":
             let cmd = try c.decode(String.self, forKey: .command)
             let reqId = try c.decodeIfPresent(String.self, forKey: .requestId)
             let success = try c.decode(Bool.self, forKey: .success)
             let data = try c.decodeIfPresent(JSONValue.self, forKey: .data)
             let error = try c.decodeIfPresent(String.self, forKey: .error)
-            self = .rpcResult(command: cmd, requestId: reqId, success: success, data: data, error: error)
+            self = .commandResult(command: cmd, requestId: reqId, success: success, data: data, error: error)
 
         case "compaction_start":
             let reason = try c.decode(String.self, forKey: .reason)
@@ -372,7 +372,7 @@ extension ServerMessage {
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"
         case .turnAck: "turnAck"
-        case .rpcResult: "rpcResult"
+        case .commandResult: "commandResult"
         case .compactionStart: "compactionStart"
         case .compactionEnd: "compactionEnd"
         case .retryStart: "retryStart"

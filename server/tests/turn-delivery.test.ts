@@ -114,9 +114,9 @@ function asTurnAcks(events: ServerMessage[]): Array<Extract<ServerMessage, { typ
 
 function asRpcResults(
   events: ServerMessage[],
-): Array<Extract<ServerMessage, { type: "rpc_result" }>> {
+): Array<Extract<ServerMessage, { type: "command_result" }>> {
   return events.filter(
-    (event): event is Extract<ServerMessage, { type: "rpc_result" }> => event.type === "rpc_result",
+    (event): event is Extract<ServerMessage, { type: "command_result" }> => event.type === "command_result",
   );
 }
 

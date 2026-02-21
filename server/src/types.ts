@@ -287,7 +287,7 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
  * Client → Server messages.
  *
  * All messages may include an optional `requestId` for response correlation.
- * Commands forwarded to pi RPC return an `rpc_result` with the same requestId.
+ * Commands return a `command_result` with the same requestId.
  */
 export type ClientMessage = // ── Stream subscriptions (multiplexed user stream) ──
   (
@@ -436,9 +436,9 @@ export type ServerMessage = // ── Connection ──
         requestId?: string;
         duplicate?: boolean;
       }
-    // ── RPC responses (keyed by requestId for correlation) ──
+    // ── Command responses (keyed by requestId for correlation) ──
     | {
-        type: "rpc_result";
+        type: "command_result";
         command: string;
         requestId?: string;
         success: boolean;

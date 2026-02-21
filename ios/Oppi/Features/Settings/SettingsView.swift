@@ -54,7 +54,6 @@ struct SettingsView: View {
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
-                        .disabled(serverStore.servers.count <= 1)
                     }
                 }
 
@@ -157,21 +156,21 @@ struct SettingsView: View {
             }
         }
         .confirmationDialog(
-            "Remove \(showRemoveConfirmation?.name ?? "server")?",
+            removeDialogTitle,
             isPresented: Binding(
                 get: { showRemoveConfirmation != nil },
                 set: { if !$0 { showRemoveConfirmation = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("Remove", role: .destructive) {
+            Button(removeDialogButtonTitle, role: .destructive) {
                 if let server = showRemoveConfirmation {
                     removeServer(server)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove the server from your paired servers. You can re-pair later.")
+            Text(removeDialogMessage)
         }
     }
 
@@ -225,6 +224,34 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.themeComment)
         }
+    }
+
+    private var removingLastServer: Bool {
+        guard let server = showRemoveConfirmation else {
+            return false
+        }
+        return serverStore.servers.count == 1 && serverStore.servers.first?.id == server.id
+    }
+
+    private var removeDialogTitle: String {
+        guard let server = showRemoveConfirmation else {
+            return "Remove server?"
+        }
+        if removingLastServer {
+            return "Remove your only paired server?"
+        }
+        return "Remove \(server.name)?"
+    }
+
+    private var removeDialogButtonTitle: String {
+        removingLastServer ? "Remove Last Server" : "Remove Server"
+    }
+
+    private var removeDialogMessage: String {
+        if removingLastServer {
+            return "This is the only paired server on this device. Removing it will disconnect Oppi and return you to onboarding. You'll need to pair again before using the app."
+        }
+        return "This removes the server from this iPhone only. It does not delete anything on the server, and you can pair it again later."
     }
 
     private var biometricIcon: String {

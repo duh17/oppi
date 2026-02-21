@@ -323,7 +323,7 @@ final class ProtocolSnapshotTests: XCTestCase {
             "agent_start", "agent_end", "message_end",
             "text_delta", "thinking_delta",
             "tool_start", "tool_output", "tool_end",
-            "turn_ack", "rpc_result",
+            "turn_ack", "command_result",
             "compaction_start", "compaction_end",
             "retry_start", "retry_end",
             "permission_request", "permission_expired", "permission_cancelled",

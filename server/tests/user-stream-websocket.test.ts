@@ -277,8 +277,8 @@ describe("/stream websocket behavior", () => {
     await flushQueue();
 
     const unsubscribeResults = ws.sent.filter(
-      (msg): msg is Extract<ServerMessage, { type: "rpc_result" }> =>
-        msg.type === "rpc_result" && msg.command === "unsubscribe",
+      (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
+        msg.type === "command_result" && msg.command === "unsubscribe",
     );
 
     expect(unsubscribeResults).toHaveLength(2);
@@ -367,7 +367,7 @@ describe("/stream websocket behavior", () => {
 
     const normalize = (messages: ServerMessage[]) =>
       messages.map((msg) => {
-        if (msg.type === "rpc_result") {
+        if (msg.type === "command_result") {
           return {
             type: msg.type,
             command: msg.command,

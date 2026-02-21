@@ -1405,7 +1405,7 @@ export class Server {
           });
 
           if (requestId) {
-            send({ type: "rpc_result", command: "prompt", requestId, success: true });
+            send({ type: "command_result", command: "prompt", requestId, success: true });
           }
 
           console.log(`${ts()} [ws] PROMPT sent to pi for ${session.id}`);
@@ -1413,7 +1413,7 @@ export class Server {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
             send({
-              type: "rpc_result",
+              type: "command_result",
               command: "prompt",
               requestId,
               success: false,
@@ -1446,13 +1446,13 @@ export class Server {
             requestId,
           });
           if (requestId) {
-            send({ type: "rpc_result", command: "steer", requestId, success: true });
+            send({ type: "command_result", command: "steer", requestId, success: true });
           }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
             send({
-              type: "rpc_result",
+              type: "command_result",
               command: "steer",
               requestId,
               success: false,
@@ -1485,13 +1485,13 @@ export class Server {
             requestId,
           });
           if (requestId) {
-            send({ type: "rpc_result", command: "follow_up", requestId, success: true });
+            send({ type: "command_result", command: "follow_up", requestId, success: true });
           }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
             send({
-              type: "rpc_result",
+              type: "command_result",
               command: "follow_up",
               requestId,
               success: false,
@@ -1512,12 +1512,12 @@ export class Server {
         try {
           await this.sessions.sendAbort(session.id);
           if (requestId) {
-            send({ type: "rpc_result", command, requestId, success: true });
+            send({ type: "command_result", command, requestId, success: true });
           }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
-            send({ type: "rpc_result", command, requestId, success: false, error: message });
+            send({ type: "command_result", command, requestId, success: false, error: message });
             break;
           }
           throw err;
@@ -1531,13 +1531,13 @@ export class Server {
         try {
           await this.sessions.stopSession(session.id);
           if (requestId) {
-            send({ type: "rpc_result", command: "stop_session", requestId, success: true });
+            send({ type: "command_result", command: "stop_session", requestId, success: true });
           }
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           if (requestId) {
             send({
-              type: "rpc_result",
+              type: "command_result",
               command: "stop_session",
               requestId,
               success: false,

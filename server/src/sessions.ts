@@ -1016,7 +1016,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Allowlisted commands that can be forwarded from the WS client.
    * Each maps to a pi SDK method. Commands that return data are
-   * awaited and the result broadcast as an `rpc_result` message.
+   * awaited and the result broadcast as a `command_result` message.
    */
   private static readonly SDK_PASSTHROUGH: ReadonlySet<string> = new Set([
     // State
@@ -1056,7 +1056,7 @@ export class SessionManager extends EventEmitter {
    *
    * Used for commands that map 1:1 to SDK methods (model switching,
    * thinking level, session management, etc.). The response is
-   * broadcast back as an `rpc_result` ServerMessage.
+   * broadcast back as a `command_result` ServerMessage.
    */
   async forwardClientCommand(
     sessionId: string,
@@ -1136,7 +1136,7 @@ export class SessionManager extends EventEmitter {
 
         const appliedRememberedThinking = await this.applyRememberedThinkingLevel(key, active);
 
-        // Keep rpc_result payload consistent with server-authoritative session state.
+        // Keep command_result payload consistent with server-authoritative session state.
         if (
           cmdType === "cycle_model" &&
           appliedRememberedThinking &&
@@ -1177,7 +1177,7 @@ export class SessionManager extends EventEmitter {
       }
 
       this.broadcast(key, {
-        type: "rpc_result",
+        type: "command_result",
         command: cmdType,
         requestId,
         success: true,
@@ -1198,7 +1198,7 @@ export class SessionManager extends EventEmitter {
     } catch (err) {
       const rawError = err instanceof Error ? err.message : String(err);
       this.broadcast(key, {
-        type: "rpc_result",
+        type: "command_result",
         command: cmdType,
         requestId,
         success: false,

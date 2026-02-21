@@ -239,7 +239,7 @@ export class UserStreamMux {
     ): Promise<void> => {
       if (sinceSeq !== undefined && (!Number.isInteger(sinceSeq) || sinceSeq < 0)) {
         send({
-          type: "rpc_result",
+          type: "command_result",
           command: "subscribe",
           requestId,
           success: false,
@@ -252,7 +252,7 @@ export class UserStreamMux {
       const session = this.ctx.storage.getSession(sessionId);
       if (!session) {
         send({
-          type: "rpc_result",
+          type: "command_result",
           command: "subscribe",
           requestId,
           success: false,
@@ -350,7 +350,7 @@ export class UserStreamMux {
         }
 
         send({
-          type: "rpc_result",
+          type: "command_result",
           command: "subscribe",
           requestId,
           success: true,
@@ -365,7 +365,7 @@ export class UserStreamMux {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         send({
-          type: "rpc_result",
+          type: "command_result",
           command: "subscribe",
           requestId,
           success: false,
@@ -396,7 +396,7 @@ export class UserStreamMux {
             case "unsubscribe": {
               clearSubscription(msg.sessionId);
               send({
-                type: "rpc_result",
+                type: "command_result",
                 command: "unsubscribe",
                 requestId: msg.requestId,
                 success: true,
@@ -421,7 +421,7 @@ export class UserStreamMux {
 
               if (msg.requestId) {
                 send({
-                  type: "rpc_result",
+                  type: "command_result",
                   command: "permission_response",
                   requestId: msg.requestId,
                   success: true,
