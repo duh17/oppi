@@ -25,8 +25,8 @@ enum AgentEvent: Sendable {
     case retryStart(sessionId: String, attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
     case retryEnd(sessionId: String, success: Bool, attempt: Int, finalError: String?)
 
-    // RPC response (model change, stats, etc.)
-    case rpcResult(sessionId: String, command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
+    // Command response (model change, stats, etc.)
+    case commandResult(sessionId: String, command: String, requestId: String?, success: Bool, data: JSONValue?, error: String?)
 
     case permissionRequest(PermissionRequest)
     case permissionExpired(id: String)
@@ -47,7 +47,7 @@ enum AgentEvent: Sendable {
         case .compactionEnd: "compactionEnd"
         case .retryStart: "retryStart"
         case .retryEnd: "retryEnd"
-        case .rpcResult: "rpcResult"
+        case .commandResult: "commandResult"
         case .permissionRequest: "permissionRequest"
         case .permissionExpired: "permissionExpired"
         case .sessionEnded: "sessionEnded"
