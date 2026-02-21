@@ -191,9 +191,6 @@ export interface ServerConfig {
 
   // Per-model thinking preferences (synced from iOS)
   thinkingLevelByModel?: Record<string, string>;
-
-  /** Session backend: "rpc" (default, child process) or "sdk" (in-process). */
-  sessionBackend?: "rpc" | "sdk";
 }
 
 // ─── API Types ───

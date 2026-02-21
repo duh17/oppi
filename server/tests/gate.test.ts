@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { PolicyEngine, defaultPresetRules } from "../src/policy.js";
 import { GateServer } from "../src/gate.js";
 import { RuleStore } from "../src/rules.js";
@@ -13,7 +11,6 @@ import type { PolicyConfig } from "../src/types.js";
 const SESSION_ID = "test-session-1";
 
 let gate: GateServer;
-let client: Socket;
 let testDir = "";
 
 beforeEach(() => {
@@ -21,28 +18,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (client && !client.destroyed) client.destroy();
   if (gate) await gate.shutdown();
   rmSync(testDir, { recursive: true, force: true });
 });
-
-function connect(port: number): Promise<Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection({ port, host: "127.0.0.1" }, () => resolve(socket));
-    socket.on("error", reject);
-  });
-}
-
-function sendAndWait(sock: Socket, msg: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: sock });
-    rl.once("line", (line) => {
-      rl.close();
-      resolve(JSON.parse(line));
-    });
-    sock.write(JSON.stringify(msg) + "\n");
-  });
-}
 
 function createGate(
   policyOrMode: string | PolicyConfig = "container",
@@ -55,51 +33,25 @@ function createGate(
   return new GateServer(policy, ruleStore, auditLog, { approvalTimeoutMs });
 }
 
-async function setupGuardedSession(): Promise<void> {
-  gate = createGate("container");
-  const activeGate = gate;
-
-  // Auto-approve any "ask" decisions after short delay
-  activeGate.on("approval_needed", (pending: { id: string }) => {
-    setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 200);
-  });
-
-  const port = await activeGate.createSessionSocket(SESSION_ID);
-  await new Promise((r) => setTimeout(r, 50));
-  client = await connect(port);
-
-  const ack = await sendAndWait(client, {
-    type: "guard_ready",
-    sessionId: SESSION_ID,
-    extensionVersion: "1.0.0",
-  });
-  expect(ack.type).toBe("guard_ack");
-  expect(ack.status).toBe("ok");
+function setupGuardedSession(
+  policyOrMode: string | PolicyConfig = "container",
+  approvalTimeoutMs?: number,
+): GateServer {
+  gate = createGate(policyOrMode, approvalTimeoutMs);
+  gate.createGuard(SESSION_ID, "w1");
+  return gate;
 }
 
 describe("GateServer", () => {
-  it("completes guard handshake", async () => {
-    gate = createGate("container");
-    const port = await gate.createSessionSocket(SESSION_ID);
-    await new Promise((r) => setTimeout(r, 50));
-
-    client = await connect(port);
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-
-    expect(ack.type).toBe("guard_ack");
-    expect(ack.status).toBe("ok");
+  it("creates guard in guarded state", () => {
+    setupGuardedSession();
     expect(gate.getGuardState(SESSION_ID)).toBe("guarded");
   });
 
   it("auto-allows safe commands (ls)", async () => {
-    await setupGuardedSession();
+    setupGuardedSession();
 
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "ls -la" },
       toolCallId: "tc_1",
@@ -109,10 +61,9 @@ describe("GateServer", () => {
   });
 
   it("hard-denies dangerous commands (sudo)", async () => {
-    await setupGuardedSession();
+    setupGuardedSession();
 
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "sudo rm -rf /" },
       toolCallId: "tc_2",
@@ -122,41 +73,30 @@ describe("GateServer", () => {
   });
 
   it("asks then allows after approval (git push --force)", async () => {
-    await setupGuardedSession();
+    setupGuardedSession();
 
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    gate.on("approval_needed", (pending: { id: string }) => {
+      setTimeout(() => gate.resolveDecision(pending.id, "allow"), 20);
+    });
+
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push --force origin main" },
       toolCallId: "tc_3",
     });
 
-    // Auto-approved by the approval_needed handler after 200ms
     expect(result.action).toBe("allow");
   });
 
   it("uses configurable approval timeout when set", async () => {
-    gate = createGate("host", 25);
-    const activeGate = gate;
+    setupGuardedSession("host", 25);
 
-    activeGate.on("approval_needed", (pending: { id: string }) => {
+    gate.on("approval_needed", (pending: { id: string }) => {
       // Intentionally slower than timeout.
-      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
+      setTimeout(() => gate.resolveDecision(pending.id, "allow"), 80);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push origin main" },
       toolCallId: "tc_timeout",
@@ -167,26 +107,13 @@ describe("GateServer", () => {
   });
 
   it("disables approval expiry when approvalTimeoutMs=0", async () => {
-    gate = createGate("host", 0);
-    const activeGate = gate;
+    setupGuardedSession("host", 0);
 
-    activeGate.on("approval_needed", (pending: { id: string }) => {
-      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 80);
+    gate.on("approval_needed", (pending: { id: string }) => {
+      setTimeout(() => gate.resolveDecision(pending.id, "allow"), 80);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push origin main" },
       toolCallId: "tc_no_timeout",
@@ -196,31 +123,17 @@ describe("GateServer", () => {
   });
 
   it("asks for chained git push in local execution", async () => {
-    gate = createGate("host");
-    const activeGate = gate;
+    setupGuardedSession("host");
     let approvalCount = 0;
     let lastReason = "";
 
-    activeGate.on("approval_needed", (pending: { id: string; reason: string }) => {
+    gate.on("approval_needed", (pending: { id: string; reason: string }) => {
       approvalCount += 1;
       lastReason = pending.reason;
-      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 20);
+      setTimeout(() => gate.resolveDecision(pending.id, "allow"), 20);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID);
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-    expect(ack.status).toBe("ok");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "cd /Users/dev/workspace/myproject && git push origin main" },
       toolCallId: "tc_3b",
@@ -243,32 +156,18 @@ describe("GateServer", () => {
       fallback: "allow",
     };
 
-    gate = createGate(askFallbackPolicy);
-    const activeGate = gate;
-
+    setupGuardedSession(askFallbackPolicy);
     let approvalCount = 0;
     const approvalReasons: string[] = [];
 
-    activeGate.on("approval_needed", (pending: { id: string; reason: string }) => {
+    gate.on("approval_needed", (pending: { id: string; reason: string }) => {
       approvalCount += 1;
       approvalReasons.push(pending.reason);
-      setTimeout(() => activeGate.resolveDecision(pending.id, "allow"), 10);
+      setTimeout(() => gate.resolveDecision(pending.id, "allow"), 10);
     });
-
-    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
 
     const runFallbackCheck = (toolCallId: string) =>
-      sendAndWait(client, {
-        type: "gate_check",
+      gate.checkToolCall(SESSION_ID, {
         tool: "bash",
         input: { command: "echo fallback-toggle-check" },
         toolCallId,
@@ -279,13 +178,13 @@ describe("GateServer", () => {
     expect(approvalCount).toBe(1);
     expect(approvalReasons[0]).toContain("No matching rule");
 
-    activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(allowFallbackPolicy));
+    gate.setSessionPolicy(SESSION_ID, new PolicyEngine(allowFallbackPolicy));
 
     const allowResult = await runFallbackCheck("tc_fallback_2");
     expect(allowResult.action).toBe("allow");
     expect(approvalCount).toBe(1);
 
-    activeGate.setSessionPolicy(SESSION_ID, new PolicyEngine(askFallbackPolicy));
+    gate.setSessionPolicy(SESSION_ID, new PolicyEngine(askFallbackPolicy));
 
     const askResult2 = await runFallbackCheck("tc_fallback_3");
     expect(askResult2.action).toBe("allow");
@@ -294,28 +193,15 @@ describe("GateServer", () => {
   });
 
   it("stores session rules with TTL from permission responses", async () => {
-    gate = createGate("host");
-    const activeGate = gate;
+    setupGuardedSession("host");
     let approvalAt = 0;
 
-    activeGate.on("approval_needed", (pending: { id: string }) => {
+    gate.on("approval_needed", (pending: { id: string }) => {
       approvalAt = Date.now();
-      activeGate.resolveDecision(pending.id, "allow", "session", 60_000);
+      gate.resolveDecision(pending.id, "allow", "session", 60_000);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push origin main" },
       toolCallId: "tc_ttl_workspace",
@@ -323,7 +209,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
 
-    const learned = activeGate.ruleStore
+    const learned = gate.ruleStore
       .getAll()
       .find(
         (rule) =>
@@ -343,28 +229,15 @@ describe("GateServer", () => {
   });
 
   it("caps learned session-rule TTL at one year", async () => {
-    gate = createGate("host");
-    const activeGate = gate;
+    setupGuardedSession("host");
     let approvalAt = 0;
 
-    activeGate.on("approval_needed", (pending: { id: string }) => {
+    gate.on("approval_needed", (pending: { id: string }) => {
       approvalAt = Date.now();
-      activeGate.resolveDecision(pending.id, "allow", "session", 10 * 365 * 24 * 60 * 60 * 1000);
+      gate.resolveDecision(pending.id, "allow", "session", 10 * 365 * 24 * 60 * 60 * 1000);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push origin main" },
       toolCallId: "tc_ttl_cap",
@@ -372,7 +245,7 @@ describe("GateServer", () => {
 
     expect(result.action).toBe("allow");
 
-    const learned = activeGate.ruleStore
+    const learned = gate.ruleStore
       .getAll()
       .find(
         (rule) =>
@@ -392,50 +265,53 @@ describe("GateServer", () => {
     expect(ttlMs).toBeLessThanOrEqual(oneYearMs + 5_000);
   });
 
-  it("stores workspace-scoped allow rule when workspace scope is requested", async () => {
-    gate = createGate("host");
-    const activeGate = gate;
+  it("normalizes deny session scope responses to one-shot", async () => {
+    setupGuardedSession("host");
 
-    activeGate.on("approval_needed", (pending: { id: string }) => {
-      activeGate.resolveDecision(pending.id, "allow", "workspace", 60_000);
+    gate.on("approval_needed", (pending: { id: string }) => {
+      gate.resolveDecision(pending.id, "deny", "session", 60_000);
     });
 
-    const port = await activeGate.createSessionSocket(SESSION_ID, "w1");
-    await new Promise((r) => setTimeout(r, 50));
-    client = await connect(port);
-
-    const ack = await sendAndWait(client, {
-      type: "guard_ready",
-      sessionId: SESSION_ID,
-      extensionVersion: "1.0.0",
-    });
-    expect(ack.type).toBe("guard_ack");
-
-    const result = await sendAndWait(client, {
-      type: "gate_check",
+    const result = await gate.checkToolCall(SESSION_ID, {
       tool: "bash",
       input: { command: "git push origin main" },
       toolCallId: "tc_scope_downgrade",
     });
 
-    expect(result.action).toBe("allow");
+    expect(result.action).toBe("deny");
 
-    const learned = activeGate.ruleStore
+    const learned = gate.ruleStore
       .getAll()
       .find(
         (rule) =>
-          rule.scope === "workspace" &&
-          rule.workspaceId === "w1" &&
-          rule.decision === "allow" &&
+          rule.scope === "session" &&
+          rule.decision === "deny" &&
           rule.pattern === "git push origin main",
       );
-    expect(learned).toBeTruthy();
+    expect(learned).toBeUndefined();
   });
 
-  it("responds to heartbeat", async () => {
-    await setupGuardedSession();
+  it("forces policy approvals to one-shot even when global scope is requested", async () => {
+    setupGuardedSession("host");
 
-    const result = await sendAndWait(client, { type: "heartbeat" });
-    expect(result.type).toBe("heartbeat_ack");
+    gate.on("approval_needed", (pending: { id: string }) => {
+      gate.resolveDecision(pending.id, "allow", "global", 60_000);
+    });
+
+    const result = await gate.checkToolCall(SESSION_ID, {
+      tool: "policy.update",
+      input: { diff: "-allow\n+ask" },
+      toolCallId: "tc_policy_scope",
+    });
+
+    expect(result.action).toBe("allow");
+
+    const learned = gate.ruleStore
+      .getAll()
+      .find((rule) => rule.scope === "global" && rule.tool.startsWith("policy."));
+    expect(learned).toBeUndefined();
+
+    const latestAudit = gate.auditLog.query({ limit: 1 })[0];
+    expect(latestAudit?.userChoice?.scope).toBe("once");
   });
 });

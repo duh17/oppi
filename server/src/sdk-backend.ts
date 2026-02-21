@@ -1,11 +1,8 @@
 /**
- * SDK-based pi session backend.
+ * Pi session backend — wraps pi's SDK AgentSession for in-process execution.
  *
- * Replaces the RPC child process approach with in-process AgentSession.
- * Events flow through the same translatePiEvent pipeline as RPC — the
- * AgentEvent shapes are identical between SDK subscribe() and RPC stdout.
- *
- * Used when config.sessionBackend === "sdk".
+ * Events flow through the translatePiEvent pipeline. The AgentEvent shapes
+ * from subscribe() match the ServerMessage contract consumed by iOS.
  */
 
 import {
@@ -47,12 +44,12 @@ function parseModelId(modelId: string): { provider: string; model: string } | nu
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
-  /** Called for every pi event (same shape as RPC stdout JSON). */
+  /** Called for every pi agent event. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   onEvent: (event: any) => void;
-  /** Called when the session ends (equivalent to process exit). */
+  /** Called when the session ends. */
   onEnd: (reason: string) => void;
-  /** Gate server for permission checks (in-process, no TCP). */
+  /** Gate server for permission checks. */
   gate?: GateServer;
   /** Workspace ID for gate guard registration. */
   workspaceId?: string;
@@ -134,16 +131,17 @@ export class SdkBackend {
       authStorage,
       modelRegistry,
       model,
-      thinkingLevel: (session.thinkingLevel as "off" | "low" | "medium" | "high") || "medium",
+      thinkingLevel:
+        (session.thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh") ||
+        "medium",
       sessionManager: piSessionManager,
       settingsManager,
       resourceLoader: loader,
     });
 
-    // Subscribe to events — feed them through the same pipeline as RPC
+    // Subscribe to agent events
     const unsub = piSession.subscribe((event: AgentSessionEvent) => {
-      // AgentSessionEvent includes core AgentEvent + session-specific events.
-      // Filter to only the core event types that RPC would produce.
+      // Filter out session-level events not consumed by iOS
       const type = event.type;
       if (
         type === "auto_compaction_start" ||
@@ -151,12 +149,10 @@ export class SdkBackend {
         type === "auto_retry_start" ||
         type === "auto_retry_end"
       ) {
-        // Session-level events — not in RPC. Skip for now.
         console.log(`${ts()} [sdk] session event: ${type}`);
         return;
       }
 
-      // Core AgentEvent — identical shape to RPC stdout JSON
       onEvent(event);
     });
 
@@ -167,9 +163,9 @@ export class SdkBackend {
     return new SdkBackend(piSession, unsub);
   }
 
-  // ─── Commands (SDK equivalents of RPC stdin) ───
+  // ─── Commands ───
 
-  /** Send a prompt. Fire-and-forget like RPC — events come via subscribe. */
+  /** Send a prompt. Fire-and-forget — events come via subscribe. */
   prompt(
     message: string,
     opts?: {
@@ -310,7 +306,7 @@ export class SdkBackend {
     };
   }
 
-  /** Full state snapshot in RPC-compatible shape for forwardRpcCommand. */
+  /** Full state snapshot for forwardRpcCommand responses. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi state shape is heterogeneous
   getStateSnapshot(): any {
     const m = this.piSession.model;
@@ -352,9 +348,8 @@ export class SdkBackend {
 // ─── In-Process Permission Gate Extension Factory ───
 
 /**
- * Create an ExtensionFactory that gates tool calls through GateServer
- * in-process (no TCP socket). Equivalent to extensions/permission-gate/
- * but without the TCP transport layer.
+ * Create an ExtensionFactory that gates tool calls through GateServer.
+ * Runs in-process — every tool call is evaluated by the policy engine.
  */
 function createPermissionGateFactory(
   gate: GateServer,
@@ -363,8 +358,8 @@ function createPermissionGateFactory(
 ): ExtensionFactory {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ExtensionAPI shape varies across pi versions
   return (pi: any) => {
-    // Register a virtual guard — immediately "guarded" (no TCP handshake).
-    gate.createVirtualGuard(sessionId, workspaceId);
+    // Register guard for this session.
+    gate.createGuard(sessionId, workspaceId);
     console.log(`${ts()} [sdk-gate] Virtual guard registered for ${sessionId}`);
 
     // Gate every tool call through the policy engine
@@ -387,7 +382,7 @@ function createPermissionGateFactory(
 
     // Clean up on shutdown
     pi.on("session_shutdown", () => {
-      gate.destroySessionSocket(sessionId);
+      gate.destroySessionGuard(sessionId);
       console.log(`${ts()} [sdk-gate] Guard destroyed for ${sessionId}`);
     });
   };

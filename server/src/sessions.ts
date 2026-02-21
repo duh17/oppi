@@ -1,16 +1,14 @@
 /**
- * Session manager — pi agent lifecycle over RPC.
+ * Session manager — pi agent lifecycle via SDK.
  *
- * Pi runs as a local child process.
+ * Pi runs in-process via createAgentSession().
  *
  * Handles:
  * - Session lifecycle (start, stop, idle timeout)
- * - RPC event → simplified WebSocket message translation
- * - extension_ui_request forwarding (for permission gate and other extensions)
- * - Response correlation for RPC commands
+ * - Agent event → simplified WebSocket message translation
+ * - In-process permission gate (via ExtensionFactory)
  */
 
-import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 
 import type {
@@ -41,7 +39,6 @@ import {
   type TranslationContext,
 } from "./session-protocol.js";
 import { getGitStatus } from "./git-status.js";
-import { resolvePiExecutable, spawnPiHost, type SpawnDeps } from "./session-spawn.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import { SdkBackend } from "./sdk-backend.js";
 
@@ -98,41 +95,19 @@ export interface SessionBroadcastEvent {
   durable: boolean;
 }
 
-// ─── Helpers ───
-
-/** Safely write to a child process stdin. No-op if pipe is closed or process exited. */
-function safeStdinWrite(proc: ChildProcess, data: string): boolean {
-  try {
-    if (!proc.killed && proc.stdin?.writable) {
-      proc.stdin.write(data);
-      return true;
-    }
-  } catch {
-    // Process exited between the check and the write — harmless.
-  }
-  return false;
-}
-
 // ─── Types ───
 
 interface ActiveSession {
   session: Session;
-  process: ChildProcess | null;
-  /** SDK backend — when set, process is null and commands go through SDK. */
-  sdkBackend?: SdkBackend;
+  sdkBackend: SdkBackend;
   workspaceId: string;
   subscribers: Set<(msg: ServerMessage) => void>;
-  /** Pending RPC response callbacks keyed by request id */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC response shape varies per command
-  pendingResponses: Map<string, (data: any) => void>;
   /** Pending extension UI requests keyed by request id */
   pendingUIRequests: Map<string, ExtensionUIRequest>;
-  /** Whether the post-first-prompt guard health check has been scheduled. */
-  guardCheckScheduled?: boolean;
   /**
    * Tracks last partialResult text per toolCallId for delta computation.
    *
-   * Pi RPC tool_execution_update sends partialResult with replace semantics
+   * Pi SDK tool_execution_update sends partialResult with replace semantics
    * (accumulated output so far). We compute deltas here so the client can
    * use simple append semantics for tool_output events.
    */
@@ -166,7 +141,7 @@ interface PendingStop {
   timeoutHandle?: NodeJS.Timeout;
 }
 
-/** Extension UI request from pi RPC (stdout) */
+/** Extension UI request from pi SDK (stdout) */
 export interface ExtensionUIRequest {
   type: "extension_ui_request";
   id: string;
@@ -186,7 +161,7 @@ export interface ExtensionUIRequest {
   timeout?: number;
 }
 
-/** Extension UI response to send to pi (stdin) */
+/** Extension UI response sent to pi */
 export interface ExtensionUIResponse {
   type: "extension_ui_response";
   id: string;
@@ -213,8 +188,6 @@ export class SessionManager extends EventEmitter {
   private runtimeManager: WorkspaceRuntime;
   private active: Map<string, ActiveSession> = new Map();
   private idleTimers: Map<string, NodeJS.Timeout> = new Map();
-  private rpcIdCounter = 0;
-  private readonly piExecutable: string;
   private readonly mobileRenderers = new MobileRendererRegistry();
   private readonly eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
   private readonly resolveSkillPath?: (name: string) => string | undefined;
@@ -238,7 +211,6 @@ export class SessionManager extends EventEmitter {
     this.gate = gate;
     this.resolveSkillPath = opts?.resolveSkillPath;
     this.runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(this.config));
-    this.piExecutable = resolvePiExecutable();
 
     // Load user-provided mobile renderers (async, fire-and-forget at startup).
     this.mobileRenderers.loadAllRenderers().then(({ loaded, errors }) => {
@@ -320,34 +292,23 @@ export class SessionManager extends EventEmitter {
       this.runtimeManager.reserveSessionStart(identity);
 
       try {
-        const useSdk =
-          process.env.OPPI_SESSION_BACKEND === "rpc" ? false : this.config.sessionBackend !== "rpc";
-
-        let proc: ChildProcess | null = null;
-        let sdkBackend: SdkBackend | undefined;
-
-        if (useSdk) {
-          const useGate = this.config.permissionGate !== false;
-          sdkBackend = await SdkBackend.create({
-            session,
-            workspace,
-            onEvent: (event) => this.handlePiEvent(key, event),
-            onEnd: (reason) => this.handleSessionEnd(key, reason),
-            gate: useGate ? this.gate : undefined,
-            workspaceId: identity.workspaceId,
-            permissionGate: useGate,
-          });
-        } else {
-          proc = await spawnPiHost(session, workspace, this.spawnDeps);
-        }
+        const useGate = this.config.permissionGate !== false;
+        const sdkBackend = await SdkBackend.create({
+          session,
+          workspace,
+          onEvent: (event) => this.handlePiEvent(key, event),
+          onEnd: (reason) => this.handleSessionEnd(key, reason),
+          gate: useGate ? this.gate : undefined,
+          workspaceId: identity.workspaceId,
+          permissionGate: useGate,
+        });
 
         const activeSession: ActiveSession = {
           session,
-          process: proc,
           sdkBackend,
           workspaceId: identity.workspaceId,
           subscribers: new Set(),
-          pendingResponses: new Map(),
+
           pendingUIRequests: new Map(),
           partialResults: new Map(),
           streamedAssistantText: "",
@@ -366,18 +327,12 @@ export class SessionManager extends EventEmitter {
         this.persistSessionNow(key, session);
         this.resetIdleTimer(key);
 
-        // Best-effort: capture pi session file/UUID from get_state so trace
-        // loading works after reconnects/restarts.
         void this.bootstrapSessionState(key);
 
         return session;
       } catch (err) {
-        // Gate socket may have been created inside spawnPiHost
-        // before the error — always clean up.
-        this.gate.destroySessionSocket(sessionId);
-
+        this.gate.destroySessionGuard(sessionId);
         this.runtimeManager.releaseSession(identity);
-
         throw err;
       }
     });
@@ -405,97 +360,19 @@ export class SessionManager extends EventEmitter {
     return `session-${session.id}`;
   }
 
-  // ─── Spawn Dependencies ───
-
-  /** Build the SpawnDeps object for spawn functions. */
-  private get spawnDeps(): SpawnDeps {
-    return {
-      gate: this.gate,
-      piExecutable: this.piExecutable,
-      policyConfig: this.config.policy,
-      permissionGate: this.storage.getConfig().permissionGate,
-      resolveSkillPath: this.resolveSkillPath,
-      onRpcLine: (key, line) => this.handleRpcLine(key, line),
-      onSessionEnd: (key, reason) => this.handleSessionEnd(key, reason),
-    };
-  }
-
-  // ─── RPC Line Handler ───
-
   /**
-   * Handle a single JSON line from pi's stdout.
-   * Dispatches to: response handler, extension UI, or event translation.
-   */
-  private handleRpcLine(key: string, line: string): void {
-    const active = this.active.get(key);
-    if (!active) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi RPC JSON is untyped
-    let data: any;
-    try {
-      data = JSON.parse(line);
-    } catch {
-      console.warn(`${ts()} [pi:${active.session.id}] invalid JSON: ${line.slice(0, 100)}`);
-      return;
-    }
-
-    // 1. RPC response — correlate to pending command.
-    // Some parse/validation failures come back as `response` without an `id`.
-    // If exactly one command is pending, attribute the failure to it so callers
-    // don't hang until timeout.
-    if (data.type === "response") {
-      const command = typeof data.command === "string" ? data.command : "rpc";
-      const rawError =
-        typeof data.error === "string" && data.error.length > 0 ? data.error : "Unknown RPC error";
-      const errorText = normalizeRpcError(command, rawError);
-
-      if (typeof data.id === "string" && data.id.length > 0) {
-        const handler = active.pendingResponses.get(data.id);
-        if (handler) {
-          active.pendingResponses.delete(data.id);
-          handler({ ...data, error: errorText });
-          return;
-        }
-
-        // Orphaned response with correlation id.
-        if (!data.success) {
-          this.broadcast(key, { type: "error", error: `${command}: ${errorText}` });
-        }
-        return;
-      }
-
-      if (!data.success) {
-        if (active.pendingResponses.size === 1) {
-          const [[pendingId, handler]] = active.pendingResponses;
-          active.pendingResponses.delete(pendingId);
-          handler({ success: false, command, error: errorText });
-          return;
-        }
-
-        // Ambiguous uncorrelated response (or no pending command).
-        this.broadcast(key, { type: "error", error: `${command}: ${errorText}` });
-      }
-      return;
-    }
-
-    // 2. Extension UI request — forward to subscribers (phone handles it)
-    if (data.type === "extension_ui_request") {
-      this.handleExtensionUIRequest(key, data as ExtensionUIRequest);
-      return;
-    }
-
-    // 3. Agent event — delegate to shared handler (used by both RPC and SDK paths)
-    this.handlePiEvent(key, data);
-  }
-
-  /**
-   * Process a pi agent event. Shared by RPC (via handleRpcLine after JSON parse)
-   * and SDK (via SdkBackend subscribe callback).
+   * Process a pi agent event from the SDK subscribe callback.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
   private handlePiEvent(key: string, data: any): void {
     const active = this.active.get(key);
     if (!active) return;
+
+    // Extension UI request — forward to subscribers (phone handles it)
+    if (data.type === "extension_ui_request") {
+      this.handleExtensionUIRequest(key, data as ExtensionUIRequest);
+      return;
+    }
 
     // Log lifecycle events (not high-frequency deltas)
     if (
@@ -595,7 +472,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Send extension_ui_response back to pi (stdin for RPC, direct for SDK).
+   * Send extension_ui_response back to pi (in-process gate).
    * Called by server.ts when phone responds to a UI dialog.
    */
   respondToUIRequest(sessionId: string, response: ExtensionUIResponse): boolean {
@@ -608,15 +485,11 @@ export class SessionManager extends EventEmitter {
 
     active.pendingUIRequests.delete(response.id);
 
-    // SDK sessions handle extension UI internally; RPC sends via stdin.
-    // TODO: wire SDK extension UI response path when extensions are loaded in-process.
-    if (active.process) {
-      safeStdinWrite(active.process, JSON.stringify(response) + "\n");
-    }
+    // SDK sessions handle extension UI internally via the in-process gate.
     return true;
   }
 
-  // ─── RPC Commands ───
+  // ─── Turn Commands ───
 
   private emitTurnAck(
     key: string,
@@ -734,7 +607,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Send a prompt to pi. Handles streaming state.
    *
-   * RPC rules:
+   * SDK prompt rules:
    * - If agent is idle: send as `prompt`
    * - If agent is streaming: must specify behavior
    */
@@ -787,7 +660,7 @@ export class SessionManager extends EventEmitter {
       message,
     };
 
-    // RPC image format: {type:"image", data:"base64...", mimeType:"image/png"}
+    // SDK image format: {type:"image", data:"base64...", mimeType:"image/png"}
     if (opts?.images?.length) {
       cmd.images = opts.images;
     }
@@ -797,15 +670,10 @@ export class SessionManager extends EventEmitter {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
-    // Schedule guard health check after first prompt (RPC only).
-    // SDK sessions use in-process gate with virtual guard — no health check needed.
-    if (!active.sdkBackend && !active.guardCheckScheduled) {
-      active.guardCheckScheduled = true;
-      this.scheduleGuardCheck(key, sessionId);
-    }
+    // In-process gate — no health check needed (virtual guard is always ready).
 
     console.log(
-      `${ts()} [rpc] prompt → pi (session=${sessionId}, status=${active.session.status}, guard=${active.guardCheckScheduled ? "scheduled" : "no"})`,
+      `${ts()} [sdk] prompt → pi (session=${sessionId}, status=${active.session.status})`,
     );
     this.sendRpcCommand(key, cmd);
     this.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
@@ -911,26 +779,17 @@ export class SessionManager extends EventEmitter {
     if (!active) return;
 
     try {
-      // SDK path: read state directly from the backend
-      if (active.sdkBackend) {
-        const sdkState = active.sdkBackend.getState();
-        const snapshot = {
-          sessionFile: sdkState.sessionFile,
-          sessionId: active.sdkBackend.sessionId,
-          model: sdkState.model
-            ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
-            : undefined,
-          thinkingLevel: sdkState.thinkingLevel,
-        };
-        if (this.applyPiStateSnapshot(active.session, snapshot)) {
-          this.persistSessionNow(key, active.session);
-        }
-      } else {
-        // RPC path: ask pi for its state via get_state command
-        const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
-        if (this.applyPiStateSnapshot(active.session, data)) {
-          this.persistSessionNow(key, active.session);
-        }
+      const sdkState = active.sdkBackend.getState();
+      const snapshot = {
+        sessionFile: sdkState.sessionFile,
+        sessionId: active.sdkBackend.sessionId,
+        model: sdkState.model
+          ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
+          : undefined,
+        thinkingLevel: sdkState.thinkingLevel,
+      };
+      if (this.applyPiStateSnapshot(active.session, snapshot)) {
+        this.persistSessionNow(key, active.session);
       }
 
       await this.applyRememberedThinkingLevel(key, active);
@@ -951,24 +810,17 @@ export class SessionManager extends EventEmitter {
     if (!active) return null;
 
     try {
-      if (active.sdkBackend) {
-        const sdkState = active.sdkBackend.getState();
-        const snapshot = {
-          sessionFile: sdkState.sessionFile,
-          sessionId: active.sdkBackend.sessionId,
-          model: sdkState.model
-            ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
-            : undefined,
-          thinkingLevel: sdkState.thinkingLevel,
-        };
-        if (this.applyPiStateSnapshot(active.session, snapshot)) {
-          this.persistSessionNow(key, active.session);
-        }
-      } else {
-        const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
-        if (this.applyPiStateSnapshot(active.session, data)) {
-          this.persistSessionNow(key, active.session);
-        }
+      const sdkState = active.sdkBackend.getState();
+      const snapshot = {
+        sessionFile: sdkState.sessionFile,
+        sessionId: active.sdkBackend.sessionId,
+        model: sdkState.model
+          ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
+          : undefined,
+        thinkingLevel: sdkState.thinkingLevel,
+      };
+      if (this.applyPiStateSnapshot(active.session, snapshot)) {
+        this.persistSessionNow(key, active.session);
       }
       return {
         sessionFile: active.session.piSessionFile,
@@ -1061,7 +913,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Run a raw pi RPC command against an active session and await response.
+   * Run a raw pi SDK command against an active session and await response.
    * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
    */
   async runRpcCommand(
@@ -1156,15 +1008,15 @@ export class SessionManager extends EventEmitter {
     return changed;
   }
 
-  // ─── RPC Passthrough ───
+  // ─── SDK Passthrough ───
 
   /**
-   * Allowlisted RPC commands that can be forwarded from the client.
-   * Each maps to the pi RPC command type. Fire-and-forget commands
+   * Allowlisted SDK commands that can be forwarded from the client.
+   * Each maps to the pi SDK command type. Fire-and-forget commands
    * (no response needed) are sent without correlation. Commands that
    * return data are awaited and the result broadcast as rpc_result.
    */
-  private static readonly RPC_PASSTHROUGH: ReadonlySet<string> = new Set([
+  private static readonly SDK_PASSTHROUGH: ReadonlySet<string> = new Set([
     // State
     "get_state",
     "get_messages",
@@ -1198,9 +1050,9 @@ export class SessionManager extends EventEmitter {
   ]);
 
   /**
-   * Forward a client WebSocket message to pi as an RPC command.
+   * Forward a client WebSocket message to pi via SDK.
    *
-   * Used for commands that map 1:1 to pi RPC (model switching,
+   * Used for commands that map 1:1 to pi SDK (model switching,
    * thinking level, session management, etc.). The response is
    * broadcast back as an `rpc_result` ServerMessage.
    */
@@ -1210,7 +1062,7 @@ export class SessionManager extends EventEmitter {
     requestId?: string,
   ): Promise<void> {
     const cmdType = message.type as string;
-    if (!SessionManager.RPC_PASSTHROUGH.has(cmdType)) {
+    if (!SessionManager.SDK_PASSTHROUGH.has(cmdType)) {
       throw new Error(`Command not allowed: ${cmdType}`);
     }
 
@@ -1317,7 +1169,7 @@ export class SessionManager extends EventEmitter {
         } catch (stateErr) {
           const message = stateErr instanceof Error ? stateErr.message : String(stateErr);
           console.warn(
-            `[rpc] ${cmdType} state refresh failed for ${active.session.id}: ${message}`,
+            `[sdk] ${cmdType} state refresh failed for ${active.session.id}: ${message}`,
           );
         }
       }
@@ -1377,18 +1229,13 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  // ─── Guard Health Check ───
-
-  /** Guard check delay — extension should connect within seconds of first prompt. */
-  private readonly guardCheckDelayMs = 10_000;
-
-  /** Graceful abort budget before escalating to SIGINT. */
+  /** Graceful abort budget before escalating. */
   private readonly stopAbortTimeoutMs = 8_000;
 
-  /** After SIGINT, wait this long before giving up on the abort (without killing session). */
-  private readonly stopAbortSigintTimeoutMs = 5_000;
+  /** After escalation, wait this long before giving up (session stays alive). */
+  private readonly stopAbortRetryTimeoutMs = 5_000;
 
-  /** Grace period between abort and SIGTERM in force-stop flow. */
+  /** Grace period between abort and dispose in force-stop flow. */
   private readonly stopSessionGraceMs = 1_000;
 
   /**
@@ -1398,95 +1245,29 @@ export class SessionManager extends EventEmitter {
    * Why after first prompt: the extension connects in `before_agent_start`
    * which only fires when pi processes its first prompt.
    */
-  private scheduleGuardCheck(key: string, sessionId: string): void {
-    setTimeout(() => {
-      const active = this.active.get(key);
-      if (!active) return; // Session already ended
-
-      const state = this.gate.getGuardState(sessionId);
-      if (state === "guarded") return; // Healthy
-
-      const warning = `Permission gate not connected (state: ${state}). Tool calls will be blocked.`;
-      if (!active.session.warnings) active.session.warnings = [];
-      if (!active.session.warnings.includes(warning)) {
-        active.session.warnings.push(warning);
-        console.warn(`${ts()} [session:${sessionId}] ${warning}`);
-        // Surface as both state update (session.warnings) and error event
-        // so the iOS chat timeline shows the problem immediately.
-        this.broadcast(key, { type: "state", session: active.session });
-        this.broadcast(key, { type: "error", error: warning });
-        this.persistSessionNow(key, active.session);
-      }
-    }, this.guardCheckDelayMs);
-  }
-
-  // ─── RPC Commands ───
+  // ─── SDK Commands ───
 
   /**
-   * Send a raw RPC command and optionally wait for its response.
+   * Send a fire-and-forget command to the SDK backend.
    */
   sendRpcCommand(key: string, command: Record<string, unknown>): void {
     const active = this.active.get(key);
     if (!active) return;
-
-    // SDK path: route command to SDK backend directly
-    if (active.sdkBackend) {
-      this.routeSdkCommand(active.sdkBackend, command);
-      this.resetIdleTimer(key);
-      return;
-    }
-
-    // RPC path: write to stdin
-    // Assign correlation id if not present
-    if (!command.id) {
-      command.id = `rpc-${++this.rpcIdCounter}`;
-    }
-
-    if (active.process) {
-      safeStdinWrite(active.process, JSON.stringify(command) + "\n");
-    }
+    this.routeSdkCommand(active.sdkBackend, command);
     this.resetIdleTimer(key);
   }
 
   /**
-   * Send RPC command and await the response.
+   * Send a command to the SDK backend and await the result.
    */
   sendRpcCommandAsync(
     key: string,
     command: Record<string, unknown>,
-    timeoutMs = 10_000,
+    _timeoutMs = 10_000,
   ): Promise<unknown> {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
-
-    // SDK path: route directly and return result
-    if (active.sdkBackend) {
-      return this.routeSdkCommandAsync(active.sdkBackend, command);
-    }
-
-    // RPC path: correlate via stdin/stdout
-    const id = `rpc-${++this.rpcIdCounter}`;
-    command.id = id;
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        active.pendingResponses.delete(id);
-        reject(new Error(`RPC timeout: ${command.type}`));
-      }, timeoutMs);
-
-      active.pendingResponses.set(id, (data) => {
-        clearTimeout(timer);
-        if (data.success) {
-          resolve(data.data);
-        } else {
-          reject(new Error(data.error || `RPC failed: ${command.type}`));
-        }
-      });
-
-      if (active.process) {
-        safeStdinWrite(active.process, JSON.stringify(command) + "\n");
-      }
-    });
+    return this.routeSdkCommandAsync(active.sdkBackend, command);
   }
 
   /**
@@ -1498,7 +1279,18 @@ export class SessionManager extends EventEmitter {
       case "prompt":
         backend.prompt(command.message as string, {
           images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
+        });
+        break;
+      case "steer":
+        backend.prompt(command.message as string, {
+          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
+          streamingBehavior: "steer",
+        });
+        break;
+      case "follow_up":
+        backend.prompt(command.message as string, {
+          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
+          streamingBehavior: "followUp",
         });
         break;
       case "abort":
@@ -1511,7 +1303,7 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Route an async command to the SDK backend and return its result.
-   * Maps RPC command types to direct SDK method calls.
+   * Maps command types to direct SDK method calls.
    */
   private async routeSdkCommandAsync(
     backend: SdkBackend,
@@ -1758,31 +1550,13 @@ export class SessionManager extends EventEmitter {
     this.persistSessionNow(key, active.session);
 
     // Clean up gate socket
-    this.gate.destroySessionSocket(active.session.id);
-
-    // Reject pending RPC responses
-    for (const [_id, handler] of active.pendingResponses) {
-      handler({ success: false, error: "Session ended" });
-    }
-    active.pendingResponses.clear();
+    this.gate.destroySessionGuard(active.session.id);
 
     // Cancel pending UI requests
-    for (const [id] of active.pendingUIRequests) {
-      if (active.process) {
-        safeStdinWrite(
-          active.process,
-          JSON.stringify({
-            type: "extension_ui_response",
-            id,
-            cancelled: true,
-          }) + "\n",
-        );
-      }
-    }
     active.pendingUIRequests.clear();
 
-    // Dispose SDK backend if present
-    if (active.sdkBackend && !active.sdkBackend.isDisposed) {
+    // Dispose SDK backend
+    if (!active.sdkBackend.isDisposed) {
       active.sdkBackend.dispose();
     }
 
@@ -2007,11 +1781,7 @@ export class SessionManager extends EventEmitter {
     reason?: string,
   ): void {
     try {
-      if (active.sdkBackend) {
-        active.sdkBackend.dispose();
-      } else if (active.process && !active.process.killed) {
-        active.process.kill("SIGTERM");
-      }
+      active.sdkBackend.dispose();
 
       const pending = this.clearPendingStop(active);
       this.broadcast(key, {
@@ -2038,27 +1808,23 @@ export class SessionManager extends EventEmitter {
         return;
       }
 
-      // Phase 1: stdin abort didn't work — send SIGINT to interrupt running tools
+      // Phase 1: first abort timed out — retry abort to interrupt running tools
       console.log(
-        `${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; sending SIGINT`,
+        `${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; retrying abort`,
       );
       this.broadcast(key, {
         type: "stop_requested",
         source: "server",
-        reason: `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; sending interrupt`,
+        reason: `Graceful stop timed out after ${this.stopAbortTimeoutMs}ms; retrying abort`,
       });
 
       try {
-        if (current.sdkBackend) {
-          void current.sdkBackend.abort();
-        } else if (current.process && !current.process.killed) {
-          current.process.kill("SIGINT");
-        }
+        void current.sdkBackend.abort();
       } catch {
         // process may have already exited
       }
 
-      // Phase 2: if SIGINT doesn't resolve the abort, give up but keep session alive
+      // Phase 2: if retry doesn't resolve the abort, give up but keep session alive
       const currentPendingStop = current.pendingStop;
       if (!currentPendingStop || currentPendingStop.mode !== "abort") {
         return;
@@ -2071,7 +1837,7 @@ export class SessionManager extends EventEmitter {
         }
 
         console.warn(
-          `${ts()} [session] Abort still pending after SIGINT + ${this.stopAbortSigintTimeoutMs}ms; giving up (session stays alive)`,
+          `${ts()} [session] Abort still pending after retry + ${this.stopAbortRetryTimeoutMs}ms; giving up (session stays alive)`,
         );
         this.finishPendingStopWithFailure(
           key,
@@ -2079,7 +1845,7 @@ export class SessionManager extends EventEmitter {
           "server",
           `Stop timed out — the agent may still be processing. You can send another message or stop the session.`,
         );
-      }, this.stopAbortSigintTimeoutMs);
+      }, this.stopAbortRetryTimeoutMs);
     }, this.stopAbortTimeoutMs);
   }
 
@@ -2096,11 +1862,7 @@ export class SessionManager extends EventEmitter {
         }
 
         // Graceful: abort current operation
-        if (active.sdkBackend) {
-          void active.sdkBackend.abort();
-        } else if (active.process) {
-          safeStdinWrite(active.process, JSON.stringify({ type: "abort" }) + "\n");
-        }
+        void active.sdkBackend.abort();
 
         // Wait briefly then stop
         await new Promise((r) => setTimeout(r, this.stopSessionGraceMs));
