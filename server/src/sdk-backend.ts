@@ -20,10 +20,12 @@ import {
   getAgentDir,
 } from "@mariozechner/pi-coding-agent";
 import { getModel, type KnownProvider, type ImageContent } from "@mariozechner/pi-ai";
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import { homedir } from "os";
 import { join } from "path";
 
 import type { Session, Workspace } from "./types.js";
+import type { GateServer } from "./gate.js";
 
 /** Compact HH:MM:SS.mmm timestamp for log lines. */
 function ts(): string {
@@ -50,6 +52,12 @@ export interface SdkBackendConfig {
   onEvent: (event: any) => void;
   /** Called when the session ends (equivalent to process exit). */
   onEnd: (reason: string) => void;
+  /** Gate server for permission checks (in-process, no TCP). */
+  gate?: GateServer;
+  /** Workspace ID for gate guard registration. */
+  workspaceId?: string;
+  /** Whether to enable the permission gate. Default: true if gate is provided. */
+  permissionGate?: boolean;
 }
 
 /**
@@ -72,7 +80,7 @@ export class SdkBackend {
   }
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
-    const { session, workspace, onEvent, onEnd } = config;
+    const { session, workspace, onEvent, onEnd: _onEnd } = config;
     const cwd = workspace?.hostMount || homedir();
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
@@ -97,12 +105,26 @@ export class SdkBackend {
       ? PiSessionManager.open(piSessionFile)
       : PiSessionManager.create(cwd);
 
-    // Resource loader — suppress auto-discovery, load only what we need
+    // Build extension factories for in-process gate
+    const extensionFactories: ExtensionFactory[] = [];
+    const useGate = config.gate && config.permissionGate !== false;
+    if (useGate && config.gate) {
+      extensionFactories.push(
+        createPermissionGateFactory(config.gate, session.id, config.workspaceId || ""),
+      );
+    }
+
+    // Resource loader — suppress auto-discovery, load only what we need.
+    // Extension factories (permission gate) are injected here.
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
       settingsManager,
       additionalExtensionPaths: [],
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      extensionFactories,
     });
     await loader.reload();
 
@@ -199,6 +221,81 @@ export class SdkBackend {
     this.piSession.setThinkingLevel(level as "off" | "low" | "medium" | "high");
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi returns typed objects but we pass through as unknown
+  async cycleModel(direction?: string): Promise<any> {
+    const result = await this.piSession.cycleModel(
+      (direction as "forward" | "backward") || "forward",
+    );
+    if (!result) return undefined;
+    return {
+      model: {
+        provider: result.model.provider,
+        id: result.model.name,
+        name: result.model.name,
+      },
+      thinkingLevel: result.thinkingLevel,
+      isScoped: result.isScoped,
+    };
+  }
+
+  cycleThinkingLevel(): string | undefined {
+    return this.piSession.cycleThinkingLevel();
+  }
+
+  setSessionName(name: string): void {
+    this.piSession.setSessionName(name);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi messages are typed internally
+  getMessages(): any[] {
+    return this.piSession.messages;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi stats object
+  getSessionStats(): any {
+    return this.piSession.getSessionStats();
+  }
+
+  async compact(instructions?: string): Promise<unknown> {
+    return this.piSession.compact(instructions);
+  }
+
+  setAutoCompaction(enabled: boolean): void {
+    this.piSession.setAutoCompactionEnabled(enabled);
+  }
+
+  async newSession(): Promise<boolean> {
+    return this.piSession.newSession();
+  }
+
+  async fork(entryId: string): Promise<unknown> {
+    return this.piSession.fork(entryId);
+  }
+
+  async switchSession(sessionPath: string): Promise<boolean> {
+    return this.piSession.switchSession(sessionPath);
+  }
+
+  setSteeringMode(mode: string): void {
+    this.piSession.setSteeringMode(mode as "all" | "one-at-a-time");
+  }
+
+  setFollowUpMode(mode: string): void {
+    this.piSession.setFollowUpMode(mode as "all" | "one-at-a-time");
+  }
+
+  setAutoRetry(enabled: boolean): void {
+    this.piSession.setAutoRetryEnabled(enabled);
+  }
+
+  abortRetry(): void {
+    this.piSession.abortRetry();
+  }
+
+  abortBash(): void {
+    this.piSession.abortBash();
+  }
+
   getState(): {
     model: string | undefined;
     thinkingLevel: string;
@@ -210,6 +307,21 @@ export class SdkBackend {
       thinkingLevel: this.piSession.thinkingLevel,
       isStreaming: this.piSession.isStreaming,
       sessionFile: this.piSession.sessionFile,
+    };
+  }
+
+  /** Full state snapshot in RPC-compatible shape for forwardRpcCommand. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi state shape is heterogeneous
+  getStateSnapshot(): any {
+    const m = this.piSession.model;
+    return {
+      sessionFile: this.piSession.sessionFile,
+      sessionId: this.piSession.sessionId,
+      sessionName: this.piSession.sessionName,
+      model: m ? { provider: m.provider, id: m.name, name: m.name } : undefined,
+      thinkingLevel: this.piSession.thinkingLevel,
+      isStreaming: this.piSession.isStreaming,
+      autoCompaction: this.piSession.autoCompactionEnabled,
     };
   }
 
@@ -235,4 +347,48 @@ export class SdkBackend {
     this.unsub();
     this.piSession.dispose();
   }
+}
+
+// ─── In-Process Permission Gate Extension Factory ───
+
+/**
+ * Create an ExtensionFactory that gates tool calls through GateServer
+ * in-process (no TCP socket). Equivalent to extensions/permission-gate/
+ * but without the TCP transport layer.
+ */
+function createPermissionGateFactory(
+  gate: GateServer,
+  sessionId: string,
+  workspaceId: string,
+): ExtensionFactory {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ExtensionAPI shape varies across pi versions
+  return (pi: any) => {
+    // Register a virtual guard — immediately "guarded" (no TCP handshake).
+    gate.createVirtualGuard(sessionId, workspaceId);
+    console.log(`${ts()} [sdk-gate] Virtual guard registered for ${sessionId}`);
+
+    // Gate every tool call through the policy engine
+    pi.on(
+      "tool_call",
+      async (event: { toolName: string; toolCallId: string; input: Record<string, unknown> }) => {
+        const result = await gate.checkToolCall(sessionId, {
+          tool: event.toolName,
+          input: event.input,
+          toolCallId: event.toolCallId,
+        });
+
+        if (result.action === "deny") {
+          return { block: true, reason: result.reason || "Denied by permission gate" };
+        }
+
+        // Allow — return void, tool executes normally
+      },
+    );
+
+    // Clean up on shutdown
+    pi.on("session_shutdown", () => {
+      gate.destroySessionSocket(sessionId);
+      console.log(`${ts()} [sdk-gate] Guard destroyed for ${sessionId}`);
+    });
+  };
 }
