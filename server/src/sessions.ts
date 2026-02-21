@@ -326,11 +326,15 @@ export class SessionManager extends EventEmitter {
         let sdkBackend: SdkBackend | undefined;
 
         if (useSdk) {
+          const useGate = this.config.permissionGate !== false;
           sdkBackend = await SdkBackend.create({
             session,
             workspace,
             onEvent: (event) => this.handlePiEvent(key, event),
             onEnd: (reason) => this.handleSessionEnd(key, reason),
+            gate: useGate ? this.gate : undefined,
+            workspaceId: identity.workspaceId,
+            permissionGate: useGate,
           });
         } else {
           proc = await spawnPiHost(session, workspace, this.spawnDeps);
@@ -792,10 +796,9 @@ export class SessionManager extends EventEmitter {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
-    // Schedule guard health check after first prompt.
-    // Extension connects in before_agent_start (triggered by first prompt),
-    // so we can't check earlier.
-    if (!active.guardCheckScheduled) {
+    // Schedule guard health check after first prompt (RPC only).
+    // SDK sessions use in-process gate with virtual guard — no health check needed.
+    if (!active.sdkBackend && !active.guardCheckScheduled) {
       active.guardCheckScheduled = true;
       this.scheduleGuardCheck(key, sessionId);
     }
@@ -907,9 +910,26 @@ export class SessionManager extends EventEmitter {
     if (!active) return;
 
     try {
-      const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
-      if (this.applyPiStateSnapshot(active.session, data)) {
-        this.persistSessionNow(key, active.session);
+      // SDK path: read state directly from the backend
+      if (active.sdkBackend) {
+        const sdkState = active.sdkBackend.getState();
+        const snapshot = {
+          sessionFile: sdkState.sessionFile,
+          sessionId: active.sdkBackend.sessionId,
+          model: sdkState.model
+            ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
+            : undefined,
+          thinkingLevel: sdkState.thinkingLevel,
+        };
+        if (this.applyPiStateSnapshot(active.session, snapshot)) {
+          this.persistSessionNow(key, active.session);
+        }
+      } else {
+        // RPC path: ask pi for its state via get_state command
+        const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+        if (this.applyPiStateSnapshot(active.session, data)) {
+          this.persistSessionNow(key, active.session);
+        }
       }
 
       await this.applyRememberedThinkingLevel(key, active);
@@ -930,9 +950,24 @@ export class SessionManager extends EventEmitter {
     if (!active) return null;
 
     try {
-      const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
-      if (this.applyPiStateSnapshot(active.session, data)) {
-        this.persistSessionNow(key, active.session);
+      if (active.sdkBackend) {
+        const sdkState = active.sdkBackend.getState();
+        const snapshot = {
+          sessionFile: sdkState.sessionFile,
+          sessionId: active.sdkBackend.sessionId,
+          model: sdkState.model
+            ? { provider: sdkState.model.split("/")[0], id: sdkState.model }
+            : undefined,
+          thinkingLevel: sdkState.thinkingLevel,
+        };
+        if (this.applyPiStateSnapshot(active.session, snapshot)) {
+          this.persistSessionNow(key, active.session);
+        }
+      } else {
+        const data = await this.sendRpcCommandAsync(key, { type: "get_state" }, 8_000);
+        if (this.applyPiStateSnapshot(active.session, data)) {
+          this.persistSessionNow(key, active.session);
+        }
       }
       return {
         sessionFile: active.session.piSessionFile,
@@ -1406,7 +1441,9 @@ export class SessionManager extends EventEmitter {
       command.id = `rpc-${++this.rpcIdCounter}`;
     }
 
-    safeStdinWrite(active.process!, JSON.stringify(command) + "\n");
+    if (active.process) {
+      safeStdinWrite(active.process, JSON.stringify(command) + "\n");
+    }
     this.resetIdleTimer(key);
   }
 
@@ -1445,7 +1482,9 @@ export class SessionManager extends EventEmitter {
         }
       });
 
-      safeStdinWrite(active.process!, JSON.stringify(command) + "\n");
+      if (active.process) {
+        safeStdinWrite(active.process, JSON.stringify(command) + "\n");
+      }
     });
   }
 
@@ -1471,6 +1510,7 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Route an async command to the SDK backend and return its result.
+   * Maps RPC command types to direct SDK method calls.
    */
   private async routeSdkCommandAsync(
     backend: SdkBackend,
@@ -1478,16 +1518,73 @@ export class SessionManager extends EventEmitter {
   ): Promise<unknown> {
     const type = command.type as string;
     switch (type) {
+      // State
+      case "get_state":
+        return backend.getStateSnapshot();
+      case "get_messages":
+        return backend.getMessages();
+      case "get_session_stats":
+        return backend.getSessionStats();
+
+      // Model
       case "set_model": {
         const result = await backend.setModel(command.model as string);
         if (!result.success) throw new Error(result.error);
         return result;
       }
+      case "cycle_model":
+        return backend.cycleModel(command.direction as string);
+      case "get_available_models":
+        // SDK doesn't have a direct equivalent — return empty for now
+        return [];
+
+      // Thinking
       case "set_thinking_level":
         backend.setThinkingLevel(command.level as string);
+        return { level: command.level };
+      case "cycle_thinking_level": {
+        const level = backend.cycleThinkingLevel();
+        return { level };
+      }
+
+      // Session
+      case "new_session":
+        await backend.newSession();
         return { success: true };
-      case "get_state":
-        return backend.getState();
+      case "set_session_name":
+        backend.setSessionName(command.name as string);
+        return { name: command.name };
+      case "compact":
+        return backend.compact(command.instructions as string | undefined);
+      case "set_auto_compaction":
+        backend.setAutoCompaction(!!command.enabled);
+        return { enabled: !!command.enabled };
+      case "fork":
+        return backend.fork(command.entryId as string);
+      case "switch_session":
+        return backend.switchSession(command.sessionPath as string);
+
+      // Queue modes
+      case "set_steering_mode":
+        backend.setSteeringMode(command.mode as string);
+        return { mode: command.mode };
+      case "set_follow_up_mode":
+        backend.setFollowUpMode(command.mode as string);
+        return { mode: command.mode };
+
+      // Retry
+      case "set_auto_retry":
+        backend.setAutoRetry(!!command.enabled);
+        return { enabled: !!command.enabled };
+      case "abort_retry":
+        backend.abortRetry();
+        return { success: true };
+
+      // Bash
+      case "abort_bash":
+        backend.abortBash();
+        return { success: true };
+
       default:
         throw new Error(`Unhandled SDK command: ${type}`);
     }

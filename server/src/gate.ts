@@ -22,11 +22,8 @@ import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { generateId } from "./id.js";
 import type { PolicyEngine } from "./policy.js";
-import {
-  parseBashCommand,
-  type GateRequest,
-  type ResolutionOptions,
-} from "./policy.js";
+import { parseBashCommand, type GateRequest } from "./policy.js";
+import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
 
@@ -57,7 +54,6 @@ export interface PendingDecision {
   createdAt: number;
   timeoutAt: number;
   expires?: boolean;
-  resolutionOptions: ResolutionOptions;
   resolve: (response: GateResponse) => void;
 }
 
@@ -123,7 +119,9 @@ export class GateServer extends EventEmitter {
 
     const configuredTimeout = options.approvalTimeoutMs;
     this.approvalTimeoutMs =
-      typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout >= 0
+      typeof configuredTimeout === "number" &&
+      Number.isFinite(configuredTimeout) &&
+      configuredTimeout >= 0
         ? Math.floor(configuredTimeout)
         : DEFAULT_APPROVAL_TIMEOUT_MS;
   }
@@ -145,10 +143,7 @@ export class GateServer extends EventEmitter {
    * Create a TCP socket for a session. Returns a promise that resolves to the port number.
    * The session's permission-gate extension connects to this port.
    */
-  async createSessionSocket(
-    sessionId: string,
-    workspaceId: string = "",
-  ): Promise<number> {
+  async createSessionSocket(sessionId: string, workspaceId: string = ""): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((client) => {
         this.handleConnection(sessionId, client);
@@ -224,28 +219,26 @@ export class GateServer extends EventEmitter {
    * scope determines rule persistence:
    *   "once"      — no rule created
    *   "session"   — in-memory rule for current session
-   *   "workspace" — persisted rule for this workspace
    *   "global"    — persisted rule for all workspaces
    */
   resolveDecision(
     requestId: string,
     action: "allow" | "deny",
-    scope: "once" | "session" | "workspace" | "global" = "once",
+    scope: "once" | "session" | "global" = "once",
     expiresInMs?: number,
   ): boolean {
     const pending = this.pending.get(requestId);
     if (!pending) return false;
 
-    const requestedScope = scope;
-    let normalizedScope = this.normalizeDecisionScope(action, requestedScope, pending.resolutionOptions);
+    const normalizedChoice = normalizeApprovalChoice(pending.tool, {
+      action,
+      scope,
+    });
+    const normalizedScope = normalizedChoice.scope;
 
-    if (pending.tool.startsWith("policy.")) {
-      normalizedScope = "once";
-    }
-
-    if (normalizedScope !== requestedScope) {
+    if (normalizedChoice.normalized) {
       console.warn(
-        `[gate] Scope ${requestedScope} is not permitted for ${action}; downgraded to ${normalizedScope} (request=${requestId})`,
+        `[gate] Scope ${scope} is not permitted for ${action}; downgraded to ${normalizedScope} (request=${requestId})`,
       );
     }
 
@@ -304,46 +297,10 @@ export class GateServer extends EventEmitter {
     return true;
   }
 
-  private normalizeDecisionScope(
-    action: "allow" | "deny",
-    requested: "once" | "session" | "workspace" | "global",
-    options: ResolutionOptions,
-  ): "once" | "session" | "workspace" | "global" {
-    if (requested === "once") return "once";
-
-    if (action === "allow") {
-      if (requested === "session") {
-        return options.allowSession ? "session" : "once";
-      }
-      // workspace/global share the same UI capability today.
-      return options.allowAlways ? requested : "once";
-    }
-
-    // action === "deny"
-    if (requested === "session") return "once";
-    return options.denyAlways ? requested : "once";
-  }
-
-  private fixedResolutionOptions(tool: string): ResolutionOptions {
-    if (tool.startsWith("policy.")) {
-      return {
-        allowSession: false,
-        allowAlways: false,
-        denyAlways: false,
-      };
-    }
-
-    return {
-      allowSession: true,
-      allowAlways: true,
-      denyAlways: true,
-    };
-  }
-
   private buildRuleFromDecision(
     pending: PendingDecision,
     action: "allow" | "deny",
-    scope: "session" | "workspace" | "global",
+    scope: "session" | "global",
     expiresAt?: number,
   ): RuleInput | null {
     if (pending.tool.startsWith("policy.")) return null;
@@ -358,7 +315,6 @@ export class GateServer extends EventEmitter {
       source: "learned",
       label: `${action === "allow" ? "Allow" : "Deny"} ${pending.displaySummary}`,
       ...(scope === "session" ? { sessionId: pending.sessionId } : {}),
-      ...(scope === "workspace" ? { workspaceId: pending.workspaceId } : {}),
       ...(expiresAt !== undefined ? { expiresAt } : {}),
     };
 
@@ -375,7 +331,13 @@ export class GateServer extends EventEmitter {
       return input;
     }
 
-    if (tool === "read" || tool === "write" || tool === "edit" || tool === "find" || tool === "ls") {
+    if (
+      tool === "read" ||
+      tool === "write" ||
+      tool === "edit" ||
+      tool === "find" ||
+      tool === "ls"
+    ) {
       const path = (pending.input as { path?: string }).path;
       if (typeof path === "string" && path.trim().length > 0) {
         input.pattern = path.trim();
@@ -384,6 +346,56 @@ export class GateServer extends EventEmitter {
     }
 
     return input;
+  }
+
+  /**
+   * Create a virtual guard for SDK sessions (no TCP socket needed).
+   * The guard starts in "guarded" state immediately since the extension
+   * factory runs in-process and doesn't need a TCP handshake.
+   */
+  createVirtualGuard(sessionId: string, workspaceId: string = ""): void {
+    // Clean up any existing guard first
+    if (this.guards.has(sessionId)) {
+      this.destroySessionSocket(sessionId);
+    }
+
+    const dummyServer = createServer(); // Never listens — placeholder
+
+    const guard: SessionGuard = {
+      sessionId,
+      workspaceId,
+      state: "guarded",
+      port: 0,
+      server: dummyServer,
+      client: null,
+      lastHeartbeat: Date.now(),
+      heartbeatTimer: null,
+    };
+
+    this.guards.set(sessionId, guard);
+    console.log(`[gate] Virtual guard created for ${sessionId} (SDK mode)`);
+    this.emit("guard_ready", { sessionId });
+  }
+
+  /**
+   * Evaluate a tool call through the gate and return the decision.
+   * Used by SDK extension factory (in-process, no TCP).
+   *
+   * Returns { action: "allow" } or { action: "deny", reason }.
+   */
+  async checkToolCall(
+    sessionId: string,
+    req: { tool: string; input: Record<string, unknown>; toolCallId: string },
+  ): Promise<{ action: "allow" | "deny"; reason?: string }> {
+    const guard = this.guards.get(sessionId);
+    if (!guard || guard.state !== "guarded") {
+      return {
+        action: "deny",
+        reason: `Session not guarded (state: ${guard?.state || "unknown"})`,
+      };
+    }
+
+    return this.evaluateGateCheck(guard, req);
   }
 
   /**
@@ -528,18 +540,28 @@ export class GateServer extends EventEmitter {
       toolCallId: msg.toolCallId,
     };
 
-    // Evaluate policy with learned rules
+    const result = await this.evaluateGateCheck(guard, req);
+    this.send(client, { type: "gate_result", ...result });
+  }
+
+  /**
+   * Core gate check evaluation. Shared by TCP handleGateCheck and
+   * in-process checkToolCall (SDK mode).
+   */
+  private async evaluateGateCheck(
+    guard: SessionGuard,
+    req: GateRequest,
+  ): Promise<{ action: "allow" | "deny"; reason?: string }> {
     const policy = this.getPolicy(guard.sessionId);
     const allRules = this.ruleStore.getAll();
     const decision = policy.evaluateWithRules(req, allRules, guard.sessionId, guard.workspaceId);
     const displaySummary = policy.formatDisplaySummary(req);
 
     if (decision.action === "allow") {
-      this.send(client, { type: "gate_result", action: "allow" });
       this.auditLog.record({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
-        tool: msg.tool,
+        tool: req.tool,
         displaySummary,
         decision: "allow",
         resolvedBy: "policy",
@@ -548,15 +570,14 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_allowed", { sessionId: guard.sessionId, ...req, decision });
-      return;
+      return { action: "allow" };
     }
 
     if (decision.action === "deny") {
-      this.send(client, { type: "gate_result", action: "deny", reason: decision.reason });
       this.auditLog.record({
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
-        tool: msg.tool,
+        tool: req.tool,
         displaySummary,
         decision: "deny",
         resolvedBy: "policy",
@@ -565,34 +586,31 @@ export class GateServer extends EventEmitter {
         ruleSummary: decision.ruleLabel,
       });
       this.emit("tool_denied", { sessionId: guard.sessionId, ...req, decision });
-      return;
+      return { action: "deny", reason: decision.reason };
     }
 
-    // action === "ask" → create pending decision, wait for phone
+    // action === "ask" — create pending decision, wait for phone
     const requestId = generateId(12);
-    const resolutionOptions = this.fixedResolutionOptions(msg.tool);
 
     const response = await new Promise<GateResponse>((resolve) => {
       const createdAt = Date.now();
       const expires = this.approvalTimeoutMs > 0;
-      const timeoutAt =
-        expires
-          ? createdAt + this.approvalTimeoutMs
-          : createdAt + NO_TIMEOUT_PLACEHOLDER_MS;
+      const timeoutAt = expires
+        ? createdAt + this.approvalTimeoutMs
+        : createdAt + NO_TIMEOUT_PLACEHOLDER_MS;
 
       const pending: PendingDecision = {
         id: requestId,
         sessionId: guard.sessionId,
         workspaceId: guard.workspaceId,
-        tool: msg.tool,
-        input: msg.input,
-        toolCallId: msg.toolCallId,
+        tool: req.tool,
+        input: req.input,
+        toolCallId: req.toolCallId,
         displaySummary,
         reason: decision.reason,
         createdAt,
         timeoutAt,
         expires,
-        resolutionOptions,
         resolve,
       };
 
@@ -604,7 +622,7 @@ export class GateServer extends EventEmitter {
             this.auditLog.record({
               sessionId: guard.sessionId,
               workspaceId: guard.workspaceId,
-              tool: msg.tool,
+              tool: req.tool,
               displaySummary,
               decision: "deny",
               resolvedBy: "timeout",
@@ -622,11 +640,7 @@ export class GateServer extends EventEmitter {
       this.emit("approval_needed", pending);
     });
 
-    this.send(client, {
-      type: "gate_result",
-      action: response.action,
-      reason: response.reason,
-    });
+    return { action: response.action, reason: response.reason };
   }
 
   private handleExtensionLost(sessionId: string): void {
