@@ -321,7 +321,7 @@ export class SessionManager extends EventEmitter {
 
       try {
         const useSdk =
-          this.config.sessionBackend === "sdk" || process.env.OPPI_SESSION_BACKEND === "sdk";
+          process.env.OPPI_SESSION_BACKEND === "rpc" ? false : this.config.sessionBackend !== "rpc";
 
         let proc: ChildProcess | null = null;
         let sdkBackend: SdkBackend | undefined;
