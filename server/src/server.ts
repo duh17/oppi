@@ -18,7 +18,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
-import { UserStreamMux, startServerPing, SEND_HWM_BYTES, DROPPABLE_TYPES } from "./stream.js";
+import { UserStreamMux, startServerPing } from "./stream.js";
 import { RouteHandler, type ModelInfo } from "./routes.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
@@ -1232,7 +1232,6 @@ export class Server {
 
     let msgSent = 0;
     let msgRecv = 0;
-    let msgDropped = 0;
 
     const send = (msg: ServerMessage): void => {
       const outbound =
@@ -1244,10 +1243,6 @@ export class Server {
           : msg;
 
       if (ws.readyState === WebSocket.OPEN) {
-        if (DROPPABLE_TYPES.has(outbound.type) && ws.bufferedAmount > SEND_HWM_BYTES) {
-          msgDropped++;
-          return;
-        }
         msgSent++;
         ws.send(JSON.stringify(outbound), { compress: false });
       } else {
@@ -1290,7 +1285,7 @@ export class Server {
       stopPing();
       const reasonStr = reason?.toString() || "";
       console.log(
-        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv}${msgDropped > 0 ? ` dropped=${msgDropped}` : ""})`,
+        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
       );
       unsubscribe?.();
       this.untrackConnection(ws);
