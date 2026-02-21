@@ -78,6 +78,8 @@ BUILD_ONLY=0
 BUMP=0
 SKIP_GENERATE=0
 BUILD_NUMBER=""
+SUBMIT_EXTERNAL=0
+EXTERNAL_GROUP="Pi Discord Beta"
 
 usage() {
   cat <<'EOF'
@@ -87,11 +89,13 @@ Usage:
   ios/scripts/testflight.sh [options]
 
 Options:
-  --build-only       Archive and export IPA, skip upload
-  --bump             Auto-increment build number (CURRENT_PROJECT_VERSION)
-  --build-number N   Set explicit build number
-  --skip-generate    Skip xcodegen generate
-  -h, --help         Show this help
+  --build-only            Archive and export IPA, skip upload
+  --bump                  Auto-increment build number (CURRENT_PROJECT_VERSION)
+  --build-number N        Set explicit build number
+  --submit-external [G]   Submit for external beta review after upload.
+                          Optionally specify group name (default: "Pi Discord Beta")
+  --skip-generate         Skip xcodegen generate
+  -h, --help              Show this help
 
 Environment:
   ASC_KEY_ID                     App Store Connect API Key ID
@@ -119,6 +123,13 @@ while [[ $# -gt 0 ]]; do
     --build-only) BUILD_ONLY=1; shift ;;
     --bump) BUMP=1; shift ;;
     --build-number) BUILD_NUMBER="$2"; shift 2 ;;
+    --submit-external)
+      SUBMIT_EXTERNAL=1
+      # Accept optional group name (next arg if it doesn't start with --)
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        EXTERNAL_GROUP="$2"; shift
+      fi
+      shift ;;
     --skip-generate) SKIP_GENERATE=1; shift ;;
     -h|--help) usage 0 ;;
     *) echo "Unknown option: $1"; usage 1 ;;
@@ -431,6 +442,147 @@ NODE
   echo "$compliance_output"
 }
 
+submit_external_beta() {
+  if [[ "$SUBMIT_EXTERNAL" -ne 1 ]]; then
+    return 0
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "warning: node not found; cannot submit for external beta review" >&2
+    return 0
+  fi
+
+  local bundle_id
+  bundle_id=$(grep 'PRODUCT_BUNDLE_IDENTIFIER:' project.yml | head -1 | awk '{print $2}')
+  if [[ -z "$bundle_id" ]]; then
+    echo "warning: failed to resolve bundle id; skipping external submission" >&2
+    return 0
+  fi
+
+  echo "── Submitting build $BUILD_NUMBER to external group \"$EXTERNAL_GROUP\"..."
+
+  local submit_output
+  if ! submit_output=$(ASC_KEY_ID="$ASC_KEY_ID" \
+      ASC_ISSUER_ID="$ASC_ISSUER_ID" \
+      ASC_KEY_PATH="$ASC_KEY_PATH" \
+      ASC_BUNDLE_ID="$bundle_id" \
+      ASC_BUILD_NUMBER="$BUILD_NUMBER" \
+      ASC_EXTERNAL_GROUP="$EXTERNAL_GROUP" \
+      ASC_COMPLIANCE_WAIT_SECONDS="${ASC_COMPLIANCE_WAIT_SECONDS:-300}" \
+      ASC_COMPLIANCE_POLL_SECONDS="${ASC_COMPLIANCE_POLL_SECONDS:-5}" \
+      node <<'SUBMIT_NODE'
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+
+const keyId = process.env.ASC_KEY_ID;
+const issuer = process.env.ASC_ISSUER_ID;
+const keyPath = process.env.ASC_KEY_PATH;
+const bundleId = process.env.ASC_BUNDLE_ID;
+const buildNumber = process.env.ASC_BUILD_NUMBER;
+const groupName = process.env.ASC_EXTERNAL_GROUP;
+const waitSeconds = Number(process.env.ASC_COMPLIANCE_WAIT_SECONDS || "300");
+const pollSeconds = Number(process.env.ASC_COMPLIANCE_POLL_SECONDS || "5");
+
+const b64url = (input) =>
+  Buffer.from(input).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+
+function token() {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: "ES256", kid: keyId, typ: "JWT" }));
+  const payload = b64url(JSON.stringify({ iss: issuer, exp: now + 600, aud: "appstoreconnect-v1" }));
+  const unsigned = `${header}.${payload}`;
+  const sign = crypto.createSign("sha256");
+  sign.update(unsigned); sign.end();
+  const sig = sign.sign({ key: fs.readFileSync(keyPath, "utf8"), dsaEncoding: "ieee-p1363" });
+  return `${unsigned}.${b64url(sig)}`;
+}
+
+async function asc(method, path, query, body) {
+  const url = new URL(`https://api.appstoreconnect.apple.com${path}`);
+  if (query) for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v));
+  const res = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch {}
+  if (!res.ok && res.status !== 409) {
+    const detail = json?.errors?.[0]?.detail || text.slice(0, 400);
+    throw new Error(`${method} ${url.pathname} (${res.status}): ${detail}`);
+  }
+  return { ok: res.ok, status: res.status, data: json };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+(async () => {
+  // 1. Find app
+  const appResp = await asc("GET", "/v1/apps", { "filter[bundleId]": bundleId, limit: 1 });
+  const appId = appResp.data?.data?.[0]?.id;
+  if (!appId) throw new Error(`app not found: ${bundleId}`);
+
+  // 2. Wait for build to appear and be VALID
+  const deadline = Date.now() + waitSeconds * 1000;
+  let build = null;
+  while (Date.now() <= deadline) {
+    const buildResp = await asc("GET", "/v1/builds", {
+      "filter[app]": appId, "filter[version]": buildNumber, sort: "-uploadedDate", limit: 1,
+    });
+    build = buildResp.data?.data?.[0] ?? null;
+    if (build?.attributes?.processingState === "VALID") break;
+    build = null;
+    await sleep(Math.max(1, pollSeconds) * 1000);
+  }
+  if (!build) throw new Error(`build ${buildNumber} not VALID within ${waitSeconds}s`);
+  console.log(`   build ${buildNumber}: ${build.id} (${build.attributes.processingState})`);
+
+  // 3. Find external beta group
+  const groupsResp = await asc("GET", "/v1/betaGroups", {
+    "filter[app]": appId, "filter[name]": groupName, limit: 1,
+  });
+  const groupId = groupsResp.data?.data?.[0]?.id;
+  if (!groupId) throw new Error(`beta group "${groupName}" not found`);
+  console.log(`   group: ${groupId} (${groupName})`);
+
+  // 4. Add build to group
+  const addBuild = await asc("POST", `/v1/betaGroups/${groupId}/relationships/builds`, undefined, {
+    data: [{ type: "builds", id: build.id }],
+  });
+  if (addBuild.ok || addBuild.status === 409) {
+    console.log(`   build added to group`);
+  }
+
+  // 5. Submit for external beta review
+  const submitResp = await asc("POST", "/v1/betaAppReviewSubmissions", undefined, {
+    data: {
+      type: "betaAppReviewSubmissions",
+      relationships: { build: { data: { type: "builds", id: build.id } } },
+    },
+  });
+  if (submitResp.ok || submitResp.status === 409) {
+    const state = submitResp.data?.data?.attributes?.betaReviewState || "submitted";
+    console.log(`   submitted for beta review (${state})`);
+  } else {
+    throw new Error(`beta review submission failed (${submitResp.status})`);
+  }
+
+  // 6. Verify final state
+  const detailResp = await asc("GET", "/v1/buildBetaDetails", { "filter[build]": build.id, limit: 1 });
+  const d = detailResp.data?.data?.[0]?.attributes || {};
+  console.log(`   internal: ${d.internalBuildState ?? "unknown"}`);
+  console.log(`   external: ${d.externalBuildState ?? "unknown"}`);
+})();
+SUBMIT_NODE
+  ); then
+    echo "warning: external beta submission failed" >&2
+    echo "$submit_output" >&2
+    return 1
+  fi
+
+  echo "$submit_output"
+}
+
 # Common xcodebuild auth flags — used for archive, export, and upload.
 # This lets xcodebuild auto-create Distribution certificates and profiles.
 AUTH_FLAGS=(
@@ -544,9 +696,12 @@ xcodebuild -exportArchive \
 if grep -q "EXPORT SUCCEEDED" "$EXPORT_LOG"; then
   if grep -q "Upload succeeded" "$EXPORT_LOG"; then
     apply_export_compliance
+    submit_external_beta
     echo ""
     echo "── Done! Version $VERSION ($BUILD_NUMBER) uploaded via cloud signing."
-    echo "   TestFlight build available in ~5-15 minutes."
+    if [[ "$SUBMIT_EXTERNAL" -eq 1 ]]; then
+      echo "   Submitted to external group: $EXTERNAL_GROUP"
+    fi
     echo "   https://appstoreconnect.apple.com/apps"
     exit 0
   fi
@@ -577,8 +732,11 @@ xcrun altool --upload-package "$IPA_PATH" \
   2>&1
 
 apply_export_compliance
+submit_external_beta
 
 echo ""
 echo "── Done! Version $VERSION ($BUILD_NUMBER) uploaded."
-echo "   TestFlight build available in ~5-15 minutes."
+if [[ "$SUBMIT_EXTERNAL" -eq 1 ]]; then
+  echo "   Submitted to external group: $EXTERNAL_GROUP"
+fi
 echo "   https://appstoreconnect.apple.com/apps"
