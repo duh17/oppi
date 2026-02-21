@@ -4,6 +4,11 @@ import SwiftUI
 ///
 /// Groups edit/write tool calls by file and lets users drill into per-change
 /// diff/content using native list navigation.
+///
+/// **Performance:** File changes and groups are built once on appear and
+/// cached in `@State`. Only `filteredChangeGroups` recomputes on search
+/// text changes, and it filters the cached groups (~50-100 entries) rather
+/// than re-scanning all 4000+ timeline items.
 struct SessionChangesView: View {
     let sessionId: String
     let workspaceId: String?
@@ -12,80 +17,19 @@ struct SessionChangesView: View {
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
 
-    private var allFileChanges: [SessionFileChangeEntry] {
-        var entries: [SessionFileChangeEntry] = []
-        entries.reserveCapacity(items.count)
+    // Cached on appear — avoids recomputing from 4000+ items per body eval.
+    @State private var cachedChangeGroups: [SessionFileChangeGroup] = []
+    @State private var cachedTotalChangeCount = 0
+    @State private var cachedTotalAddedLines = 0
+    @State private var cachedTotalRemovedLines = 0
+    @State private var isBuilt = false
 
-        for (index, item) in items.enumerated() {
-            guard case .toolCall(let id, let tool, let argsSummary, _, _, let isError, _) = item else {
-                continue
-            }
-            guard !isError else { continue }
-
-            let normalized = ToolCallFormatting.normalized(tool)
-            guard normalized == "edit" || normalized == "write" else { continue }
-
-            let args = toolArgsStore.args(for: id)
-            guard let rawPath = ToolCallFormatting.filePath(from: args)
-                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary) else {
-                continue
-            }
-
-            let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !path.isEmpty else { continue }
-
-            if normalized == "edit" {
-                let stats = ToolCallFormatting.editDiffStats(from: args)
-                let entry = SessionFileChangeEntry(
-                    id: id,
-                    kind: .edit,
-                    path: path,
-                    oldText: args?["oldText"]?.stringValue,
-                    newText: args?["newText"]?.stringValue,
-                    writeContent: nil,
-                    addedLines: stats?.added ?? 0,
-                    removedLines: stats?.removed ?? 0,
-                    order: index
-                )
-                entries.append(entry)
-            } else {
-                let content = args?["content"]?.stringValue
-                let entry = SessionFileChangeEntry(
-                    id: id,
-                    kind: .write,
-                    path: path,
-                    oldText: nil,
-                    newText: nil,
-                    writeContent: content,
-                    addedLines: content.map(Self.lineCount(of:)) ?? 0,
-                    removedLines: 0,
-                    order: index
-                )
-                entries.append(entry)
-            }
-        }
-
-        return entries
-    }
-
-    private var fileChangeGroups: [SessionFileChangeGroup] {
-        let grouped = Dictionary(grouping: allFileChanges, by: \.path)
-        return grouped
-            .map { path, entries in
-                SessionFileChangeGroup(
-                    path: path,
-                    entries: entries.sorted { $0.order > $1.order }
-                )
-            }
-            .sorted { lhs, rhs in
-                (lhs.entries.first?.order ?? -1) > (rhs.entries.first?.order ?? -1)
-            }
-    }
-
+    /// Filters the cached groups by search text. Cheap — operates on
+    /// ~50-100 groups, not the full 4000+ item array.
     private var filteredChangeGroups: [SessionFileChangeGroup] {
-        guard !searchText.isEmpty else { return fileChangeGroups }
+        guard !searchText.isEmpty else { return cachedChangeGroups }
         let query = searchText.lowercased()
-        return fileChangeGroups.filter { group in
+        return cachedChangeGroups.filter { group in
             if group.path.lowercased().contains(query) {
                 return true
             }
@@ -95,24 +39,12 @@ struct SessionChangesView: View {
         }
     }
 
-    private var totalChangeCount: Int {
-        allFileChanges.count
-    }
-
-    private var totalFilesChanged: Int {
-        fileChangeGroups.count
-    }
-
-    private var totalAddedLines: Int {
-        allFileChanges.reduce(0) { $0 + $1.addedLines }
-    }
-
-    private var totalRemovedLines: Int {
-        allFileChanges.reduce(0) { $0 + $1.removedLines }
-    }
-
     var body: some View {
-        if fileChangeGroups.isEmpty {
+        if !isBuilt {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task { buildChangeIndex() }
+        } else if cachedChangeGroups.isEmpty {
             ContentUnavailableView(
                 "No File Changes",
                 systemImage: "doc.badge.plus",
@@ -124,22 +56,22 @@ struct SessionChangesView: View {
             List {
                 Section("Summary") {
                     LabeledContent("Files Changed") {
-                        Text("\(totalFilesChanged)")
+                        Text("\(cachedChangeGroups.count)")
                             .foregroundStyle(.themeFg)
                     }
                     LabeledContent("Total Changes") {
-                        Text("\(totalChangeCount)")
+                        Text("\(cachedTotalChangeCount)")
                             .foregroundStyle(.themeFg)
                     }
-                    if totalAddedLines > 0 || totalRemovedLines > 0 {
+                    if cachedTotalAddedLines > 0 || cachedTotalRemovedLines > 0 {
                         HStack(spacing: 10) {
-                            if totalAddedLines > 0 {
-                                Text("+\(totalAddedLines)")
+                            if cachedTotalAddedLines > 0 {
+                                Text("+\(cachedTotalAddedLines)")
                                     .font(.caption.monospaced().bold())
                                     .foregroundStyle(.themeDiffAdded)
                             }
-                            if totalRemovedLines > 0 {
-                                Text("-\(totalRemovedLines)")
+                            if cachedTotalRemovedLines > 0 {
+                                Text("-\(cachedTotalRemovedLines)")
                                     .font(.caption.monospaced().bold())
                                     .foregroundStyle(.themeDiffRemoved)
                             }
@@ -165,6 +97,80 @@ struct SessionChangesView: View {
             .scrollContentBackground(.hidden)
             .background(Color.themeBg)
         }
+    }
+
+    // MARK: - Index Building
+
+    /// Build file change entries and groups once from the full item array.
+    /// Called on appear via `.task`. Subsequent body evaluations read
+    /// cached `@State` values instead of re-scanning 4000+ items.
+    private func buildChangeIndex() {
+        var entries: [SessionFileChangeEntry] = []
+        entries.reserveCapacity(items.count)
+
+        for (index, item) in items.enumerated() {
+            guard case .toolCall(let id, let tool, let argsSummary, _, _, let isError, _) = item else {
+                continue
+            }
+            guard !isError else { continue }
+
+            let normalized = ToolCallFormatting.normalized(tool)
+            guard normalized == "edit" || normalized == "write" else { continue }
+
+            let args = toolArgsStore.args(for: id)
+            guard let rawPath = ToolCallFormatting.filePath(from: args)
+                ?? ToolCallFormatting.parseArgValue("path", from: argsSummary) else {
+                continue
+            }
+
+            let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { continue }
+
+            if normalized == "edit" {
+                let stats = ToolCallFormatting.editDiffStats(from: args)
+                entries.append(SessionFileChangeEntry(
+                    id: id,
+                    kind: .edit,
+                    path: path,
+                    oldText: args?["oldText"]?.stringValue,
+                    newText: args?["newText"]?.stringValue,
+                    writeContent: nil,
+                    addedLines: stats?.added ?? 0,
+                    removedLines: stats?.removed ?? 0,
+                    order: index
+                ))
+            } else {
+                let content = args?["content"]?.stringValue
+                entries.append(SessionFileChangeEntry(
+                    id: id,
+                    kind: .write,
+                    path: path,
+                    oldText: nil,
+                    newText: nil,
+                    writeContent: content,
+                    addedLines: content.map(Self.lineCount(of:)) ?? 0,
+                    removedLines: 0,
+                    order: index
+                ))
+            }
+        }
+
+        let grouped = Dictionary(grouping: entries, by: \.path)
+        cachedChangeGroups = grouped
+            .map { path, groupEntries in
+                SessionFileChangeGroup(
+                    path: path,
+                    entries: groupEntries.sorted { $0.order > $1.order }
+                )
+            }
+            .sorted { lhs, rhs in
+                (lhs.entries.first?.order ?? -1) > (rhs.entries.first?.order ?? -1)
+            }
+
+        cachedTotalChangeCount = entries.count
+        cachedTotalAddedLines = entries.reduce(0) { $0 + $1.addedLines }
+        cachedTotalRemovedLines = entries.reduce(0) { $0 + $1.removedLines }
+        isBuilt = true
     }
 
     private static func lineCount(of text: String) -> Int {
@@ -313,7 +319,7 @@ private struct FileChangeGroupView: View {
     @State private var loadingRemoteDiff = false
 
     private var cacheKey: String {
-        "\(workspaceId ?? "legacy")|\(sessionId)|\(group.path)"
+        "\(workspaceId ?? "default")|\(sessionId)|\(group.path)"
     }
 
     private var overallDiff: SessionOverallFileDiff? {

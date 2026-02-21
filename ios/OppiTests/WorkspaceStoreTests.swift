@@ -93,8 +93,6 @@ struct WorkspaceStoreOfflineTests {
         SkillInfo(
             name: name,
             description: "desc",
-            containerSafe: true,
-            hasScripts: false,
             path: "/tmp/\(name)",
             builtIn: true
         )

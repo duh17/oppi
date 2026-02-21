@@ -152,7 +152,7 @@ describe("single-session websocket stream behavior", () => {
     }).handleWebSocket(ws as unknown as WebSocket, session);
 
     const base = ws.sent.length;
-    ws.emitMessage({ type: "prompt", message: "hello legacy" });
+    ws.emitMessage({ type: "prompt", message: "hello world" });
     await flushQueue();
 
     expect(handleClientMessage).toHaveBeenCalledTimes(1);

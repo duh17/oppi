@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Storage } from "../src/storage.js";
@@ -71,8 +71,8 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(true);
   });
 
-  it("backfills defaults for deprecated config shape in non-strict normalization", () => {
-    const priorConfig = {
+  it("backfills defaults for minimal config in non-strict normalization", () => {
+    const minimalConfig = {
       port: 7749,
       host: "0.0.0.0",
       dataDir: dir,
@@ -84,104 +84,22 @@ describe("Storage config validation", () => {
       maxSessionsGlobal: 5,
     };
 
-    const result = Storage.validateConfig(priorConfig, dir, false);
+    const result = Storage.validateConfig(minimalConfig, dir, false);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
     expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
   });
 
-  it("migrates deprecated security.allowedCidrs to top-level allowedCidrs", () => {
+  it("rejects unknown top-level keys in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      security: {
-        allowedCidrs: ["10.0.0.0/8"],
-      },
-    } as Record<string, unknown>;
-    delete raw.allowedCidrs;
-
-    const result = Storage.validateConfig(raw, dir, true);
-
-    expect(result.valid).toBe(true);
-    expect(result.config?.allowedCidrs).toEqual(["10.0.0.0/8"]);
-    expect(
-      result.warnings.some((w) => w.includes("config.security.allowedCidrs is deprecated; migrated")),
-    ).toBe(true);
-  });
-
-  it("prefers top-level allowedCidrs when both are present", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      allowedCidrs: ["192.168.0.0/16"],
-      security: {
-        allowedCidrs: ["10.0.0.0/8"],
-      },
+      unknownField: "bad",
     };
 
     const result = Storage.validateConfig(raw, dir, true);
-
-    expect(result.valid).toBe(true);
-    expect(result.config?.allowedCidrs).toEqual(["192.168.0.0/16"]);
-    expect(
-      result.warnings.some((w) =>
-        w.includes("config.security.allowedCidrs is deprecated and ignored in favor of config.allowedCidrs"),
-      ),
-    ).toBe(true);
-  });
-
-  it("accepts deprecated transport/profile keys but warns they are ignored", () => {
-    const defaults = Storage.getDefaultConfig(dir);
-    const raw = {
-      ...defaults,
-      security: {
-        allowedCidrs: ["10.0.0.0/8"],
-        profile: "strict",
-        requireTlsOutsideTailnet: false,
-        allowInsecureHttpInTailnet: true,
-        requirePinnedServerIdentity: false,
-      },
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-
-    expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes("config.security.profile is deprecated"))).toBe(true);
-    expect(result.warnings.some((w) => w.includes("config.security.requireTlsOutsideTailnet is deprecated"))).toBe(true);
-  });
-
-  it("loadConfig rewrites deprecated config shape with top-level allowedCidrs", () => {
-    const priorConfig = {
-      port: 7749,
-      host: "0.0.0.0",
-      dataDir: dir,
-      defaultModel: "anthropic/claude-sonnet-4-0",
-      sessionTimeout: 600_000,
-      sessionIdleTimeoutMs: 600_000,
-      workspaceIdleTimeoutMs: 1_800_000,
-      maxSessionsPerWorkspace: 3,
-      maxSessionsGlobal: 5,
-      security: {
-        allowedCidrs: ["10.0.0.0/8"],
-      },
-    };
-
-    writeFileSync(join(dir, "config.json"), JSON.stringify(priorConfig, null, 2));
-
-    const storage = new Storage(dir);
-    const config = storage.getConfig();
-
-    expect(config.configVersion).toBe(2);
-    expect(config.allowedCidrs).toEqual(["10.0.0.0/8"]);
-
-    const rewritten = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")) as {
-      configVersion?: number;
-      allowedCidrs?: string[];
-      security?: { allowedCidrs?: string[] };
-    };
-
-    expect(rewritten.configVersion).toBe(2);
-    expect(rewritten.allowedCidrs).toEqual(["10.0.0.0/8"]);
-    expect(rewritten.security).toBeUndefined();
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("config.unknownField: unknown key"))).toBe(true);
   });
 
   it("accepts declarative policy config", () => {

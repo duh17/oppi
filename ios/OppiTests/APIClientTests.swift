@@ -661,7 +661,7 @@ struct APIClientTests {
 
         MockURLProtocol.handler = { _ in
             self.mockResponse(json: """
-            {"skills":[{"name":"fetch","description":"Fetch URLs","containerSafe":true,"hasScripts":false,"path":"/path"}]}
+            {"skills":[{"name":"fetch","description":"Fetch URLs","path":"/path"}]}
             """)
         }
 

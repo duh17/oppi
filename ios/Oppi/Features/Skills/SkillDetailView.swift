@@ -54,16 +54,6 @@ struct SkillDetailView: View {
                 .foregroundStyle(.themeComment)
 
             HStack(spacing: 8) {
-                badge(
-                    skill.containerSafe ? "Portable" : "Needs Local Tools",
-                    icon: skill.containerSafe ? "checkmark.shield" : "desktopcomputer",
-                    color: skill.containerSafe ? .themeGreen : .themeOrange
-                )
-
-                if skill.hasScripts {
-                    badge("Scripts", icon: "terminal", color: .themeBlue)
-                }
-
                 if let detail, detail.files.count > 1 {
                     badge("\(detail.files.count) files", icon: "doc.on.doc", color: .themeComment)
                 }
