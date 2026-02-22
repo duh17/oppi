@@ -48,19 +48,21 @@ final class ExpandedToolOutputLoader {
         case emptyOutput
     }
 
-    var fetchOverrideForTesting: FetchToolOutput?
+    #if DEBUG
+        var fetchOverrideForTesting: FetchToolOutput?
 
-    private(set) var canceledCountForTesting = 0
-    private(set) var staleDiscardCountForTesting = 0
-    private(set) var appliedCountForTesting = 0
+        private(set) var canceledCountForTesting = 0
+        private(set) var staleDiscardCountForTesting = 0
+        private(set) var appliedCountForTesting = 0
 
-    var taskCountForTesting: Int {
-        loadState.taskCount
-    }
+        var taskCountForTesting: Int {
+            loadState.taskCount
+        }
 
-    var loadingIDsForTesting: Set<String> {
-        loadState.loadingIDs
-    }
+        var loadingIDsForTesting: Set<String> {
+            loadState.loadingIDs
+        }
+    #endif
 
     private var loadState = LoadState()
     private var pendingRetryWorkByID: [String: DispatchWorkItem] = [:]
@@ -105,12 +107,14 @@ final class ExpandedToolOutputLoader {
                 )
 
                 guard disposition == .apply else {
-                    switch disposition {
-                    case .staleSession, .missingItem, .emptyOutput:
-                        self.staleDiscardCountForTesting += 1
-                    case .canceled, .apply:
-                        break
-                    }
+                    #if DEBUG
+                        switch disposition {
+                        case .staleSession, .missingItem, .emptyOutput:
+                            self.staleDiscardCountForTesting += 1
+                        case .canceled, .apply:
+                            break
+                        }
+                    #endif
 
                     if disposition == .emptyOutput {
                         self.scheduleRetryIfNeeded(for: request)
@@ -121,7 +125,9 @@ final class ExpandedToolOutputLoader {
 
                 self.cancelRetryWork(for: request.itemID)
                 request.applyOutput(output)
-                self.appliedCountForTesting += 1
+                #if DEBUG
+                    self.appliedCountForTesting += 1
+                #endif
                 request.reconfigureItem()
             }
         }
@@ -142,7 +148,9 @@ final class ExpandedToolOutputLoader {
 
     func cancelLoadTasks(for itemIDs: Set<String>) {
         let canceled = loadState.cancel(for: itemIDs)
-        canceledCountForTesting += canceled
+        #if DEBUG
+            canceledCountForTesting += canceled
+        #endif
 
         for itemID in itemIDs {
             cancelRetryWork(for: itemID)
@@ -151,7 +159,9 @@ final class ExpandedToolOutputLoader {
 
     func cancelAllWork() {
         let canceled = loadState.cancelAll()
-        canceledCountForTesting += canceled
+        #if DEBUG
+            canceledCountForTesting += canceled
+        #endif
         cancelAllRetryWork()
     }
 
