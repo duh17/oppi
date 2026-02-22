@@ -68,11 +68,11 @@ struct SessionRow: View {
 
                         Text("+\(stats.addedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.themeGreen)
+                            .foregroundStyle(.themeDiffAdded)
 
                         Text("-\(stats.removedLines)")
                             .font(.caption2.monospaced().bold())
-                            .foregroundStyle(.themeRed)
+                            .foregroundStyle(.themeDiffRemoved)
                     }
                     .font(.caption2)
                     .lineLimit(1)

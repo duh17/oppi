@@ -29,11 +29,17 @@ struct GitStatus: Codable, Sendable, Equatable {
     /// Number of staged files
     var stagedCount: Int
 
-    /// Individual file statuses (capped at 100 by server)
+    /// Individual file statuses (capped at 500 by server)
     var files: [GitFileStatus]
 
     /// Total count of all non-clean files
     var totalFiles: Int
+
+    /// Total lines added vs HEAD (tracked files only)
+    var addedLines: Int
+
+    /// Total lines removed vs HEAD (tracked files only)
+    var removedLines: Int
 
     /// Number of stash entries
     var stashCount: Int
@@ -65,6 +71,8 @@ struct GitStatus: Codable, Sendable, Equatable {
         stagedCount: 0,
         files: [],
         totalFiles: 0,
+        addedLines: 0,
+        removedLines: 0,
         stashCount: 0,
         lastCommitMessage: nil,
         lastCommitDate: nil
@@ -78,6 +86,12 @@ struct GitFileStatus: Codable, Sendable, Equatable, Identifiable {
 
     /// File path relative to repo root
     var path: String
+
+    /// Lines added vs HEAD (nil for binary/untracked)
+    var addedLines: Int?
+
+    /// Lines removed vs HEAD (nil for binary/untracked)
+    var removedLines: Int?
 
     var id: String { path }
 

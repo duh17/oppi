@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// Expandable bar showing git status and session changes.
+/// Expandable bar showing workspace git status.
 ///
-/// Pinned at the top of the chat view. Collapsed shows branch + dirty count.
-/// Expanded shows the full file list from git and session change details.
+/// Pinned at the top of the chat view. Collapsed shows branch + dirty count + repo-wide +/-.
+/// Expanded shows the full file list with per-file line stats.
 struct WorkspaceContextBar: View {
     let gitStatus: GitStatus?
-    let changeStats: SessionChangeStats?
     let isLoading: Bool
     let appliesOuterHorizontalPadding: Bool
 
@@ -14,12 +13,10 @@ struct WorkspaceContextBar: View {
 
     init(
         gitStatus: GitStatus?,
-        changeStats: SessionChangeStats?,
         isLoading: Bool,
         appliesOuterHorizontalPadding: Bool = true
     ) {
         self.gitStatus = gitStatus
-        self.changeStats = changeStats
         self.isLoading = isLoading
         self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
     }
@@ -28,20 +25,15 @@ struct WorkspaceContextBar: View {
 
     private var hasContent: Bool {
         guard let gitStatus, gitStatus.isGitRepo else { return false }
-        return !gitStatus.isClean || hasSessionChanges
-    }
-
-    private var hasSessionChanges: Bool {
-        guard let changeStats else { return false }
-        return changeStats.filesChanged > 0
+        return !gitStatus.isClean
     }
 
     private var dirtyColor: Color {
         guard let count = gitStatus?.uncommittedCount else { return .themeComment }
-        if count == 0 { return .themeGreen }
+        if count == 0 { return .themeDiffAdded }
         if count <= 5 { return .themeFg }
         if count <= 15 { return .themeOrange }
-        return .themeRed
+        return .themeDiffRemoved
     }
 
     // MARK: - Body
@@ -57,7 +49,7 @@ struct WorkspaceContextBar: View {
                     ScrollView {
                         expandedPanel
                     }
-                    .frame(maxHeight: 240)
+                    .frame(maxHeight: 300)
                 }
             }
             .background(Color.themeBgHighlight.opacity(0.6))
@@ -95,23 +87,23 @@ struct WorkspaceContextBar: View {
 
                 // Dirty count
                 if let gitStatus, gitStatus.uncommittedCount > 0 {
-                    Text("\(gitStatus.uncommittedCount) dirty")
+                    Text("\(gitStatus.uncommittedCount) changed")
                         .font(.caption.monospaced().weight(.semibold))
                         .foregroundStyle(dirtyColor)
                 }
 
-                // Session change stats
-                if let stats = changeStats, stats.filesChanged > 0 {
+                // Repo-wide +/- from git diff HEAD
+                if let gitStatus, (gitStatus.addedLines > 0 || gitStatus.removedLines > 0) {
                     HStack(spacing: 4) {
-                        if stats.addedLines > 0 {
-                            Text("+\(stats.addedLines)")
+                        if gitStatus.addedLines > 0 {
+                            Text("+\(gitStatus.addedLines)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeGreen)
+                                .foregroundStyle(.themeDiffAdded)
                         }
-                        if stats.removedLines > 0 {
-                            Text("-\(stats.removedLines)")
+                        if gitStatus.removedLines > 0 {
+                            Text("-\(gitStatus.removedLines)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeRed)
+                                .foregroundStyle(.themeDiffRemoved)
                         }
                     }
                 }
@@ -125,7 +117,7 @@ struct WorkspaceContextBar: View {
                             if ahead > 0 {
                                 Text("\u{2191}\(ahead)")
                                     .font(.caption2.monospaced())
-                                    .foregroundStyle(.themeGreen)
+                                    .foregroundStyle(.themeDiffAdded)
                             }
                             if behind > 0 {
                                 Text("\u{2193}\(behind)")
@@ -154,16 +146,11 @@ struct WorkspaceContextBar: View {
         VStack(alignment: .leading, spacing: 0) {
             Divider().overlay(Color.themeComment.opacity(0.2))
 
-            // Git dirty files
+            // File list with per-file +/-
             if let gitStatus, !gitStatus.files.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Git Status")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                        .padding(.bottom, 2)
-
-                    ForEach(gitStatus.files.prefix(20)) { file in
-                        HStack(spacing: 8) {
+                    ForEach(gitStatus.files) { file in
+                        HStack(spacing: 6) {
                             Text(file.status)
                                 .font(.caption2.monospaced().bold())
                                 .foregroundStyle(statusColor(for: file.status))
@@ -174,20 +161,35 @@ struct WorkspaceContextBar: View {
                                 .foregroundStyle(.themeFg)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+
+                            Spacer(minLength: 4)
+
+                            // Per-file +/- from git diff HEAD --numstat
+                            if let added = file.addedLines, added > 0 {
+                                Text("+\(added)")
+                                    .font(.caption2.monospaced().bold())
+                                    .foregroundStyle(.themeDiffAdded)
+                            }
+                            if let removed = file.removedLines, removed > 0 {
+                                Text("-\(removed)")
+                                    .font(.caption2.monospaced().bold())
+                                    .foregroundStyle(.themeDiffRemoved)
+                            }
                         }
                     }
 
-                    if gitStatus.files.count > 20 {
-                        Text("... and \(gitStatus.totalFiles - 20) more")
+                    if gitStatus.totalFiles > gitStatus.files.count {
+                        Text("... and \(gitStatus.totalFiles - gitStatus.files.count) more")
                             .font(.caption2)
                             .foregroundStyle(.themeComment)
+                            .padding(.top, 2)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
 
-            // Commit info
+            // Commit info + stash
             if let gitStatus, gitStatus.isGitRepo {
                 Divider().overlay(Color.themeComment.opacity(0.15))
 
@@ -213,53 +215,6 @@ struct WorkspaceContextBar: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
             }
-
-            // Session changes summary
-            if let stats = changeStats, stats.filesChanged > 0 {
-                Divider().overlay(Color.themeComment.opacity(0.15))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("Session Changes")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeComment)
-
-                        Text("\(stats.filesChanged) files")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.themeFg)
-
-                        if stats.addedLines > 0 {
-                            Text("+\(stats.addedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeGreen)
-                        }
-                        if stats.removedLines > 0 {
-                            Text("-\(stats.removedLines)")
-                                .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeRed)
-                        }
-                    }
-
-                    let overflow = stats.changedFilesOverflow ?? max(0, stats.filesChanged - stats.changedFiles.count)
-                    let hiddenFromDisplayCap = max(0, stats.changedFiles.count - 10)
-                    let hiddenCount = hiddenFromDisplayCap + overflow
-
-                    ForEach(stats.changedFiles.prefix(10), id: \.self) { file in
-                        Text(file.shortenedPath)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.themeFgDim)
-                            .lineLimit(1)
-                    }
-
-                    if hiddenCount > 0 {
-                        Text("... and \(hiddenCount) more")
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
         }
     }
 
@@ -269,11 +224,11 @@ struct WorkspaceContextBar: View {
         let trimmed = status.trimmingCharacters(in: .whitespaces)
         switch trimmed {
         case "M": return .themeOrange
-        case "A": return .themeGreen
-        case "D": return .themeRed
+        case "A": return .themeDiffAdded
+        case "D": return .themeDiffRemoved
         case "R", "C": return .themeCyan
         case "??": return .themeComment
-        case "UU", "AA", "DD": return .themeRed
+        case "UU", "AA", "DD": return .themeDiffRemoved
         default: return .themeFg
         }
     }

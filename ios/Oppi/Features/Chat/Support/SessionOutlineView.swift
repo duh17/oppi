@@ -448,12 +448,12 @@ private struct OutlineRow: View {
                         if stats.added > 0 {
                             Text("+\(stats.added)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeGreen)
+                                .foregroundStyle(.themeDiffAdded)
                         }
                         if stats.removed > 0 {
                             Text("-\(stats.removed)")
                                 .font(.caption2.monospaced().bold())
-                                .foregroundStyle(.themeRed)
+                                .foregroundStyle(.themeDiffRemoved)
                         }
                     }
                 }
