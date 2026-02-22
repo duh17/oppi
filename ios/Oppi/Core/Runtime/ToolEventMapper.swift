@@ -1,13 +1,13 @@
 import Foundation
 
-/// Maps server tool events to client-side tool event IDs.
+/// Correlates server tool events to client-side tool call IDs.
 ///
 /// Prefers the server-provided `toolCallId` (from pi RPC) when available.
 /// Falls back to synthetic UUIDs for servers that omit `toolCallId`.
 ///
 /// v1 assumption: tool events are strictly sequential (one open tool at a time).
 @MainActor
-final class ToolEventMapper {
+final class ToolCallCorrelator {
     private var currentToolEventID: String?
 
     func start(sessionId: String, tool: String, args: [String: JSONValue], toolCallId: String? = nil, callSegments: [StyledSegment]? = nil) -> AgentEvent {
@@ -33,3 +33,6 @@ final class ToolEventMapper {
         currentToolEventID = nil
     }
 }
+
+@available(*, deprecated, renamed: "ToolCallCorrelator")
+typealias ToolEventMapper = ToolCallCorrelator

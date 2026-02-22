@@ -1813,8 +1813,8 @@ struct StreamLifecycleTests {
 
         // Simulates the subscribe await in streamSession — the waiter is
         // pending but the per-session stream consumer hasn't started yet.
-        let pending = PendingRPCRequest(command: "subscribe", requestId: "req-1")
-        conn.registerPendingRPCRequest(pending)
+        let pending = PendingCommand(command: "subscribe", requestId: "req-1")
+        conn.commands.registerCommand(pending)
 
         _ = AsyncStream<ServerMessage> { continuation in
             conn.sessionContinuations["s1"] = continuation
@@ -1844,8 +1844,8 @@ struct StreamLifecycleTests {
         conn._setActiveSessionIdForTesting("s1")
 
         // Non-subscribe commands resolve through the normal consumer path
-        let pending = PendingRPCRequest(command: "set_model", requestId: "req-m")
-        conn.registerPendingRPCRequest(pending)
+        let pending = PendingCommand(command: "set_model", requestId: "req-m")
+        conn.commands.registerCommand(pending)
 
         _ = AsyncStream<ServerMessage> { continuation in
             conn.sessionContinuations["s1"] = continuation
@@ -1863,8 +1863,8 @@ struct StreamLifecycleTests {
         )
         conn.routeStreamMessage(streamMsg)
 
-        // Should still be pending — resolved later by handleRPCResult in the consumer
-        #expect(conn.pendingRPCRequestsByRequestId["req-m"] != nil,
+        // Should still be pending — resolved later by handleCommandResult in the consumer
+        #expect(conn.commands.pendingCommandsByRequestId["req-m"] != nil,
                 "Non-subscribe commands should not be resolved by routeStreamMessage")
     }
 

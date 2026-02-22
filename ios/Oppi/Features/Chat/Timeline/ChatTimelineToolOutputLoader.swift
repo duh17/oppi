@@ -2,10 +2,10 @@ import Foundation
 
 /// Isolated collaborator for loading expanded tool output + retry scheduling.
 ///
-/// Keeps task/retry bookkeeping out of `ChatTimelineCollectionView.Coordinator`
+/// Keeps task/retry bookkeeping out of `ChatTimelineCollectionHost.Controller`
 /// while preserving the same externally observed behavior.
 @MainActor
-final class ChatTimelineToolOutputLoader {
+final class ExpandedToolOutputLoader {
     typealias FetchToolOutput = (_ sessionId: String, _ toolCallId: String) async throws -> String
 
     struct LoadRequest {
@@ -205,6 +205,9 @@ final class ChatTimelineToolOutputLoader {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retryWork)
     }
 }
+
+@available(*, deprecated, renamed: "ExpandedToolOutputLoader")
+typealias ChatTimelineToolOutputLoader = ExpandedToolOutputLoader
 
 private struct LoadState {
     var loadingIDs: Set<String> = []

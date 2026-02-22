@@ -33,24 +33,21 @@ final class ServerConnection {
     // Runtime pipeline
     let reducer = TimelineReducer()
     let coalescer = DeltaCoalescer()
-    let toolMapper = ToolEventMapper()
+    let toolCallCorrelator = ToolCallCorrelator()
+
+    @available(*, deprecated, renamed: "toolCallCorrelator")
+    var toolMapper: ToolCallCorrelator { toolCallCorrelator }
 
     // Stream lifecycle
     var activeSessionId: String?
 
-    /// Pending prompt/steer/follow-up acknowledgements keyed by requestId.
-    /// Resolved by `turn_ack` stage progress (preferred) and `command_result` fallback.
-    var pendingTurnSendsByRequestId: [String: PendingTurnSend] = [:]
-    var pendingTurnRequestIdByClientTurnId: [String: String] = [:]
+    /// Command correlation tracker — owns pending turn sends and command requests.
+    let commands = CommandTracker()
     static let sendAckTimeoutDefault: Duration = .seconds(4)
     static let turnSendRetryDelay: Duration = .milliseconds(250)
     static let turnSendMaxAttempts = 2
     static let turnSendRequiredStage: TurnAckStage = .dispatched
-
-    /// Pending generic RPC requests keyed by requestId.
-    /// Used for request/response commands like `get_fork_messages`.
-    var pendingRPCRequestsByRequestId: [String: PendingRPCRequest] = [:]
-    static let rpcRequestTimeoutDefault: Duration = .seconds(8)
+    static let commandRequestTimeoutDefault: Duration = .seconds(8)
 
     /// Test seam: override outbound send path without opening a real WebSocket.
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
@@ -74,7 +71,7 @@ final class ServerConnection {
     @ObservationIgnored var scrollWasNearBottom: Bool = true
 
     /// Current thinking level — synced from server session state on connect,
-    /// then updated by `cycle_thinking_level` / `set_thinking_level` RPC responses.
+    /// then updated by `cycle_thinking_level` / `set_thinking_level` command responses.
     var thinkingLevel: ThinkingLevel = .medium
 
     /// Cached slash command metadata for composer autocomplete.
@@ -94,18 +91,8 @@ final class ServerConnection {
     /// Model prefetch task — eagerly loaded on connect.
     var modelPrefetchTask: Task<Void, Never>?
 
-    /// Watchdog: if the session reports busy but no stream events arrive for
-    /// this duration, trigger a state reconciliation.
-    static let silenceTimeout: Duration = .seconds(15)
-    static let silenceReconnectTimeout: Duration = .seconds(45)
-    /// Tracks the last time a meaningful stream event was routed.
-    var lastEventTime: ContinuousClock.Instant?
-    /// Watchdog task — monitors for silence during busy sessions.
-    var silenceWatchdog: Task<Void, Never>?
-
-    /// Callback for the silence watchdog to trigger a full reconnection.
-    /// Set by `ChatSessionManager` when connecting.
-    var onSilenceReconnect: (() -> Void)?
+    /// Silence watchdog — detects zombie WS connections during busy sessions.
+    let silenceWatchdog = SilenceWatchdog()
 
     /// Set when server sends a fatal error (e.g. session limit).
     /// ChatSessionManager checks this to suppress auto-reconnect.
@@ -127,6 +114,11 @@ final class ServerConnection {
                     LiveActivityManager.shared.updateFromEvent(event)
                 }
             }
+        }
+
+        // Wire silence watchdog probe to request a state refresh.
+        silenceWatchdog.onProbe = { [weak self] in
+            try? await self?.requestState()
         }
     }
 
@@ -256,14 +248,14 @@ final class ServerConnection {
     /// Only these two commands need eager resolution — they're sent in
     /// `streamSession()` before the per-session stream consumer starts.
     /// Other commands (set_model, get_fork_messages, etc.) are sent while
-    /// the consumer is running and resolve normally through `handleRPCResult`.
+    /// the consumer is running and resolve normally through `handleCommandResult`.
     private func resolveSubscribeWaiters(_ message: ServerMessage) {
         guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
               let requestId,
               command == "subscribe" || command == "unsubscribe" else {
             return
         }
-        _ = resolvePendingRPCResult(
+        _ = commands.resolveCommandResult(
             command: command, requestId: requestId,
             success: success, data: data, error: error
         )
@@ -424,7 +416,7 @@ final class ServerConnection {
         }
 
         activeSessionId = sessionId
-        toolMapper.reset()
+        toolCallCorrelator.reset()
         thinkingLevel = .medium  // Reset to default; overwritten by session.thinkingLevel on connect
         Task {
             await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
@@ -447,7 +439,7 @@ final class ServerConnection {
         // Subscribe at full level — await server confirmation before returning
         // so commands sent after this call don't race the subscription.
         do {
-            _ = try await sendRPCCommandAwaitingResult(
+            _ = try await sendCommandAwaitingResult(
                 command: "subscribe",
                 timeout: .seconds(10)
             ) { requestId in
@@ -483,8 +475,8 @@ final class ServerConnection {
     /// Disconnect from the current session stream.
     func disconnectSession() {
         coalescer.flushNow()
-        failPendingSendAcks(error: WebSocketError.notConnected)
-        failPendingRPCRequests(error: WebSocketError.notConnected)
+        commands.failAllTurnSends(error: WebSocketError.notConnected)
+        commands.failAllCommands(error: WebSocketError.notConnected)
 
         if let activeSessionId {
             unsubscribeSession(activeSessionId)
@@ -498,7 +490,7 @@ final class ServerConnection {
         activeExtensionDialog = nil
         extensionTimeoutTask?.cancel()
         extensionTimeoutTask = nil
-        stopSilenceWatchdog()
+        silenceWatchdog.stop()
         slashCommandsTask?.cancel()
         slashCommandsTask = nil
         slashCommandsRequestId = nil
@@ -672,7 +664,7 @@ final class ServerConnection {
             clientTurnId: clientTurnId,
             onAckStage: onAckStage
         )
-        registerPendingTurnSend(pending)
+        commands.registerTurnSend(pending)
 
         var lastError: Error?
 
@@ -686,30 +678,30 @@ final class ServerConnection {
                 try await dispatchSend(message())
             } catch {
                 lastError = error
-                if attempt < Self.turnSendMaxAttempts, Self.isReconnectableSendError(error) {
+                if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
                     continue
                 }
                 pending.waiter.resolve(.failure(error))
-                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 throw error
             }
 
             do {
                 try await waitForSendAck(waiter: pending.waiter, command: command)
 
-                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 return
             } catch {
                 lastError = error
-                if attempt < Self.turnSendMaxAttempts, Self.isReconnectableSendError(error) {
+                if attempt < Self.turnSendMaxAttempts, CommandTracker.isReconnectableSendError(error) {
                     continue
                 }
-                unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+                commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
                 throw error
             }
         }
 
-        unregisterPendingTurnSend(requestId: requestId, clientTurnId: clientTurnId)
+        commands.unregisterTurnSend(requestId: requestId, clientTurnId: clientTurnId)
         throw lastError ?? SendAckError.timeout(command: command)
     }
 
@@ -742,9 +734,9 @@ final class ServerConnection {
         }
     }
 
-    func sendRPCCommandAwaitingResult(
+    func sendCommandAwaitingResult(
         command: String,
-        timeout: Duration = ServerConnection.rpcRequestTimeoutDefault,
+        timeout: Duration = ServerConnection.commandRequestTimeoutDefault,
         message: (String) -> ClientMessage
     ) async throws -> JSONValue? {
         if _sendMessageForTesting == nil, wsClient == nil {
@@ -752,52 +744,52 @@ final class ServerConnection {
         }
 
         let requestId = UUID().uuidString
-        let pending = PendingRPCRequest(command: command, requestId: requestId)
-        registerPendingRPCRequest(pending)
+        let pending = PendingCommand(command: command, requestId: requestId)
+        commands.registerCommand(pending)
 
         do {
             try await dispatchSend(message(requestId))
         } catch {
-            unregisterPendingRPCRequest(requestId: requestId)
+            commands.unregisterCommand(requestId: requestId)
             pending.waiter.resolve(.failure(error))
             throw error
         }
 
         do {
-            let response = try await waitForRPCResult(waiter: pending.waiter, command: command, timeout: timeout)
-            unregisterPendingRPCRequest(requestId: requestId)
+            let response = try await waitForCommandResult(waiter: pending.waiter, command: command, timeout: timeout)
+            commands.unregisterCommand(requestId: requestId)
             return response.data
         } catch {
-            unregisterPendingRPCRequest(requestId: requestId)
+            commands.unregisterCommand(requestId: requestId)
             throw error
         }
     }
 
-    private func waitForRPCResult(
-        waiter: RPCResultWaiter,
+    private func waitForCommandResult(
+        waiter: CommandResultWaiter,
         command: String,
         timeout: Duration
-    ) async throws -> RPCResultPayload {
-        try await withThrowingTaskGroup(of: RPCResultPayload.self) { group in
+    ) async throws -> CommandResultPayload {
+        try await withThrowingTaskGroup(of: CommandResultPayload.self) { group in
             group.addTask {
                 try await waiter.wait()
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw RPCRequestError.timeout(command: command)
+                throw CommandRequestError.timeout(command: command)
             }
 
             do {
                 guard let result = try await group.next() else {
-                    throw RPCRequestError.timeout(command: command)
+                    throw CommandRequestError.timeout(command: command)
                 }
                 group.cancelAll()
                 return result
             } catch {
                 // Same continuation-drain guard as send acks.
-                if let rpcError = error as? RPCRequestError,
-                   case .timeout = rpcError {
-                    waiter.resolve(.failure(rpcError))
+                if let cmdError = error as? CommandRequestError,
+                   case .timeout = cmdError {
+                    waiter.resolve(.failure(cmdError))
                 }
                 group.cancelAll()
                 throw error
@@ -806,7 +798,7 @@ final class ServerConnection {
     }
 
     func getForkMessages() async throws -> [ForkMessage] {
-        let data = try await sendRPCCommandAwaitingResult(command: "get_fork_messages") { requestId in
+        let data = try await sendCommandAwaitingResult(command: "get_fork_messages") { requestId in
             .getForkMessages(requestId: requestId)
         }
 
@@ -836,73 +828,7 @@ final class ServerConnection {
         }
     }
 
-    func resolvePendingRPCResult(
-        command: String,
-        requestId: String,
-        success: Bool,
-        data: JSONValue?,
-        error: String?
-    ) -> Bool {
-        guard let pending = pendingRPCRequestsByRequestId[requestId], pending.command == command else {
-            return false
-        }
 
-        if success {
-            pending.waiter.resolve(.success(RPCResultPayload(data: data)))
-        } else {
-            pending.waiter.resolve(.failure(RPCRequestError.rejected(command: command, reason: error)))
-        }
-
-        return true
-    }
-
-    func resolveTurnAck(
-        command: String,
-        clientTurnId: String,
-        stage: TurnAckStage,
-        requestId: String?
-    ) -> Bool {
-        let lookupRequestId = requestId ?? pendingTurnRequestIdByClientTurnId[clientTurnId]
-        guard let lookupRequestId,
-              let pending = pendingTurnSendsByRequestId[lookupRequestId],
-              pending.command == command,
-              pending.clientTurnId == clientTurnId else {
-            return false
-        }
-
-        pending.latestStage = stage
-        pending.notifyStage(stage)
-
-        if stage.rank >= Self.turnSendRequiredStage.rank {
-            pending.waiter.resolve(.success(()))
-        }
-
-        return true
-    }
-
-    func resolveTurnRpcResult(
-        command: String,
-        requestId: String,
-        success: Bool,
-        error: String?
-    ) -> Bool {
-        guard let pending = pendingTurnSendsByRequestId[requestId], pending.command == command else {
-            return false
-        }
-
-        if success {
-            // Handle servers that only emit command_result without stage events.
-            if pending.latestStage == nil {
-                pending.latestStage = .dispatched
-                pending.notifyStage(.dispatched)
-                pending.waiter.resolve(.success(()))
-            }
-        } else {
-            pending.waiter.resolve(.failure(SendAckError.rejected(command: command, reason: error)))
-        }
-
-        return true
-    }
 
     // ── Model ──
 

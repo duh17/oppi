@@ -23,7 +23,7 @@ extension ServerConnection {
             throw ForkRequestError.entryNotForkable
         }
 
-        _ = try await sendRPCCommandAwaitingResult(command: "fork") { requestId in
+        _ = try await sendCommandAwaitingResult(command: "fork") { requestId in
             .fork(entryId: resolvedEntryId, requestId: requestId)
         }
     }
@@ -38,7 +38,7 @@ extension ServerConnection {
         workspaceId: String
     ) async throws -> Session {
         guard let apiClient else {
-            throw RPCRequestError.rejected(command: "fork", reason: "API client unavailable")
+            throw CommandRequestError.rejected(command: "fork", reason: "API client unavailable")
         }
 
         guard UUID(uuidString: entryId) == nil else {
