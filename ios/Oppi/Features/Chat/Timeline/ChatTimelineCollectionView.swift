@@ -175,27 +175,35 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         private var lastObservedContentOffsetY: CGFloat?
-        private var toolOutputLoadState = ToolOutputLoadState()
-        private var pendingToolOutputRetryWorkByID: [String: DispatchWorkItem] = [:]
+        private let toolOutputLoader = ChatTimelineToolOutputLoader()
 
-        private static let toolOutputRetryMaxAttempts = 6
-        private static let toolOutputRetryBaseDelay: TimeInterval = 0.45
-        private static let toolOutputRetryMaxDelay: TimeInterval = 2.0
+        var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
+            get { toolOutputLoader.fetchOverrideForTesting }
+            set { toolOutputLoader.fetchOverrideForTesting = newValue }
+        }
 
-        var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)?
-        private(set) var _toolOutputCanceledCountForTesting = 0
-        private(set) var _toolOutputStaleDiscardCountForTesting = 0
-        private(set) var _toolOutputAppliedCountForTesting = 0
+        var _toolOutputCanceledCountForTesting: Int {
+            toolOutputLoader.canceledCountForTesting
+        }
+
+        var _toolOutputStaleDiscardCountForTesting: Int {
+            toolOutputLoader.staleDiscardCountForTesting
+        }
+
+        var _toolOutputAppliedCountForTesting: Int {
+            toolOutputLoader.appliedCountForTesting
+        }
+
         private(set) var _toolExpansionFallbackCountForTesting = 0
         private(set) var _audioStateRefreshCountForTesting = 0
         private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
 
         var _toolOutputLoadTaskCountForTesting: Int {
-            toolOutputLoadState.taskCount
+            toolOutputLoader.taskCountForTesting
         }
 
         var _loadingToolOutputIDsForTesting: Set<String> {
-            toolOutputLoadState.loadingIDs
+            toolOutputLoader.loadingIDsForTesting
         }
 
         func _triggerLoadFullToolOutputForTesting(
@@ -215,9 +223,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         deinit {
             MainActor.assumeIsolated {
                 let observedAudioPlayer = audioPlayer
-                let canceled = toolOutputLoadState.cancelAll()
-                _toolOutputCanceledCountForTesting += canceled
-                cancelAllToolOutputRetryWork()
+                toolOutputLoader.cancelAllWork()
                 NotificationCenter.default.removeObserver(
                     self,
                     name: AudioPlayerService.stateDidChangeNotification,
@@ -392,47 +398,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             }
         }
 
-        enum ToolOutputCompletionDisposition: Equatable {
-            case apply
-            case canceled
-            case staleSession
-            case missingItem
-            case emptyOutput
-        }
-        private struct ToolOutputLoadState {
-            var loadingIDs: Set<String> = []
-            var tasks: [String: Task<Void, Never>] = [:]
-            var taskCount: Int { tasks.count }
-            func isLoading(_ itemID: String) -> Bool { loadingIDs.contains(itemID) || tasks[itemID] != nil }
-            mutating func start(itemID: String, task: Task<Void, Never>) {
-                loadingIDs.insert(itemID)
-                tasks[itemID] = task
-            }
-            mutating func finish(itemID: String) {
-                loadingIDs.remove(itemID)
-                tasks.removeValue(forKey: itemID)
-            }
-            mutating func cancel(for itemIDs: Set<String>) -> Int {
-                guard !itemIDs.isEmpty else { return 0 }
-                var canceled = 0
-                for itemID in itemIDs {
-                    if let task = tasks.removeValue(forKey: itemID) {
-                        task.cancel()
-                        canceled += 1
-                    }
-                    loadingIDs.remove(itemID)
-                }
-                return canceled
-            }
-            mutating func cancelAll() -> Int {
-                let canceled = tasks.count
-                for task in tasks.values { task.cancel() }
-                tasks.removeAll()
-                loadingIDs.removeAll()
-                return canceled
-            }
-        }
-
         static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
             var itemByID: [String: ChatItem] = [:]
             itemByID.reserveCapacity(items.count)
@@ -461,20 +426,14 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             activeSessionID: String,
             currentSessionID: String,
             itemExists: Bool
-        ) -> ToolOutputCompletionDisposition {
-            if isTaskCancelled {
-                return .canceled
-            }
-            if activeSessionID != currentSessionID {
-                return .staleSession
-            }
-            if !itemExists {
-                return .missingItem
-            }
-            if output.isEmpty {
-                return .emptyOutput
-            }
-            return .apply
+        ) -> ChatTimelineToolOutputLoader.CompletionDisposition {
+            ChatTimelineToolOutputLoader.completionDisposition(
+                output: output,
+                isTaskCancelled: isTaskCancelled,
+                activeSessionID: activeSessionID,
+                currentSessionID: currentSessionID,
+                itemExists: itemExists
+            )
         }
 
         private static func reportNativeRendererGap(_ message: String) {
@@ -1023,7 +982,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 args: toolArgsStore?.args(for: itemID),
                 expandedItemIDs: reducer?.expandedItemIDs ?? [],
                 fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
-                isLoadingOutput: toolOutputLoadState.isLoading(itemID),
+                isLoadingOutput: toolOutputLoader.isLoading(itemID),
                 callSegments: toolSegmentStore?.callSegments(for: itemID),
                 resultSegments: toolSegmentStore?.resultSegments(for: itemID)
             )
@@ -1046,153 +1005,72 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             in collectionView: UICollectionView,
             attempt: Int = 0
         ) {
-            _ = tool
-            _ = outputByteCount
+            guard let toolOutputStore else { return }
 
-            guard let toolOutputStore,
-                  toolOutputStore.fullOutput(for: itemID).isEmpty,
-                  !toolOutputLoadState.isLoading(itemID) else {
-                return
-            }
-
-            let fetchToolOutput: (_ sessionId: String, _ toolCallId: String) async throws -> String
+            let fetchToolOutput: ChatTimelineToolOutputLoader.FetchToolOutput
             if let fetchHook = _fetchToolOutputForTesting {
                 fetchToolOutput = fetchHook
             } else {
                 guard let apiClient = connection?.apiClient,
                       let workspaceId,
-                      !workspaceId.isEmpty else { return }
+                      !workspaceId.isEmpty else {
+                    return
+                }
 
                 fetchToolOutput = { sessionId, toolCallId in
-                    try await apiClient.getNonEmptyToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId) ?? ""
+                    try await apiClient.getNonEmptyToolOutput(
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        toolCallId: toolCallId
+                    ) ?? ""
                 }
             }
 
-            let activeSessionID = sessionId
-
-            let task = Task { [weak self, weak collectionView, activeSessionID] in
-                let output: String
-                do {
-                    output = try await fetchToolOutput(activeSessionID, itemID)
-                } catch {
-                    await MainActor.run {
-                        guard let self else { return }
-                        self.toolOutputLoadState.finish(itemID: itemID)
-                    }
-                    return
+            let request = ChatTimelineToolOutputLoader.LoadRequest(
+                itemID: itemID,
+                tool: tool,
+                outputByteCount: outputByteCount,
+                attempt: attempt,
+                hasExistingOutput: {
+                    !toolOutputStore.fullOutput(for: itemID).isEmpty
+                },
+                activeSessionID: sessionId,
+                currentSessionID: { [weak self] in
+                    self?.sessionId ?? ""
+                },
+                itemExists: { [weak self] in
+                    self?.currentItemByID[itemID] != nil
+                },
+                isItemExpanded: { [weak self] in
+                    self?.reducer?.expandedItemIDs.contains(itemID) == true
+                },
+                fetchToolOutput: fetchToolOutput,
+                applyOutput: { output in
+                    toolOutputStore.append(output, to: itemID)
+                },
+                reconfigureItem: { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    self.reconfigureItems([itemID], in: collectionView)
                 }
-
-                await MainActor.run {
-                    guard let self else { return }
-                    defer {
-                        self.toolOutputLoadState.finish(itemID: itemID)
-                    }
-
-                    let disposition = Self.toolOutputCompletionDisposition(
-                        output: output,
-                        isTaskCancelled: Task.isCancelled,
-                        activeSessionID: activeSessionID,
-                        currentSessionID: self.sessionId,
-                        itemExists: self.currentItemByID[itemID] != nil
-                    )
-
-                    guard disposition == .apply else {
-                        switch disposition {
-                        case .staleSession, .missingItem, .emptyOutput:
-                            self._toolOutputStaleDiscardCountForTesting += 1
-                        case .canceled, .apply:
-                            break
-                        }
-
-                        if disposition == .emptyOutput {
-                            self.scheduleToolOutputRetryIfNeeded(
-                                itemID: itemID,
-                                tool: tool,
-                                outputByteCount: outputByteCount,
-                                in: collectionView,
-                                attempt: attempt
-                            )
-                        }
-                        return
-                    }
-
-                    self.cancelToolOutputRetryWork(for: itemID)
-                    self.toolOutputStore?.append(output, to: itemID)
-                    self._toolOutputAppliedCountForTesting += 1
-
-                    if let collectionView {
-                        self.reconfigureItems([itemID], in: collectionView)
-                    }
-                }
-            }
-
-            toolOutputLoadState.start(itemID: itemID, task: task)
-        }
-
-        private func scheduleToolOutputRetryIfNeeded(
-            itemID: String,
-            tool: String,
-            outputByteCount: Int,
-            in collectionView: UICollectionView?,
-            attempt: Int
-        ) {
-            guard ToolCallFormatting.isReadTool(tool) else { return }
-            guard attempt < Self.toolOutputRetryMaxAttempts else { return }
-            guard reducer?.expandedItemIDs.contains(itemID) == true else { return }
-            guard let collectionView else { return }
-
-            cancelToolOutputRetryWork(for: itemID)
-
-            let nextAttempt = attempt + 1
-            let delay = min(
-                Self.toolOutputRetryMaxDelay,
-                Self.toolOutputRetryBaseDelay * pow(1.6, Double(attempt))
             )
 
-            let retryWork = DispatchWorkItem { [weak self, weak collectionView] in
-                guard let self,
-                      let collectionView,
-                      self.reducer?.expandedItemIDs.contains(itemID) == true,
-                      self.currentItemByID[itemID] != nil else {
-                    return
-                }
-
-                self.loadFullToolOutputIfNeeded(
-                    itemID: itemID,
-                    tool: tool,
-                    outputByteCount: outputByteCount,
-                    in: collectionView,
-                    attempt: nextAttempt
-                )
-            }
-
-            pendingToolOutputRetryWorkByID[itemID] = retryWork
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retryWork)
+            toolOutputLoader.loadIfNeeded(request)
         }
 
         private func cancelToolOutputRetryWork(for itemID: String) {
-            pendingToolOutputRetryWorkByID.removeValue(forKey: itemID)?.cancel()
+            toolOutputLoader.cancelRetryWork(for: itemID)
         }
 
         private func cancelAllToolOutputRetryWork() {
-            for (_, work) in pendingToolOutputRetryWorkByID {
-                work.cancel()
-            }
-            pendingToolOutputRetryWorkByID.removeAll(keepingCapacity: false)
+            toolOutputLoader.cancelAllRetryWork()
         }
 
         private func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
-            let canceled = toolOutputLoadState.cancel(for: itemIDs)
-            _toolOutputCanceledCountForTesting += canceled
-            for itemID in itemIDs {
-                cancelToolOutputRetryWork(for: itemID)
-            }
+            toolOutputLoader.cancelLoadTasks(for: itemIDs)
         }
 
         private func cancelAllToolOutputLoadTasks() {
-            let canceled = toolOutputLoadState.cancelAll()
-            _toolOutputCanceledCountForTesting += canceled
-            cancelAllToolOutputRetryWork()
+            toolOutputLoader.cancelAllWork()
         }
 
         private func animateNativeToolExpansion(
