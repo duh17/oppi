@@ -122,7 +122,6 @@ struct ChatView: View {
         VStack(spacing: 0) {
             WorkspaceContextBar(
                 gitStatus: connection.gitStatusStore.gitStatus,
-                changeStats: session?.changeStats,
                 isLoading: connection.gitStatusStore.isLoading
             )
 

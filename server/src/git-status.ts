@@ -19,6 +19,10 @@ export interface GitFileStatus {
   status: string;
   /** File path relative to repo root */
   path: string;
+  /** Lines added vs HEAD (null for binary/untracked) */
+  addedLines: number | null;
+  /** Lines removed vs HEAD (null for binary/untracked) */
+  removedLines: number | null;
 }
 
 export interface GitStatus {
@@ -38,10 +42,14 @@ export interface GitStatus {
   untrackedCount: number;
   /** Number of staged files */
   stagedCount: number;
-  /** Individual file statuses (capped to first 100) */
+  /** Individual file statuses (capped to first 500) */
   files: GitFileStatus[];
   /** Total file count if capped */
   totalFiles: number;
+  /** Total lines added vs HEAD (tracked files only) */
+  addedLines: number;
+  /** Total lines removed vs HEAD (tracked files only) */
+  removedLines: number;
   /** Number of stash entries */
   stashCount: number;
   /** Most recent commit subject line */
@@ -50,7 +58,7 @@ export interface GitStatus {
   lastCommitDate: string | null;
 }
 
-const FILE_CAP = 100;
+const FILE_CAP = 500;
 const GIT_TIMEOUT_MS = 5000;
 
 // ─── Helpers ───
@@ -94,6 +102,8 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     stagedCount: 0,
     files: [],
     totalFiles: 0,
+    addedLines: 0,
+    removedLines: 0,
     stashCount: 0,
     lastCommitMessage: null,
     lastCommitDate: null,
@@ -104,14 +114,16 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
   }
 
   // Run all git commands in parallel
-  const [branchOut, shaOut, statusOut, stashOut, logOut, upstreamOut] = await Promise.all([
-    git(resolved, ["branch", "--show-current"]),
-    git(resolved, ["rev-parse", "--short", "HEAD"]),
-    git(resolved, ["status", "--porcelain"]),
-    git(resolved, ["stash", "list"]),
-    git(resolved, ["log", "-1", "--format=%s%n%aI"]),
-    git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
-  ]);
+  const [branchOut, shaOut, statusOut, stashOut, logOut, upstreamOut, numstatOut] =
+    await Promise.all([
+      git(resolved, ["branch", "--show-current"]),
+      git(resolved, ["rev-parse", "--short", "HEAD"]),
+      git(resolved, ["status", "--porcelain"]),
+      git(resolved, ["stash", "list"]),
+      git(resolved, ["log", "-1", "--format=%s%n%aI"]),
+      git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
+      git(resolved, ["diff", "HEAD", "--numstat"]),
+    ]);
 
   // Branch (empty string means detached HEAD)
   const branch = branchOut?.trim() || null;
@@ -147,15 +159,45 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
       }
 
       if (files.length < FILE_CAP) {
-        files.push({ status: statusCode, path: filePath });
+        files.push({ status: statusCode, path: filePath, addedLines: null, removedLines: null });
       }
     }
-
-    // dirtyCount should include untracked for the "total uncommitted" number
-    // Keep separate counts but totalFiles = all non-clean
   }
 
   const totalFiles = dirtyCount + untrackedCount + stagedCount;
+
+  // Parse git diff HEAD --numstat for per-file +/- lines
+  // Format: "added\tremoved\tpath" (binary files show "-\t-\tpath")
+  const numstatMap = new Map<string, { added: number; removed: number }>();
+  let totalAdded = 0;
+  let totalRemoved = 0;
+
+  if (numstatOut) {
+    const lines = numstatOut.split("\n").filter((l) => l.length > 0);
+    for (const line of lines) {
+      const parts = line.split("\t");
+      if (parts.length < 3) continue;
+      const [addedStr, removedStr, ...pathParts] = parts;
+      const filePath = pathParts.join("\t"); // handle paths with tabs (rare)
+      if (addedStr === "-" || removedStr === "-") continue; // binary
+      const added = parseInt(addedStr, 10);
+      const removed = parseInt(removedStr, 10);
+      if (!isNaN(added) && !isNaN(removed)) {
+        numstatMap.set(filePath, { added, removed });
+        totalAdded += added;
+        totalRemoved += removed;
+      }
+    }
+  }
+
+  // Merge numstat into file entries
+  for (const file of files) {
+    const stats = numstatMap.get(file.path);
+    if (stats) {
+      file.addedLines = stats.added;
+      file.removedLines = stats.removed;
+    }
+  }
 
   // Ahead/behind
   let ahead: number | null = null;
@@ -193,6 +235,8 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     stagedCount,
     files,
     totalFiles,
+    addedLines: totalAdded,
+    removedLines: totalRemoved,
     stashCount,
     lastCommitMessage,
     lastCommitDate,

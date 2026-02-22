@@ -63,9 +63,18 @@ contains_arg() {
 }
 
 restart_launchd_server() {
+  local uid
+  uid="$(id -u)"
+
   if launchctl list "$LAUNCHD_LABEL" &>/dev/null; then
-    launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
-    # KeepAlive will restart it automatically
+    # kickstart -k: kill + restart in one shot.
+    # Avoids the KeepAlive race where `launchctl stop` + clean exit = no respawn.
+    launchctl kickstart -k "gui/${uid}/${LAUNCHD_LABEL}" 2>/dev/null || {
+      # Fallback for older macOS or edge cases
+      launchctl stop "$LAUNCHD_LABEL" 2>/dev/null || true
+      sleep 1
+      launchctl kickstart "gui/${uid}/${LAUNCHD_LABEL}" 2>/dev/null || true
+    }
     sleep 1
   else
     local plist="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
