@@ -44,11 +44,12 @@ struct RestorationState: Codable {
     // MARK: - Load
 
     /// Load restoration state if fresh enough (< 1 hour old).
-    /// Accepts both v1 (no activeServerId) and v2 schemas.
+    /// Rejects stale schema versions — states expire after 1 hour anyway,
+    /// so there's no practical need for cross-version migration.
     static func load() -> Self? {
         guard let data = UserDefaults.standard.data(forKey: key),
               let state = try? JSONDecoder().decode(Self.self, from: data),
-              state.version >= 1 && state.version <= schemaVersion,
+              state.version == schemaVersion,
               Date().timeIntervalSince(state.timestamp) < 3600  // 1 hour freshness
         else {
             return nil

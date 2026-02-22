@@ -220,7 +220,7 @@ extension ServerMessage: Decodable {
                 duplicate: duplicate
             )
 
-        case "command_result", "rpc_result":
+        case "command_result":
             let cmd = try c.decode(String.self, forKey: .command)
             let reqId = try c.decodeIfPresent(String.self, forKey: .requestId)
             let success = try c.decode(Bool.self, forKey: .success)

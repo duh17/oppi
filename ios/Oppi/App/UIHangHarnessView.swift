@@ -710,23 +710,12 @@ struct UIHangHarnessView: View {
     }
 }
 
-// MARK: - Main Thread Breadcrumb
-
-/// Lightweight breadcrumb placeholders kept for stall reports.
-/// Hot-path writers were intentionally removed to reduce instrumentation overhead.
-enum MainThreadBreadcrumb {
-    static var current: String { "n/a" }
-    static var rowCount: Int { 0 }
-}
-
 // MARK: - Main Thread Lag Watchdog
 
 #if DEBUG
 struct MainThreadStallContext: Sendable {
     let thresholdMs: Int
     let footprintMB: Int?
-    let crumb: String
-    let rows: Int
 }
 
 final class MainThreadLagWatchdog {
@@ -777,16 +766,12 @@ final class MainThreadLagWatchdog {
             guard nowNs &- lastStallLogUptimeNs >= cooldownNs else { return }
             lastStallLogUptimeNs = nowNs
 
-            let crumb = MainThreadBreadcrumb.current
-            let rows = MainThreadBreadcrumb.rowCount
             let footprintMB = Self.currentFootprintMB()
 
             onStall?(
                 MainThreadStallContext(
                     thresholdMs: thresholdMs,
-                    footprintMB: footprintMB,
-                    crumb: crumb,
-                    rows: rows
+                    footprintMB: footprintMB
                 )
             )
         }

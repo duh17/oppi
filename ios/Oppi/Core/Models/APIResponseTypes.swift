@@ -53,7 +53,7 @@ enum PolicyFallbackDecision: String, CaseIterable, Codable, Sendable {
             self = .allow
         case "ask":
             self = .ask
-        case "deny", "denied", "block":
+        case "deny":
             self = .deny
         default:
             self = .ask

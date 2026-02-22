@@ -517,19 +517,18 @@ struct ServerMessageTests {
         #expect(error == "Permission denied")
     }
 
-    @Test func decodesLegacyRpcResult() throws {
-        // Backward compat: old servers still send "rpc_result"
+    @Test func rpcResultDecodesAsUnknown() throws {
+        // Server only emits "command_result" — the old "rpc_result" alias was removed.
+        // Unknown types decode gracefully to .unknown.
         let json = """
         {"type":"rpc_result","command":"get_state","requestId":"r-2","success":true}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .commandResult(let command, let requestId, let success, _, _) = msg else {
-            Issue.record("Expected .commandResult from legacy rpc_result")
+        guard case .unknown(let type) = msg else {
+            Issue.record("Expected .unknown for removed rpc_result type")
             return
         }
-        #expect(command == "get_state")
-        #expect(requestId == "r-2")
-        #expect(success)
+        #expect(type == "rpc_result")
     }
 
     // MARK: - Compaction
