@@ -44,13 +44,6 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         URL(string: "http://\(host):\(port)")
     }
 
-    /// WebSocket URL for a specific session (per-session path).
-    ///
-    /// Workspace-scoped v2 path only.
-    func webSocketURL(sessionId: String, workspaceId: String) -> URL? {
-        URL(string: "ws://\(host):\(port)/workspaces/\(workspaceId)/sessions/\(sessionId)/stream")
-    }
-
     /// WebSocket URL for the multiplexed `/stream` endpoint.
     ///
     /// Supports subscribing to multiple sessions over a single connection.

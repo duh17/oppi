@@ -3,8 +3,7 @@ import Foundation
 /// A single event from the full pi JSONL trace.
 ///
 /// Returned by `GET /workspaces/:workspaceId/sessions/:id` (`trace` payload).
-/// Contains the complete tool call history that `SessionMessage`
-/// (user/assistant only) drops.
+/// Contains the complete tool call history including tool calls and thinking.
 struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let type: TraceEventType

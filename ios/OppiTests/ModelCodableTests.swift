@@ -135,69 +135,6 @@ struct SessionCodableTests {
     }
 }
 
-// MARK: - SessionMessage Codable
-
-@Suite("SessionMessage Codable")
-struct SessionMessageCodableTests {
-
-    @Test func decodeUserMessage() throws {
-        let json = """
-        {
-            "id": "m1", "sessionId": "s1", "role": "user",
-            "content": "Hello", "timestamp": 1700000000000
-        }
-        """
-        let msg = try JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
-        #expect(msg.role == .user)
-        #expect(msg.content == "Hello")
-        #expect(msg.model == nil)
-        #expect(msg.tokens == nil)
-        #expect(msg.cost == nil)
-        #expect(msg.timestamp.timeIntervalSince1970 == 1700000000)
-    }
-
-    @Test func decodeAssistantWithOptionals() throws {
-        let json = """
-        {
-            "id": "m2", "sessionId": "s1", "role": "assistant",
-            "content": "Hi!", "timestamp": 1700000000000,
-            "model": "claude-sonnet-4-20250514",
-            "tokens": {"input": 10, "output": 5},
-            "cost": 0.001
-        }
-        """
-        let msg = try JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
-        #expect(msg.role == .assistant)
-        #expect(msg.model == "claude-sonnet-4-20250514")
-        #expect(msg.tokens?.input == 10)
-        #expect(msg.cost == 0.001)
-    }
-
-    @Test func encodeDecodeRoundTrip() throws {
-        let json = """
-        {
-            "id": "m3", "sessionId": "s1", "role": "system",
-            "content": "You are helpful", "timestamp": 1700000000000,
-            "model": "test", "tokens": {"input": 1, "output": 2}, "cost": 0.0
-        }
-        """
-        let original = try JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
-        let encoded = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(SessionMessage.self, from: encoded)
-        #expect(original == decoded)
-    }
-
-    @Test func allMessageRoles() throws {
-        for role in ["user", "assistant", "system"] {
-            let json = """
-            {"id":"m","sessionId":"s","role":"\(role)","content":"x","timestamp":0}
-            """
-            let msg = try JSONDecoder().decode(SessionMessage.self, from: json.data(using: .utf8)!)
-            #expect(msg.role.rawValue == role)
-        }
-    }
-}
-
 // MARK: - ModelInfo Codable
 
 @Suite("ModelInfo Codable")
@@ -339,11 +276,11 @@ struct ServerCredentialsTests {
         #expect(url?.absoluteString == "http://my-server.ts.net:7749")
     }
 
-    @Test func webSocketURLValid() {
+    @Test func streamURLValid() {
         let creds = ServerCredentials(host: "192.168.1.10", port: 7749, token: "sk_test", name: "Test")
-        let url = creds.webSocketURL(sessionId: "abc-123", workspaceId: "w1")
+        let url = creds.streamURL
         #expect(url != nil)
-        #expect(url?.absoluteString == "ws://192.168.1.10:7749/workspaces/w1/sessions/abc-123/stream")
+        #expect(url?.absoluteString == "ws://192.168.1.10:7749/stream")
     }
 
     @Test func credentialsCodableRoundTrip() throws {

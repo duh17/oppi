@@ -1,9 +1,10 @@
 import UIKit
 
-/// Pure-UIKit full-screen content viewer for tool output.
+/// Full-screen content viewer for tool output (UIKit).
 ///
-/// Replaces the SwiftUI ``FullScreenCodeView`` in the chat timeline path.
 /// Supports code (with syntax highlighting), diff, and markdown modes.
+/// Presented via ``FullScreenCodeView`` (UIViewControllerRepresentable wrapper)
+/// from SwiftUI callers, and directly from UIKit timeline cells.
 final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private var showSource = false

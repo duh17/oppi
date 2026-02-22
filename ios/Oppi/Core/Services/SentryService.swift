@@ -126,8 +126,6 @@ actor SentryService {
     func captureMainThreadStall(
         thresholdMs: Int,
         footprintMB: Int?,
-        crumb: String,
-        rows: Int,
         sessionId: String?
     ) {
 #if canImport(Sentry)
@@ -135,8 +133,6 @@ actor SentryService {
 
         var metadata: [String: String] = [
             "thresholdMs": String(thresholdMs),
-            "crumb": crumb,
-            "rows": String(rows),
         ]
         if let footprintMB {
             metadata["footprintMB"] = String(footprintMB)
@@ -158,8 +154,6 @@ actor SentryService {
 #else
         _ = thresholdMs
         _ = footprintMB
-        _ = crumb
-        _ = rows
         _ = sessionId
 #endif
     }
