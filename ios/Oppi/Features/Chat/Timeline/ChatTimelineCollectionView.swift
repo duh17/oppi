@@ -177,48 +177,50 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var lastObservedContentOffsetY: CGFloat?
         private let toolOutputLoader = ExpandedToolOutputLoader()
 
-        var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
-            get { toolOutputLoader.fetchOverrideForTesting }
-            set { toolOutputLoader.fetchOverrideForTesting = newValue }
-        }
+        #if DEBUG
+            var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
+                get { toolOutputLoader.fetchOverrideForTesting }
+                set { toolOutputLoader.fetchOverrideForTesting = newValue }
+            }
 
-        var _toolOutputCanceledCountForTesting: Int {
-            toolOutputLoader.canceledCountForTesting
-        }
+            var _toolOutputCanceledCountForTesting: Int {
+                toolOutputLoader.canceledCountForTesting
+            }
 
-        var _toolOutputStaleDiscardCountForTesting: Int {
-            toolOutputLoader.staleDiscardCountForTesting
-        }
+            var _toolOutputStaleDiscardCountForTesting: Int {
+                toolOutputLoader.staleDiscardCountForTesting
+            }
 
-        var _toolOutputAppliedCountForTesting: Int {
-            toolOutputLoader.appliedCountForTesting
-        }
+            var _toolOutputAppliedCountForTesting: Int {
+                toolOutputLoader.appliedCountForTesting
+            }
 
-        private(set) var _toolExpansionFallbackCountForTesting = 0
-        private(set) var _audioStateRefreshCountForTesting = 0
-        private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
+            private(set) var _toolExpansionFallbackCountForTesting = 0
+            private(set) var _audioStateRefreshCountForTesting = 0
+            private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
 
-        var _toolOutputLoadTaskCountForTesting: Int {
-            toolOutputLoader.taskCountForTesting
-        }
+            var _toolOutputLoadTaskCountForTesting: Int {
+                toolOutputLoader.taskCountForTesting
+            }
 
-        var _loadingToolOutputIDsForTesting: Set<String> {
-            toolOutputLoader.loadingIDsForTesting
-        }
+            var _loadingToolOutputIDsForTesting: Set<String> {
+                toolOutputLoader.loadingIDsForTesting
+            }
 
-        func _triggerLoadFullToolOutputForTesting(
-            itemID: String,
-            tool: String,
-            outputByteCount: Int,
-            in collectionView: UICollectionView
-        ) {
-            ensureExpandedToolOutputLoaded(
-                itemID: itemID,
-                tool: tool,
-                outputByteCount: outputByteCount,
-                in: collectionView
-            )
-        }
+            func _triggerLoadFullToolOutputForTesting(
+                itemID: String,
+                tool: String,
+                outputByteCount: Int,
+                in collectionView: UICollectionView
+            ) {
+                ensureExpandedToolOutputLoaded(
+                    itemID: itemID,
+                    tool: tool,
+                    outputByteCount: outputByteCount,
+                    in: collectionView
+                )
+            }
+        #endif
 
         deinit {
             MainActor.assumeIsolated {
@@ -562,8 +564,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             guard !targetIDs.isEmpty else { return }
 
-            _audioStateRefreshCountForTesting += 1
-            _audioStateRefreshedItemIDsForTesting = targetIDs
+            #if DEBUG
+                _audioStateRefreshCountForTesting += 1
+                _audioStateRefreshedItemIDsForTesting = targetIDs
+            #endif
             reconfigureItems(targetIDs, in: collectionView)
         }
 
@@ -1009,9 +1013,25 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             guard let toolOutputStore else { return }
 
             let fetchToolOutput: ExpandedToolOutputLoader.FetchToolOutput
-            if let fetchHook = _fetchToolOutputForTesting {
-                fetchToolOutput = fetchHook
-            } else {
+            #if DEBUG
+                if let fetchHook = _fetchToolOutputForTesting {
+                    fetchToolOutput = fetchHook
+                } else {
+                    guard let apiClient = connection?.apiClient,
+                          let workspaceId,
+                          !workspaceId.isEmpty else {
+                        return
+                    }
+
+                    fetchToolOutput = { sessionId, toolCallId in
+                        try await apiClient.getNonEmptyToolOutput(
+                            workspaceId: workspaceId,
+                            sessionId: sessionId,
+                            toolCallId: toolCallId
+                        ) ?? ""
+                    }
+                }
+            #else
                 guard let apiClient = connection?.apiClient,
                       let workspaceId,
                       !workspaceId.isEmpty else {
@@ -1025,7 +1045,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         toolCallId: toolCallId
                     ) ?? ""
                 }
-            }
+            #endif
 
             let request = ExpandedToolOutputLoader.LoadRequest(
                 itemID: itemID,
@@ -1086,7 +1106,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             else {
                 // Defensive fallback: should be rare for tap-selected visible
                 // rows. Track it so tests can catch regressions.
-                _toolExpansionFallbackCountForTesting += 1
+                #if DEBUG
+                    _toolExpansionFallbackCountForTesting += 1
+                #endif
                 reconfigureItems([itemID], in: collectionView)
                 return
             }
