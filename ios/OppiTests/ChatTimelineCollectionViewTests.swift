@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("ChatTimelineCollectionView.Coordinator")
+@Suite("ChatTimelineCollectionHost.Controller")
 struct ChatTimelineCoordinatorTests {
 
     @MainActor
@@ -12,7 +12,7 @@ struct ChatTimelineCoordinatorTests {
         let middle = ChatItem.error(id: "middle", message: "middle")
         let second = ChatItem.systemEvent(id: "dup", message: "second")
 
-        let result = ChatTimelineCollectionView.Coordinator.uniqueItemsKeepingLast([first, middle, second])
+        let result = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast([first, middle, second])
 
         #expect(result.orderedIDs == ["middle", "dup"])
         #expect(result.itemByID["dup"] == second)
@@ -22,7 +22,7 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func toolOutputCompletionDispositionGuardsStaleAndCanceledStates() {
         #expect(
-            ChatTimelineCollectionView.Coordinator.toolOutputCompletionDisposition(
+            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -32,7 +32,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionView.Coordinator.toolOutputCompletionDisposition(
+            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: true,
                 activeSessionID: "s1",
@@ -42,7 +42,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionView.Coordinator.toolOutputCompletionDisposition(
+            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -52,7 +52,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionView.Coordinator.toolOutputCompletionDisposition(
+            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -62,7 +62,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionView.Coordinator.toolOutputCompletionDisposition(
+            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
                 output: "",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -179,7 +179,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         #expect(config.languageBadge == "⚠︎media")
     }
 
@@ -205,7 +205,7 @@ struct ChatTimelineCoordinatorTests {
         ]
 
         for row in rows {
-            #expect(harness.coordinator.nativeToolConfiguration(itemID: row.id, item: row) != nil)
+            #expect(harness.coordinator.toolRowConfiguration(itemID: row.id, item: row) != nil)
         }
     }
 
@@ -261,7 +261,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         #expect(config.editAdded == nil)
         #expect(config.editRemoved == nil)
         #expect(config.trailing == "modified")
@@ -287,7 +287,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
         let stats = diffLines.reduce(into: (added: 0, removed: 0)) { acc, line in
@@ -324,7 +324,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         // Error edit falls back to code viewer with language from file path
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for error edit fallback"); return }
         #expect(language == .typescript)
@@ -351,7 +351,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         guard case .code(_, let language, _, _) = config.expandedContent else { Issue.record("Expected .code"); return }
         #expect(language == .swift)
         #expect(config.languageBadge == "Swift")
@@ -375,7 +375,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         if case .code(_, _, let startLine, _) = config.expandedContent { #expect(startLine == 1) }
         if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Sources/Agent.swift") }
     }
@@ -402,7 +402,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         #expect(config.collapsedImageBase64 == fakeBase64, "Builder must extract base64 from data URI in tool output")
         #expect(config.collapsedImageMimeType == "image/png")
     }
@@ -423,7 +423,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: false
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         #expect(config.collapsedImageBase64 == nil, "No image preview before output arrives")
     }
 
@@ -445,7 +445,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         // Write without content arg falls back to code viewer with language from file path
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for write fallback"); return }
         #expect(language == .swift)
@@ -472,7 +472,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         guard case .markdown = config.expandedContent else { Issue.record("Expected .markdown"); return }
         // startLine is implicit in content case
         #expect(config.languageBadge == "Markdown")
@@ -492,7 +492,7 @@ struct ChatTimelineCoordinatorTests {
 
         for row in rows {
             harness.reducer.expandedItemIDs.insert(row.id)
-            #expect(harness.coordinator.nativeToolConfiguration(itemID: row.id, item: row) != nil)
+            #expect(harness.coordinator.toolRowConfiguration(itemID: row.id, item: row) != nil)
         }
     }
 
@@ -535,7 +535,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
         // Now uses the rich card renderer instead of markdown text
         guard case .todoCard = config.expandedContent else { Issue.record("Expected .todoCard"); return }
         if case .todoCard(let output) = config.expandedContent { #expect(output.contains("TODO-a27df231")) }
@@ -564,7 +564,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
         // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
         #expect(config.trailing == nil)
         // expandedText == nil is now implicit (content is .diff not .text)
@@ -596,7 +596,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: itemID, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
         guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
         // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
@@ -1351,7 +1351,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "tool-1", item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "tool-1", item: item))
 
         #expect(config.preview == nil)
         #expect(config.trailing == nil)
@@ -1374,7 +1374,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "read-1", item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-1", item: item))
         #expect(config.preview == nil)
         #expect(config.trailing == nil)
     }
@@ -1399,7 +1399,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "read-image-1", item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-image-1", item: item))
         guard case .readMedia = config.expandedContent else { Issue.record("Expected .readMedia"); return }
         // startLine is implicit in content case
     }
@@ -1437,9 +1437,9 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let bashConfig = try #require(harness.coordinator.nativeToolConfiguration(itemID: "bash-1", item: bash))
-        let readConfig = try #require(harness.coordinator.nativeToolConfiguration(itemID: "read-1", item: read))
-        let writeConfig = try #require(harness.coordinator.nativeToolConfiguration(itemID: "write-1", item: write))
+        let bashConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: bash))
+        let readConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-1", item: read))
+        let writeConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "write-1", item: write))
 
         #expect(bashConfig.trailing == nil)
         #expect(readConfig.trailing == nil)
@@ -1467,7 +1467,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: toolID, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: toolID, item: item))
         #expect(config.preview == nil)
     }
 
@@ -1495,7 +1495,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: item.id, item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
         #expect(config.languageBadge == "Swift")
     }
 
@@ -1514,7 +1514,7 @@ struct ChatTimelineCoordinatorTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.nativeToolConfiguration(itemID: "bash-1", item: item))
+        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: item))
         guard case .bash = config.expandedContent else { Issue.record("Expected .bash"); return }
         if case .bash(_, _, let unwrapped) = config.expandedContent { #expect(unwrapped) }
         #expect(config.toolNamePrefix == "$")
@@ -3475,7 +3475,7 @@ private func offsetY(forDistanceFromBottom distance: CGFloat, in collectionView:
 }
 
 private struct TimelineHarness {
-    let coordinator: ChatTimelineCollectionView.Coordinator
+    let coordinator: ChatTimelineCollectionHost.Controller
     let collectionView: UICollectionView
     let reducer: TimelineReducer
     let toolOutputStore: ToolOutputStore
@@ -3492,7 +3492,7 @@ private func makeHarness(sessionId: String) -> TimelineHarness {
         frame: CGRect(x: 0, y: 0, width: 390, height: 844),
         collectionViewLayout: UICollectionViewFlowLayout()
     )
-    let coordinator = ChatTimelineCollectionView.Coordinator()
+    let coordinator = ChatTimelineCollectionHost.Controller()
     coordinator.configureDataSource(collectionView: collectionView)
 
     let reducer = TimelineReducer()
@@ -3553,8 +3553,8 @@ private func makeConfiguration(
     connection: ServerConnection,
     scrollController: ChatScrollController,
     audioPlayer: AudioPlayerService
-) -> ChatTimelineCollectionView.Configuration {
-    ChatTimelineCollectionView.Configuration(
+) -> ChatTimelineCollectionHost.Configuration {
+    ChatTimelineCollectionHost.Configuration(
         items: items,
         hiddenCount: hiddenCount,
         renderWindowStep: renderWindowStep,

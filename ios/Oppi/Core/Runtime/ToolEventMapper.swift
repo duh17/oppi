@@ -34,4 +34,3 @@ final class ToolCallCorrelator {
     }
 }
 
-typealias ToolEventMapper = ToolCallCorrelator
