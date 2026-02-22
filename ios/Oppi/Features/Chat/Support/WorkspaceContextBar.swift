@@ -93,7 +93,7 @@ struct WorkspaceContextBar: View {
                 }
 
                 // Repo-wide +/- from git diff HEAD
-                if let gitStatus, (gitStatus.addedLines > 0 || gitStatus.removedLines > 0) {
+                if let gitStatus, gitStatus.addedLines > 0 || gitStatus.removedLines > 0 {
                     HStack(spacing: 4) {
                         if gitStatus.addedLines > 0 {
                             Text("+\(gitStatus.addedLines)")

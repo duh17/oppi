@@ -132,5 +132,3 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     let provider: String
     let contextWindow: Int
 }
-
-

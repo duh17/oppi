@@ -85,8 +85,6 @@ private struct SkillRow: View {
                 Text(skill.name)
                     .font(.system(.body, design: .monospaced, weight: .medium))
                     .foregroundStyle(isEnabled ? .themeFg : .themeComment)
-
-            
             }
 
             Text(skill.description)
