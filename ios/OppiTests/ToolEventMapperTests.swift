@@ -2,14 +2,14 @@ import Testing
 import Foundation
 @testable import Oppi
 
-@Suite("ToolEventMapper")
-struct ToolEventMapperTests {
+@Suite("ToolCallCorrelator")
+struct ToolCallCorrelatorTests {
 
     // MARK: - Normal sequence
 
     @MainActor
     @Test func startOutputEndSequenceSharesToolId() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: ["command": "ls"])
         guard case .toolStart(_, let startId, let tool, let args, _) = startEvent else {
@@ -41,7 +41,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func sequentialToolsGetDistinctIds() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let start1 = mapper.start(sessionId: "s1", tool: "bash", args: [:])
         guard case .toolStart(_, let id1, _, _, _) = start1 else {
@@ -63,7 +63,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func outputWithoutStartGeneratesNewId() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         // No start called — output should still produce a valid event
         let event = mapper.output(sessionId: "s1", output: "orphan", isError: true)
@@ -80,7 +80,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func endWithoutStartGeneratesNewId() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let event = mapper.end(sessionId: "s1")
         guard case .toolEnd(_, let id, _, _, _) = event else {
@@ -94,7 +94,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func endClearsCurrentId() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
         guard case .toolStart(_, let startId, _, _, _) = start else {
@@ -116,7 +116,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func resetClearsState() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "s1", tool: "bash", args: [:])
         guard case .toolStart(_, let startId, _, _, _) = start else {
@@ -139,7 +139,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func sessionIdIsPassedThrough() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let start = mapper.start(sessionId: "session-42", tool: "read", args: [:])
         guard case .toolStart(let sid, _, _, _, _) = start else {
@@ -167,7 +167,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func argsArePreserved() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
         let args: [String: JSONValue] = [
             "command": .string("echo hello"),
             "timeout": .number(30),
@@ -186,7 +186,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func errorOutputFlagIsPreserved() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
         _ = mapper.start(sessionId: "s1", tool: "bash", args: [:])
 
         let event = mapper.output(sessionId: "s1", output: "stderr stuff", isError: true)
@@ -201,7 +201,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func serverProvidedToolCallIdIsUsed() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
         guard case .toolStart(_, let startId, _, _, _) = startEvent else {
@@ -227,7 +227,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func outputFallsBackToCurrentToolWhenNoServerToolCallId() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         // Start with server-provided ID
         _ = mapper.start(sessionId: "s1", tool: "bash", args: [:], toolCallId: "server-tc-1")
@@ -243,7 +243,7 @@ struct ToolEventMapperTests {
 
     @MainActor
     @Test func noServerIdGeneratesSyntheticUUID() {
-        let mapper = ToolEventMapper()
+        let mapper = ToolCallCorrelator()
 
         let startEvent = mapper.start(sessionId: "s1", tool: "bash", args: [:])
         guard case .toolStart(_, let id, _, _, _) = startEvent else {
