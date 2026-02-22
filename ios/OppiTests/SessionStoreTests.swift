@@ -28,7 +28,12 @@ struct SessionStorePartitioningTests {
             "cost": 0
         }
         """
-        return try! JSONDecoder().decode(Session.self, from: json.data(using: .utf8)!)
+        let data = Data(json.utf8)
+        do {
+            return try JSONDecoder().decode(Session.self, from: data)
+        } catch {
+            fatalError("Failed to decode test session \(id): \(error)")
+        }
     }
 
     // MARK: - Server partitioning
