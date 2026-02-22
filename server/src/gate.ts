@@ -14,6 +14,7 @@ import { parseBashCommand, type GateRequest } from "./policy.js";
 import { normalizeApprovalChoice } from "./policy-approval.js";
 import type { RuleInput, RuleStore } from "./rules.js";
 import type { AuditLog } from "./audit.js";
+import type { ServerMessage } from "./types.js";
 
 // ─── Types ───
 
@@ -449,4 +450,21 @@ export class GateServer extends EventEmitter {
       this.pendingTimeouts.delete(requestId);
     }
   }
+}
+
+// ─── Helpers ───
+
+/** Build a `permission_request` ServerMessage from a PendingDecision. */
+export function buildPermissionMessage(pending: PendingDecision): ServerMessage {
+  return {
+    type: "permission_request",
+    id: pending.id,
+    sessionId: pending.sessionId,
+    tool: pending.tool,
+    input: pending.input,
+    displaySummary: pending.displaySummary,
+    reason: pending.reason,
+    timeoutAt: pending.timeoutAt,
+    expires: pending.expires ?? true,
+  };
 }

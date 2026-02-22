@@ -64,19 +64,11 @@ import type {
   ClientLogUploadRequest,
   ApiError,
 } from "./types.js";
+import { ts } from "./log-utils.js";
 
-function ts(): string {
-  return new Date().toISOString().replace("T", " ").slice(0, 23);
-}
+import { type ModelInfo } from "./model-catalog.js";
 
 // ─── Types ───
-
-export interface ModelInfo {
-  id: string;
-  name: string;
-  provider: string;
-  contextWindow?: number;
-}
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {

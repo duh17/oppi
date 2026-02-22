@@ -189,7 +189,7 @@ function normalizeConfig(
     config.configVersion = configVersion;
   }
 
-  const port = readNumber("port", { min: 1 });
+  const port = readNumber("port", { min: 0 });
   if (port !== undefined && port <= 65_535) {
     config.port = port;
   } else if (port !== undefined) {
