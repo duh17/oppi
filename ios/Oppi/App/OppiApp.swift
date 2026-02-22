@@ -259,16 +259,12 @@ struct OppiApp: App {
                 "sessionId": sessionId,
                 "thresholdMs": String(context.thresholdMs),
                 "footprintMB": context.footprintMB.map(String.init) ?? "n/a",
-                "crumb": context.crumb,
-                "rows": String(context.rows),
             ]
         )
 
         await SentryService.shared.captureMainThreadStall(
             thresholdMs: context.thresholdMs,
             footprintMB: context.footprintMB,
-            crumb: context.crumb,
-            rows: context.rows,
             sessionId: sessionId
         )
 

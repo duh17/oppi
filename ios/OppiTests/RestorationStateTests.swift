@@ -200,17 +200,16 @@ struct RestorationStateTests {
         RestorationState.clear()
     }
 
-    @Test func v1StateWithoutScrollFieldsDecodesGracefully() throws {
-        // Simulate a v1 state that lacks scroll and server fields
+    @Test func v1StateIsRejectedByLoad() throws {
+        // v1 states (pre-multi-server) are rejected — version must match current schema.
+        // States expire after 1 hour anyway, so no migration needed.
         let v1JSON = """
-        {"version":1,"activeSessionId":"s1","selectedTab":"sessions","composerDraft":null,"timestamp":0}
+        {"version":1,"activeSessionId":"s1","selectedTab":"sessions","composerDraft":null,"timestamp":\(Date().timeIntervalSince1970)}
         """
-        let data = Data(v1JSON.utf8)
-        let decoded = try JSONDecoder().decode(RestorationState.self, from: data)
-
-        #expect(decoded.scrollAnchorItemId == nil)
-        #expect(decoded.wasNearBottom == nil)
-        #expect(decoded.activeServerId == nil)
+        UserDefaults.standard.set(Data(v1JSON.utf8), forKey: RestorationState.key)
+        let loaded = RestorationState.load()
+        #expect(loaded == nil, "v1 state should be rejected by version check")
+        RestorationState.clear()
     }
 
     // MARK: - Server ID restoration
