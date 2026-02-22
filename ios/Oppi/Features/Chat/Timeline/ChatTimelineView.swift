@@ -44,13 +44,13 @@ struct ChatTimelineView: View {
 
     private var bottomItemID: String? {
         if showsWorkingIndicator {
-            return ChatTimelineCollectionView.workingIndicatorID
+            return ChatTimelineCollectionHost.workingIndicatorID
         }
         return visibleItems.last?.id
     }
 
     var body: some View {
-        ChatTimelineCollectionView(
+        ChatTimelineCollectionHost(
             configuration: .init(
                 items: Array(visibleItems),
                 hiddenCount: hiddenCount,

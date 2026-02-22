@@ -34,5 +34,4 @@ final class ToolCallCorrelator {
     }
 }
 
-@available(*, deprecated, renamed: "ToolCallCorrelator")
 typealias ToolEventMapper = ToolCallCorrelator

@@ -119,15 +119,15 @@ extension ServerConnection {
 
         case .toolStart(let tool, let args, let toolCallId, let callSegments):
             silenceWatchdog.recordEvent()
-            coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
+            coalescer.receive(toolCallCorrelator.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
 
         case .toolOutput(let output, let isError, let toolCallId):
             silenceWatchdog.recordEvent()
-            coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
 
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             silenceWatchdog.recordEvent()
-            coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
+            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
 
         case .sessionEnded(let reason):
             silenceWatchdog.stop()

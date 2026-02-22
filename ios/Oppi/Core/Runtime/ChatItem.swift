@@ -2,7 +2,7 @@ import Foundation
 
 /// Unified timeline item for the chat view.
 ///
-/// Designed for cheap `Equatable` diffs in `LazyVStack`:
+/// Designed for cheap `Equatable` diffs in the collection timeline:
 /// - Tool output stores preview-only (`outputPreview` ≤ 500 chars)
 /// - Full output lives in `ToolOutputStore`, keyed by item ID
 /// - Expansion state is external (`Set<String>` in reducer)

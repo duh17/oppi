@@ -367,7 +367,7 @@ struct UIHangHarnessView: View {
 
             controlsBar
 
-            ChatTimelineCollectionView(
+            ChatTimelineCollectionHost(
                 configuration: .init(
                     items: visibleItems,
                     hiddenCount: hiddenCount,

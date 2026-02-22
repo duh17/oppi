@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Builds `ToolTimelineRowConfiguration` from a `ChatItem.toolCall`.
 ///
-/// Extracted from `ChatTimelineCollectionView.Coordinator.nativeToolConfiguration()`
+/// Extracted from `ChatTimelineCollectionHost.Controller.toolRowConfiguration()`
 /// so per-tool rendering logic is isolated and testable.
 enum ToolPresentationBuilder {
 
