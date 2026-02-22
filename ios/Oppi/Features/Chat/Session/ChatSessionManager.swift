@@ -282,7 +282,7 @@ final class ChatSessionManager {
 
         // Wire silence watchdog → full reconnect
         let sid = sessionId
-        connection.onSilenceReconnect = { [weak self] in
+        connection.silenceWatchdog.onReconnect = { [weak self] in
             log.error("Silence watchdog triggered reconnect for \(sid)")
             ClientLog.error("ChatSession", "Silence watchdog triggered reconnect", metadata: ["sessionId": sid])
             self?.reconnect()
@@ -385,7 +385,7 @@ final class ChatSessionManager {
             cancelAutoReconnect()
         }
 
-        connection.onSilenceReconnect = nil
+        connection.silenceWatchdog.onReconnect = nil
         cancelHistoryReload()
         cancelStateSync()
         disconnectIfCurrent(generation, connection: connection)

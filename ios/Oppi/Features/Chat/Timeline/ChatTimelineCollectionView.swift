@@ -70,9 +70,11 @@ struct ChatTimelineScrollCommand: Equatable {
     let nonce: Int
 }
 
-struct ChatTimelineCollectionView: UIViewRepresentable {
+struct ChatTimelineCollectionHost: UIViewRepresentable {
     static let loadMoreID = "__timeline.load-more__"
     static let workingIndicatorID = "working-indicator"
+
+    typealias Coordinator = Controller
 
     struct Configuration {
         let items: [ChatItem]
@@ -138,7 +140,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
+    final class Controller: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
         private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
         private var hiddenCount = 0
@@ -175,7 +177,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         private var lastObservedContentOffsetY: CGFloat?
-        private let toolOutputLoader = ChatTimelineToolOutputLoader()
+        private let toolOutputLoader = ExpandedToolOutputLoader()
 
         var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
             get { toolOutputLoader.fetchOverrideForTesting }
@@ -212,7 +214,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             outputByteCount: Int,
             in collectionView: UICollectionView
         ) {
-            loadFullToolOutputIfNeeded(
+            ensureExpandedToolOutputLoaded(
                 itemID: itemID,
                 tool: tool,
                 outputByteCount: outputByteCount,
@@ -293,28 +295,28 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 switch item {
                 case .userMessage:
                     rowLabel = "user"
-                    nativeConfig = self.nativeUserConfiguration(itemID: itemID, item: item)
+                    nativeConfig = self.userRowConfiguration(itemID: itemID, item: item)
                 case .assistantMessage:
                     rowLabel = "assistant"
-                    nativeConfig = self.nativeAssistantConfiguration(itemID: itemID, item: item)
+                    nativeConfig = self.assistantRowConfiguration(itemID: itemID, item: item)
                 case .thinking:
                     rowLabel = "thinking"
-                    nativeConfig = self.nativeThinkingConfiguration(itemID: itemID, item: item)
+                    nativeConfig = self.thinkingRowConfiguration(itemID: itemID, item: item)
                 case .toolCall:
                     rowLabel = "tool"
-                    nativeConfig = self.nativeToolConfiguration(itemID: itemID, item: item)
+                    nativeConfig = self.toolRowConfiguration(itemID: itemID, item: item)
                 case .audioClip:
                     rowLabel = "audio"
-                    nativeConfig = self.nativeAudioConfiguration(item: item)
+                    nativeConfig = self.audioRowConfiguration(item: item)
                 case .permission, .permissionResolved:
                     rowLabel = "permission"
-                    nativeConfig = self.nativePermissionConfiguration(item: item)
+                    nativeConfig = self.permissionRowConfiguration(item: item)
                 case .systemEvent(_, let message):
                     rowLabel = Self.compactionPresentation(from: message) == nil ? "system" : "compaction"
-                    nativeConfig = self.nativeSystemEventConfiguration(itemID: itemID, item: item)
+                    nativeConfig = self.systemEventRowConfiguration(itemID: itemID, item: item)
                 case .error:
                     rowLabel = "error"
-                    nativeConfig = self.nativeErrorConfiguration(item: item)
+                    nativeConfig = self.errorRowConfiguration(item: item)
                 }
 
                 if let nativeConfig {
@@ -374,7 +376,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             dataSource = UICollectionViewDiffableDataSource<Int, String>(
                 collectionView: collectionView
             ) { collectionView, indexPath, itemID in
-                if itemID == ChatTimelineCollectionView.loadMoreID {
+                if itemID == ChatTimelineCollectionHost.loadMoreID {
                     return collectionView.dequeueConfiguredReusableCell(
                         using: loadMoreRegistration,
                         for: indexPath,
@@ -382,7 +384,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     )
                 }
 
-                if itemID == ChatTimelineCollectionView.workingIndicatorID {
+                if itemID == ChatTimelineCollectionHost.workingIndicatorID {
                     return collectionView.dequeueConfiguredReusableCell(
                         using: workingRegistration,
                         for: indexPath,
@@ -426,8 +428,8 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             activeSessionID: String,
             currentSessionID: String,
             itemExists: Bool
-        ) -> ChatTimelineToolOutputLoader.CompletionDisposition {
-            ChatTimelineToolOutputLoader.completionDisposition(
+        ) -> ExpandedToolOutputLoader.CompletionDisposition {
+            ExpandedToolOutputLoader.completionDisposition(
                 output: output,
                 isTaskCancelled: isTaskCancelled,
                 activeSessionID: activeSessionID,
@@ -640,7 +642,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             nextIDs.reserveCapacity(configuration.items.count + 2)
 
             if configuration.hiddenCount > 0 {
-                nextIDs.append(ChatTimelineCollectionView.loadMoreID)
+                nextIDs.append(ChatTimelineCollectionHost.loadMoreID)
             }
 
             // Diffable data sources require globally unique item identifiers.
@@ -651,7 +653,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             nextItemByID = dedupedItems.itemByID
 
             if configuration.isBusy, configuration.streamingAssistantID == nil {
-                nextIDs.append(ChatTimelineCollectionView.workingIndicatorID)
+                nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
             }
 
             let removedIDs = Set(currentIDs).subtracting(nextIDs)
@@ -669,8 +671,8 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             var changedIDs = changedItemIDs(nextItemByID: nextItemByID)
 
             if configuration.hiddenCount != previousHiddenCount,
-               nextIDs.contains(ChatTimelineCollectionView.loadMoreID) {
-                changedIDs.append(ChatTimelineCollectionView.loadMoreID)
+               nextIDs.contains(ChatTimelineCollectionHost.loadMoreID) {
+                changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
             }
 
             if let streamingAssistantID = configuration.streamingAssistantID {
@@ -768,7 +770,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
             let itemID = currentIDs[indexPath.item]
-            if itemID == ChatTimelineCollectionView.loadMoreID || itemID == ChatTimelineCollectionView.workingIndicatorID {
+            if itemID == ChatTimelineCollectionHost.loadMoreID || itemID == ChatTimelineCollectionHost.workingIndicatorID {
                 return
             }
 
@@ -791,14 +793,14 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                     cancelToolOutputRetryWork(for: itemID)
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
-                    loadFullToolOutputIfNeeded(
+                    ensureExpandedToolOutputLoaded(
                         itemID: itemID,
                         tool: tool,
                         outputByteCount: outputByteCount,
                         in: collectionView
                     )
                 }
-                animateNativeToolExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
+                animateToolRowExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
             case .thinking(_, _, _, let isDone):
                 guard isDone else {
                     return
@@ -832,7 +834,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             return changed
         }
 
-        private func nativeAssistantConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
+        private func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
             guard case .assistantMessage(_, let text, _) = item else { return nil }
 
             let isStreaming = itemID == streamingAssistantID
@@ -849,7 +851,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             )
         }
 
-        private func nativeUserConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
+        private func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
             guard case .userMessage(_, let text, let images, _) = item else { return nil }
 
             let canFork = UUID(uuidString: itemID) == nil && onFork != nil
@@ -872,7 +874,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             )
         }
 
-        private func nativeThinkingConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
+        private func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
             guard case .thinking(_, let preview, _, let isDone) = item else { return nil }
 
             // Thought content should be visible by default once complete.
@@ -886,7 +888,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             )
         }
 
-        private func nativeAudioConfiguration(item: ChatItem) -> AudioClipTimelineRowConfiguration? {
+        private func audioRowConfiguration(item: ChatItem) -> AudioClipTimelineRowConfiguration? {
             guard case .audioClip(let id, let title, let fileURL, _) = item,
                   let audioPlayer else {
                 return nil
@@ -901,7 +903,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             )
         }
 
-        private func nativePermissionConfiguration(item: ChatItem) -> PermissionTimelineRowConfiguration? {
+        private func permissionRowConfiguration(item: ChatItem) -> PermissionTimelineRowConfiguration? {
             switch item {
             case .permission(let request):
                 return PermissionTimelineRowConfiguration(
@@ -924,7 +926,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             }
         }
 
-        private func nativeSystemEventConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
+        private func systemEventRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
             guard case .systemEvent(_, let message) = item else { return nil }
 
             if let compaction = Self.compactionPresentation(from: message) {
@@ -968,12 +970,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             reconfigureItems([itemID], in: collectionView)
         }
 
-        private func nativeErrorConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
+        private func errorRowConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
             guard case .error(_, let message) = item else { return nil }
             return ErrorTimelineRowConfiguration(message: message, themeID: currentThemeID)
         }
 
-        func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
+        func toolRowConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
             guard case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
                 return nil
             }
@@ -998,7 +1000,12 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             )
         }
 
-        private func loadFullToolOutputIfNeeded(
+        @available(*, deprecated, renamed: "toolRowConfiguration(itemID:item:)")
+        func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
+            toolRowConfiguration(itemID: itemID, item: item)
+        }
+
+        private func ensureExpandedToolOutputLoaded(
             itemID: String,
             tool: String,
             outputByteCount: Int,
@@ -1007,7 +1014,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         ) {
             guard let toolOutputStore else { return }
 
-            let fetchToolOutput: ChatTimelineToolOutputLoader.FetchToolOutput
+            let fetchToolOutput: ExpandedToolOutputLoader.FetchToolOutput
             if let fetchHook = _fetchToolOutputForTesting {
                 fetchToolOutput = fetchHook
             } else {
@@ -1026,7 +1033,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
                 }
             }
 
-            let request = ChatTimelineToolOutputLoader.LoadRequest(
+            let request = ExpandedToolOutputLoader.LoadRequest(
                 itemID: itemID,
                 tool: tool,
                 outputByteCount: outputByteCount,
@@ -1073,7 +1080,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             toolOutputLoader.cancelAllWork()
         }
 
-        private func animateNativeToolExpansion(
+        private func animateToolRowExpansion(
             itemID: String,
             item: ChatItem,
             isExpanding _: Bool,
@@ -1081,7 +1088,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
         ) {
             guard let index = currentIDs.firstIndex(of: itemID),
                   let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)),
-                  let configuration = nativeToolConfiguration(itemID: itemID, item: item)
+                  let configuration = toolRowConfiguration(itemID: itemID, item: item)
             else {
                 // Defensive fallback: should be rare for tap-selected visible
                 // rows. Track it so tests can catch regressions.
@@ -1217,7 +1224,7 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
             }
 
             let id = currentIDs[firstVisible.item]
-            if id == ChatTimelineCollectionView.loadMoreID || id == ChatTimelineCollectionView.workingIndicatorID {
+            if id == ChatTimelineCollectionHost.loadMoreID || id == ChatTimelineCollectionHost.workingIndicatorID {
                 scrollController.updateTopVisibleItemId(nil)
             } else {
                 scrollController.updateTopVisibleItemId(id)
@@ -1227,3 +1234,6 @@ struct ChatTimelineCollectionView: UIViewRepresentable {
 }
 
 // swiftlint:enable type_body_length
+
+@available(*, deprecated, renamed: "ChatTimelineCollectionHost")
+typealias ChatTimelineCollectionView = ChatTimelineCollectionHost
