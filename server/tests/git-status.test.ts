@@ -71,25 +71,38 @@ describe("getGitStatus", () => {
     expect(status.stagedCount).toBe(0);
     expect(status.totalFiles).toBe(0);
     expect(status.files).toHaveLength(0);
+    expect(status.addedLines).toBe(0);
+    expect(status.removedLines).toBe(0);
   });
 
-  it("detects untracked files", async () => {
+  it("detects untracked files (no line stats)", async () => {
     writeFileSync(join(repoDir, "untracked.txt"), "new file\n");
     try {
       const status = await getGitStatus(repoDir);
       expect(status.untrackedCount).toBe(1);
-      expect(status.files.some((f) => f.path === "untracked.txt" && f.status === "??")).toBe(true);
+      const file = status.files.find((f) => f.path === "untracked.txt" && f.status === "??");
+      expect(file).toBeDefined();
+      // Untracked files have no numstat data
+      expect(file!.addedLines).toBeNull();
+      expect(file!.removedLines).toBeNull();
     } finally {
       rmSync(join(repoDir, "untracked.txt"));
     }
   });
 
-  it("detects modified files (dirty working tree)", async () => {
-    writeFileSync(join(repoDir, "file1.txt"), "modified\n");
+  it("detects modified files with per-file line stats", async () => {
+    writeFileSync(join(repoDir, "file1.txt"), "modified\nline2\nline3\n");
     try {
       const status = await getGitStatus(repoDir);
       expect(status.dirtyCount).toBe(1);
-      expect(status.files.some((f) => f.path === "file1.txt")).toBe(true);
+      const file = status.files.find((f) => f.path === "file1.txt");
+      expect(file).toBeDefined();
+      // "hello\n" → "modified\nline2\nline3\n" = 3 added, 1 removed
+      expect(file!.addedLines).toBe(3);
+      expect(file!.removedLines).toBe(1);
+      // Totals
+      expect(status.addedLines).toBe(3);
+      expect(status.removedLines).toBe(1);
     } finally {
       gitIn(repoDir, "checkout -- file1.txt");
     }
@@ -147,18 +160,18 @@ describe("getGitStatus", () => {
     }
   });
 
-  it("caps files at 100", async () => {
-    // Create 110 untracked files in repo root (not a subdir — git shows subdir as single entry)
-    for (let i = 0; i < 110; i++) {
+  it("caps files at 500", async () => {
+    // Create 510 untracked files in repo root (not a subdir — git shows subdir as single entry)
+    for (let i = 0; i < 510; i++) {
       writeFileSync(join(repoDir, `bulk-${String(i).padStart(3, "0")}.txt`), `content-${i}\n`);
     }
     try {
       const status = await getGitStatus(repoDir);
-      expect(status.files.length).toBeLessThanOrEqual(100);
-      expect(status.untrackedCount).toBe(110);
-      expect(status.totalFiles).toBeGreaterThanOrEqual(110);
+      expect(status.files.length).toBeLessThanOrEqual(500);
+      expect(status.untrackedCount).toBe(510);
+      expect(status.totalFiles).toBeGreaterThanOrEqual(510);
     } finally {
-      for (let i = 0; i < 110; i++) {
+      for (let i = 0; i < 510; i++) {
         rmSync(join(repoDir, `bulk-${String(i).padStart(3, "0")}.txt`), { force: true });
       }
     }

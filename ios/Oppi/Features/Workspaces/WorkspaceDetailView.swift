@@ -260,7 +260,6 @@ struct WorkspaceDetailView: View {
                 Section {
                     WorkspaceContextBar(
                         gitStatus: gitStatus,
-                        changeStats: nil,
                         isLoading: false,
                         appliesOuterHorizontalPadding: false
                     )
