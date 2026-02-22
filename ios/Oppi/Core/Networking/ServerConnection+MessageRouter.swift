@@ -348,9 +348,6 @@ extension ServerConnection {
         cachedModels = []
     }
 
-    // MARK: - Silence Watchdog
-
-    /// Start monitoring for silence during an active agent turn.
     // MARK: - Extension Timeout
 
     /// Auto-dismiss extension dialog after its timeout expires.
