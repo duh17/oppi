@@ -139,6 +139,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
     @MainActor
     final class Controller: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
+        // MARK: - Properties + Init
+
         private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
         private var hiddenCount = 0
@@ -233,6 +235,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 )
             }
         }
+
+        // MARK: - Data Source Configuration
 
         func configureDataSource(collectionView: UICollectionView) {
             self.collectionView = collectionView
@@ -400,6 +404,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
         }
 
+        // MARK: - Diffing
+
         static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
             var itemByID: [String: ChatItem] = [:]
             itemByID.reserveCapacity(items.count)
@@ -443,6 +449,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 NSLog("⚠️ [TimelineNativeGap] %@", message)
             #endif
         }
+
+        // MARK: - Compaction
 
         struct CompactionPresentation: Equatable {
             enum Phase: Equatable {
@@ -529,6 +537,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             return Int(String(digits))
         }
 
+        // MARK: - Audio State Observation
+
         private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
             if let currentAudioPlayer = self.audioPlayer,
                currentAudioPlayer === audioPlayer {
@@ -605,6 +615,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             return ids
         }
+
+        // MARK: - Apply Configuration
 
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             hiddenCount = configuration.hiddenCount
@@ -727,6 +739,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
             updateDetachedStreamingHintVisibility()
         }
+
+        // MARK: - UIScrollViewDelegate
+
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             scrollController?.setUserInteracting(true)
             lastObservedContentOffsetY = scrollView.contentOffset.y
@@ -757,6 +772,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             updateScrollState(collectionView)
             updateDetachedStreamingHintVisibility()
         }
+
+        // MARK: - UICollectionViewDelegate
+
         @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended else { return }
             gesture.view?.window?.endEditing(true)
@@ -821,6 +839,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 break
             }
         }
+
+        // MARK: - Row Configuration Builders
 
         private func changedItemIDs(nextItemByID: [String: ChatItem]) -> [String] {
             var changed: [String] = []
@@ -1002,6 +1022,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
         }
 
+        // MARK: - Tool Output Loading
 
         private func ensureExpandedToolOutputLoaded(
             itemID: String,
@@ -1093,6 +1114,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private func cancelAllToolOutputLoadTasks() {
             toolOutputLoader.cancelAllWork()
         }
+
+        // MARK: - Animation + Scroll
 
         private func animateToolRowExpansion(
             itemID: String,
