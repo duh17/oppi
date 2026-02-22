@@ -37,7 +37,6 @@ beforeAll(async () => {
     host: "127.0.0.1",
   });
   token = storage.ensurePaired();
-  process.env.OPPI_AUTH_PROXY_PORT = "0";
   server = new Server(storage);
   await server.start();
   baseWsUrl = `ws://127.0.0.1:${server.port}`;
@@ -505,7 +504,7 @@ describe("malformed message handling", () => {
 });
 
 describe("per-session WebSocket lifecycle", () => {
-  it("per-session stream receives connected with session data", async () => {
+  it("per-session stream endpoint returns 404 (removed, use /stream)", async () => {
     const { workspaceId, sessionId } = await createWorkspaceAndSession();
 
     const ws = new WebSocket(
@@ -513,16 +512,15 @@ describe("per-session WebSocket lifecycle", () => {
       { headers: { Authorization: `Bearer ${token}` } },
     );
 
-    try {
-      const msg = await waitForMessage(ws);
-      expect(msg.type).toBe("connected");
-      expect((msg as { session?: { id: string } }).session?.id).toBe(sessionId);
-    } finally {
-      await new Promise<void>((r) => {
-        ws.on("close", () => r());
+    const closed = await new Promise<boolean>((resolve) => {
+      ws.on("error", () => resolve(true));
+      ws.on("close", () => resolve(true));
+      ws.on("open", () => {
         ws.close();
+        resolve(false);
       });
-    }
+    });
+    expect(closed).toBe(true);
   });
 });
 

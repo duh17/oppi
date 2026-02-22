@@ -75,7 +75,6 @@ beforeAll(async () => {
     pushDeviceTokens: [pushOnlyToken],
   });
   token = storage.ensurePaired();
-  process.env.OPPI_AUTH_PROXY_PORT = "0";
   server = new Server(storage);
   await server.start();
   baseUrl = `http://127.0.0.1:${server.port}`;
@@ -752,12 +751,11 @@ describe("workspace lifecycle", () => {
   });
 });
 
-// ── Per-session WebSocket ──
+// ── Per-session WebSocket (removed — use /stream) ──
 
 describe("per-session WebSocket", () => {
-  it("connects to /workspaces/:wid/sessions/:sid/stream and receives connected", async () => {
-    // Create workspace + session
-    const wsRes = await post("/workspaces", { name: "ws-stream", skills: [] });
+  it("returns 404 (endpoint removed, use /stream instead)", async () => {
+    const wsRes = await post("/workspaces", { name: "ws-gone", skills: [] });
     const { workspace } = await wsRes.json();
     const sessRes = await post(`/workspaces/${workspace.id}/sessions`, {
       model: "anthropic/claude-sonnet-4-20250514",
@@ -766,63 +764,6 @@ describe("per-session WebSocket", () => {
 
     const ws = new WebSocket(
       `${baseUrl.replace("http", "ws")}/workspaces/${workspace.id}/sessions/${session.id}/stream`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-
-    const msg = await new Promise<Record<string, unknown> | null>((resolve) => {
-      ws.on("message", (data) => {
-        resolve(JSON.parse(data.toString()));
-      });
-      ws.on("error", () => resolve(null));
-      setTimeout(() => resolve(null), 3000);
-    });
-
-    expect(msg).not.toBeNull();
-    expect(msg!.type).toBe("connected");
-    expect(msg!.session).toBeDefined();
-    expect((msg!.session as Record<string, unknown>).id).toBe(session.id);
-
-    // Wait for close to complete to avoid EPIPE on teardown
-    await new Promise<void>((resolve) => {
-      ws.on("close", () => resolve());
-      ws.close();
-    });
-  });
-
-  it("rejects WS to nonexistent session", async () => {
-    const wsRes = await post("/workspaces", { name: "ws-404", skills: [] });
-    const { workspace } = await wsRes.json();
-
-    const ws = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/workspaces/${workspace.id}/sessions/NONEXISTENT/stream`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-
-    const closed = await new Promise<boolean>((resolve) => {
-      ws.on("error", () => resolve(true));
-      ws.on("close", () => resolve(true));
-      ws.on("open", () => {
-        ws.close();
-        resolve(false);
-      });
-    });
-    expect(closed).toBe(true);
-  });
-
-  it("rejects WS with mismatched workspace/session", async () => {
-    // Create session in one workspace, try to connect via another
-    const ws1Res = await post("/workspaces", { name: "ws-a", skills: [] });
-    const { workspace: ws1 } = await ws1Res.json();
-    const ws2Res = await post("/workspaces", { name: "ws-b", skills: [] });
-    const { workspace: ws2 } = await ws2Res.json();
-
-    const sessRes = await post(`/workspaces/${ws1.id}/sessions`, {
-      model: "anthropic/claude-sonnet-4-20250514",
-    });
-    const { session } = await sessRes.json();
-
-    const ws = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/workspaces/${ws2.id}/sessions/${session.id}/stream`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
 
@@ -892,14 +833,12 @@ type PairingTestContext = {
 async function withIsolatedPairingServer(run: (ctx: PairingTestContext) => Promise<void>): Promise<void> {
   const pairingDataDir = mkdtempSync(join(tmpdir(), "oppi-pairing-integration-"));
   const pairingStorage = new Storage(pairingDataDir);
-  const isolatedPort = 20_000 + Math.floor(Math.random() * 20_000);
   pairingStorage.updateConfig({
-    port: isolatedPort,
+    port: 0,
     host: "127.0.0.1",
   });
   pairingStorage.ensurePaired();
 
-  process.env.OPPI_AUTH_PROXY_PORT = "0";
   const pairingServer = new Server(pairingStorage);
   await pairingServer.start();
 

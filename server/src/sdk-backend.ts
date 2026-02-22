@@ -23,16 +23,7 @@ import { join, resolve } from "path";
 
 import type { Session, Workspace } from "./types.js";
 import type { GateServer } from "./gate.js";
-
-/** Compact HH:MM:SS.mmm timestamp for log lines. */
-function ts(): string {
-  const d = new Date();
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
+import { ts } from "./log-utils.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
 function parseModelId(modelId: string): { provider: string; model: string } | null {

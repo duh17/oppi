@@ -42,16 +42,7 @@ import {
 import { getGitStatus } from "./git-status.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import { SdkBackend } from "./sdk-backend.js";
-
-/** Compact HH:MM:SS.mmm timestamp for log lines. */
-function ts(): string {
-  const d = new Date();
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
+import { ts } from "./log-utils.js";
 
 function parsePositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1019,44 +1010,127 @@ export class SessionManager extends EventEmitter {
     return changed;
   }
 
-  // ─── SDK Passthrough ───
+  // ─── SDK Command Handlers ───
 
   /**
-   * Allowlisted commands that can be forwarded from the WS client.
-   * Each maps to a pi SDK method. Commands that return data are
-   * awaited and the result broadcast as a `command_result` message.
+   * Declarative map of SDK command type → handler.
+   *
+   * Serves as both the allowlist (replaces SDK_PASSTHROUGH) and the
+   * dispatch table (replaces routeSdkCommandAsync switch). Each handler
+   * receives the SdkBackend and the raw command payload, and returns
+   * the RPC result.
    */
-  private static readonly SDK_PASSTHROUGH: ReadonlySet<string> = new Set([
+  private static readonly SDK_HANDLERS = new Map<
+    string,
+    (backend: SdkBackend, cmd: Record<string, unknown>) => unknown | Promise<unknown>
+  >([
     // State
-    "get_state",
-    "get_messages",
-    "get_session_stats",
+    ["get_state", (b) => b.getStateSnapshot()],
+    ["get_messages", (b) => b.getMessages()],
+    ["get_session_stats", (b) => b.getSessionStats()],
+
     // Model
-    "set_model",
-    "cycle_model",
-    "get_available_models",
+    [
+      "set_model",
+      async (b, cmd) => {
+        const modelFromCommand =
+          typeof cmd.model === "string" && cmd.model.trim().length > 0
+            ? cmd.model.trim()
+            : undefined;
+        const modelFromParts =
+          typeof cmd.provider === "string" &&
+          cmd.provider.trim().length > 0 &&
+          typeof cmd.modelId === "string" &&
+          cmd.modelId.trim().length > 0
+            ? composeModelId(cmd.provider.trim(), cmd.modelId.trim())
+            : undefined;
+        const model = modelFromCommand ?? modelFromParts;
+        if (!model)
+          throw new Error("Invalid set_model payload: expected model or provider+modelId");
+        const result = await b.setModel(model);
+        if (!result.success) throw new Error(result.error);
+        return result;
+      },
+    ],
+    ["cycle_model", (b, cmd) => b.cycleModel(cmd.direction as string)],
+    ["get_available_models", () => []],
+
     // Thinking
-    "set_thinking_level",
-    "cycle_thinking_level",
+    [
+      "set_thinking_level",
+      (b, cmd) => {
+        b.setThinkingLevel(cmd.level as string);
+        return { level: cmd.level };
+      },
+    ],
+    ["cycle_thinking_level", (b) => ({ level: b.cycleThinkingLevel() })],
+
     // Session
-    "new_session",
-    "set_session_name",
-    "compact",
-    "set_auto_compaction",
-    "fork",
-    "get_fork_messages",
-    "switch_session",
+    [
+      "new_session",
+      async (b) => {
+        await b.newSession();
+        return { success: true };
+      },
+    ],
+    [
+      "set_session_name",
+      (b, cmd) => {
+        b.setSessionName(cmd.name as string);
+        return { name: cmd.name };
+      },
+    ],
+    ["compact", (b, cmd) => b.compact(cmd.instructions as string | undefined)],
+    [
+      "set_auto_compaction",
+      (b, cmd) => {
+        b.setAutoCompaction(!!cmd.enabled);
+        return { enabled: !!cmd.enabled };
+      },
+    ],
+    ["fork", (b, cmd) => b.fork(cmd.entryId as string)],
+    ["switch_session", (b, cmd) => b.switchSession(cmd.sessionPath as string)],
+
     // Queue modes
-    "set_steering_mode",
-    "set_follow_up_mode",
+    [
+      "set_steering_mode",
+      (b, cmd) => {
+        b.setSteeringMode(cmd.mode as string);
+        return { mode: cmd.mode };
+      },
+    ],
+    [
+      "set_follow_up_mode",
+      (b, cmd) => {
+        b.setFollowUpMode(cmd.mode as string);
+        return { mode: cmd.mode };
+      },
+    ],
+
     // Retry
-    "set_auto_retry",
-    "abort_retry",
+    [
+      "set_auto_retry",
+      (b, cmd) => {
+        b.setAutoRetry(!!cmd.enabled);
+        return { enabled: !!cmd.enabled };
+      },
+    ],
+    [
+      "abort_retry",
+      (b) => {
+        b.abortRetry();
+        return { success: true };
+      },
+    ],
+
     // Bash
-    "bash",
-    "abort_bash",
-    // Commands
-    "get_commands",
+    [
+      "abort_bash",
+      (b) => {
+        b.abortBash();
+        return { success: true };
+      },
+    ],
   ]);
 
   /**
@@ -1072,7 +1146,7 @@ export class SessionManager extends EventEmitter {
     requestId?: string,
   ): Promise<void> {
     const cmdType = message.type as string;
-    if (!SessionManager.SDK_PASSTHROUGH.has(cmdType)) {
+    if (!SessionManager.SDK_HANDLERS.has(cmdType)) {
       throw new Error(`Command not allowed: ${cmdType}`);
     }
 
@@ -1288,15 +1362,19 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Send a command to the SDK backend and await the result.
+   * Dispatches through the declarative SDK_HANDLERS map.
    */
-  sendCommandAsync(
+  async sendCommandAsync(
     key: string,
     command: Record<string, unknown>,
     _timeoutMs = 10_000,
   ): Promise<unknown> {
     const active = this.active.get(key);
     if (!active) return Promise.reject(new Error("Session not active"));
-    return this.routeSdkCommandAsync(active.sdkBackend, command);
+    const type = command.type as string;
+    const handler = SessionManager.SDK_HANDLERS.get(type);
+    if (!handler) throw new Error(`Unhandled SDK command: ${type}`);
+    return handler(active.sdkBackend, command);
   }
 
   /**
@@ -1327,105 +1405,6 @@ export class SessionManager extends EventEmitter {
         break;
       default:
         console.warn(`${ts()} [sdk] Unhandled fire-and-forget command: ${type}`);
-    }
-  }
-
-  /**
-   * Route an async command to the SDK backend and return its result.
-   * Maps command types to direct SDK method calls.
-   */
-  private async routeSdkCommandAsync(
-    backend: SdkBackend,
-    command: Record<string, unknown>,
-  ): Promise<unknown> {
-    const type = command.type as string;
-    switch (type) {
-      // State
-      case "get_state":
-        return backend.getStateSnapshot();
-      case "get_messages":
-        return backend.getMessages();
-      case "get_session_stats":
-        return backend.getSessionStats();
-
-      // Model
-      case "set_model": {
-        const modelFromCommand =
-          typeof command.model === "string" && command.model.trim().length > 0
-            ? command.model.trim()
-            : undefined;
-        const modelFromParts =
-          typeof command.provider === "string" &&
-          command.provider.trim().length > 0 &&
-          typeof command.modelId === "string" &&
-          command.modelId.trim().length > 0
-            ? composeModelId(command.provider.trim(), command.modelId.trim())
-            : undefined;
-
-        const model = modelFromCommand ?? modelFromParts;
-        if (!model) {
-          throw new Error("Invalid set_model payload: expected model or provider+modelId");
-        }
-
-        const result = await backend.setModel(model);
-        if (!result.success) throw new Error(result.error);
-        return result;
-      }
-      case "cycle_model":
-        return backend.cycleModel(command.direction as string);
-      case "get_available_models":
-        // SDK doesn't have a direct equivalent — return empty for now
-        return [];
-
-      // Thinking
-      case "set_thinking_level":
-        backend.setThinkingLevel(command.level as string);
-        return { level: command.level };
-      case "cycle_thinking_level": {
-        const level = backend.cycleThinkingLevel();
-        return { level };
-      }
-
-      // Session
-      case "new_session":
-        await backend.newSession();
-        return { success: true };
-      case "set_session_name":
-        backend.setSessionName(command.name as string);
-        return { name: command.name };
-      case "compact":
-        return backend.compact(command.instructions as string | undefined);
-      case "set_auto_compaction":
-        backend.setAutoCompaction(!!command.enabled);
-        return { enabled: !!command.enabled };
-      case "fork":
-        return backend.fork(command.entryId as string);
-      case "switch_session":
-        return backend.switchSession(command.sessionPath as string);
-
-      // Queue modes
-      case "set_steering_mode":
-        backend.setSteeringMode(command.mode as string);
-        return { mode: command.mode };
-      case "set_follow_up_mode":
-        backend.setFollowUpMode(command.mode as string);
-        return { mode: command.mode };
-
-      // Retry
-      case "set_auto_retry":
-        backend.setAutoRetry(!!command.enabled);
-        return { enabled: !!command.enabled };
-      case "abort_retry":
-        backend.abortRetry();
-        return { success: true };
-
-      // Bash
-      case "abort_bash":
-        backend.abortBash();
-        return { success: true };
-
-      default:
-        throw new Error(`Unhandled SDK command: ${type}`);
     }
   }
 
