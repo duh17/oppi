@@ -11,6 +11,7 @@
 
 import type { ServerMessage, Session, SessionMessage } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import type { PiEvent, PiMessage } from "./pi-events.js";
 import { ts } from "./log-utils.js";
 
 // ─── Text Helpers ───
@@ -41,9 +42,12 @@ export function computeAssistantTextTailDelta(streamedText: string, finalizedTex
   return finalizedText.slice(commonPrefix);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-export function extractAssistantText(message: any): string {
-  const content = message?.content;
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+export function extractAssistantText(message: PiMessage): string {
+  const content = message.content;
 
   if (typeof content === "string") {
     return content;
@@ -54,35 +58,41 @@ export function extractAssistantText(message: any): string {
   }
 
   const textParts: string[] = [];
-  for (const part of content) {
-    const isTextPart = part?.type === "text" || part?.type === "output_text";
-    if (isTextPart && typeof part.text === "string") {
-      textParts.push(part.text);
+  for (const part of content as unknown[]) {
+    const block = asRecord(part);
+    if (!block) {
+      continue;
+    }
+
+    const type = block.type;
+    if ((type === "text" || type === "output_text") && typeof block.text === "string") {
+      textParts.push(block.text);
     }
   }
 
   return textParts.join("");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-function extractUsage(message: any): {
+function extractUsage(message: PiMessage): {
   input: number;
   output: number;
   cost: number;
   cacheRead: number;
   cacheWrite: number;
 } | null {
-  const usage = message?.usage;
+  const usage = asRecord(message.usage);
   if (!usage) {
     return null;
   }
 
+  const cost = asRecord(usage.cost);
+
   return {
-    input: usage.input || 0,
-    output: usage.output || 0,
-    cost: usage.cost?.total || 0,
-    cacheRead: usage.cacheRead || 0,
-    cacheWrite: usage.cacheWrite || 0,
+    input: typeof usage.input === "number" ? usage.input : 0,
+    output: typeof usage.output === "number" ? usage.output : 0,
+    cost: typeof cost?.total === "number" ? cost.total : 0,
+    cacheRead: typeof usage.cacheRead === "number" ? usage.cacheRead : 0,
+    cacheWrite: typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0,
   };
 }
 
@@ -126,13 +136,19 @@ export interface TranslationContext {
  * Pi sends media as { type: "image"|"audio", data: "base64...", mimeType: "..." }.
  * We encode as data URIs so iOS extractors can detect and render them.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi content blocks are untyped
-function extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
+function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMessage[] {
   const out: ServerMessage[] = [];
   for (const block of contents) {
-    if ((block.type === "image" || block.type === "audio") && block.data) {
-      const defaultMime = block.type === "image" ? "image/png" : "audio/wav";
-      const dataUri = `data:${block.mimeType || defaultMime};base64,${block.data}`;
+    const record = asRecord(block);
+    if (!record) {
+      continue;
+    }
+
+    const type = record.type;
+    if ((type === "image" || type === "audio") && typeof record.data === "string") {
+      const defaultMime = type === "image" ? "image/png" : "audio/wav";
+      const mimeType = typeof record.mimeType === "string" ? record.mimeType : defaultMime;
+      const dataUri = `data:${mimeType};base64,${record.data}`;
       out.push({ type: "tool_output", output: dataUri, toolCallId });
     }
   }
@@ -145,16 +161,19 @@ function extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessag
  * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
  * side effect (streaming state for the current turn).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
-export function translatePiEvent(event: any, ctx: TranslationContext): ServerMessage[] {
+export function translatePiEvent(event: PiEvent, ctx: TranslationContext): ServerMessage[] {
   const resolveToolCallId = (): string | undefined => {
-    if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+    if (
+      "toolCallId" in event &&
+      typeof event.toolCallId === "string" &&
+      event.toolCallId.length > 0
+    ) {
       return event.toolCallId;
     }
 
     // Some pi tool events omit toolCallId but still include a stable event id.
     // Use it so stream-time IDs match trace lookup IDs.
-    if (typeof event.id === "string" && event.id.length > 0) {
+    if ("id" in event && typeof event.id === "string" && event.id.length > 0) {
       return event.id;
     }
 
@@ -205,7 +224,9 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       if (evt?.type === "error") {
         const reason = evt.reason ?? "error";
         const errorMsg =
-          typeof evt.error?.content === "string" ? evt.error.content : `Stream ${reason}`;
+          typeof evt.error?.errorMessage === "string" && evt.error.errorMessage.length > 0
+            ? evt.error.errorMessage
+            : `Stream ${reason}`;
         return [{ type: "error", error: errorMsg }];
       }
       // Other sub-events (start, text_start/end, thinking_start/end,
@@ -236,9 +257,14 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       const messages: ServerMessage[] = [];
 
       for (const block of contents) {
-        const isText = block.type === "text" || block.type === "output_text";
-        if (isText && typeof block.text === "string") {
-          const fullText: string = block.text;
+        const record = asRecord(block);
+        if (!record) {
+          continue;
+        }
+
+        const type = record.type;
+        if ((type === "text" || type === "output_text") && typeof record.text === "string") {
+          const fullText = record.text;
 
           // Compute delta from last partialResult to avoid duplication.
           // partialResult is accumulated (replace semantics) — we convert
@@ -270,10 +296,15 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
 
       if (Array.isArray(resultContents) && resultContents.length > 0) {
         const finalText = resultContents
-          .map((block: Record<string, unknown>) => {
-            const type = block.type;
+          .map((block) => {
+            const record = asRecord(block);
+            if (!record) {
+              return "";
+            }
+
+            const type = record.type;
             const isText = type === "text" || type === "output_text";
-            return isText && typeof block.text === "string" ? (block.text as string) : "";
+            return isText && typeof record.text === "string" ? record.text : "";
           })
           .join("");
 
@@ -329,7 +360,7 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
           attempt: event.attempt,
           maxAttempts: event.maxAttempts,
           delayMs: event.delayMs,
-          errorMessage: event.errorMessage,
+          errorMessage: event.errorMessage ?? "retry requested",
         },
       ];
 
@@ -360,7 +391,7 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
     // Recover any missing text tail and emit thinking blocks for iOS.
     case "message_end": {
       const message = event.message;
-      if (message?.role !== "assistant") {
+      if (message.role !== "assistant") {
         ctx.streamedAssistantText = "";
         return [];
       }
@@ -376,15 +407,20 @@ export function translatePiEvent(event: any, ctx: TranslationContext): ServerMes
       // Streaming sets ctx.hasStreamedThinking; recovery is for reconnect
       // catch-up scenarios where the client missed the streaming events.
       if (!ctx.hasStreamedThinking) {
-        const content = message?.content;
+        const content = message.content;
         if (Array.isArray(content)) {
-          for (const block of content) {
+          for (const block of content as unknown[]) {
+            const record = asRecord(block);
+            if (!record) {
+              continue;
+            }
+
             if (
-              block?.type === "thinking" &&
-              typeof block.thinking === "string" &&
-              block.thinking.length > 0
+              record.type === "thinking" &&
+              typeof record.thinking === "string" &&
+              record.thinking.length > 0
             ) {
-              out.push({ type: "thinking_delta", delta: block.thinking });
+              out.push({ type: "thinking_delta", delta: record.thinking });
             }
           }
         }
@@ -546,12 +582,8 @@ export function appendSessionMessage(
  *
  * Extracts usage/tokens and updates session counters/context token count.
  */
-export function applyMessageEndToSession(
-  session: Session,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-  message: any,
-): void {
-  const role = message?.role;
+export function applyMessageEndToSession(session: Session, message: PiMessage): void {
+  const role = message.role;
 
   // Only persist assistant messages — user messages are already stored on prompt receipt
   if (role === "user") return;

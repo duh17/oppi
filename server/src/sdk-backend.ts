@@ -23,6 +23,13 @@ import { join, resolve } from "path";
 
 import type { Session, Workspace } from "./types.js";
 import type { GateServer } from "./gate.js";
+import {
+  parsePiEvent,
+  type PiEvent,
+  type PiSessionMessage,
+  type PiSessionStats,
+  type PiStateSnapshot,
+} from "./pi-events.js";
 import { ts } from "./log-utils.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
@@ -57,9 +64,8 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
-  /** Called for every pi agent event. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi event JSON is untyped
-  onEvent: (event: any) => void;
+  /** Called for every parsed pi agent event. */
+  onEvent: (event: PiEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
   /** Gate server for permission checks. */
@@ -100,8 +106,7 @@ export class SdkBackend {
     const settingsManager = SettingsManager.create(cwd, agentDir);
 
     // Resolve the model from the session's model ID
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- getModel requires KnownProvider literal types
-    let model: any;
+    let model: ReturnType<typeof getModel> | undefined;
     const parsed = session.model ? parseModelId(session.model) : null;
     if (parsed) {
       try {
@@ -168,7 +173,13 @@ export class SdkBackend {
 
     // Subscribe to agent events — forward everything to the translation layer.
     const unsub = piSession.subscribe((event: AgentSessionEvent) => {
-      onEvent(event);
+      const parsed = parsePiEvent(event as unknown);
+      if (parsed.type === "unknown") {
+        console.warn(
+          `${ts()} [sdk] unrecognized pi event (type=${parsed.originalType ?? "<missing>"}, reason=${parsed.reason})`,
+        );
+      }
+      onEvent(parsed);
     });
 
     console.log(
@@ -245,8 +256,18 @@ export class SdkBackend {
     this.piSession.setThinkingLevel(level as "off" | "low" | "medium" | "high");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi returns typed objects but we pass through as unknown
-  async cycleModel(direction?: string): Promise<any> {
+  async cycleModel(direction?: string): Promise<
+    | {
+        model: {
+          provider: string;
+          id: string;
+          name: string;
+        };
+        thinkingLevel: string;
+        isScoped: boolean;
+      }
+    | undefined
+  > {
     const result = await this.piSession.cycleModel(
       (direction as "forward" | "backward") || "forward",
     );
@@ -270,13 +291,11 @@ export class SdkBackend {
     this.piSession.setSessionName(name);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi messages are typed internally
-  getMessages(): any[] {
-    return this.piSession.messages;
+  getMessages(): PiSessionMessage[] {
+    return this.piSession.messages as PiSessionMessage[];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi stats object
-  getSessionStats(): any {
+  getSessionStats(): PiSessionStats {
     return this.piSession.getSessionStats();
   }
 
@@ -335,8 +354,7 @@ export class SdkBackend {
   }
 
   /** Full state snapshot for client command responses. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi state shape is heterogeneous
-  getStateSnapshot(): any {
+  getStateSnapshot(): PiStateSnapshot {
     const m = this.piSession.model;
     return {
       sessionFile: this.piSession.sessionFile,
@@ -384,8 +402,19 @@ function createPermissionGateFactory(
   sessionId: string,
   workspaceId: string,
 ): ExtensionFactory {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ExtensionAPI shape varies across pi versions
-  return (pi: any) => {
+  return (extensionApi: unknown) => {
+    const pi = extensionApi as {
+      on(
+        event: "tool_call",
+        handler: (event: {
+          toolName: string;
+          toolCallId: string;
+          input: Record<string, unknown>;
+        }) => Promise<{ block: true; reason: string } | void>,
+      ): void;
+      on(event: "session_shutdown", handler: () => void): void;
+    };
+
     // Register guard for this session.
     gate.createGuard(sessionId, workspaceId);
     console.log(`${ts()} [sdk-gate] Virtual guard registered for ${sessionId}`);
