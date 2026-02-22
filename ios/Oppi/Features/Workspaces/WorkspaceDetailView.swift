@@ -1,20 +1,5 @@
 import SwiftUI
 
-enum WorkspaceDetailWorkspaceResolver {
-    static func resolve(
-        fallback workspace: Workspace,
-        currentServerId: String?,
-        workspacesByServer: [String: [Workspace]]
-    ) -> Workspace {
-        guard let currentServerId,
-              let latest = workspacesByServer[currentServerId]?
-                .first(where: { $0.id == workspace.id }) else {
-            return workspace
-        }
-        return latest
-    }
-}
-
 /// Detail view for a workspace — shows its sessions with management actions.
 ///
 /// Sessions are grouped into active (running/busy/ready) and stopped.
@@ -146,11 +131,12 @@ struct WorkspaceDetailView: View {
     /// lookup the screen can show stale fields after editing (name, icon,
     /// hostMount, model, etc.) until navigating away and back.
     private var currentWorkspace: Workspace {
-        WorkspaceDetailWorkspaceResolver.resolve(
-            fallback: workspace,
-            currentServerId: connection.currentServerId,
-            workspacesByServer: connection.workspaceStore.workspacesByServer
-        )
+        guard let currentServerId = connection.currentServerId,
+              let latest = connection.workspaceStore.workspacesByServer[currentServerId]?
+                .first(where: { $0.id == workspace.id }) else {
+            return workspace
+        }
+        return latest
     }
 
     private var workspaceSessions: [Session] {

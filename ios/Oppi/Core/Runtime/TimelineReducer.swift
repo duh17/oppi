@@ -65,10 +65,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Separate store for structured tool args.
     let toolArgsStore = ToolArgsStore()
 
-    /// Separate store for structured tool result details.
-    /// Populated when `tool_end` carries `details` from pi's `AgentToolResult`.
-    let toolDetailsStore = ToolDetailsStore()
-
     /// Separate store for server-rendered styled segments.
     /// Populated from `callSegments`/`resultSegments` in tool_start/tool_end.
     let toolSegmentStore = ToolSegmentStore()
@@ -113,7 +109,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
-        toolDetailsStore.clearAll()
         toolSegmentStore.clearAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
@@ -131,7 +126,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let clearedBytes = toolOutputStore.totalBytes
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
-        toolDetailsStore.clearAll()
         toolSegmentStore.clearAll()
 
         let expandedCount = expandedItemIDs.count
@@ -212,7 +206,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
-        toolDetailsStore.clearAll()
         toolSegmentStore.clearAll()
 
         var assistantTextsToCache: [String] = []
@@ -599,10 +592,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             toolOutputStore.append(output, to: toolEventId)
             updateToolCallPreview(id: toolEventId, isError: isError)
 
-        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
-            if let details {
-                toolDetailsStore.set(details, for: toolEventId)
-            }
+        case .toolEnd(_, let toolEventId, _, let isError, let resultSegments):
             if let resultSegments, !resultSegments.isEmpty {
                 toolSegmentStore.setResultSegments(resultSegments, for: toolEventId)
             }
