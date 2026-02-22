@@ -74,8 +74,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     static let loadMoreID = "__timeline.load-more__"
     static let workingIndicatorID = "working-indicator"
 
-    typealias Coordinator = Controller
-
     struct Configuration {
         let items: [ChatItem]
         let hiddenCount: Int
@@ -122,7 +120,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         context.coordinator.apply(configuration: configuration, to: collectionView)
     }
 
-    func makeCoordinator() -> Coordinator {
+    func makeCoordinator() -> Controller {
         Controller()
     }
 
@@ -1000,9 +998,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
         }
 
-        func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
-            toolRowConfiguration(itemID: itemID, item: item)
-        }
 
         private func ensureExpandedToolOutputLoaded(
             itemID: String,
@@ -1233,5 +1228,3 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 }
 
 // swiftlint:enable type_body_length
-
-typealias ChatTimelineCollectionView = ChatTimelineCollectionHost

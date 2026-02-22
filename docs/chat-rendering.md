@@ -21,13 +21,13 @@ WebSocket
 iOS (ServerMessage.swift)
   │  Decodes StyledSegment arrays
   ▼
-ToolEventMapper → AgentEvent → DeltaCoalescer → TimelineReducer
+ToolCallCorrelator → AgentEvent → DeltaCoalescer → TimelineReducer
   │  Stores segments in ToolSegmentStore
   │  Stores args in ToolArgsStore
   │  Stores output in ToolOutputStore
   │  Stores details in ToolDetailsStore
   ▼
-ChatTimelineCollectionView
+ChatTimelineCollectionHost
   │  Reads stores, calls ToolPresentationBuilder
   ▼
 ToolPresentationBuilder
@@ -256,13 +256,13 @@ case .toolEnd(tool, toolCallId, details, isError, resultSegments)
 
 ### Event Mapping
 
-`ToolEventMapper` passes segments through to `AgentEvent`:
+`ToolCallCorrelator` passes segments through to `AgentEvent`:
 
 ```swift
-// ToolEventMapper.start()
+// ToolCallCorrelator.start()
 .toolStart(sessionId:, toolEventId:, tool:, args:, callSegments:)
 
-// ToolEventMapper.end()
+// ToolCallCorrelator.end()
 .toolEnd(sessionId:, toolEventId:, details:, isError:, resultSegments:)
 ```
 
@@ -478,7 +478,7 @@ Protocol decoding tests:
 |------|---------|
 | `Core/Models/StyledSegment.swift` | `Codable` segment model |
 | `Core/Runtime/ToolSegmentStore.swift` | `@Observable` keyed store for call/result segments |
-| `Core/Runtime/ToolEventMapper.swift` | Passes segments from `ServerMessage` to `AgentEvent` |
+| `Core/Runtime/ToolEventMapper.swift` (`ToolCallCorrelator`) | Passes segments from `ServerMessage` to `AgentEvent` |
 | `Core/Runtime/TimelineReducer.swift` | Stores segments in `ToolSegmentStore` |
 | `Features/Chat/Timeline/SegmentRenderer.swift` | `[StyledSegment] → NSAttributedString` |
 | `Features/Chat/Output/ToolPresentationBuilder.swift` | Prefers segments, falls back to hardcoded |
