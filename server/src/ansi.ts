@@ -13,5 +13,4 @@ export const red = esc("31");
 export const green = esc("32");
 export const yellow = esc("33");
 export const cyan = esc("36");
-export const magenta = esc("35");
 export const boldMagenta = (s: string): string => `\x1b[1;35m${s}\x1b[0m`;

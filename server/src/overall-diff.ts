@@ -11,7 +11,7 @@ export type DiffLine = {
 };
 
 /** Normalize tool names (`functions.edit` → `edit`) for trace matching. */
-export function normalizeToolName(tool: string | undefined): string {
+function normalizeToolName(tool: string | undefined): string {
   if (!tool) return "";
   const normalized = tool.trim().toLowerCase();
   const parts = normalized.split(".");

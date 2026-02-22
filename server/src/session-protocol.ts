@@ -74,7 +74,7 @@ export function extractAssistantText(message: any): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi message shape is untyped
-export function extractUsage(message: any): {
+function extractUsage(message: any): {
   input: number;
   output: number;
   cost: number;
@@ -136,7 +136,7 @@ export interface TranslationContext {
  * We encode as data URIs so iOS extractors can detect and render them.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi content blocks are untyped
-export function extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
+function extractMediaOutputs(contents: any[], toolCallId?: string): ServerMessage[] {
   const out: ServerMessage[] = [];
   for (const block of contents) {
     if ((block.type === "image" || block.type === "audio") && block.data) {
@@ -470,7 +470,7 @@ export function updateSessionChangeStats(
   };
 }
 
-export function extractChangedFilePath(rawArgs: unknown): string | null {
+function extractChangedFilePath(rawArgs: unknown): string | null {
   if (!rawArgs || typeof rawArgs !== "object") {
     return null;
   }
@@ -485,10 +485,7 @@ export function extractChangedFilePath(rawArgs: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export function estimateLineDelta(
-  toolName: string,
-  rawArgs: unknown,
-): { added: number; removed: number } {
+function estimateLineDelta(toolName: string, rawArgs: unknown): { added: number; removed: number } {
   if (!rawArgs || typeof rawArgs !== "object") {
     return { added: 0, removed: 0 };
   }
@@ -518,7 +515,7 @@ export function estimateLineDelta(
   };
 }
 
-export function countLines(text: string): number {
+function countLines(text: string): number {
   if (text.length === 0) {
     return 0;
   }

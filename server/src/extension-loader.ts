@@ -8,7 +8,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
 
-export const HOST_EXTENSIONS_DIR = join(homedir(), ".pi", "agent", "extensions");
+const HOST_EXTENSIONS_DIR = join(homedir(), ".pi", "agent", "extensions");
 
 const EXTENSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
