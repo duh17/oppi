@@ -140,17 +140,6 @@ export function buildHostEnv(overrides: Record<string, string>): Record<string, 
   return env;
 }
 
-// ─── Cached Singletons ───
-
-/** Loaded once at module init. */
-const HOST_ENV_OVERRIDES = loadHostEnv();
-
-/** Full merged environment for local session spawns. */
-export const HOST_ENV = buildHostEnv(HOST_ENV_OVERRIDES);
-
-/** Just the PATH component for quick access. */
-export const HOST_PATH = HOST_ENV.PATH || process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
-
 // ─── CLI: env init ───
 
 export function envInit(): void {
