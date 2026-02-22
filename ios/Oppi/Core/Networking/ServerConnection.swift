@@ -398,7 +398,7 @@ final class ServerConnection {
     /// subsequent commands (prompt, stop, etc.) never race ahead of the
     /// subscription on the server side.
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<ServerMessage>? {
-        guard let wsClient else { return nil }
+        guard wsClient != nil else { return nil }
 
         // Unsubscribe previous full session (if any)
         if let previousSessionId = activeSessionId, previousSessionId != sessionId {
@@ -824,8 +824,6 @@ final class ServerConnection {
             )
         }
     }
-
-
 
     // ── Model ──
 
