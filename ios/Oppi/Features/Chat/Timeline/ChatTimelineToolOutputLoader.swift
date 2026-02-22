@@ -206,8 +206,6 @@ final class ExpandedToolOutputLoader {
     }
 }
 
-typealias ChatTimelineToolOutputLoader = ExpandedToolOutputLoader
-
 private struct LoadState {
     var loadingIDs: Set<String> = []
     var tasks: [String: Task<Void, Never>] = [:]

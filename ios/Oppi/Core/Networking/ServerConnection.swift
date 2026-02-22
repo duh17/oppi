@@ -35,8 +35,6 @@ final class ServerConnection {
     let coalescer = DeltaCoalescer()
     let toolCallCorrelator = ToolCallCorrelator()
 
-    var toolMapper: ToolCallCorrelator { toolCallCorrelator }
-
     // Stream lifecycle
     var activeSessionId: String?
 

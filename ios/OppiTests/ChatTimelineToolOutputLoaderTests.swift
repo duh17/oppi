@@ -3,12 +3,12 @@ import Testing
 @testable import Oppi
 
 @MainActor
-@Suite("ChatTimelineToolOutputLoader")
-struct ChatTimelineToolOutputLoaderTests {
+@Suite("ExpandedToolOutputLoader")
+struct ExpandedToolOutputLoaderTests {
 
     @Test func completionDispositionMapping() {
         #expect(
-            ChatTimelineToolOutputLoader.completionDisposition(
+            ExpandedToolOutputLoader.completionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "session-a",
@@ -18,7 +18,7 @@ struct ChatTimelineToolOutputLoaderTests {
         )
 
         #expect(
-            ChatTimelineToolOutputLoader.completionDisposition(
+            ExpandedToolOutputLoader.completionDisposition(
                 output: "ok",
                 isTaskCancelled: true,
                 activeSessionID: "session-a",
@@ -28,7 +28,7 @@ struct ChatTimelineToolOutputLoaderTests {
         )
 
         #expect(
-            ChatTimelineToolOutputLoader.completionDisposition(
+            ExpandedToolOutputLoader.completionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "session-a",
@@ -38,7 +38,7 @@ struct ChatTimelineToolOutputLoaderTests {
         )
 
         #expect(
-            ChatTimelineToolOutputLoader.completionDisposition(
+            ExpandedToolOutputLoader.completionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "session-a",
@@ -48,7 +48,7 @@ struct ChatTimelineToolOutputLoaderTests {
         )
 
         #expect(
-            ChatTimelineToolOutputLoader.completionDisposition(
+            ExpandedToolOutputLoader.completionDisposition(
                 output: "",
                 isTaskCancelled: false,
                 activeSessionID: "session-a",
@@ -59,7 +59,7 @@ struct ChatTimelineToolOutputLoaderTests {
     }
 
     @Test func loadAppliesOutputAndReconfigures() async {
-        let loader = ChatTimelineToolOutputLoader()
+        let loader = ExpandedToolOutputLoader()
         var appliedOutput: String?
         var reconfigureCount = 0
 
@@ -88,7 +88,7 @@ struct ChatTimelineToolOutputLoaderTests {
     }
 
     @Test func staleSessionDoesNotApplyOutput() async {
-        let loader = ChatTimelineToolOutputLoader()
+        let loader = ExpandedToolOutputLoader()
         var applied = false
 
         let request = makeRequest(
@@ -125,7 +125,7 @@ struct ChatTimelineToolOutputLoaderTests {
             }
         }
 
-        let loader = ChatTimelineToolOutputLoader()
+        let loader = ExpandedToolOutputLoader()
         let attempts = Attempts()
         var appliedOutput: String?
 
@@ -166,7 +166,7 @@ struct ChatTimelineToolOutputLoaderTests {
             }
         }
 
-        let loader = ChatTimelineToolOutputLoader()
+        let loader = ExpandedToolOutputLoader()
         let attempts = Attempts()
 
         let request = makeRequest(
@@ -208,7 +208,7 @@ struct ChatTimelineToolOutputLoaderTests {
             }
         }
 
-        let loader = ChatTimelineToolOutputLoader()
+        let loader = ExpandedToolOutputLoader()
         let probe = Probe()
 
         let request = makeRequest(
@@ -259,11 +259,11 @@ private func makeRequest(
     currentSessionID: @escaping () -> String = { "session-a" },
     itemExists: @escaping () -> Bool = { true },
     isItemExpanded: @escaping () -> Bool = { true },
-    fetchToolOutput: @escaping ChatTimelineToolOutputLoader.FetchToolOutput = { _, _ in "output" },
+    fetchToolOutput: @escaping ExpandedToolOutputLoader.FetchToolOutput = { _, _ in "output" },
     applyOutput: @escaping (_ output: String) -> Void = { _ in },
     reconfigureItem: @escaping () -> Void = {}
-) -> ChatTimelineToolOutputLoader.LoadRequest {
-    ChatTimelineToolOutputLoader.LoadRequest(
+) -> ExpandedToolOutputLoader.LoadRequest {
+    ExpandedToolOutputLoader.LoadRequest(
         itemID: itemID,
         tool: tool,
         outputByteCount: 0,
