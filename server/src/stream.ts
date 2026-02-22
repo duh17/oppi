@@ -9,9 +9,10 @@
 import { WebSocket } from "ws";
 import { EventRing } from "./event-ring.js";
 import type { SessionManager } from "./sessions.js";
-import type { GateServer, PendingDecision } from "./gate.js";
+import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
+import { ts } from "./log-utils.js";
 
 // ─── Types ───
 
@@ -36,10 +37,6 @@ export interface StreamContext {
   ) => Promise<void>;
   trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
-}
-
-function ts(): string {
-  return new Date().toISOString().replace("T", " ").slice(0, 23);
 }
 
 // ─── Keepalive ───
@@ -321,17 +318,7 @@ export class UserStreamMux {
           .getPendingForUser()
           .filter((p: PendingDecision) => p.sessionId === sessionId);
         for (const pending of pendingPerms) {
-          send({
-            type: "permission_request",
-            id: pending.id,
-            sessionId: pending.sessionId,
-            tool: pending.tool,
-            input: pending.input,
-            displaySummary: pending.displaySummary,
-            reason: pending.reason,
-            timeoutAt: pending.timeoutAt,
-            expires: pending.expires ?? true,
-          });
+          send(buildPermissionMessage(pending));
         }
 
         send({

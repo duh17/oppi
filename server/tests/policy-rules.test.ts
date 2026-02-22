@@ -513,3 +513,106 @@ describe("fetch allowlist helpers", () => {
     expect(set.has("docs.python.org")).toBe(true);
   });
 });
+
+// ─── Protected paths guard ───
+
+describe("protected paths guard", () => {
+  function editReq(path: string): GateRequest {
+    return { tool: "edit", input: { path, oldText: "a", newText: "b" }, toolCallId: "t1" };
+  }
+
+  function writeReq(path: string): GateRequest {
+    return { tool: "write", input: { path, content: "[]" }, toolCallId: "t1" };
+  }
+
+  it("asks when edit targets a protected path", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const rulesPath = "/tmp/test-oppi/rules.json";
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(editReq(rulesPath), store.getAll(), "s1", "w1");
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("asks when write targets a protected path", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const rulesPath = "/tmp/test-oppi/rules.json";
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(writeReq(rulesPath), store.getAll(), "s1", "w1");
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("asks when bash command references a protected path", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const rulesPath = "/tmp/test-oppi/rules.json";
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(
+      bash(`echo '[]' > ${rulesPath}`),
+      store.getAll(),
+      "s1",
+      "w1",
+    );
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("allows edit of unprotected paths", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    engine.setProtectedPaths(["/tmp/test-oppi/rules.json"]);
+
+    const decision = engine.evaluateWithRules(
+      editReq("/tmp/other/file.ts"),
+      store.getAll(),
+      "s1",
+      "w1",
+    );
+    expect(decision.action).toBe("allow");
+  });
+
+  it("allows read of protected paths (read-only is fine)", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const rulesPath = "/tmp/test-oppi/rules.json";
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(readReq(rulesPath), store.getAll(), "s1", "w1");
+    expect(decision.action).toBe("allow");
+  });
+
+  it("getProtectedPaths returns configured paths", () => {
+    const engine = new PolicyEngine("default");
+    engine.setProtectedPaths(["/a/b/rules.json", "/c/d/config.json"]);
+    expect(engine.getProtectedPaths()).toEqual(["/a/b/rules.json", "/c/d/config.json"]);
+  });
+
+  it("protected path guard fires before user rules", () => {
+    const { store } = makeStore();
+    const rulesPath = "/tmp/test-oppi/rules.json";
+
+    // Add an allow rule for the edit tool on the protected path
+    store.add({
+      tool: "edit",
+      decision: "allow",
+      pattern: rulesPath,
+      scope: "global",
+      source: "manual",
+      label: "Allow editing rules.json",
+    });
+
+    const engine = new PolicyEngine("default");
+    engine.setProtectedPaths([rulesPath]);
+
+    // Guard should still fire even though a user rule says "allow"
+    const decision = engine.evaluateWithRules(editReq(rulesPath), store.getAll(), "s1", "w1");
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+});

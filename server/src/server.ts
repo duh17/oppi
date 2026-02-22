@@ -18,8 +18,10 @@ import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
-import { UserStreamMux, startServerPing } from "./stream.js";
-import { RouteHandler, type ModelInfo } from "./routes.js";
+import { UserStreamMux } from "./stream.js";
+import { RouteHandler } from "./routes.js";
+import { ModelCatalog } from "./model-catalog.js";
+import { LiveActivityBridge } from "./live-activity.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
   PolicyEngine,
@@ -27,10 +29,10 @@ import {
   policyRulesFromDeclarativeConfig,
   policyRuntimeConfig,
 } from "./policy.js";
-import { GateServer, type PendingDecision } from "./gate.js";
+import { GateServer, buildPermissionMessage, type PendingDecision } from "./gate.js";
 import { RuleStore } from "./rules.js";
 import { AuditLog } from "./audit.js";
-import { WorkspaceRuntimeError } from "./workspace-runtime.js";
+
 import { SkillRegistry, UserSkillStore } from "./skills.js";
 
 import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
@@ -40,21 +42,11 @@ import type {
   Workspace,
   ClientMessage,
   ServerMessage,
+  ImageAttachment,
   ApiError,
   ServerConfig,
 } from "./types.js";
-
-// ─── Logging ───
-
-/** Compact HH:MM:SS.mmm timestamp for log lines. */
-function ts(): string {
-  const d = new Date();
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
+import { ts } from "./log-utils.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -205,55 +197,6 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   return warnings;
 }
 
-type LiveActivityStatus = "busy" | "stopping" | "ready" | "stopped" | "error";
-
-interface LiveActivityContentState {
-  status: LiveActivityStatus;
-  activeTool: string | null;
-  pendingPermissions: number;
-  lastEvent: string | null;
-  elapsedSeconds: number;
-}
-
-interface PendingLiveActivityUpdate {
-  sessionId?: string;
-  status?: LiveActivityStatus;
-  activeTool?: string | null;
-  lastEvent?: string | null;
-  end?: boolean;
-  priority?: 5 | 10;
-}
-
-// ─── Available Models (via SDK ModelRegistry) ───
-
-/** Normalize model labels/IDs for tolerant matching (e.g. "GPT-5.3 Codex" ~= "gpt-5.3-codex"). */
-function normalizeModelToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-/**
- * Map SDK Model objects to the simplified ModelInfo shape for REST responses.
- * Deduplicates by canonical `provider/modelId`.
- */
-function sdkModelsToModelInfo(
-  sdkModels: Array<{ id: string; name: string; provider: string; contextWindow: number }>,
-): ModelInfo[] {
-  const seen = new Set<string>();
-  const result: ModelInfo[] = [];
-  for (const m of sdkModels) {
-    const id = `${m.provider}/${m.id}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    result.push({
-      id,
-      name: m.name || m.id,
-      provider: m.provider,
-      contextWindow: m.contextWindow || 200000,
-    });
-  }
-  return result;
-}
-
 /** Resolve the pi executable path for version detection. */
 function resolvePiExecutable(): string {
   const envPath = process.env.OPPI_PI_BIN;
@@ -300,16 +243,13 @@ export class Server {
 
   private readonly piExecutable: string;
   private modelRegistry: ModelRegistry;
-  private modelCatalog: ModelInfo[] = [];
-  private modelCatalogUpdatedAt = 0;
+  private models: ModelCatalog;
 
   // Track WebSocket connections per user for permission/UI forwarding
   private connections: Set<WebSocket> = new Set();
 
-  // Live Activity push coalescing (one pending update per user, flushed with debounce).
-  private liveActivityTimer: NodeJS.Timeout | null = null;
-  private liveActivityPending: PendingLiveActivityUpdate | null = null;
-  private readonly liveActivityDebounceMs = 750;
+  // Live Activity push bridge (debounced APNs updates)
+  private liveActivity: LiveActivityBridge;
 
   // User-wide stream multiplexer (event ring, subscriptions, /stream WS)
   private streamMux!: UserStreamMux;
@@ -320,10 +260,11 @@ export class Server {
     this.storage = storage;
     this.piExecutable = resolvePiExecutable();
 
-    // SDK model registry — replaces pi --list-models CLI parsing
+    // SDK model registry + catalog
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
     this.modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
+    this.models = new ModelCatalog(this.modelRegistry, this.storage);
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
@@ -334,8 +275,13 @@ export class Server {
     this.policy = new PolicyEngine(policyRuntimeConfig(configuredPolicy));
 
     // v2 policy infrastructure
-    const ruleStore = new RuleStore(join(dataDir, "rules.json"));
+    const rulesPath = join(dataDir, "rules.json");
+    const ruleStore = new RuleStore(rulesPath);
     ruleStore.seedIfEmpty(policyRulesFromDeclarativeConfig(configuredPolicy));
+
+    // Protect the rules file from silent agent modification.
+    // This is a hard-coded guard — it can't be overridden by rules in the store.
+    this.policy.setProtectedPaths([rulesPath]);
     const auditLog = new AuditLog(join(dataDir, "audit.jsonl"));
 
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
@@ -348,8 +294,10 @@ export class Server {
     this.skillRegistry.watch(); // Live-reload: watch skill dirs for changes
 
     this.push = createPushClient(apnsConfig);
+    this.liveActivity = new LiveActivityBridge(this.push, this.storage, this.gate);
     this.sessions = new SessionManager(storage, this.gate);
-    this.sessions.contextWindowResolver = (modelId: string) => this.getContextWindow(modelId);
+    this.sessions.contextWindowResolver = (modelId: string) =>
+      this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
 
     // Create the user stream mux (handles /stream WS, event rings, replay)
@@ -357,7 +305,7 @@ export class Server {
       storage: this.storage,
       sessions: this.sessions,
       gate: this.gate,
-      ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
+      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       handleClientMessage: (session, msg, send) => this.handleClientMessage(session, msg, send),
       trackConnection: (ws) => this.trackConnection(ws),
@@ -365,7 +313,7 @@ export class Server {
     });
 
     this.sessions.on("session_event", (payload: SessionBroadcastEvent) => {
-      this.handleLiveActivitySessionEvent(payload);
+      this.liveActivity.handleSessionEvent(payload);
 
       if (!this.streamMux.isNotificationLevelMessage(payload.event)) {
         return;
@@ -386,14 +334,14 @@ export class Server {
       skillRegistry: this.skillRegistry,
       userSkillStore: this.userSkillStore,
       streamMux: this.streamMux,
-      ensureSessionContextWindow: (session) => this.ensureSessionContextWindow(session),
+      ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       isValidMemoryNamespace: (ns) => this.isValidMemoryNamespace(ns),
       refreshModelCatalog: () => {
-        this.refreshModelCatalog();
+        this.models.refresh();
         return Promise.resolve();
       },
-      getModelCatalog: () => this.modelCatalog,
+      getModelCatalog: () => this.models.getAll(),
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),
@@ -422,7 +370,7 @@ export class Server {
             reason: "Approval timeout",
             sessionId,
           });
-          this.queueLiveActivityUpdate({
+          this.liveActivity.queueUpdate({
             sessionId,
             lastEvent: "Permission expired",
             priority: 5,
@@ -434,7 +382,7 @@ export class Server {
     this.gate.on(
       "approval_resolved",
       ({ sessionId, action }: { sessionId: string; action: "allow" | "deny" }) => {
-        this.queueLiveActivityUpdate({
+        this.liveActivity.queueUpdate({
           sessionId,
           lastEvent: action === "allow" ? "Permission approved" : "Permission denied",
           priority: action === "deny" ? 10 : 5,
@@ -453,18 +401,20 @@ export class Server {
     }
 
     // Prime model catalog so first picker open is fast.
-    this.refreshModelCatalog();
+    this.models.refresh();
 
     // Heal stale persisted contextWindow fallbacks before any client connects.
-    this.healPersistedSessionContextWindows();
+    this.models.healPersistedSessionContextWindows();
 
     const securityWarnings = formatStartupSecurityWarnings(config);
     for (const warning of securityWarnings) {
       console.warn(`[startup][security] ${warning}`);
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.httpServer.once("error", reject);
       this.httpServer.listen(config.port, config.host, () => {
+        this.httpServer.removeListener("error", reject);
         console.log(`🚀 oppi listening on ${config.host}:${this.port}`);
         resolve();
       });
@@ -482,9 +432,7 @@ export class Server {
     this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
     await this.gate.shutdown();
-    if (this.liveActivityTimer) clearTimeout(this.liveActivityTimer);
-    this.liveActivityTimer = null;
-    this.liveActivityPending = null;
+    this.liveActivity.shutdown();
     this.push.shutdown();
     this.wss.close();
     this.httpServer.close();
@@ -493,20 +441,8 @@ export class Server {
   // ─── Permission Forwarding ───
 
   private forwardPermissionRequest(pending: PendingDecision): void {
-    const msg: ServerMessage = {
-      type: "permission_request",
-      id: pending.id,
-      sessionId: pending.sessionId,
-      tool: pending.tool,
-      input: pending.input,
-      displaySummary: pending.displaySummary,
-      reason: pending.reason,
-      timeoutAt: pending.timeoutAt,
-      expires: pending.expires ?? true,
-    };
-
-    this.broadcastToUser(msg);
-    this.queueLiveActivityUpdate({
+    this.broadcastToUser(buildPermissionMessage(pending));
+    this.liveActivity.queueUpdate({
       sessionId: pending.sessionId,
       lastEvent: "Permission required",
       priority: 10,
@@ -607,271 +543,6 @@ export class Server {
     }
   }
 
-  private handleLiveActivitySessionEvent(payload: SessionBroadcastEvent): void {
-    const { event, sessionId } = payload;
-
-    switch (event.type) {
-      case "state":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: this.mapSessionStatusToLiveActivity(event.session.status),
-          lastEvent: this.sessionStatusLabel(event.session.status),
-          priority: 5,
-        });
-        return;
-      case "agent_start":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "busy",
-          lastEvent: "Agent started",
-          priority: 5,
-        });
-        return;
-      case "agent_end":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "ready",
-          activeTool: null,
-          lastEvent: "Agent finished",
-          priority: 5,
-        });
-        return;
-      case "tool_start":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "busy",
-          activeTool: event.tool,
-          lastEvent: event.tool,
-          priority: 5,
-        });
-        return;
-      case "tool_end":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          activeTool: null,
-          priority: 5,
-        });
-        return;
-      case "stop_requested":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "stopping",
-          lastEvent: "Stopping",
-          priority: 5,
-        });
-        return;
-      case "stop_confirmed":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "ready",
-          activeTool: null,
-          lastEvent: "Stop confirmed",
-          priority: 5,
-        });
-        return;
-      case "stop_failed":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "error",
-          lastEvent: "Stop failed",
-          priority: 10,
-        });
-        return;
-      case "permission_request":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          lastEvent: "Permission required",
-          priority: 10,
-        });
-        return;
-      case "permission_expired":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          lastEvent: "Permission expired",
-          priority: 5,
-        });
-        return;
-      case "permission_cancelled":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          lastEvent: "Permission resolved",
-          priority: 5,
-        });
-        return;
-      case "error":
-        if (!event.error.startsWith("Retrying (")) {
-          this.queueLiveActivityUpdate({
-            sessionId,
-            status: "error",
-            lastEvent: "Error",
-            priority: 10,
-          });
-        }
-        return;
-      case "session_ended":
-        this.queueLiveActivityUpdate({
-          sessionId,
-          status: "stopped",
-          activeTool: null,
-          lastEvent: event.reason,
-          end: true,
-          priority: 5,
-        });
-        return;
-      default:
-        return;
-    }
-  }
-
-  private queueLiveActivityUpdate(update: PendingLiveActivityUpdate): void {
-    const current = this.liveActivityPending ?? {};
-    const merged: PendingLiveActivityUpdate = {
-      sessionId: update.sessionId ?? current.sessionId,
-      status: update.status ?? current.status,
-      activeTool: update.activeTool !== undefined ? update.activeTool : current.activeTool,
-      lastEvent: update.lastEvent !== undefined ? update.lastEvent : current.lastEvent,
-      end: Boolean(current.end || update.end),
-      priority: Math.max(current.priority ?? 5, update.priority ?? 5) as 5 | 10,
-    };
-
-    this.liveActivityPending = merged;
-
-    if (this.liveActivityTimer) {
-      return;
-    }
-
-    const timer = setTimeout(() => this.flushLiveActivityUpdate(), this.liveActivityDebounceMs);
-    this.liveActivityTimer = timer;
-  }
-
-  private flushLiveActivityUpdate(): void {
-    const timer = this.liveActivityTimer;
-    if (timer) {
-      clearTimeout(timer);
-      this.liveActivityTimer = null;
-    }
-
-    const pending = this.liveActivityPending;
-    if (!pending) {
-      return;
-    }
-    this.liveActivityPending = null;
-
-    const token = this.storage.getLiveActivityToken();
-    if (!token) {
-      return;
-    }
-
-    const contentState = this.buildLiveActivityContentState(pending);
-    const liveActivityPayload: Record<string, unknown> = { ...contentState };
-
-    if (pending.end) {
-      void this.push
-        .endLiveActivity(token, liveActivityPayload, undefined, pending.priority ?? 10)
-        .then((ok) => {
-          if (ok) {
-            this.storage.setLiveActivityToken(null);
-          }
-        });
-      return;
-    }
-
-    const staleDate = Date.now() + 2 * 60 * 1000;
-    void this.push.sendLiveActivityUpdate(
-      token,
-      liveActivityPayload,
-      staleDate,
-      pending.priority ?? 5,
-    );
-  }
-
-  private buildLiveActivityContentState(
-    pending: PendingLiveActivityUpdate,
-  ): LiveActivityContentState {
-    const session = pending.sessionId
-      ? this.findSessionById(pending.sessionId)
-      : this.findPrimarySessionForUser();
-
-    const now = Date.now();
-    const elapsedSeconds = session ? Math.max(0, Math.floor((now - session.createdAt) / 1000)) : 0;
-
-    return {
-      status: pending.status ?? this.mapSessionStatusToLiveActivity(session?.status),
-      activeTool: pending.activeTool ?? null,
-      pendingPermissions: this.gate.getPendingForUser().length,
-      lastEvent: pending.lastEvent ?? null,
-      elapsedSeconds,
-    };
-  }
-
-  private findPrimarySessionForUser(): Session | undefined {
-    const sessions = this.storage.listSessions();
-    if (sessions.length === 0) {
-      return undefined;
-    }
-
-    const score = (status: Session["status"]): number => {
-      switch (status) {
-        case "busy":
-          return 5;
-        case "stopping":
-          return 4;
-        case "ready":
-          return 3;
-        case "starting":
-          return 2;
-        case "error":
-          return 1;
-        case "stopped":
-          return 0;
-      }
-    };
-
-    return sessions.slice().sort((a, b) => {
-      const priority = score(b.status) - score(a.status);
-      if (priority !== 0) {
-        return priority;
-      }
-      return b.lastActivity - a.lastActivity;
-    })[0];
-  }
-
-  private mapSessionStatusToLiveActivity(
-    status: Session["status"] | undefined,
-  ): LiveActivityStatus {
-    switch (status) {
-      case "busy":
-        return "busy";
-      case "stopping":
-        return "stopping";
-      case "stopped":
-        return "stopped";
-      case "error":
-        return "error";
-      case "ready":
-      case "starting":
-      default:
-        return "ready";
-    }
-  }
-
-  private sessionStatusLabel(status: Session["status"]): string {
-    switch (status) {
-      case "busy":
-        return "Working";
-      case "stopping":
-        return "Stopping";
-      case "ready":
-        return "Ready";
-      case "starting":
-        return "Starting";
-      case "stopped":
-        return "Session ended";
-      case "error":
-        return "Error";
-    }
-  }
-
   /**
    * Find session from a session_ended message context.
    * We track which user's sessions are active to find the match.
@@ -889,31 +560,6 @@ export class Server {
 
   private untrackConnection(ws: WebSocket): void {
     this.connections.delete(ws);
-  }
-
-  private refreshModelCatalog(): void {
-    try {
-      this.modelRegistry.refresh();
-      const available = this.modelRegistry.getAvailable();
-      if (available.length > 0) {
-        this.modelCatalog = sdkModelsToModelInfo(available);
-        this.modelCatalogUpdatedAt = Date.now();
-        return;
-      }
-
-      // Fall back to all registered models (includes those without auth)
-      const all = this.modelRegistry.getAll();
-      if (all.length > 0) {
-        this.modelCatalog = sdkModelsToModelInfo(all);
-        this.modelCatalogUpdatedAt = Date.now();
-        return;
-      }
-
-      console.warn(`${ts()} [models] SDK ModelRegistry returned 0 models`);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`${ts()} [models] failed to refresh model catalog: ${message}`);
-    }
   }
 
   /**
@@ -938,108 +584,12 @@ export class Server {
     return paths;
   }
 
-  private getContextWindow(modelId: string): number {
-    const trimmed = modelId.trim();
-    const tail = trimmed.includes("/") ? trimmed.substring(trimmed.lastIndexOf("/") + 1) : trimmed;
-
-    const candidates = new Set<string>([trimmed, tail].filter((v) => v.length > 0));
-    const normalizedCandidates = new Set(
-      Array.from(candidates)
-        .map((v) => normalizeModelToken(v))
-        .filter((v) => v.length > 0),
-    );
-
-    const known = this.modelCatalog.find((m) => {
-      if (candidates.has(m.id) || candidates.has(m.name)) {
-        return true;
-      }
-
-      for (const candidate of candidates) {
-        if (m.id.endsWith(`/${candidate}`)) {
-          return true;
-        }
-      }
-
-      const normalizedId = normalizeModelToken(m.id);
-      const normalizedName = normalizeModelToken(m.name);
-      const normalizedTail = normalizeModelToken(m.id.substring(m.id.lastIndexOf("/") + 1));
-
-      for (const candidate of normalizedCandidates) {
-        if (
-          candidate === normalizedId ||
-          candidate === normalizedName ||
-          candidate === normalizedTail
-        ) {
-          return true;
-        }
-      }
-
-      return false;
-    })?.contextWindow;
-
-    if (known) {
-      return known;
-    }
-
-    // Generic model-id fallback, e.g. "...-272k" / "..._128k".
-    const match = trimmed.match(/(\d{2,4})k\b/i);
-    if (match) {
-      const thousands = Number.parseInt(match[1], 10);
-      if (Number.isFinite(thousands) && thousands > 0) {
-        return thousands * 1000;
-      }
-    }
-
-    return 200000;
-  }
-
   private findSessionById(sessionId: string): Session | undefined {
     if (!this.storage.isPaired()) return undefined;
 
     const sessions = this.storage.listSessions();
     const match = sessions.find((s) => s.id === sessionId);
-    return match ? this.ensureSessionContextWindow(match) : undefined;
-  }
-
-  private ensureSessionContextWindow(session: Session): Session {
-    let changed = false;
-
-    const resolved = this.getContextWindow(session.model || "");
-    const current = session.contextWindow;
-
-    if (!current || current <= 0) {
-      session.contextWindow = resolved;
-      changed = true;
-    } else if (current !== resolved && current === 200000) {
-      // Heal stale fallback values after model-ID normalization fixes.
-      session.contextWindow = resolved;
-      changed = true;
-    }
-
-    if (changed) {
-      this.storage.saveSession(session);
-    }
-
-    return session;
-  }
-
-  private healPersistedSessionContextWindows(): void {
-    const sessions = this.storage.listSessions();
-    let healedCount = 0;
-
-    for (const session of sessions) {
-      const before = session.contextWindow;
-      this.ensureSessionContextWindow(session);
-      if (session.contextWindow !== before) {
-        healedCount += 1;
-      }
-    }
-
-    if (healedCount > 0) {
-      console.log(
-        `${ts()} [models] healed context windows for ${healedCount} persisted session(s)`,
-      );
-    }
+    return match ? this.models.ensureSessionContextWindow(match) : undefined;
   }
 
   private isValidMemoryNamespace(namespace: string): boolean {
@@ -1189,196 +739,64 @@ export class Server {
       return;
     }
 
-    const wsMatch = url.pathname.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/);
-    if (!wsMatch) {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
-    const workspaceId = wsMatch[1];
-    const sessionId = wsMatch[2];
-    const session = this.findSessionById(sessionId);
-    if (!session) {
-      console.log(
-        `${ts()} [ws] 404 session not found: ${sessionId} (user=${this.storage.getOwnerName()})`,
-      );
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
-    if (session.workspaceId !== workspaceId) {
-      console.log(
-        `${ts()} [ws] 404 session/workspace mismatch: session=${sessionId} requested=${workspaceId} actual=${session.workspaceId ?? "none"} (user=${this.storage.getOwnerName()})`,
-      );
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
-    this.wss.handleUpgrade(req, socket, head, (ws) => {
-      this.handleWebSocket(ws, session);
-    });
+    // Per-session WS endpoint removed — use /stream with subscribe instead.
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
   }
 
-  private async handleWebSocket(ws: WebSocket, session: Session): Promise<void> {
+  /**
+   * Shared handler for prompt/steer/follow_up turn commands.
+   *
+   * Logs, maps images, calls the session method, and sends command_result.
+   */
+  private async handleTurnCommand(
+    session: Session,
+    command: string,
+    msg: {
+      message: string;
+      images?: ImageAttachment[];
+      clientTurnId?: string;
+      requestId?: string;
+    },
+    send: (msg: ServerMessage) => void,
+    handler: (
+      sessionId: string,
+      message: string,
+      opts: {
+        images?: Array<{ type: "image"; data: string; mimeType: string }>;
+        clientTurnId?: string;
+        requestId?: string;
+      },
+    ) => Promise<void>,
+  ): Promise<void> {
+    const requestId = msg.requestId;
+    const chars = msg.message.length;
+    const images = msg.images?.map((img: ImageAttachment) => ({
+      type: "image" as const,
+      data: img.data,
+      mimeType: img.mimeType,
+    }));
+    const imageCount = images?.length ?? 0;
     console.log(
-      `${ts()} [ws] Connected: ${this.storage.getOwnerName()} → ${session.id} (status=${session.status})`,
+      `${ts()} [ws] ${command.toUpperCase()} ${session.id} (chars=${chars}${imageCount > 0 ? `, images=${imageCount}` : ""})`,
     );
-    this.trackConnection(ws);
-
-    const stopPing = startServerPing(ws, `${session.id} (${this.storage.getOwnerName()})`);
-
-    let msgSent = 0;
-    let msgRecv = 0;
-
-    const send = (msg: ServerMessage): void => {
-      const outbound =
-        msg.type === "state"
-          ? {
-              ...msg,
-              session: this.ensureSessionContextWindow(msg.session),
-            }
-          : msg;
-
-      if (ws.readyState === WebSocket.OPEN) {
-        msgSent++;
-        ws.send(JSON.stringify(outbound), { compress: false });
-      } else {
-        console.warn(`${ts()} [ws] DROP ${msg.type} → ${session.id} (readyState=${ws.readyState})`);
-      }
-    };
-
-    // Queue messages received before startSession completes.
-    // Without this, the iOS client sends a prompt while pi is still
-    // loading and the message is silently dropped — causing a hang.
-    let ready = false;
-    let hydratedSession: Session = this.ensureSessionContextWindow(session);
-    const messageQueue: ClientMessage[] = [];
-
-    ws.on("message", async (data) => {
-      try {
-        const msg = JSON.parse(data.toString()) as ClientMessage;
-        msgRecv++;
-        console.log(
-          `${ts()} [ws] RECV ${msg.type} from ${this.storage.getOwnerName()} → ${session.id} (ready=${ready}, queued=${messageQueue.length})`,
-        );
-        if (ready) {
-          await this.handleClientMessage(hydratedSession, msg, send);
-        } else {
-          messageQueue.push(msg);
-          console.log(
-            `${ts()} [ws] QUEUED ${msg.type} (pi not ready, queue=${messageQueue.length})`,
-          );
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        console.error(`${ts()} [ws] MSG ERROR ${session.id}: ${message}`);
-        send({ type: "error", error: message });
-      }
-    });
-
-    let unsubscribe: (() => void) | null = null;
-
-    ws.on("close", (code, reason) => {
-      stopPing();
-      const reasonStr = reason?.toString() || "";
-      console.log(
-        `${ts()} [ws] Disconnected: ${this.storage.getOwnerName()} → ${session.id} (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
-      );
-      unsubscribe?.();
-      this.untrackConnection(ws);
-    });
-
-    ws.on("error", (err) => {
-      stopPing();
-      console.error(`${ts()} [ws] Error: ${this.storage.getOwnerName()} → ${session.id}:`, err);
-      unsubscribe?.();
-      this.untrackConnection(ws);
-    });
 
     try {
-      // Send session metadata immediately (from disk) so the iOS client
-      // can display the chat history while pi is starting.
-      console.log(`${ts()} [ws] SEND connected → ${session.id}`);
-      send({
-        type: "connected",
-        session: hydratedSession,
-        currentSeq: this.sessions.getCurrentSeq(session.id),
+      await handler(session.id, msg.message, {
+        images,
+        clientTurnId: msg.clientTurnId,
+        requestId,
       });
-
-      // Resolve workspace for this session
-      const workspace = this.resolveWorkspaceForSession(session);
-
-      console.log(
-        `${ts()} [ws] Starting pi for ${session.id} (workspace=${workspace?.name ?? "none"})...`,
-      );
-      const startTime = Date.now();
-      const activeSession = await this.sessions.startSession(
-        session.id,
-        this.storage.getOwnerName(),
-        workspace,
-      );
-      const startMs = Date.now() - startTime;
-      hydratedSession = this.ensureSessionContextWindow(activeSession);
-      console.log(
-        `${ts()} [ws] Pi ready for ${session.id} in ${startMs}ms (status=${hydratedSession.status})`,
-      );
-
-      // Send updated session with live pi state (context tokens, etc.)
-      send({ type: "state", session: hydratedSession });
-
-      // Send pending permission requests
-      const pendingPerms = this.gate.getPendingForUser();
-      if (pendingPerms.length > 0) {
-        console.log(
-          `${ts()} [ws] Sending ${pendingPerms.length} pending permission(s) → ${session.id}`,
-        );
+      if (requestId) {
+        send({ type: "command_result", command, requestId, success: true });
       }
-      for (const pending of pendingPerms) {
-        send({
-          type: "permission_request",
-          id: pending.id,
-          sessionId: pending.sessionId,
-          tool: pending.tool,
-          input: pending.input,
-          displaySummary: pending.displaySummary,
-          reason: pending.reason,
-          timeoutAt: pending.timeoutAt,
-          expires: pending.expires ?? true,
-        });
-      }
-
-      // Subscribe to session events
-      unsubscribe = this.sessions.subscribe(session.id, send);
-
-      // Drain queued messages (sent while pi was starting)
-      ready = true;
-      if (messageQueue.length > 0) {
-        console.log(
-          `${ts()} [ws] Draining ${messageQueue.length} queued message(s) for ${session.id}`,
-        );
-      }
-      for (const msg of messageQueue) {
-        console.log(`${ts()} [ws] DRAIN ${msg.type} → ${session.id}`);
-        await this.handleClientMessage(hydratedSession, msg, send);
-      }
-      messageQueue.length = 0;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Setup error";
-      console.error(`${ts()} [ws] Setup error for ${session.id}:`, err);
-
-      // WorkspaceRuntimeError is fatal — client should NOT auto-reconnect.
-      const isRuntimeError = err instanceof WorkspaceRuntimeError;
-      send({
-        type: "error",
-        error: message,
-        code: isRuntimeError ? (err as WorkspaceRuntimeError).code : undefined,
-        fatal: isRuntimeError ? true : undefined,
-      });
-      this.untrackConnection(ws);
-      ws.close();
+      const message = err instanceof Error ? err.message : String(err);
+      if (requestId) {
+        send({ type: "command_result", command, requestId, success: false, error: message });
+        return;
+      }
+      throw err;
     }
   }
 
@@ -1397,130 +815,27 @@ export class Server {
         break;
       }
 
-      case "prompt": {
-        const timestamp = Date.now();
-        const requestId = msg.requestId;
-        const promptChars = msg.message.length;
-        const imageCount = msg.images?.length ?? 0;
-        console.log(
-          `${ts()} [ws] PROMPT ${session.id} (chars=${promptChars}${imageCount > 0 ? `, images=${imageCount}` : ""})`,
-        );
-
-        // RPC image format: { type: "image", data: "base64...", mimeType: "image/png" }
-        const images = msg.images?.map((img) => ({
-          type: "image" as const,
-          data: img.data,
-          mimeType: img.mimeType,
-        }));
-
-        try {
-          await this.sessions.sendPrompt(session.id, msg.message, {
-            images,
+      case "prompt":
+        await this.handleTurnCommand(session, "prompt", msg, send, (id, text, opts) =>
+          this.sessions.sendPrompt(id, text, {
+            ...opts,
             streamingBehavior: msg.streamingBehavior,
-            clientTurnId: msg.clientTurnId,
-            requestId,
-            timestamp,
-          });
-
-          if (requestId) {
-            send({ type: "command_result", command: "prompt", requestId, success: true });
-          }
-
-          console.log(`${ts()} [ws] PROMPT sent to pi for ${session.id}`);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (requestId) {
-            send({
-              type: "command_result",
-              command: "prompt",
-              requestId,
-              success: false,
-              error: message,
-            });
-            return;
-          }
-          throw err;
-        }
-        break;
-      }
-
-      case "steer": {
-        const requestId = msg.requestId;
-        const steerChars = msg.message.length;
-        const steerImageCount = msg.images?.length ?? 0;
-        console.log(
-          `${ts()} [ws] STEER ${session.id} (chars=${steerChars}${steerImageCount > 0 ? `, images=${steerImageCount}` : ""})`,
+            timestamp: Date.now(),
+          }),
         );
-        const steerImages = msg.images?.map((img) => ({
-          type: "image" as const,
-          data: img.data,
-          mimeType: img.mimeType,
-        }));
-
-        try {
-          await this.sessions.sendSteer(session.id, msg.message, {
-            images: steerImages,
-            clientTurnId: msg.clientTurnId,
-            requestId,
-          });
-          if (requestId) {
-            send({ type: "command_result", command: "steer", requestId, success: true });
-          }
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (requestId) {
-            send({
-              type: "command_result",
-              command: "steer",
-              requestId,
-              success: false,
-              error: message,
-            });
-            return;
-          }
-          throw err;
-        }
         break;
-      }
 
-      case "follow_up": {
-        const requestId = msg.requestId;
-        const followUpChars = msg.message.length;
-        const followUpImageCount = msg.images?.length ?? 0;
-        console.log(
-          `${ts()} [ws] FOLLOW_UP ${session.id} (chars=${followUpChars}${followUpImageCount > 0 ? `, images=${followUpImageCount}` : ""})`,
+      case "steer":
+        await this.handleTurnCommand(session, "steer", msg, send, (id, text, opts) =>
+          this.sessions.sendSteer(id, text, opts),
         );
-        const fuImages = msg.images?.map((img) => ({
-          type: "image" as const,
-          data: img.data,
-          mimeType: img.mimeType,
-        }));
-
-        try {
-          await this.sessions.sendFollowUp(session.id, msg.message, {
-            images: fuImages,
-            clientTurnId: msg.clientTurnId,
-            requestId,
-          });
-          if (requestId) {
-            send({ type: "command_result", command: "follow_up", requestId, success: true });
-          }
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (requestId) {
-            send({
-              type: "command_result",
-              command: "follow_up",
-              requestId,
-              success: false,
-              error: message,
-            });
-            return;
-          }
-          throw err;
-        }
         break;
-      }
+
+      case "follow_up":
+        await this.handleTurnCommand(session, "follow_up", msg, send, (id, text, opts) =>
+          this.sessions.sendFollowUp(id, text, opts),
+        );
+        break;
 
       case "abort":
       case "stop": {
@@ -1571,7 +886,7 @@ export class Server {
       case "get_state": {
         const active = this.sessions.getActiveSession(session.id);
         if (active) {
-          send({ type: "state", session: this.ensureSessionContextWindow(active) });
+          send({ type: "state", session: this.models.ensureSessionContextWindow(active) });
         }
         break;
       }
@@ -1612,15 +927,12 @@ export class Server {
       case "compact":
       case "set_auto_compaction":
       case "fork":
-      case "get_fork_messages":
       case "switch_session":
       case "set_steering_mode":
       case "set_follow_up_mode":
       case "set_auto_retry":
       case "abort_retry":
-      case "bash":
       case "abort_bash":
-      case "get_commands":
         await this.sessions.forwardClientCommand(
           session.id,
           msg as unknown as Record<string, unknown>,

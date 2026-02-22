@@ -111,6 +111,7 @@ interface ParsedRequestContext {
 export class PolicyEngine {
   private policy: CompiledPolicy;
   private config: PolicyConfig;
+  private protectedPaths: string[] = [];
 
   constructor(policyOrMode: string | DeclarativePolicyConfig = "default", config?: PolicyConfig) {
     if (typeof policyOrMode === "string") {
@@ -236,6 +237,21 @@ export class PolicyEngine {
       };
     }
 
+    // Protected path guard — prevent agents from silently modifying config
+    // files (e.g. rules.json). Hard-coded so it can't be bypassed by editing
+    // the rules file itself.
+    if (this.protectedPaths.length > 0) {
+      const protectedHit = this.matchesProtectedPath(req);
+      if (protectedHit) {
+        return {
+          action: "ask",
+          reason: `Modifying ${protectedHit} requires approval`,
+          layer: "rule",
+          ruleLabel: "config guard",
+        };
+      }
+    }
+
     const heuristicDecision = this.evaluateHeuristics(req);
     if (heuristicDecision) {
       return heuristicDecision;
@@ -273,6 +289,47 @@ export class PolicyEngine {
       ruleLabel: best.label,
       ruleId: best.id,
     };
+  }
+
+  /**
+   * Check if a tool call targets a protected path.
+   * Returns the matched path basename for display, or null if no match.
+   *
+   * Guards edit/write tools. For bash, checks if the command string
+   * contains a protected path (conservative: catches reads too, but
+   * these config files shouldn't normally appear in agent commands).
+   */
+  private matchesProtectedPath(req: GateRequest): string | null {
+    if (this.protectedPaths.length === 0) return null;
+
+    const { tool, input } = req;
+
+    if (tool === "edit" || tool === "write") {
+      const rawPath = (input as { path?: string }).path;
+      if (!rawPath) return null;
+
+      const { rawNormalized, resolvedRealpath } = normalizePathInput(rawPath);
+      const candidates = [rawNormalized, resolvedRealpath].filter(
+        (v): v is string => v !== null && v !== undefined && v.length > 0,
+      );
+
+      for (const protectedPath of this.protectedPaths) {
+        if (candidates.some((c) => c === protectedPath)) {
+          return protectedPath.split("/").pop() || protectedPath;
+        }
+      }
+    }
+
+    if (tool === "bash") {
+      const command = (input as { command?: string }).command || "";
+      for (const protectedPath of this.protectedPaths) {
+        if (command.includes(protectedPath)) {
+          return protectedPath.split("/").pop() || protectedPath;
+        }
+      }
+    }
+
+    return null;
   }
 
   private evaluateHeuristics(req: GateRequest): PolicyDecision | null {
@@ -411,6 +468,22 @@ export class PolicyEngine {
 
   setDefaultAction(action: PolicyDecision["action"]): void {
     this.policy.defaultAction = action;
+  }
+
+  /**
+   * Register file paths that agents must never modify without approval.
+   * Hard-coded guard — cannot be overridden by rules in the store
+   * (since the rules file itself is a protected path).
+   */
+  setProtectedPaths(paths: string[]): void {
+    this.protectedPaths = paths.map((p) => {
+      const expanded = p.replace(/^~(?=$|\/)/, homedir());
+      return pathNormalize(pathResolve(expanded));
+    });
+  }
+
+  getProtectedPaths(): string[] {
+    return [...this.protectedPaths];
   }
 
   // ─── Internal ───
