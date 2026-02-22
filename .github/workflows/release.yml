@@ -1,0 +1,100 @@
+# CI: full test suite then release to TestFlight.
+#
+# Workflow:
+#   1. Dev locally, install on device, bake
+#   2. Push to main
+#   3. CI runs all tests, uploads to TestFlight if green
+#
+# Self-hosted runner on Mac Studio. One-time setup:
+#   https://github.com/duh17/oppi/settings/actions/runners/new?arch=arm64&os=osx
+#
+# ASC credentials auto-discovered from ~/.appstoreconnect/ (no GitHub secrets needed).
+# Build number derived from git commit count (always increasing, no repo mutation).
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip tests and release directly"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+env:
+  # Homebrew tools (xcodegen, etc.) live here on Apple Silicon
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+jobs:
+  test-and-release:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Server ──────────────────────────────────────────────
+
+      - name: "Server: install"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: server
+        run: npm ci
+
+      - name: "Server: typecheck + lint"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: server
+        run: npm run check
+
+      - name: "Server: tests"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: server
+        run: npm test
+
+      # ── iOS ─────────────────────────────────────────────────
+
+      - name: "iOS: generate project"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: "iOS: unit tests"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project Oppi.xcodeproj \
+            -scheme Oppi \
+            -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' \
+            -only-testing:OppiTests \
+            -derivedDataPath build/ci \
+            -quiet
+
+      - name: "iOS: UI tests"
+        if: ${{ github.event_name == 'push' || !inputs.skip_tests }}
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project Oppi.xcodeproj \
+            -scheme Oppi \
+            -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' \
+            -only-testing:OppiUITests \
+            -derivedDataPath build/ci \
+            -quiet
+
+      # ── Release ─────────────────────────────────────────────
+
+      - name: "TestFlight: build + upload"
+        working-directory: ios
+        run: |
+          BUILD_NUM=$(git rev-list --count HEAD)
+          echo "::notice::Releasing build $BUILD_NUM"
+          bash scripts/testflight.sh \
+            --build-number "$BUILD_NUM" \
+            --submit-external
