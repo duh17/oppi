@@ -2,8 +2,8 @@ import Foundation
 
 /// Pure formatting logic for tool call display.
 ///
-/// Extracted from `ToolCallRow` so it can be unit-tested without
-/// SwiftUI view instantiation. Maps structured args to display strings.
+/// Extracted from timeline row rendering so it can be unit-tested without
+/// view instantiation. Maps structured args to display strings.
 enum ToolCallFormatting {
 
     // MARK: - Tool Type Detection

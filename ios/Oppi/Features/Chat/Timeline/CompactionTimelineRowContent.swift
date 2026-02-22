@@ -2,13 +2,13 @@ import SwiftUI
 import UIKit
 
 struct CompactionTimelineRowConfiguration: UIContentConfiguration {
-    let presentation: ChatTimelineCollectionView.Coordinator.CompactionPresentation
+    let presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation
     let isExpanded: Bool
     let themeID: ThemeID
     let onToggleExpand: (() -> Void)?
 
     init(
-        presentation: ChatTimelineCollectionView.Coordinator.CompactionPresentation,
+        presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
         isExpanded: Bool,
         themeID: ThemeID,
         onToggleExpand: (() -> Void)? = nil
@@ -253,7 +253,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     }
 
     private static func style(
-        for phase: ChatTimelineCollectionView.Coordinator.CompactionPresentation.Phase,
+        for phase: ChatTimelineCollectionHost.Controller.CompactionPresentation.Phase,
         palette: ThemePalette
     ) -> Style {
         switch phase {

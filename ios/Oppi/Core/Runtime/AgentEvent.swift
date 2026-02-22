@@ -3,7 +3,7 @@ import Foundation
 /// Transport-agnostic domain events from the agent.
 ///
 /// Produced by translating `ServerMessage` into agent-level semantics.
-/// Consumed by the `DeltaCoalescer` → `TimelineReducer` → `SurfaceCoordinator` pipeline.
+/// Consumed by the `DeltaCoalescer` → `TimelineReducer` → chat timeline rendering pipeline.
 enum AgentEvent: Sendable {
     case agentStart(sessionId: String)
     case agentEnd(sessionId: String)

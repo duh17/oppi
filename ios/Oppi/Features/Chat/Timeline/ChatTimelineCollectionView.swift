@@ -109,7 +109,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.contentInset.bottom = 12
         collectionView.delegate = context.coordinator
 
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTimelineTap(_:)))
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Controller.handleTimelineTap(_:)))
         tapGesture.cancelsTouchesInView = false
         tapGesture.delegate = context.coordinator
         collectionView.addGestureRecognizer(tapGesture)
@@ -123,7 +123,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Controller()
     }
 
     private static func makeLayout() -> UICollectionViewLayout {
@@ -1000,7 +1000,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
         }
 
-        @available(*, deprecated, renamed: "toolRowConfiguration(itemID:item:)")
         func nativeToolConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
             toolRowConfiguration(itemID: itemID, item: item)
         }
@@ -1235,5 +1234,4 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
 // swiftlint:enable type_body_length
 
-@available(*, deprecated, renamed: "ChatTimelineCollectionHost")
 typealias ChatTimelineCollectionView = ChatTimelineCollectionHost

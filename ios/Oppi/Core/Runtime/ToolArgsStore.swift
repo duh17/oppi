@@ -3,7 +3,7 @@ import Foundation
 /// Stores structured tool call arguments keyed by tool call ID.
 ///
 /// Separate from ChatItem to avoid Equatable cost on the `[String: JSONValue]` dict.
-/// ToolCallRow reads from this to render tool-specific headers (bash command, file path, etc).
+/// Tool timeline rows read from this to render tool-specific headers (bash command, file path, etc).
 @MainActor @Observable
 final class ToolArgsStore {
     private var store: [String: [String: JSONValue]] = [:]

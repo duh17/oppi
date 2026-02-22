@@ -7,7 +7,7 @@ private let loadSessionLog = Logger(subsystem: AppIdentifiers.subsystem, categor
 /// Reduces `AgentEvent` stream into a `[ChatItem]` timeline.
 ///
 /// State machine that accumulates deltas into items, manages tool correlation,
-/// and produces the item array that drives the chat `LazyVStack`.
+/// and produces the item array that drives the chat collection timeline.
 @MainActor @Observable
 final class TimelineReducer { // swiftlint:disable:this type_body_length
     // No timeline trimming — the full session history is always preserved.
@@ -47,7 +47,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// The item ID currently being rendered in streaming mode.
     /// Non-nil while deltas arrive AND during tool-call gaps within a turn.
     /// This prevents MarkdownText from switching to finalizedBody (cache miss
-    /// → placeholder → async parse → height change → LazyVStack cascade).
+    /// → placeholder → async parse → height change → collection layout cascade).
     var streamingAssistantID: String? {
         currentAssistantID ?? (turnInProgress ? lastAssistantIDThisTurn : nil)
     }
@@ -86,7 +86,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// during rapid session switching.
     private var markdownPrewarmTask: Task<Void, Never>?
 
-    /// Prewarm limits — sized for 128+ item sessions to avoid LazyVStack cascade.
+    /// Prewarm limits — sized for 128+ item sessions to avoid layout cascades.
     private static let markdownPrewarmMaxMessages = 48
     private static let markdownPrewarmMaxCharsPerMessage = 12_000
     private static let markdownPrewarmMaxTotalChars = 192_000
