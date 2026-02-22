@@ -39,7 +39,7 @@ extension ServerConnection {
             extensionToast = message
 
         case .turnAck(let command, let clientTurnId, let stage, let requestId, _):
-            _ = resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId)
+            _ = commands.resolveTurnAck(command: command, clientTurnId: clientTurnId, stage: stage, requestId: requestId, requiredStage: Self.turnSendRequiredStage)
 
         case .gitStatus(let workspaceId, let status):
             gitStatusStore.handleGitStatusPush(workspaceId: workspaceId, status: status)
@@ -93,7 +93,7 @@ extension ServerConnection {
                 sessionStore.upsert(current)
             }
             coalescer.receive(.agentStart(sessionId: sessionId))
-            startSilenceWatchdog()
+            silenceWatchdog.start()
 
         case .agentEnd:
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status == .busy {
@@ -102,7 +102,7 @@ extension ServerConnection {
                 sessionStore.upsert(current)
             }
             coalescer.receive(.agentEnd(sessionId: sessionId))
-            stopSilenceWatchdog()
+            silenceWatchdog.stop()
 
         case .messageEnd(let role, let content):
             if role == "assistant" {
@@ -110,27 +110,27 @@ extension ServerConnection {
             }
 
         case .textDelta(let delta):
-            lastEventTime = .now
+            silenceWatchdog.recordEvent()
             coalescer.receive(.textDelta(sessionId: sessionId, delta: delta))
 
         case .thinkingDelta(let delta):
-            lastEventTime = .now
+            silenceWatchdog.recordEvent()
             coalescer.receive(.thinkingDelta(sessionId: sessionId, delta: delta))
 
         case .toolStart(let tool, let args, let toolCallId, let callSegments):
-            lastEventTime = .now
+            silenceWatchdog.recordEvent()
             coalescer.receive(toolMapper.start(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments))
 
         case .toolOutput(let output, let isError, let toolCallId):
-            lastEventTime = .now
+            silenceWatchdog.recordEvent()
             coalescer.receive(toolMapper.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId))
 
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
-            lastEventTime = .now
+            silenceWatchdog.recordEvent()
             coalescer.receive(toolMapper.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
 
         case .sessionEnded(let reason):
-            stopSilenceWatchdog()
+            silenceWatchdog.stop()
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .stopped
                 current.lastActivity = Date()
@@ -166,9 +166,9 @@ extension ServerConnection {
         case .retryEnd(let success, let attempt, let finalError):
             coalescer.receive(.retryEnd(sessionId: sessionId, success: success, attempt: attempt, finalError: finalError))
 
-        // RPC results → pipeline (for model changes, stats, etc.)
+        // Command results → pipeline (for model changes, stats, etc.)
         case .commandResult(let command, let requestId, let success, let data, let error):
-            handleRPCResult(
+            handleCommandResult(
                 command: command,
                 requestId: requestId,
                 success: success,
@@ -232,9 +232,9 @@ extension ServerConnection {
         sessionStore.upsert(current)
     }
 
-    // MARK: - RPC Result Routing
+    // MARK: - Command Result Routing
 
-    func handleRPCResult(
+    func handleCommandResult(
         command: String,
         requestId: String?,
         success: Bool,
@@ -246,7 +246,7 @@ extension ServerConnection {
         // These are local send-path control messages, not timeline events.
         if let requestId,
            command == "prompt" || command == "steer" || command == "follow_up",
-           resolveTurnRpcResult(command: command, requestId: requestId, success: success, error: error) {
+           commands.resolveTurnCommandResult(command: command, requestId: requestId, success: success, error: error) {
             return
         }
 
@@ -262,7 +262,7 @@ extension ServerConnection {
         }
 
         if let requestId,
-           resolvePendingRPCResult(
+           commands.resolveCommandResult(
             command: command,
             requestId: requestId,
             success: success,
@@ -272,7 +272,7 @@ extension ServerConnection {
             return
         }
 
-        syncThinkingLevelFromRPC(command: command, success: success, data: data)
+        syncThinkingLevelFromCommand(command: command, success: success, data: data)
 
         coalescer.receive(
             .commandResult(
@@ -286,7 +286,7 @@ extension ServerConnection {
         )
     }
 
-    func syncThinkingLevelFromRPC(command: String, success: Bool, data: JSONValue?) {
+    func syncThinkingLevelFromCommand(command: String, success: Bool, data: JSONValue?) {
         guard success, command == "cycle_thinking_level" || command == "set_thinking_level" else {
             return
         }
@@ -351,44 +351,6 @@ extension ServerConnection {
     // MARK: - Silence Watchdog
 
     /// Start monitoring for silence during an active agent turn.
-    ///
-    /// Two tiers:
-    /// 1. After `silenceTimeout` (15s): send `requestState()` as a probe.
-    /// 2. After `silenceReconnectTimeout` (45s): the WS receive path is likely
-    ///    zombie (TCP alive but no frames delivered). Force a full reconnect
-    ///    via `sessionManager.reconnect()` to recover.
-    func startSilenceWatchdog() {
-        lastEventTime = .now
-        silenceWatchdog?.cancel()
-        silenceWatchdog = Task { @MainActor [weak self] in
-            var probed = false
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Self.silenceTimeout)
-                guard !Task.isCancelled, let self else { return }
-                guard let lastEvent = self.lastEventTime else { break }
-
-                let elapsed = ContinuousClock.now - lastEvent
-                if elapsed >= Self.silenceReconnectTimeout {
-                    // Tier 2: WS is zombie — force full reconnect
-                    logger.error("Silence watchdog: no events for \(elapsed) — forcing WS reconnect")
-                    self.onSilenceReconnect?()
-                    break
-                } else if elapsed >= Self.silenceTimeout && !probed {
-                    // Tier 1: probe — maybe the agent is just thinking
-                    try? await self.requestState()
-                    probed = true
-                }
-            }
-        }
-    }
-
-    /// Stop the silence watchdog (agent turn ended normally).
-    func stopSilenceWatchdog() {
-        silenceWatchdog?.cancel()
-        silenceWatchdog = nil
-        lastEventTime = nil
-    }
-
     // MARK: - Extension Timeout
 
     /// Auto-dismiss extension dialog after its timeout expires.
