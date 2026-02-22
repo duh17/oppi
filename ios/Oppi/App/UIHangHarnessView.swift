@@ -1,3 +1,4 @@
+#if DEBUG
 import Darwin.Mach
 import SwiftUI
 
@@ -791,4 +792,5 @@ final class MainThreadLagWatchdog {
         return Int(info.phys_footprint / 1_048_576)
     }
 }
+#endif
 #endif
