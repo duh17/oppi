@@ -36,7 +36,7 @@ export const POLICY_APPROVAL_OPTIONS: readonly ApprovalOption[] = [
   { id: "reject", label: "Reject", action: "deny", scope: "once" },
 ];
 
-export function isPolicyTool(tool: string): boolean {
+function isPolicyTool(tool: string): boolean {
   return tool.startsWith("policy.");
 }
 
