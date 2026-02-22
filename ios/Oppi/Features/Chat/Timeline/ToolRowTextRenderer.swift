@@ -66,6 +66,7 @@ enum ToolRowTextRenderer {
         )
     }
 
+    @MainActor
     static func applyANSIOutputPresentation(
         _ presentation: ANSIOutputPresentation,
         to label: UILabel,
