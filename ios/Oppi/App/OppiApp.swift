@@ -50,45 +50,53 @@ struct OppiApp: App {
 
     var body: some Scene {
         WindowGroup {
+#if DEBUG
             if UIHangHarnessConfig.isEnabled {
                 UIHangHarnessView()
             } else {
-                ContentView()
-                    .environment(coordinator)
-                    .environment(coordinator.activeConnection)
-                    .environment(coordinator.activeConnection.sessionStore)
-                    .environment(coordinator.activeConnection.permissionStore)
-                    .environment(coordinator.activeConnection.reducer)
-                    .environment(coordinator.activeConnection.reducer.toolOutputStore)
-                    .environment(coordinator.activeConnection.reducer.toolArgsStore)
-                    .environment(coordinator.activeConnection.audioPlayer)
-                    .environment(navigation)
-                    .environment(coordinator.serverStore)
-                    .environment(themeStore)
-                    .environment(\.theme, themeStore.appTheme)
-                    .preferredColorScheme(themeStore.preferredColorScheme)
-                    .onChange(of: scenePhase) { _, phase in
-                        handleScenePhase(phase)
-                    }
-                    .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                        handleMemoryWarning()
-                    }
-                    .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
-                        guard let url = notification.object as? URL else { return }
-                        Task { @MainActor in await handleIncomingInviteURL(url) }
-                    }
-                    .onOpenURL { url in Task { @MainActor in await handleIncomingInviteURL(url) } }
-                    .task {
-                        await SentryService.shared.configure()
-#if DEBUG
-                        configureWatchdogHooks()
-                        mainThreadLagWatchdog.start()
-#endif
-                        await setupNotifications()
-                        await reconnectOnLaunch()
-                    }
+                appRootView
             }
+#else
+            appRootView
+#endif
         }
+    }
+
+    private var appRootView: some View {
+        ContentView()
+            .environment(coordinator)
+            .environment(coordinator.activeConnection)
+            .environment(coordinator.activeConnection.sessionStore)
+            .environment(coordinator.activeConnection.permissionStore)
+            .environment(coordinator.activeConnection.reducer)
+            .environment(coordinator.activeConnection.reducer.toolOutputStore)
+            .environment(coordinator.activeConnection.reducer.toolArgsStore)
+            .environment(coordinator.activeConnection.audioPlayer)
+            .environment(navigation)
+            .environment(coordinator.serverStore)
+            .environment(themeStore)
+            .environment(\.theme, themeStore.appTheme)
+            .preferredColorScheme(themeStore.preferredColorScheme)
+            .onChange(of: scenePhase) { _, phase in
+                handleScenePhase(phase)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                handleMemoryWarning()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
+                guard let url = notification.object as? URL else { return }
+                Task { @MainActor in await handleIncomingInviteURL(url) }
+            }
+            .onOpenURL { url in Task { @MainActor in await handleIncomingInviteURL(url) } }
+            .task {
+                await SentryService.shared.configure()
+#if DEBUG
+                configureWatchdogHooks()
+                mainThreadLagWatchdog.start()
+#endif
+                await setupNotifications()
+                await reconnectOnLaunch()
+            }
     }
 
     @MainActor

@@ -1,7 +1,4 @@
 import SwiftUI
-import os.log
-
-private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SkillPanel")
 
 /// Quick skill browser shown from the session status badge in ChatView.
 ///
