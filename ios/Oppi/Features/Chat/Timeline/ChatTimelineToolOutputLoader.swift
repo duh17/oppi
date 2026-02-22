@@ -206,7 +206,6 @@ final class ExpandedToolOutputLoader {
     }
 }
 
-@available(*, deprecated, renamed: "ExpandedToolOutputLoader")
 typealias ChatTimelineToolOutputLoader = ExpandedToolOutputLoader
 
 private struct LoadState {

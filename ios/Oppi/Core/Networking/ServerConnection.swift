@@ -35,7 +35,6 @@ final class ServerConnection {
     let coalescer = DeltaCoalescer()
     let toolCallCorrelator = ToolCallCorrelator()
 
-    @available(*, deprecated, renamed: "toolCallCorrelator")
     var toolMapper: ToolCallCorrelator { toolCallCorrelator }
 
     // Stream lifecycle
