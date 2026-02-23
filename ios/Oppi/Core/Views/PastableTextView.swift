@@ -108,6 +108,7 @@ struct PastableTextView: UIViewRepresentable {
     let tintColor: UIColor
     let maxLines: Int
     let onPasteImages: ([UIImage]) -> Void
+    let onCommandEnter: (() -> Void)?
     let onOverflowChange: ((Bool) -> Void)?
     let onLineCountChange: ((Int) -> Void)?
     let onFocusChange: ((Bool) -> Void)?
@@ -121,6 +122,7 @@ struct PastableTextView: UIViewRepresentable {
         let textView = PastableUITextView()
         textView.delegate = context.coordinator
         textView.onPasteImages = onPasteImages
+        textView.onCommandEnter = onCommandEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -156,6 +158,7 @@ struct PastableTextView: UIViewRepresentable {
             textView.text = text
         }
         textView.onPasteImages = onPasteImages
+        textView.onCommandEnter = onCommandEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -354,12 +357,14 @@ struct FullSizeTextView: UIViewRepresentable {
     let textColor: UIColor
     let tintColor: UIColor
     let onPasteImages: ([UIImage]) -> Void
+    let onCommandEnter: (() -> Void)?
     let autoFocusOnAppear: Bool
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
         textView.delegate = context.coordinator
         textView.onPasteImages = onPasteImages
+        textView.onCommandEnter = onCommandEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -394,6 +399,7 @@ struct FullSizeTextView: UIViewRepresentable {
             textView.text = text
         }
         textView.onPasteImages = onPasteImages
+        textView.onCommandEnter = onCommandEnter
         textView.tintColor = tintColor
     }
 
@@ -419,6 +425,7 @@ struct FullSizeTextView: UIViewRepresentable {
 /// UITextView subclass that intercepts paste to extract images.
 final class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
+    var onCommandEnter: (() -> Void)?
 
     private var cachedPasteboardChangeCount: Int = -1
     private var cachedPasteboardHasImages = false
@@ -428,6 +435,21 @@ final class PastableUITextView: UITextView {
         // for SwiftUI layout. Having intrinsicContentSize compete with
         // sizeThatFits causes layout oscillation.
         return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(
+                input: "\r",
+                modifierFlags: .command,
+                action: #selector(handleCommandReturn),
+                discoverabilityTitle: "Send"
+            ),
+        ]
+    }
+
+    @objc private func handleCommandReturn() {
+        onCommandEnter?()
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {

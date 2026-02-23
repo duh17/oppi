@@ -241,6 +241,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
                         maxLines: effectiveMaxLines,
                         onPasteImages: handlePastedImages,
+                        onCommandEnter: handleSend,
                         onOverflowChange: nil,
                         onLineCountChange: handleInlineLineCountChange,
                         onFocusChange: nil,

@@ -124,6 +124,7 @@ struct ExpandedComposerView: View {
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
                     onPasteImages: handlePastedImages,
+                    onCommandEnter: handleSend,
                     autoFocusOnAppear: false
                 )
 
