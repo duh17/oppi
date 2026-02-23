@@ -66,7 +66,7 @@ final class ProtocolSnapshotTests: XCTestCase {
                 switch decoded {
                 case .unknown(let type):
                     // Server-only message types iOS intentionally ignores.
-                    let allowedUnknown: Set<String> = ["stream_connected", "turn_start", "turn_end"]
+                    let allowedUnknown: Set<String> = ["stream_connected"]
                     if !allowedUnknown.contains(type) {
                         failures.append("\(key): decoded as .unknown(\(type))")
                     }
