@@ -28,7 +28,7 @@ export interface RouteContext {
 
 export interface RouteHelpers {
   parseBody<T>(req: IncomingMessage): Promise<T>;
-  json(res: ServerResponse, data: Record<string, unknown>, status?: number): void;
+  json(res: ServerResponse, data: unknown, status?: number): void;
   error(res: ServerResponse, status: number, message: string): void;
 }
 

@@ -114,14 +114,24 @@ export class WsMessageHandler {
       case "set_follow_up_mode":
       case "set_auto_retry":
       case "abort_retry":
-      case "abort_bash":
+      case "abort_bash": {
+        const command = this.toCommandRecord(msg);
         await this.deps.sessions.forwardClientCommand(
           session.id,
-          msg as unknown as Record<string, unknown>,
-          (msg as Record<string, unknown>).requestId as string | undefined,
+          command,
+          this.getRequestId(command),
         );
         return;
+      }
     }
+  }
+
+  private toCommandRecord(message: ClientMessage): Record<string, unknown> {
+    return message as unknown as Record<string, unknown>;
+  }
+
+  private getRequestId(command: Record<string, unknown>): string | undefined {
+    return typeof command.requestId === "string" ? command.requestId : undefined;
   }
 
   /**
@@ -146,7 +156,7 @@ export class WsMessageHandler {
   ): Promise<void> {
     const requestId = msg.requestId;
     const chars = msg.message.length;
-    const images = msg.images?.map((img: ImageAttachment) => ({
+    const images = msg.images?.map((img) => ({
       type: "image" as const,
       data: img.data,
       mimeType: img.mimeType,

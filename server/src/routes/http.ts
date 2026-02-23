@@ -18,7 +18,7 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
   });
 }
 
-function json(res: ServerResponse, data: Record<string, unknown>, status = 200): void {
+function json(res: ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }

@@ -194,7 +194,7 @@ export class SessionCommandCoordinator {
   async sendCommandAsync(key: string, command: Record<string, unknown>): Promise<unknown> {
     const active = this.deps.getActiveSession(key);
     if (!active) {
-      return Promise.reject(new Error("Session not active"));
+      throw new Error("Session not active");
     }
 
     const type = command.type as string;

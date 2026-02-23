@@ -24,7 +24,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       helpers.error(res, 404, "Skill not found");
       return;
     }
-    helpers.json(res, detail as unknown as Record<string, unknown>);
+    helpers.json(res, detail);
   }
 
   function handleGetSkillFile(name: string, url: URL, res: ServerResponse): void {
