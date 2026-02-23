@@ -159,7 +159,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     const status = await getGitStatus(workspace.hostMount);
-    helpers.json(res, status as unknown as Record<string, unknown>);
+    helpers.json(res, status);
   }
 
   function handleGetWorkspaceGraph(workspaceId: string, url: URL, res: ServerResponse): void {
