@@ -10,7 +10,7 @@ import UIKit
 /// Uses a non-reactive `ScrollAnchorState` class to avoid SwiftUI
 /// body re-evaluation feedback loops from sentinel visibility changes.
 @MainActor @Observable
-final class ChatScrollController {
+final class ChatScrollController: NSObject {
     /// Non-reactive anchor — mutations are invisible to SwiftUI observation.
     private let anchor = ScrollAnchorState()
 
@@ -41,8 +41,6 @@ final class ChatScrollController {
     /// Keyboard animation settle time — suppress auto-scroll until layout settles.
     private let keyboardSettleDuration: Duration = .milliseconds(500)
     private var keyboardTransitionUntil: ContinuousClock.Instant?
-    @ObservationIgnored
-    nonisolated(unsafe) private var keyboardObservers: [NSObjectProtocol] = []
 
     /// Set by outline view to scroll to a specific item.
     var scrollTargetID: String?
@@ -92,15 +90,13 @@ final class ChatScrollController {
         return hasNewItems
     }
 
-    init() {
+    override init() {
+        super.init()
         startKeyboardObservers()
     }
 
     deinit {
-        let center = NotificationCenter.default
-        for token in keyboardObservers {
-            center.removeObserver(token)
-        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Keyboard Tracking
@@ -113,14 +109,18 @@ final class ChatScrollController {
             UIResponder.keyboardWillChangeFrameNotification,
         ]
 
-        keyboardObservers = names.map { name in
-            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.keyboardTransitionUntil = ContinuousClock.now.advanced(by: self.keyboardSettleDuration)
-                }
-            }
+        for name in names {
+            center.addObserver(
+                self,
+                selector: #selector(handleKeyboardTransitionNotification(_:)),
+                name: name,
+                object: nil
+            )
         }
+    }
+
+    @objc private func handleKeyboardTransitionNotification(_ notification: Notification) {
+        keyboardTransitionUntil = ContinuousClock.now.advanced(by: keyboardSettleDuration)
     }
 
     private var isKeyboardSettling: Bool {

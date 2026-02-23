@@ -518,6 +518,11 @@ final class WebSocketClient {
     }
 
     /// Thread-safe one-shot resolver for callback + timeout races.
+    ///
+    /// SAFETY (`@unchecked Sendable`):
+    /// - Mutable state (`continuation`, `timeoutWorkItem`) is protected by `lock`.
+    /// - `resolve(_:)` is one-shot: first caller nils stored state; subsequent callers no-op.
+    /// - Continuation resume happens after lock release, preventing re-entrancy while locked.
     private final class SendResolver: @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: CheckedContinuation<Void, Error>?
@@ -553,6 +558,10 @@ final class WebSocketClient {
 // MARK: - One-Shot Ping Continuation
 
 private final class OneShotPingContinuation: @unchecked Sendable {
+    // SAFETY (`@unchecked Sendable`):
+    // - `continuation` is protected by `lock` and consumed exactly once.
+    // - Resume is always executed after lock release.
+    // - Double-resume is prevented by nil-ing `continuation` under lock.
     private var continuation: UnsafeContinuation<Bool, Never>?
     private let lock = NSLock()
 

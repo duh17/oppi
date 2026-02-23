@@ -10,6 +10,11 @@ import UIKit
 /// Bounded by both entry count and total source text bytes to avoid
 /// retaining large markdown histories across session switches.
 final class MarkdownSegmentCache: @unchecked Sendable {
+    // SAFETY (`@unchecked Sendable`):
+    // - Every mutable field (`entries`, `counter`, `totalSourceBytes`) is read/written only under `lock`.
+    // - Stored values are value-semantic (`[FlatSegment]`, `Int`, `UInt64`) and never expose shared mutable references.
+    // - Public APIs return copied value data and do not execute callbacks while the lock is held.
+    // - This process-wide singleton intentionally allows cross-thread access, with synchronization fully handled by `NSLock`.
     static let shared = MarkdownSegmentCache()
 
     private struct Entry {

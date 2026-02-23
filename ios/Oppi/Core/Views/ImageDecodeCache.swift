@@ -8,6 +8,10 @@ import UIKit
 /// during fast scrolling.
 enum ImageDecodeCache {
     private final class CacheBox: @unchecked Sendable {
+        // SAFETY (`@unchecked Sendable`):
+        // - `NSCache` is documented thread-safe for concurrent reads/writes.
+        // - `CacheBox` is immutable after init (`cache` is `let`) and has no additional mutable state.
+        // - Callers only interact through static helpers that perform deterministic keying + decode.
         let cache: NSCache<NSString, UIImage>
 
         init() {
