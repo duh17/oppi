@@ -142,6 +142,40 @@ if [[ "${DISABLE_SENTRY_FOR_TESTFLIGHT:-1}" == "1" ]]; then
   echo "── Sentry DSN: disabled for TestFlight build"
 fi
 
+# ─── Tag + Changelog ────────────────────────────────────────────
+
+tag_release() {
+  local tag="testflight/$BUILD_NUMBER"
+
+  if git rev-parse "$tag" >/dev/null 2>&1; then
+    echo "── Tag $tag already exists, skipping"
+    return 0
+  fi
+
+  # Find previous testflight tag for changelog range
+  local prev_tag
+  prev_tag="$(git tag -l 'testflight/*' --sort=-version:refname | head -1)"
+
+  echo ""
+  echo "── Changelog (${prev_tag:-initial}..${tag}):"
+  echo ""
+
+  if [[ -n "$prev_tag" ]]; then
+    git log --oneline --no-decorate "$prev_tag"..HEAD | while IFS= read -r line; do
+      echo "   $line"
+    done
+  else
+    git log --oneline --no-decorate -20 | while IFS= read -r line; do
+      echo "   $line"
+    done
+  fi
+
+  echo ""
+  git tag "$tag"
+  git push origin "$tag" 2>/dev/null || echo "── warning: could not push tag (push manually)"
+  echo "── Tagged: $tag"
+}
+
 # ─── Resolve API key ────────────────────────────────────────────
 
 resolve_asc_key() {
@@ -697,6 +731,7 @@ if grep -q "EXPORT SUCCEEDED" "$EXPORT_LOG"; then
   if grep -q "Upload succeeded" "$EXPORT_LOG"; then
     apply_export_compliance
     submit_external_beta
+    tag_release
     echo ""
     echo "── Done! Version $VERSION ($BUILD_NUMBER) uploaded via cloud signing."
     if [[ "$SUBMIT_EXTERNAL" -eq 1 ]]; then
@@ -733,6 +768,7 @@ xcrun altool --upload-package "$IPA_PATH" \
 
 apply_export_compliance
 submit_external_beta
+tag_release
 
 echo ""
 echo "── Done! Version $VERSION ($BUILD_NUMBER) uploaded."
