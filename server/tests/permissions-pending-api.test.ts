@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RouteHandler, type RouteContext } from "../src/routes.js";
+import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 import type { PendingDecision } from "../src/gate.js";
 
 interface MockResponse {

@@ -12,11 +12,7 @@ export interface SessionStateActiveSession {
 export interface SessionStateCoordinatorDeps {
   storage: Storage;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
-  sendCommandAsync: (
-    key: string,
-    command: Record<string, unknown>,
-    timeoutMs?: number,
-  ) => Promise<unknown>;
+  sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   persistSessionNow: (key: string, session: Session) => void;
   broadcast: (key: string, message: ServerMessage) => void;
 }
@@ -73,11 +69,7 @@ export class SessionStateCoordinator {
       return undefined;
     }
 
-    const storageWithPrefs = this.deps.storage as unknown as {
-      getModelThinkingLevelPreference?: (modelId: string) => string | undefined;
-    };
-
-    return storageWithPrefs.getModelThinkingLevelPreference?.(normalizedModelId);
+    return this.deps.storage.getModelThinkingLevelPreference(normalizedModelId);
   }
 
   persistThinkingPreference(session: Session): void {
@@ -87,11 +79,7 @@ export class SessionStateCoordinator {
       return;
     }
 
-    const storageWithPrefs = this.deps.storage as unknown as {
-      setModelThinkingLevelPreference?: (modelId: string, level: string) => void;
-    };
-
-    storageWithPrefs.setModelThinkingLevelPreference?.(modelId, level);
+    this.deps.storage.setModelThinkingLevelPreference(modelId, level);
   }
 
   /**
@@ -124,14 +112,10 @@ export class SessionStateCoordinator {
     }
 
     try {
-      await this.deps.sendCommandAsync(
-        key,
-        { type: "set_thinking_level", level: preferred },
-        8_000,
-      );
+      await this.deps.sendCommandAsync(key, { type: "set_thinking_level", level: preferred });
 
       try {
-        const state = await this.deps.sendCommandAsync(key, { type: "get_state" }, 8_000);
+        const state = await this.deps.sendCommandAsync(key, { type: "get_state" });
         const snapshot = parsePiStateSnapshot(state);
         if (snapshot && this.applyPiStateSnapshot(active.session, snapshot)) {
           this.deps.persistSessionNow(key, active.session);

@@ -73,11 +73,7 @@ export interface SessionCoordinatorBundleDeps {
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
   sendCommand: (key: string, command: Record<string, unknown>) => void;
-  sendCommandAsync: (
-    key: string,
-    command: Record<string, unknown>,
-    timeoutMs?: number,
-  ) => Promise<unknown>;
+  sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
 }
@@ -113,7 +109,7 @@ export function createSessionCoordinatorBundle(
   const stateCoordinator = new SessionStateCoordinator({
     storage: deps.storage,
     getContextWindowResolver: () => deps.getContextWindowResolver(),
-    sendCommandAsync: (key, command, timeoutMs) => deps.sendCommandAsync(key, command, timeoutMs),
+    sendCommandAsync: (key, command) => deps.sendCommandAsync(key, command),
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     broadcast: (key, message) => deps.broadcast(key, message),
   });

@@ -19,7 +19,7 @@ import { URL } from "node:url";
 import type { Storage } from "./storage.js";
 import { SessionManager, type SessionBroadcastEvent } from "./sessions.js";
 import { UserStreamMux } from "./stream.js";
-import { RouteHandler } from "./routes.js";
+import { RouteHandler } from "./routes/index.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { ModelRegistry, AuthStorage, getAgentDir } from "@mariozechner/pi-coding-agent";

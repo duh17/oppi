@@ -257,11 +257,7 @@ export class UserStreamMux {
         let hydratedSession = this.ctx.ensureSessionContextWindow(session);
         if (level === "full") {
           const workspace = this.ctx.resolveWorkspaceForSession(session);
-          const started = await this.ctx.sessions.startSession(
-            sessionId,
-            this.ctx.storage.getOwnerName(),
-            workspace,
-          );
+          const started = await this.ctx.sessions.startSession(sessionId, workspace);
           hydratedSession = this.ctx.ensureSessionContextWindow(started);
           fullSessionId = sessionId;
 

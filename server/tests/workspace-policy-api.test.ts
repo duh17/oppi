@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { RouteHandler, type RouteContext } from "../src/routes.js";
+import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 
 interface MockResponse {
   statusCode: number;

@@ -6,6 +6,7 @@ import {
   updateSessionChangeStats,
   type TranslationContext,
 } from "./session-protocol.js";
+import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
 import type { Session, ServerMessage } from "./types.js";
 
@@ -44,7 +45,7 @@ export interface EventProcessorSessionState {
   partialResults: Map<string, string>;
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
-  pendingStop?: { mode: "abort" | "terminate" };
+  pendingStop?: PendingStop;
 }
 
 export interface SessionEventProcessorDeps {

@@ -104,7 +104,7 @@ export class SessionManager extends EventEmitter {
       resetIdleTimer: (key) => this.resetIdleTimer(key),
       bootstrapSessionState: (key) => this.bootstrapSessionState(key),
       sendCommand: (key, command) => this.sendCommand(key, command),
-      sendCommandAsync: (key, command, timeoutMs) => this.sendCommandAsync(key, command, timeoutMs),
+      sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
     });
@@ -142,11 +142,7 @@ export class SessionManager extends EventEmitter {
   /**
    * Start a new session — creates an in-process pi SDK session.
    */
-  async startSession(
-    sessionId: string,
-    userName?: string,
-    workspace?: Workspace,
-  ): Promise<Session> {
+  async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
     return this.activationCoordinator.startSession(key, sessionId, workspace);
   }
@@ -257,17 +253,13 @@ export class SessionManager extends EventEmitter {
    * Run a SDK command against an active session and await response.
    * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
    */
-  async runCommand(
-    sessionId: string,
-    command: Record<string, unknown>,
-    timeoutMs = 30_000,
-  ): Promise<unknown> {
+  async runCommand(sessionId: string, command: Record<string, unknown>): Promise<unknown> {
     const key = this.sessionKey(sessionId);
     if (!this.active.has(key)) {
       throw new Error(`Session not active: ${sessionId}`);
     }
 
-    return this.sendCommandAsync(key, { ...command }, timeoutMs);
+    return this.sendCommandAsync(key, { ...command });
   }
 
   /**
@@ -300,7 +292,7 @@ export class SessionManager extends EventEmitter {
       key,
       message,
       requestId,
-      (commandKey, command, timeoutMs) => this.sendCommandAsync(commandKey, command, timeoutMs),
+      (commandKey, command) => this.sendCommandAsync(commandKey, command),
     );
   }
 
@@ -338,12 +330,8 @@ export class SessionManager extends EventEmitter {
    * Send a command to the SDK backend and await the result.
    * Dispatches through the declarative SDK_HANDLERS map.
    */
-  async sendCommandAsync(
-    key: string,
-    command: Record<string, unknown>,
-    timeoutMs = 10_000,
-  ): Promise<unknown> {
-    return this.commandCoordinator.sendCommandAsync(key, command, timeoutMs);
+  async sendCommandAsync(key: string, command: Record<string, unknown>): Promise<unknown> {
+    return this.commandCoordinator.sendCommandAsync(key, command);
   }
 
   // ─── Persistence ───
