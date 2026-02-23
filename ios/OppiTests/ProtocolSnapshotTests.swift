@@ -318,7 +318,7 @@ final class ProtocolSnapshotTests: XCTestCase {
 
         // All type discriminators that iOS handles (excluding stream_connected which is mux-only)
         let expectedTypes: Set<String> = [
-            "connected", "state", "session_ended",
+            "connected", "state", "session_ended", "session_deleted",
             "stop_requested", "stop_confirmed", "stop_failed", "error",
             "agent_start", "agent_end", "message_end",
             "text_delta", "thinking_delta",

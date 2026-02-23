@@ -191,6 +191,56 @@ struct ReliabilityTests {
             "Dialog should survive background transition")
     }
 
+    // MARK: - Thinking lifecycle recovery
+
+    @MainActor
+    @Test func stopConfirmedWithoutAgentEndFinalizesThinking() {
+        let conn = makeConnection()
+        conn.handleServerMessage(.connected(session: makeSession(status: .busy)), sessionId: "s1")
+
+        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
+        conn.handleServerMessage(
+            .stopRequested(source: .user, reason: "Stopping current turn"),
+            sessionId: "s1"
+        )
+        conn.handleServerMessage(
+            .stopConfirmed(source: .user, reason: nil),
+            sessionId: "s1"
+        )
+
+        // Force flush in case the coalescer still has buffered deltas.
+        conn.coalescer.flushNow()
+
+        let thinkingStates = conn.reducer.items.compactMap { item -> Bool? in
+            guard case .thinking(_, _, _, let isDone) = item else { return nil }
+            return isDone
+        }
+
+        #expect(thinkingStates.count == 1)
+        #expect(thinkingStates[0] == true)
+    }
+
+    @MainActor
+    @Test func stateReadyWithoutAgentEndFinalizesThinking() {
+        let conn = makeConnection()
+        conn.handleServerMessage(.connected(session: makeSession(status: .busy)), sessionId: "s1")
+
+        conn.handleServerMessage(.agentStart, sessionId: "s1")
+        conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
+        conn.handleServerMessage(.state(session: makeSession(status: .ready)), sessionId: "s1")
+
+        conn.coalescer.flushNow()
+
+        let thinkingStates = conn.reducer.items.compactMap { item -> Bool? in
+            guard case .thinking(_, _, _, let isDone) = item else { return nil }
+            return isDone
+        }
+
+        #expect(thinkingStates.count == 1)
+        #expect(thinkingStates[0] == true)
+    }
+
     // MARK: - Fix 5: Timeline preserves all items (no trimming)
 
     @MainActor
@@ -275,6 +325,33 @@ struct ReliabilityTests {
 
     private func makeCredentials() -> ServerCredentials {
         .init(host: "localhost", port: 7749, token: "sk_test", name: "Test")
+    }
+
+    private func makeSession(
+        id: String = "s1",
+        status: SessionStatus = .ready,
+        thinkingLevel: String? = nil
+    ) -> Session {
+        let now = Date()
+        return Session(
+            id: id,
+            workspaceId: nil,
+            workspaceName: nil,
+            name: nil,
+            status: status,
+            createdAt: now,
+            lastActivity: now,
+            model: nil,
+            messageCount: 0,
+            tokens: .init(input: 0, output: 0),
+            cost: 0,
+            changeStats: nil,
+            contextTokens: nil,
+            contextWindow: nil,
+            firstMessage: nil,
+            lastMessage: nil,
+            thinkingLevel: thinkingLevel
+        )
     }
 
     @MainActor

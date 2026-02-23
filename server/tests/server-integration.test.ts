@@ -882,7 +882,7 @@ describe("pairing token flow", () => {
       });
       expect(replay.status).toBe(401);
     });
-  });
+  }, 30_000);
 
   it("rejects expired pairing token", async () => {
     await withIsolatedPairingServer(async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {

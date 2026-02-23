@@ -29,12 +29,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var currentAssistantTimestamp: Date?
 
     private var currentThinkingID: String?
-    /// Live thinking preview buffer (capped to `ChatItem.maxPreviewLength`).
+    /// Live thinking buffer. Unlike tool output previews, thinking is not
+    /// truncated in the timeline; the row container handles viewport limits.
     private var thinkingBuffer: String = ""
-    /// True once thinking text exceeds preview capacity.
-    private var thinkingOverflowed = false
-    /// True once overflowed thinking has been spilled to `toolOutputStore`.
-    private var thinkingStoredInOutputStore = false
 
     /// True between agentStart and agentEnd — used to keep the last assistant
     /// message in streaming render mode during tool calls (avoiding expensive
@@ -55,7 +52,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
 
-    /// Separate store for full tool output (and full thinking text).
+    /// Separate store for full tool output.
     let toolOutputStore = ToolOutputStore()
 
     /// O(1) item lookup by ID — avoids linear scans on every 33ms upsert.
@@ -274,15 +271,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let thinking = event.thinking ?? ""
             upsertHistoryItem(.thinking(
                 id: event.id,
-                preview: ChatItem.preview(thinking),
+                preview: thinking,
                 hasMore: thinking.count > ChatItem.maxPreviewLength,
                 isDone: true
             ))
-
-            // Store full thinking text for expand view
-            if thinking.count > ChatItem.maxPreviewLength {
-                toolOutputStore.append(thinking, to: event.id)
-            }
             return nil
 
         case .toolCall:
@@ -742,8 +734,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private func clearTurnBuffers() {
         assistantBuffer = ""
         thinkingBuffer = ""
-        thinkingOverflowed = false
-        thinkingStoredInOutputStore = false
         currentAssistantID = nil
         currentAssistantTimestamp = nil
         currentThinkingID = nil
@@ -817,58 +807,25 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func thinkingPreviewText() -> String {
-        guard thinkingOverflowed else {
-            return thinkingBuffer
-        }
-        guard ChatItem.maxPreviewLength > 1 else {
-            return "…"
-        }
-        return String(thinkingBuffer.prefix(ChatItem.maxPreviewLength - 1)) + "…"
+        thinkingBuffer
     }
 
-    /// Append a thinking delta into the capped preview buffer.
+    /// Append a thinking delta into the live buffer.
     ///
-    /// Returns `true` only when visible thinking UI should update
-    /// (preview or hasMore changed). Overflow tail is still preserved in
-    /// `toolOutputStore` for expand view, but those tail-only chunks do not
-    /// trigger rerenders.
+    /// Thinking is intentionally not truncated in the timeline row; the row
+    /// container manages viewport height and full-screen takes over for full
+    /// reading.
     @discardableResult
     private func appendThinkingDelta(_ delta: String) -> Bool {
         guard !delta.isEmpty else { return false }
 
         let previousPreview = thinkingPreviewText()
-        let previousHasMore = thinkingOverflowed
+        let previousHasMore = thinkingBuffer.count > ChatItem.maxPreviewLength
 
-        if !thinkingOverflowed {
-            let remaining = max(0, ChatItem.maxPreviewLength - thinkingBuffer.count)
-            if delta.count <= remaining {
-                thinkingBuffer += delta
-            } else {
-                let previewHead = String(delta.prefix(remaining))
-                let overflowTail = String(delta.dropFirst(remaining))
-                thinkingBuffer += previewHead
-                thinkingOverflowed = true
-
-                let id = ensureCurrentThinkingID()
-                if !thinkingStoredInOutputStore {
-                    toolOutputStore.append(thinkingBuffer, to: id)
-                    thinkingStoredInOutputStore = true
-                }
-                if !overflowTail.isEmpty {
-                    toolOutputStore.append(overflowTail, to: id)
-                }
-            }
-        } else {
-            let id = ensureCurrentThinkingID()
-            if !thinkingStoredInOutputStore {
-                toolOutputStore.append(thinkingBuffer, to: id)
-                thinkingStoredInOutputStore = true
-            }
-            toolOutputStore.append(delta, to: id)
-        }
+        thinkingBuffer += delta
 
         let newPreview = thinkingPreviewText()
-        let newHasMore = thinkingOverflowed
+        let newHasMore = thinkingBuffer.count > ChatItem.maxPreviewLength
         return newPreview != previousPreview || newHasMore != previousHasMore
     }
 
@@ -878,7 +835,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let item = ChatItem.thinking(
             id: id,
             preview: thinkingPreviewText(),
-            hasMore: thinkingOverflowed
+            hasMore: thinkingBuffer.count > ChatItem.maxPreviewLength
         )
 
         if let idx = indexForID(id) {
@@ -920,23 +877,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func finalizeThinking() {
-        // Mark the thinking item as done so the spinner stops
         if let thinkingID = currentThinkingID,
            let idx = indexForID(thinkingID),
            case .thinking(let id, let preview, let hasMore, _) = items[idx] {
-            items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
-
-            // Overflowed thinking is streamed into ToolOutputStore as deltas.
-            // This fallback handles unexpected paths where overflow happened
-            // but nothing was spilled yet.
-            if thinkingOverflowed, !thinkingStoredInOutputStore {
-                toolOutputStore.append(thinkingBuffer, to: thinkingID)
-                thinkingStoredInOutputStore = true
+            // Remove empty/whitespace-only thinking rows to avoid blank bubbles.
+            if preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                items.remove(at: idx)
+                rebuildIndex()
+            } else {
+                // Mark the thinking item as done so the spinner stops.
+                items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
             }
         }
         thinkingBuffer = ""
-        thinkingOverflowed = false
-        thinkingStoredInOutputStore = false
         currentThinkingID = nil
     }
 

@@ -61,7 +61,10 @@ enum ToolRowTextRenderer {
         }
 
         return ANSIOutputPresentation(
-            attributedText: NSAttributedString(SyntaxHighlighter.highlight(text, language: language)),
+            attributedText: withMonospaceFont(
+                NSAttributedString(SyntaxHighlighter.highlight(text, language: language)),
+                font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            ),
             plainText: nil
         )
     }
@@ -436,16 +439,24 @@ enum ToolRowTextRenderer {
         }
     }
 
+    private static func withMonospaceFont(
+        _ attributed: NSAttributedString,
+        font: UIFont
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard fullRange.length > 0 else { return mutable }
+        mutable.addAttribute(.font, value: font, range: fullRange)
+        return mutable
+    }
+
     // MARK: - Shell / ANSI
 
     static func shellHighlighted(_ text: String) -> NSAttributedString {
-        let highlighted = SyntaxHighlighter.highlight(text, language: .shell)
-        let ns = NSMutableAttributedString(highlighted)
-        // Ensure monospace font is embedded — UILabel ignores its own .font
-        // when attributedText is set.
-        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        ns.addAttribute(.font, value: font, range: NSRange(location: 0, length: ns.length))
-        return ns
+        withMonospaceFont(
+            NSAttributedString(SyntaxHighlighter.highlight(text, language: .shell)),
+            font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        )
     }
 
     static func ansiHighlighted(
