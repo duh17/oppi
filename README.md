@@ -43,7 +43,7 @@ Requires Node.js 20+ and a [pi](https://github.com/badlogic/pi-mono) auth setup 
 npx oppi serve
 ```
 
-On first run, the server auto-initializes config and shows a pairing QR code. Scan it in the Oppi iOS app. Your phone and server need to be on the same local network.
+On first run, the server auto-initializes config and shows a pairing QR code. Scan it in the Oppi iOS app. Your phone and server need to be on the same local network. For off-LAN access via Tailscale, pair with your tailnet host: `npx oppi pair --host <your-host>.ts.net`.
 
 If the auto-detected hostname isn't reachable from your phone, pass one explicitly:
 
