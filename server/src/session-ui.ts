@@ -1,4 +1,5 @@
 import type { ExtensionUIRequest } from "./session-events.js";
+import type { SdkBackend } from "./sdk-backend.js";
 
 /** Extension UI response sent to pi */
 export interface ExtensionUIResponse {
@@ -11,6 +12,7 @@ export interface ExtensionUIResponse {
 
 export interface SessionUIState {
   pendingUIRequests: Map<string, ExtensionUIRequest>;
+  sdkBackend: SdkBackend;
 }
 
 export interface SessionUICoordinatorDeps {
@@ -32,8 +34,7 @@ export class SessionUICoordinator {
     }
 
     active.pendingUIRequests.delete(response.id);
-
-    // SDK sessions handle extension UI internally via the in-process gate.
+    active.sdkBackend.respondToExtensionUIRequest(response);
     return true;
   }
 

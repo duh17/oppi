@@ -17,7 +17,7 @@ import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
-import { type PiEvent, type PiStateSnapshot } from "./pi-events.js";
+import { type PiStateSnapshot, type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import {
   createSessionCoordinatorBundle,
@@ -65,6 +65,9 @@ export class SessionManager extends EventEmitter {
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => string[]) | null = null;
 
+  private readonly mobileRenderers: MobileRendererRegistry;
+  private mobileRenderersLoadStarted = false;
+
   private readonly broadcaster: SessionCoordinatorBundle["broadcaster"];
   private readonly stateCoordinator: SessionCoordinatorBundle["stateCoordinator"];
   private readonly commandCoordinator: SessionCoordinatorBundle["commandCoordinator"];
@@ -80,7 +83,7 @@ export class SessionManager extends EventEmitter {
     this.storage = storage;
     const config = storage.getConfig();
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
-    const mobileRenderers = new MobileRendererRegistry();
+    this.mobileRenderers = new MobileRendererRegistry();
     const eventRingCapacity = parsePositiveIntEnv("OPPI_SESSION_EVENT_RING_CAPACITY", 500);
 
     const bundle = createSessionCoordinatorBundle({
@@ -89,7 +92,7 @@ export class SessionManager extends EventEmitter {
       gate,
       runtimeManager,
       active: this.active,
-      mobileRenderers,
+      mobileRenderers: this.mobileRenderers,
       eventRingCapacity,
       stopAbortTimeoutMs: this.stopAbortTimeoutMs,
       stopAbortRetryTimeoutMs: this.stopAbortRetryTimeoutMs,
@@ -118,16 +121,26 @@ export class SessionManager extends EventEmitter {
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
     this.uiCoordinator = bundle.uiCoordinator;
+  }
 
-    // Load user-provided mobile renderers (async, fire-and-forget at startup).
-    mobileRenderers.loadAllRenderers().then(({ loaded, errors }) => {
-      if (loaded.length > 0) {
-        console.log(`${ts()} [mobile-renderer] loaded: ${loaded.join(", ")}`);
-      }
-      for (const err of errors) {
-        console.error(`${ts()} [mobile-renderer] ${err}`);
-      }
-    });
+  private ensureMobileRenderersLoaded(): void {
+    if (this.mobileRenderersLoadStarted) return;
+    this.mobileRenderersLoadStarted = true;
+
+    this.mobileRenderers
+      .loadAllRenderers()
+      .then(({ loaded, errors }) => {
+        if (loaded.length > 0) {
+          console.log(`${ts()} [mobile-renderer] loaded: ${loaded.join(", ")}`);
+        }
+        for (const err of errors) {
+          console.error(`${ts()} [mobile-renderer] ${err}`);
+        }
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`${ts()} [mobile-renderer] ${message}`);
+      });
   }
 
   // ─── Session Lifecycle ───
@@ -144,11 +157,12 @@ export class SessionManager extends EventEmitter {
    */
   async startSession(sessionId: string, workspace?: Workspace): Promise<Session> {
     const key = this.sessionKey(sessionId);
+    this.ensureMobileRenderersLoaded();
     return this.activationCoordinator.startSession(key, sessionId, workspace);
   }
 
   /** Process a pi agent event from the SDK subscribe callback. */
-  private handlePiEvent(key: string, data: PiEvent): void {
+  private handlePiEvent(key: string, data: SessionBackendEvent): void {
     this.agentEventCoordinator.handlePiEvent(key, data);
   }
 

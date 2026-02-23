@@ -1,5 +1,7 @@
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+
 import { ts } from "./log-utils.js";
-import type { PiEvent } from "./pi-events.js";
+import type { SessionBackendEvent } from "./pi-events.js";
 import { extractAssistantText, translatePiEvent } from "./session-protocol.js";
 import type {
   EventProcessorSessionState,
@@ -25,7 +27,7 @@ export interface SessionAgentEventCoordinatorDeps {
 }
 
 export class SessionAgentEventCoordinator {
-  private static readonly LOGGED_EVENT_TYPES = new Set<PiEvent["type"]>([
+  private static readonly LOGGED_EVENT_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
     "turn_start",
@@ -39,7 +41,7 @@ export class SessionAgentEventCoordinator {
     "auto_retry_end",
   ]);
 
-  private static readonly STATUS_BROADCAST_TYPES = new Set<PiEvent["type"]>([
+  private static readonly STATUS_BROADCAST_TYPES = new Set<AgentSessionEvent["type"]>([
     "agent_start",
     "agent_end",
     "message_end",
@@ -48,7 +50,7 @@ export class SessionAgentEventCoordinator {
 
   constructor(private readonly deps: SessionAgentEventCoordinatorDeps) {}
 
-  handlePiEvent(key: string, data: PiEvent): void {
+  handlePiEvent(key: string, data: SessionBackendEvent): void {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       return;
@@ -59,16 +61,26 @@ export class SessionAgentEventCoordinator {
       return;
     }
 
-    if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(data.type)) {
+    if (data.type === "extension_error") {
+      console.error(
+        `${ts()} [pi:${active.session.id}] extension error: ${data.extensionPath}: ${data.error}`,
+      );
+      this.deps.resetIdleTimer(key);
+      return;
+    }
+
+    const event = data;
+
+    if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(event.type)) {
       const tool =
-        "toolName" in data && typeof data.toolName === "string" ? ` tool=${data.toolName}` : "";
+        "toolName" in event && typeof event.toolName === "string" ? ` tool=${event.toolName}` : "";
       console.log(
-        `${ts()} [pi:${active.session.id}] EVENT ${data.type}${tool} (subs=${active.subscribers.size})`,
+        `${ts()} [pi:${active.session.id}] EVENT ${event.type}${tool} (subs=${active.subscribers.size})`,
       );
     }
 
     const ctx = this.deps.eventProcessor.translationContext(active);
-    const messages = translatePiEvent(data, ctx);
+    const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.hasStreamedThinking = ctx.hasStreamedThinking;
 
@@ -76,28 +88,28 @@ export class SessionAgentEventCoordinator {
       this.deps.broadcast(key, message);
     }
 
-    if (data.type === "agent_start") {
+    if (event.type === "agent_start") {
       this.deps.turnCoordinator.markNextTurnStarted(key, active);
     }
 
-    this.deps.eventProcessor.updateSessionFromEvent(key, active, data);
+    this.deps.eventProcessor.updateSessionFromEvent(key, active, event);
 
-    if (data.type === "agent_end") {
+    if (event.type === "agent_end") {
       this.deps.stopCoordinator.finishPendingAbortWithSuccess(key, active);
     }
 
-    if (data.type === "message_end") {
-      const role = data.message?.role;
+    if (event.type === "message_end") {
+      const role = event.message.role;
       if (role === "assistant" || role === "user") {
         this.deps.broadcast(key, {
           type: "message_end",
           role,
-          content: extractAssistantText(data.message),
+          content: extractAssistantText(event.message),
         });
       }
     }
 
-    if (SessionAgentEventCoordinator.STATUS_BROADCAST_TYPES.has(data.type)) {
+    if (SessionAgentEventCoordinator.STATUS_BROADCAST_TYPES.has(event.type)) {
       console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
       this.deps.broadcast(key, { type: "state", session: active.session });
     }

@@ -187,7 +187,7 @@ export class SessionStopCoordinator {
 
       try {
         void current.sdkBackend.abort();
-        current.sdkBackend.abortBash();
+        current.sdkBackend.session.abortBash();
       } catch {
         // process may have already exited
       }

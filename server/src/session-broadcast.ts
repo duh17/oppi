@@ -41,6 +41,7 @@ export class SessionBroadcaster {
     "stop_confirmed",
     "stop_failed",
     "session_ended",
+    "session_deleted",
     "error",
   ]);
 

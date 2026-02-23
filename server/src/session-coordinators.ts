@@ -1,6 +1,6 @@
 import type { GateServer } from "./gate.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
-import type { PiEvent } from "./pi-events.js";
+import type { SessionBackendEvent } from "./pi-events.js";
 import {
   SessionActivationCoordinator,
   type SessionActivationActiveSession,
@@ -66,7 +66,7 @@ export interface SessionCoordinatorBundleDeps {
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => string[]) | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
-  onPiEvent: (key: string, event: PiEvent) => void;
+  onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;

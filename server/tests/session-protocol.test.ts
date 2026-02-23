@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import { describe, expect, it } from "vitest";
 import type { Session } from "../src/types.js";
 import {
   normalizeCommandError,
@@ -53,6 +54,10 @@ describe("session-protocol translatePiEvent", () => {
     const messages = translatePiEvent(
       {
         type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }],
+        },
         assistantMessageEvent: { type: "text_delta", delta: "hello" },
       },
       ctx,
@@ -76,6 +81,8 @@ describe("session-protocol translatePiEvent", () => {
       {
         type: "tool_execution_update",
         toolCallId: "tc-1",
+        toolName: "read",
+        args: {},
         partialResult: {
           content: [{ type: "text", text: "line1\n" }],
         },
@@ -87,6 +94,8 @@ describe("session-protocol translatePiEvent", () => {
       {
         type: "tool_execution_update",
         toolCallId: "tc-1",
+        toolName: "read",
+        args: {},
         partialResult: {
           content: [{ type: "text", text: "line1\nline2\n" }],
         },
@@ -109,6 +118,7 @@ describe("session-protocol translatePiEvent", () => {
         result: {
           content: [{ type: "text", text: "full read output" }],
         },
+        isError: false,
       },
       ctx,
     );
@@ -126,6 +136,8 @@ describe("session-protocol translatePiEvent", () => {
       {
         type: "tool_execution_update",
         toolCallId: "tc-tail",
+        toolName: "read",
+        args: {},
         partialResult: {
           content: [{ type: "text", text: "line1\n" }],
         },
@@ -141,6 +153,7 @@ describe("session-protocol translatePiEvent", () => {
         result: {
           content: [{ type: "text", text: "line1\nline2\n" }],
         },
+        isError: false,
       },
       ctx,
     );
@@ -160,7 +173,7 @@ describe("session-protocol translatePiEvent", () => {
         id: "evt-tool-1",
         toolName: "read",
         args: { path: "README.md" },
-      },
+      } as unknown as AgentSessionEvent,
       ctx,
     );
 
@@ -172,7 +185,8 @@ describe("session-protocol translatePiEvent", () => {
         result: {
           content: [{ type: "text", text: "content" }],
         },
-      },
+        isError: false,
+      } as unknown as AgentSessionEvent,
       ctx,
     );
 
@@ -192,6 +206,8 @@ describe("session-protocol translatePiEvent", () => {
       {
         type: "tool_execution_update",
         toolCallId: "tc-media",
+        toolName: "read",
+        args: {},
         partialResult: {
           content: [
             { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
@@ -264,6 +280,10 @@ describe("session-protocol translatePiEvent", () => {
     translatePiEvent(
       {
         type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "hmm" }],
+        },
         assistantMessageEvent: { type: "thinking_delta", delta: "hmm" },
       },
       ctx,
@@ -272,23 +292,6 @@ describe("session-protocol translatePiEvent", () => {
     expect(ctx.hasStreamedThinking).toBe(true);
   });
 
-  it("logs extension errors and emits no messages", () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const ctx = makeCtx();
-
-    const messages = translatePiEvent(
-      {
-        type: "extension_error",
-        extensionPath: "ext.ts",
-        error: "boom",
-      },
-      ctx,
-    );
-
-    expect(messages).toEqual([]);
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
-  });
 });
 
 describe("session-protocol state mutation helpers", () => {

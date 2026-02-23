@@ -1,6 +1,6 @@
 import { EventRing } from "./event-ring.js";
 import type { GateServer } from "./gate.js";
-import type { PiEvent } from "./pi-events.js";
+import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import type { ExtensionUIRequest } from "./session-events.js";
 import type { PendingStop } from "./session-stop.js";
@@ -32,7 +32,7 @@ export interface SessionStartCoordinatorDeps {
   gate: GateServer;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => string[]) | null;
-  onPiEvent: (key: string, event: PiEvent) => void;
+  onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
   persistSessionNow: (key: string, session: Session) => void;

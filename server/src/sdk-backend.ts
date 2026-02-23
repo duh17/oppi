@@ -5,10 +5,17 @@
  * from subscribe() match the ServerMessage contract consumed by iOS.
  */
 
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
 import {
   createAgentSession,
   type AgentSession,
   type AgentSessionEvent,
+  type ExtensionFactory,
+  type ExtensionUIDialogOptions,
+  type ExtensionUIContext,
   SessionManager as PiSessionManager,
   DefaultResourceLoader,
   AuthStorage,
@@ -17,20 +24,16 @@ import {
   getAgentDir,
 } from "@mariozechner/pi-coding-agent";
 import { getModel, type KnownProvider, type ImageContent } from "@mariozechner/pi-ai";
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
-import { homedir } from "os";
-import { join, resolve } from "path";
 
-import type { Session, Workspace } from "./types.js";
 import type { GateServer } from "./gate.js";
-import {
-  parsePiEvent,
-  type PiEvent,
-  type PiSessionMessage,
-  type PiSessionStats,
-  type PiStateSnapshot,
-} from "./pi-events.js";
 import { ts } from "./log-utils.js";
+import type {
+  ExtensionErrorEvent,
+  ExtensionUIRequestEvent,
+  PiStateSnapshot,
+  SessionBackendEvent,
+} from "./pi-events.js";
+import type { Session, Workspace } from "./types.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
 function parseModelId(modelId: string): { provider: string; model: string } | null {
@@ -64,8 +67,8 @@ export function resolveSdkSessionCwd(workspace?: Workspace): string {
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
-  /** Called for every parsed pi agent event. */
-  onEvent: (event: PiEvent) => void;
+  /** Called for SDK agent events and extension callback events. */
+  onEvent: (event: SessionBackendEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
   /** Gate server for permission checks. */
@@ -76,6 +79,18 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
+}
+
+interface ExtensionUIResponsePayload {
+  id: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+}
+
+interface PendingExtensionUIResponse {
+  resolve: (response: ExtensionUIResponsePayload) => void;
+  cancel: () => void;
 }
 
 /**
@@ -90,11 +105,18 @@ export interface SdkBackendConfig {
 export class SdkBackend {
   private piSession: AgentSession;
   private unsub: () => void;
+  private readonly emitEvent: (event: SessionBackendEvent) => void;
+  private readonly pendingExtensionResponses = new Map<string, PendingExtensionUIResponse>();
   private disposed = false;
 
-  private constructor(piSession: AgentSession, unsub: () => void) {
+  private constructor(
+    piSession: AgentSession,
+    unsub: () => void,
+    emitEvent: (event: SessionBackendEvent) => void,
+  ) {
     this.piSession = piSession;
     this.unsub = unsub;
+    this.emitEvent = emitEvent;
   }
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
@@ -173,20 +195,240 @@ export class SdkBackend {
 
     // Subscribe to agent events — forward everything to the translation layer.
     const unsub = piSession.subscribe((event: AgentSessionEvent) => {
-      const parsed = parsePiEvent(event as unknown);
-      if (parsed.type === "unknown") {
-        console.warn(
-          `${ts()} [sdk] unrecognized pi event (type=${parsed.originalType ?? "<missing>"}, reason=${parsed.reason})`,
-        );
-      }
-      onEvent(parsed);
+      onEvent(event);
+    });
+
+    const backend = new SdkBackend(piSession, unsub, onEvent);
+
+    await piSession.bindExtensions({
+      uiContext: backend.createExtensionUIContext(),
+      onError: (error) => {
+        const event: ExtensionErrorEvent = {
+          type: "extension_error",
+          extensionPath: error.extensionPath,
+          event: error.event,
+          error: error.error,
+        };
+        onEvent(event);
+      },
     });
 
     console.log(
       `${ts()} [sdk] Session created: model=${piSession.model?.id ?? piSession.model?.name}, thinking=${piSession.thinkingLevel}`,
     );
 
-    return new SdkBackend(piSession, unsub);
+    return backend;
+  }
+
+  get session(): AgentSession {
+    return this.piSession;
+  }
+
+  private emitExtensionUIRequest(request: Omit<ExtensionUIRequestEvent, "type">): void {
+    this.emitEvent({
+      type: "extension_ui_request",
+      ...request,
+    });
+  }
+
+  private createDialogPromise<T>(
+    opts: ExtensionUIDialogOptions | undefined,
+    defaultValue: T,
+    request: Omit<ExtensionUIRequestEvent, "type" | "id">,
+    parseResponse: (response: ExtensionUIResponsePayload) => T,
+  ): Promise<T> {
+    if (this.disposed || opts?.signal?.aborted) {
+      return Promise.resolve(defaultValue);
+    }
+
+    const id = randomUUID();
+
+    return new Promise<T>((resolve) => {
+      let timeoutId: NodeJS.Timeout | undefined;
+
+      const cleanup = (): void => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        opts?.signal?.removeEventListener("abort", onAbort);
+        this.pendingExtensionResponses.delete(id);
+      };
+
+      const cancel = (): void => {
+        cleanup();
+        resolve(defaultValue);
+      };
+
+      const onAbort = (): void => {
+        cancel();
+      };
+
+      opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+      if (opts?.timeout) {
+        timeoutId = setTimeout(() => {
+          cancel();
+        }, opts.timeout);
+      }
+
+      this.pendingExtensionResponses.set(id, {
+        resolve: (response) => {
+          cleanup();
+          resolve(parseResponse(response));
+        },
+        cancel,
+      });
+
+      this.emitExtensionUIRequest({
+        id,
+        ...request,
+        timeout: opts?.timeout,
+      });
+    });
+  }
+
+  private createExtensionUIContext(): ExtensionUIContext {
+    return {
+      select: (title, options, opts) =>
+        this.createDialogPromise(
+          opts,
+          undefined,
+          { method: "select", title, options },
+          (response) => (response.cancelled ? undefined : response.value),
+        ),
+
+      confirm: (title, message, opts) =>
+        this.createDialogPromise(opts, false, { method: "confirm", title, message }, (response) =>
+          response.cancelled ? false : (response.confirmed ?? false),
+        ),
+
+      input: (title, placeholder, opts) =>
+        this.createDialogPromise(
+          opts,
+          undefined,
+          { method: "input", title, placeholder },
+          (response) => (response.cancelled ? undefined : response.value),
+        ),
+
+      notify: (message, type) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "notify",
+          message,
+          notifyType: type,
+        });
+      },
+
+      onTerminalInput: () => () => {
+        // Raw terminal input is not supported in Oppi server sessions.
+      },
+
+      setStatus: (key, text) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setStatus",
+          statusKey: key,
+          statusText: text,
+        });
+      },
+
+      setWorkingMessage: (_message) => {
+        // Working message requires TUI access; unsupported in Oppi sessions.
+      },
+
+      setWidget: (key, content, options) => {
+        if (content === undefined || Array.isArray(content)) {
+          this.emitExtensionUIRequest({
+            id: randomUUID(),
+            method: "setWidget",
+            widgetKey: key,
+            widgetLines: content,
+            widgetPlacement: options?.placement,
+          });
+        }
+      },
+
+      setFooter: (_factory) => {
+        // Custom footer requires TUI access; unsupported in Oppi sessions.
+      },
+
+      setHeader: (_factory) => {
+        // Custom header requires TUI access; unsupported in Oppi sessions.
+      },
+
+      setTitle: (title) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "setTitle",
+          title,
+        });
+      },
+
+      custom: async () => {
+        return undefined;
+      },
+
+      pasteToEditor: (text) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "set_editor_text",
+          text,
+        });
+      },
+
+      setEditorText: (text) => {
+        this.emitExtensionUIRequest({
+          id: randomUUID(),
+          method: "set_editor_text",
+          text,
+        });
+      },
+
+      getEditorText: () => {
+        return "";
+      },
+
+      editor: (title, prefill) =>
+        this.createDialogPromise(
+          undefined,
+          undefined,
+          { method: "editor", title, prefill },
+          (response) => (response.cancelled ? undefined : response.value),
+        ),
+
+      setEditorComponent: (_factory) => {
+        // Custom editor components require TUI access; unsupported in Oppi sessions.
+      },
+
+      get theme() {
+        return {} as ExtensionUIContext["theme"];
+      },
+
+      getAllThemes: () => [],
+
+      getTheme: (_name) => undefined,
+
+      setTheme: (_theme) => ({
+        success: false,
+        error: "Theme switching not supported in Oppi sessions",
+      }),
+
+      getToolsExpanded: () => false,
+
+      setToolsExpanded: (_expanded) => {
+        // Tool expansion requires TUI access; unsupported in Oppi sessions.
+      },
+    } as ExtensionUIContext;
+  }
+
+  respondToExtensionUIRequest(response: ExtensionUIResponsePayload): boolean {
+    const pending = this.pendingExtensionResponses.get(response.id);
+    if (!pending) {
+      return false;
+    }
+
+    pending.resolve(response);
+    return true;
   }
 
   // ─── Commands ───
@@ -251,108 +493,6 @@ export class SdkBackend {
     }
   }
 
-  setThinkingLevel(level: string): void {
-    if (this.disposed) return;
-    this.piSession.setThinkingLevel(level as "off" | "low" | "medium" | "high");
-  }
-
-  async cycleModel(direction?: string): Promise<
-    | {
-        model: {
-          provider: string;
-          id: string;
-          name: string;
-        };
-        thinkingLevel: string;
-        isScoped: boolean;
-      }
-    | undefined
-  > {
-    const result = await this.piSession.cycleModel(
-      (direction as "forward" | "backward") || "forward",
-    );
-    if (!result) return undefined;
-    return {
-      model: {
-        provider: result.model.provider,
-        id: result.model.id,
-        name: result.model.name,
-      },
-      thinkingLevel: result.thinkingLevel,
-      isScoped: result.isScoped,
-    };
-  }
-
-  cycleThinkingLevel(): string | undefined {
-    return this.piSession.cycleThinkingLevel();
-  }
-
-  setSessionName(name: string): void {
-    this.piSession.setSessionName(name);
-  }
-
-  getMessages(): PiSessionMessage[] {
-    return this.piSession.messages as PiSessionMessage[];
-  }
-
-  getSessionStats(): PiSessionStats {
-    return this.piSession.getSessionStats();
-  }
-
-  async compact(instructions?: string): Promise<unknown> {
-    return this.piSession.compact(instructions);
-  }
-
-  setAutoCompaction(enabled: boolean): void {
-    this.piSession.setAutoCompactionEnabled(enabled);
-  }
-
-  async newSession(): Promise<boolean> {
-    return this.piSession.newSession();
-  }
-
-  async fork(entryId: string): Promise<unknown> {
-    return this.piSession.fork(entryId);
-  }
-
-  async switchSession(sessionPath: string): Promise<boolean> {
-    return this.piSession.switchSession(sessionPath);
-  }
-
-  setSteeringMode(mode: string): void {
-    this.piSession.setSteeringMode(mode as "all" | "one-at-a-time");
-  }
-
-  setFollowUpMode(mode: string): void {
-    this.piSession.setFollowUpMode(mode as "all" | "one-at-a-time");
-  }
-
-  setAutoRetry(enabled: boolean): void {
-    this.piSession.setAutoRetryEnabled(enabled);
-  }
-
-  abortRetry(): void {
-    this.piSession.abortRetry();
-  }
-
-  abortBash(): void {
-    this.piSession.abortBash();
-  }
-
-  getState(): {
-    model: string | undefined;
-    thinkingLevel: string;
-    isStreaming: boolean;
-    sessionFile: string | undefined;
-  } {
-    return {
-      model: this.piSession.model?.id,
-      thinkingLevel: this.piSession.thinkingLevel,
-      isStreaming: this.piSession.isStreaming,
-      sessionFile: this.piSession.sessionFile,
-    };
-  }
-
   /** Full state snapshot for client command responses. */
   getStateSnapshot(): PiStateSnapshot {
     const m = this.piSession.model;
@@ -386,6 +526,12 @@ export class SdkBackend {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+
+    for (const pending of this.pendingExtensionResponses.values()) {
+      pending.cancel();
+    }
+    this.pendingExtensionResponses.clear();
+
     this.unsub();
     this.piSession.dispose();
   }

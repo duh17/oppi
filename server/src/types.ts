@@ -397,6 +397,7 @@ export type ServerMessage = // ── Connection ──
     | { type: "stream_connected"; userName: string }
     | { type: "state"; session: Session }
     | { type: "session_ended"; reason: string }
+    | { type: "session_deleted"; sessionId: string }
     | { type: "stop_requested"; source: "user" | "timeout" | "server"; reason?: string }
     | { type: "stop_confirmed"; source: "user" | "timeout" | "server"; reason?: string }
     | { type: "stop_failed"; source: "user" | "timeout" | "server"; reason: string }

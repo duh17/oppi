@@ -1,6 +1,7 @@
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+
 import { getGitStatus } from "./git-status.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
-import type { PiEvent } from "./pi-events.js";
 import {
   applyMessageEndToSession,
   updateSessionChangeStats,
@@ -120,7 +121,11 @@ export class SessionEventProcessor {
    * Update session state from pi events.
    * Delegates extraction to session-protocol functions; handles persistence here.
    */
-  updateSessionFromEvent(key: string, active: EventProcessorSessionState, event: PiEvent): void {
+  updateSessionFromEvent(
+    key: string,
+    active: EventProcessorSessionState,
+    event: AgentSessionEvent,
+  ): void {
     const session = active.session;
     let shouldFlushNow = false;
     const pendingStopMode = active.pendingStop?.mode;

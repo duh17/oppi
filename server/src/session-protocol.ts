@@ -9,10 +9,11 @@
  * lifecycle orchestration and wiring.
  */
 
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+
 import type { ServerMessage, Session, SessionMessage } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
-import type { PiEvent, PiMessage } from "./pi-events.js";
-import { ts } from "./log-utils.js";
+import type { PiMessage } from "./pi-events.js";
 
 // ─── Text Helpers ───
 
@@ -161,7 +162,10 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
  * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
  * side effect (streaming state for the current turn).
  */
-export function translatePiEvent(event: PiEvent, ctx: TranslationContext): ServerMessage[] {
+export function translatePiEvent(
+  event: AgentSessionEvent,
+  ctx: TranslationContext,
+): ServerMessage[] {
   const resolveToolCallId = (): string | undefined => {
     if (
       "toolCallId" in event &&
@@ -373,19 +377,6 @@ export function translatePiEvent(event: PiEvent, ctx: TranslationContext): Serve
           finalError: event.finalError,
         },
       ];
-
-    case "extension_error":
-      console.error(
-        `${ts()} [pi:${ctx.sessionId}] extension error: ${event.extensionPath}: ${event.error}`,
-      );
-      return [];
-
-    case "response":
-      // Uncorrelated responses (no id) — ignore unless error
-      if (!event.success) {
-        return [{ type: "error", error: `${event.command}: ${event.error}` }];
-      }
-      return [];
 
     // Pi can deliver final assistant text/thinking only in message_end.
     // Recover any missing text tail and emit thinking blocks for iOS.

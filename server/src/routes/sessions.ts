@@ -716,6 +716,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     await ctx.sessions.stopSession(sessionId);
     ctx.storage.deleteSession(sessionId);
+
+    // Notify connected clients so they can remove stale session entries.
+    ctx.streamMux.recordUserStreamEvent(sessionId, {
+      type: "session_deleted",
+      sessionId,
+    });
+
     helpers.json(res, { ok: true });
   }
 
