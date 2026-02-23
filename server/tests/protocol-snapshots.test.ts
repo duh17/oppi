@@ -93,8 +93,6 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
     // Agent lifecycle
     agent_start: { type: "agent_start" },
     agent_end: { type: "agent_end" },
-    turn_start: { type: "turn_start" },
-    turn_end: { type: "turn_end" },
     message_end: {
       type: "message_end",
       role: "assistant",
@@ -310,8 +308,6 @@ describe("protocol snapshots", () => {
       "error",
       "agent_start",
       "agent_end",
-      "turn_start",
-      "turn_end",
       "message_end",
       "text_delta",
       "thinking_delta",
