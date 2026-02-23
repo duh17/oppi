@@ -142,6 +142,11 @@ extension ServerConnection {
             sessionStore.remove(id: deletedId)
 
         case .error(let msg, _, let fatal):
+            if msg.contains("is not subscribed at level=full") {
+                triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
+                break
+            }
+
             coalescer.receive(.error(sessionId: sessionId, message: msg))
             // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
             // The server closed the WS after this; retrying would just loop.
