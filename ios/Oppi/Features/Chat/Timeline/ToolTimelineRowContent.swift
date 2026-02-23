@@ -50,10 +50,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private static let maxDiffViewportHeight: CGFloat = 760
     private static let outputViewportCloseSafeAreaReserve: CGFloat = 128
     private static let diffViewportCloseSafeAreaReserve: CGFloat = 88
-    private static let autoFollowBottomThreshold: CGFloat = 18
     private static let collapsedImagePreviewHeight: CGFloat = 136
     private static let fullScreenOverflowThreshold: CGFloat = 2
-    private static let genericLanguageBadgeSymbolName = "chevron.left.forwardslash.chevron.right"
 
     @MainActor
     private enum ExpandedViewportMode {
@@ -254,8 +252,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateExpandedReadMediaWidthIfNeeded()
         updateViewportHeightsIfNeeded()
         updateExpandFloatingButtonVisibility()
-        clampScrollOffsetIfNeeded(outputScrollView)
-        clampScrollOffsetIfNeeded(expandedScrollView)
+        ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(outputScrollView)
+        ToolTimelineRowUIHelpers.clampScrollOffsetIfNeeded(expandedScrollView)
     }
 
     private func updateViewportHeightsIfNeeded() {
@@ -316,7 +314,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func outputLabelWidthConstant(for renderedText: String) -> CGFloat {
         let frameWidth = max(1, outputScrollView.bounds.width)
         let minimumContentWidth = max(1, frameWidth - 12)
-        let estimatedContentWidth = Self.estimatedMonospaceLineWidth(renderedText)
+        let estimatedContentWidth = ToolTimelineRowRenderMetrics.estimatedMonospaceLineWidth(renderedText)
         let contentWidth = max(minimumContentWidth, estimatedContentWidth)
         return contentWidth - frameWidth
     }
@@ -342,7 +340,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func expandedLabelWidthConstant(for renderedText: String) -> CGFloat {
         let frameWidth = max(1, expandedScrollView.bounds.width)
         let minimumContentWidth = max(1, frameWidth - 12)
-        let estimatedContentWidth = Self.estimatedMonospaceLineWidth(renderedText)
+        let estimatedContentWidth = ToolTimelineRowRenderMetrics.estimatedMonospaceLineWidth(renderedText)
         let contentWidth = max(minimumContentWidth, estimatedContentWidth)
         return contentWidth - frameWidth
     }
@@ -355,21 +353,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateExpandedReadMediaWidthIfNeeded() {
         guard let expandedReadMediaWidthConstraint else { return }
         expandedReadMediaWidthConstraint.constant = -12
-    }
-
-    private static func estimatedMonospaceLineWidth(_ text: String) -> CGFloat {
-        guard !text.isEmpty else { return 1 }
-
-        let maxLineLength = text.split(
-            separator: "\n",
-            omittingEmptySubsequences: false
-        ).reduce(0) { max($0, $1.count) }
-
-        guard maxLineLength > 0 else { return 1 }
-
-        let font = UIFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
-        return ceil(charWidth * CGFloat(maxLineLength)) + 12
     }
 
     private func preferredViewportHeight(
@@ -444,105 +427,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return CGSize(width: width, height: height)
     }
 
-    private static func displayCommandText(_ text: String) -> String {
-        ToolRowTextRenderer.displayCommandText(text)
-    }
-
-    private static func displayOutputText(_ text: String) -> String {
-        ToolRowTextRenderer.displayOutputText(text)
-    }
-
-    private static func commandSignature(displayCommand: String) -> Int {
-        var hasher = Hasher()
-        hasher.combine("command")
-        hasher.combine(displayCommand)
-        hasher.combine(displayCommand.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes)
-        return hasher.finalize()
-    }
-
-    private static func outputSignature(displayOutput: String, isError: Bool, unwrapped: Bool) -> Int {
-        var hasher = Hasher()
-        hasher.combine("bash-output")
-        hasher.combine(displayOutput)
-        hasher.combine(isError)
-        hasher.combine(unwrapped)
-        return hasher.finalize()
-    }
-
-    private static func diffSignature(lines: [DiffLine], path: String?) -> Int {
-        var hasher = Hasher()
-        hasher.combine("diff")
-        hasher.combine(path ?? "")
-        hasher.combine(lines.count)
-        for line in lines {
-            switch line.kind {
-            case .context:
-                hasher.combine(0)
-            case .added:
-                hasher.combine(1)
-            case .removed:
-                hasher.combine(2)
-            }
-            hasher.combine(line.text)
-        }
-        return hasher.finalize()
-    }
-
-    private static func codeSignature(
-        displayText: String,
-        language: SyntaxLanguage?,
-        startLine: Int
-    ) -> Int {
-        var hasher = Hasher()
-        hasher.combine("code")
-        hasher.combine(displayText)
-        hasher.combine(language)
-        hasher.combine(startLine)
-        return hasher.finalize()
-    }
-
-    private static func markdownSignature(_ text: String) -> Int {
-        var hasher = Hasher()
-        hasher.combine("markdown")
-        hasher.combine(text)
-        return hasher.finalize()
-    }
-
-    private static func todoSignature(_ output: String) -> Int {
-        var hasher = Hasher()
-        hasher.combine("todo")
-        hasher.combine(output)
-        return hasher.finalize()
-    }
-
-    private static func readMediaSignature(
-        output: String,
-        filePath: String?,
-        startLine: Int,
-        isError: Bool
-    ) -> Int {
-        var hasher = Hasher()
-        hasher.combine("read-media")
-        hasher.combine(output)
-        hasher.combine(filePath ?? "")
-        hasher.combine(startLine)
-        hasher.combine(isError)
-        return hasher.finalize()
-    }
-
-    private static func textSignature(
-        displayText: String,
-        language: SyntaxLanguage?,
-        isError: Bool
-    ) -> Int {
-        var hasher = Hasher()
-        hasher.combine("text")
-        hasher.combine(displayText)
-        hasher.combine(language)
-        hasher.combine(isError)
-        return hasher.finalize()
-    }
-
     private func installExpandedReadMediaView(
         output: String,
         isError: Bool,
@@ -598,7 +482,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             guard let self else { return }
             self.setNeedsLayout()
             self.layoutIfNeeded()
-            self.invalidateEnclosingCollectionViewLayout()
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
         }
     }
 
@@ -711,169 +595,71 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedViewportHeightConstraint?.isActive = false
         expandedUsesViewport = false
         expandedShouldAutoFollow = true
-        resetScrollPosition(expandedScrollView)
+        ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
     }
 
     private func setupViews() {
         backgroundColor = .clear
 
-        borderView.translatesAutoresizingMaskIntoConstraints = false
-        borderView.layer.cornerRadius = 10
-        borderView.layer.borderWidth = 1
+        ToolTimelineRowViewStyler.styleBorderView(borderView)
 
         addSubview(borderView)
 
-        statusImageView.translatesAutoresizingMaskIntoConstraints = false
-        statusImageView.contentMode = .scaleAspectFit
+        ToolTimelineRowViewStyler.styleHeader(
+            statusImageView: statusImageView,
+            toolImageView: toolImageView,
+            titleLabel: titleLabel,
+            trailingStack: trailingStack,
+            languageBadgeIconView: languageBadgeIconView,
+            addedLabel: addedLabel,
+            removedLabel: removedLabel,
+            trailingLabel: trailingLabel
+        )
+        ToolTimelineRowViewStyler.stylePreviewLabel(previewLabel)
+        ToolTimelineRowViewStyler.styleCommand(
+            commandContainer: commandContainer,
+            commandLabel: commandLabel
+        )
+        ToolTimelineRowViewStyler.styleOutput(
+            outputContainer: outputContainer,
+            outputScrollView: outputScrollView,
+            outputLabel: outputLabel,
+            delegate: self
+        )
+        ToolTimelineRowViewStyler.styleExpanded(
+            expandedContainer: expandedContainer,
+            expandedScrollView: expandedScrollView,
+            expandedLabel: expandedLabel,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedReadMediaContainer: expandedReadMediaContainer,
+            delegate: self
+        )
 
-        toolImageView.translatesAutoresizingMaskIntoConstraints = false
-        toolImageView.contentMode = .scaleAspectFit
-        toolImageView.tintColor = UIColor(Color.themeCyan)
-        toolImageView.isHidden = true
-
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = UIColor(Color.themeFg)
-        titleLabel.numberOfLines = 3
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        trailingStack.translatesAutoresizingMaskIntoConstraints = false
-        trailingStack.axis = .horizontal
-        trailingStack.alignment = .center
-        trailingStack.spacing = 4
-        trailingStack.setContentCompressionResistancePriority(.required, for: .horizontal)
-        trailingStack.setContentHuggingPriority(.required, for: .horizontal)
-
-        languageBadgeIconView.translatesAutoresizingMaskIntoConstraints = false
-        languageBadgeIconView.contentMode = .scaleAspectFit
-        languageBadgeIconView.tintColor = UIColor(Color.themeBlue)
-        languageBadgeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-        languageBadgeIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
-
-        addedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
-        addedLabel.textColor = UIColor(Color.themeDiffAdded)
-        addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        addedLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        removedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
-        removedLabel.textColor = UIColor(Color.themeDiffRemoved)
-        removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        removedLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        trailingLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        trailingLabel.textColor = UIColor(Color.themeComment)
-        trailingLabel.numberOfLines = 1
-        trailingLabel.lineBreakMode = .byTruncatingTail
-        trailingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        previewLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        previewLabel.textColor = UIColor(Color.themeFgDim)
-        previewLabel.numberOfLines = 3
-
-        commandContainer.layer.cornerRadius = 6
-        commandContainer.backgroundColor = UIColor(Color.themeBgHighlight.opacity(0.9))
-        commandContainer.layer.borderWidth = 1
-        commandContainer.layer.borderColor = UIColor(Color.themeBlue.opacity(0.35)).cgColor
-
-        commandLabel.translatesAutoresizingMaskIntoConstraints = false
-        commandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        commandLabel.numberOfLines = 0
-        commandLabel.lineBreakMode = .byCharWrapping
-        commandLabel.textColor = UIColor(Color.themeFg)
-
-        outputContainer.layer.cornerRadius = 6
-        outputContainer.layer.masksToBounds = true
-        outputContainer.backgroundColor = UIColor(Color.themeBgDark)
-        outputContainer.layer.borderWidth = 1
-        outputContainer.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
-
-        outputScrollView.translatesAutoresizingMaskIntoConstraints = false
-        outputScrollView.alwaysBounceVertical = true
-        outputScrollView.alwaysBounceHorizontal = false
-        outputScrollView.showsVerticalScrollIndicator = true
-        outputScrollView.showsHorizontalScrollIndicator = false
-        outputScrollView.delegate = self
-
-        outputLabel.translatesAutoresizingMaskIntoConstraints = false
-        outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputLabel.numberOfLines = 0
-        outputLabel.lineBreakMode = .byCharWrapping
-        outputLabel.textColor = UIColor(Color.themeFg)
-
-        expandedContainer.layer.cornerRadius = 6
-        expandedContainer.layer.masksToBounds = true
-        expandedContainer.backgroundColor = UIColor(Color.themeBgDark.opacity(0.9))
-
-        expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
-        expandedScrollView.alwaysBounceVertical = true
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsVerticalScrollIndicator = true
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        expandedScrollView.delegate = self
-
-        expandedLabel.translatesAutoresizingMaskIntoConstraints = false
-        expandedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        expandedLabel.numberOfLines = 0
-        expandedLabel.lineBreakMode = .byCharWrapping
-
-        expandedMarkdownView.translatesAutoresizingMaskIntoConstraints = false
-        expandedMarkdownView.backgroundColor = .clear
-        expandedMarkdownView.isHidden = true
-
-        expandedReadMediaContainer.translatesAutoresizingMaskIntoConstraints = false
-        expandedReadMediaContainer.backgroundColor = .clear
-        expandedReadMediaContainer.isHidden = true
-
-        imagePreviewContainer.translatesAutoresizingMaskIntoConstraints = false
-        imagePreviewContainer.backgroundColor = UIColor(Color.themeBgDark)
-        imagePreviewContainer.layer.cornerRadius = 6
-        imagePreviewContainer.layer.masksToBounds = true
-        imagePreviewContainer.isHidden = true
-        imagePreviewContainer.isUserInteractionEnabled = true
+        ToolTimelineRowViewStyler.styleImagePreview(
+            imagePreviewContainer: imagePreviewContainer,
+            imagePreviewImageView: imagePreviewImageView
+        )
         imagePreviewContainer.addGestureRecognizer(
             UITapGestureRecognizer(target: self, action: #selector(handleImagePreviewTap))
         )
         imagePreviewContainer.addInteraction(UIContextMenuInteraction(delegate: self))
-
-        imagePreviewImageView.translatesAutoresizingMaskIntoConstraints = false
-        imagePreviewImageView.contentMode = .scaleAspectFit
-        imagePreviewImageView.clipsToBounds = true
         imagePreviewContainer.addSubview(imagePreviewImageView)
 
-        expandFloatingButton.translatesAutoresizingMaskIntoConstraints = false
-        let expandBtnSymbolConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
-        expandFloatingButton.setImage(
-            UIImage(systemName: "arrow.up.left.and.arrow.down.right", withConfiguration: expandBtnSymbolConfig),
-            for: .normal
-        )
-        expandFloatingButton.tintColor = UIColor(Color.themeCyan)
-        expandFloatingButton.backgroundColor = UIColor(Color.themeBgHighlight)
-        expandFloatingButton.layer.cornerRadius = 18
-        expandFloatingButton.layer.borderWidth = 1
-        expandFloatingButton.layer.borderColor = UIColor(Color.themeComment.opacity(0.3)).cgColor
-        expandFloatingButton.accessibilityIdentifier = "tool.expand-full-screen"
-        expandFloatingButton.isHidden = true
+        ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
         expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
 
-        bodyStack.translatesAutoresizingMaskIntoConstraints = false
-        bodyStack.axis = .vertical
-        bodyStack.alignment = .fill
-        bodyStack.spacing = 4
-        bodyStackCollapsedHeightConstraint = bodyStack.heightAnchor.constraint(equalToConstant: 0)
+        bodyStackCollapsedHeightConstraint = ToolTimelineRowViewStyler.styleBodyStack(bodyStack)
 
         trailingStack.addArrangedSubview(languageBadgeIconView)
         trailingStack.addArrangedSubview(addedLabel)
         trailingStack.addArrangedSubview(removedLabel)
         trailingStack.addArrangedSubview(trailingLabel)
 
-        NSLayoutConstraint.activate([
-            languageBadgeIconView.widthAnchor.constraint(equalToConstant: 10),
-            languageBadgeIconView.heightAnchor.constraint(equalToConstant: 10),
-        ])
+        NSLayoutConstraint.activate(
+            ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints(
+                languageBadgeIconView: languageBadgeIconView
+            )
+        )
 
         commandContainer.addSubview(commandLabel)
         outputContainer.addSubview(outputScrollView)
@@ -888,9 +674,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bodyStack.addArrangedSubview(commandContainer)
         bodyStack.addArrangedSubview(outputContainer)
         bodyStack.addArrangedSubview(expandedContainer)
-
-        outputViewportHeightConstraint = outputContainer.heightAnchor.constraint(equalToConstant: Self.minOutputViewportHeight)
-        expandedViewportHeightConstraint = expandedContainer.heightAnchor.constraint(equalToConstant: Self.minDiffViewportHeight)
 
         commandContainer.isUserInteractionEnabled = true
         outputContainer.isUserInteractionEnabled = true
@@ -915,208 +698,93 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         borderView.addSubview(trailingStack)
         borderView.addSubview(bodyStack)
 
-        toolLeadingConstraint = toolImageView.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 0)
-        toolWidthConstraint = toolImageView.widthAnchor.constraint(equalToConstant: 0)
-        titleLeadingToStatusConstraint = titleLabel.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 5)
-        titleLeadingToToolConstraint = titleLabel.leadingAnchor.constraint(equalTo: toolImageView.trailingAnchor, constant: 5)
-        outputLabelWidthConstraint = outputLabel.widthAnchor.constraint(
-            equalTo: outputScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
+        let layout = ToolTimelineRowLayoutBuilder.makeConstraints(
+            containerView: self,
+            borderView: borderView,
+            statusImageView: statusImageView,
+            toolImageView: toolImageView,
+            titleLabel: titleLabel,
+            trailingStack: trailingStack,
+            bodyStack: bodyStack,
+            commandContainer: commandContainer,
+            commandLabel: commandLabel,
+            outputContainer: outputContainer,
+            outputScrollView: outputScrollView,
+            outputLabel: outputLabel,
+            expandedContainer: expandedContainer,
+            expandedScrollView: expandedScrollView,
+            expandedLabel: expandedLabel,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedReadMediaContainer: expandedReadMediaContainer,
+            imagePreviewContainer: imagePreviewContainer,
+            imagePreviewImageView: imagePreviewImageView,
+            expandFloatingButton: expandFloatingButton,
+            minOutputViewportHeight: Self.minOutputViewportHeight,
+            minDiffViewportHeight: Self.minDiffViewportHeight,
+            collapsedImagePreviewHeight: Self.collapsedImagePreviewHeight
         )
-        expandedLabelWidthConstraint = expandedLabel.widthAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
-        )
-        expandedMarkdownWidthConstraint = expandedMarkdownView.widthAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
-        )
-        expandedReadMediaWidthConstraint = expandedReadMediaContainer.widthAnchor.constraint(
-            equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
-            constant: -12
-        )
+
+        toolLeadingConstraint = layout.toolLeading
+        toolWidthConstraint = layout.toolWidth
+        titleLeadingToStatusConstraint = layout.titleLeadingToStatus
+        titleLeadingToToolConstraint = layout.titleLeadingToTool
+        outputLabelWidthConstraint = layout.outputLabelWidth
+        expandedLabelWidthConstraint = layout.expandedLabelWidth
+        expandedMarkdownWidthConstraint = layout.expandedMarkdownWidth
+        expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
+        imagePreviewHeightConstraint = layout.imagePreviewHeight
+        outputViewportHeightConstraint = layout.outputViewportHeight
+        expandedViewportHeightConstraint = layout.expandedViewportHeight
+
         // During the first self-sizing measurement pass, scroll view frame
         // layout guides can still report width=0. Keep markdown/hosted width
         // constraints below required priority so systemLayoutSizeFitting can
         // provide a temporary fitting width instead of measuring at 0px.
         expandedMarkdownWidthConstraint?.priority = .defaultHigh
         expandedReadMediaWidthConstraint?.priority = .defaultHigh
-        imagePreviewHeightConstraint = imagePreviewContainer.heightAnchor.constraint(
-            equalToConstant: Self.collapsedImagePreviewHeight
-        )
 
-        guard let toolLeadingConstraint,
-              let toolWidthConstraint,
-              let titleLeadingToStatusConstraint,
-              let outputLabelWidthConstraint,
-              let expandedLabelWidthConstraint,
-              let expandedMarkdownWidthConstraint,
-              let expandedReadMediaWidthConstraint,
-              let imagePreviewHeightConstraint else {
-            assertionFailure("Expected tool-row constraints to be initialized")
-            return
-        }
-
-        NSLayoutConstraint.activate([
-            borderView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            borderView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            borderView.topAnchor.constraint(equalTo: topAnchor),
-            borderView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            statusImageView.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
-            statusImageView.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
-            statusImageView.widthAnchor.constraint(equalToConstant: 14),
-            statusImageView.heightAnchor.constraint(equalToConstant: 14),
-
-            toolLeadingConstraint,
-            toolImageView.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
-            toolWidthConstraint,
-            toolImageView.heightAnchor.constraint(equalToConstant: 12),
-
-            titleLeadingToStatusConstraint,
-            titleLabel.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
-
-            trailingStack.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            trailingStack.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
-            trailingStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
-
-            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
-            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
-            bodyStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            bodyStack.bottomAnchor.constraint(equalTo: borderView.bottomAnchor, constant: -6),
-
-            commandLabel.leadingAnchor.constraint(equalTo: commandContainer.leadingAnchor, constant: 6),
-            commandLabel.trailingAnchor.constraint(equalTo: commandContainer.trailingAnchor, constant: -6),
-            commandLabel.topAnchor.constraint(equalTo: commandContainer.topAnchor, constant: 5),
-            commandLabel.bottomAnchor.constraint(equalTo: commandContainer.bottomAnchor, constant: -5),
-
-            outputScrollView.leadingAnchor.constraint(equalTo: outputContainer.leadingAnchor),
-            outputScrollView.trailingAnchor.constraint(equalTo: outputContainer.trailingAnchor),
-            outputScrollView.topAnchor.constraint(equalTo: outputContainer.topAnchor),
-            outputScrollView.bottomAnchor.constraint(equalTo: outputContainer.bottomAnchor),
-
-            outputLabel.leadingAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            outputLabel.trailingAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            outputLabel.topAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            outputLabel.bottomAnchor.constraint(equalTo: outputScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
-            outputLabelWidthConstraint,
-
-            expandedScrollView.leadingAnchor.constraint(equalTo: expandedContainer.leadingAnchor),
-            expandedScrollView.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor),
-            expandedScrollView.topAnchor.constraint(equalTo: expandedContainer.topAnchor),
-            expandedScrollView.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor),
-
-            expandedLabel.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedLabel.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedLabel.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedLabel.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
-            expandedLabelWidthConstraint,
-
-            expandedMarkdownView.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedMarkdownView.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedMarkdownView.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedMarkdownView.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
-            expandedMarkdownWidthConstraint,
-
-            expandedReadMediaContainer.leadingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.leadingAnchor, constant: 6),
-            expandedReadMediaContainer.trailingAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.trailingAnchor, constant: -6),
-            expandedReadMediaContainer.topAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.topAnchor, constant: 5),
-            expandedReadMediaContainer.bottomAnchor.constraint(equalTo: expandedScrollView.contentLayoutGuide.bottomAnchor, constant: -5),
-            expandedReadMediaWidthConstraint,
-
-            imagePreviewImageView.leadingAnchor.constraint(equalTo: imagePreviewContainer.leadingAnchor, constant: 6),
-            imagePreviewImageView.trailingAnchor.constraint(equalTo: imagePreviewContainer.trailingAnchor, constant: -6),
-            imagePreviewImageView.topAnchor.constraint(equalTo: imagePreviewContainer.topAnchor, constant: 6),
-            imagePreviewImageView.bottomAnchor.constraint(equalTo: imagePreviewContainer.bottomAnchor, constant: -6),
-            imagePreviewHeightConstraint,
-            imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
-
-            expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -10),
-            expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -10),
-            expandFloatingButton.widthAnchor.constraint(equalToConstant: 36),
-            expandFloatingButton.heightAnchor.constraint(equalToConstant: 36),
-        ])
+        NSLayoutConstraint.activate(layout.all)
     }
 
-    private struct ExpandedRenderVisibility {
-        let showExpandedContainer: Bool
-        let showCommandContainer: Bool
-        let showOutputContainer: Bool
-    }
+    private typealias ExpandedRenderVisibility = ToolTimelineRowExpandedRenderer.Visibility
 
     private func apply(configuration: ToolTimelineRowConfiguration) {
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
 
-        if let segmentTitle = configuration.segmentAttributedTitle {
-            titleLabel.attributedText = segmentTitle
-        } else {
-            titleLabel.attributedText = ToolRowTextRenderer.styledTitle(
-                title: configuration.title,
-                toolNamePrefix: configuration.toolNamePrefix,
-                toolNameColor: configuration.toolNameColor
-            )
-        }
+        ToolTimelineRowDisplayState.applyTitle(
+            configuration: configuration,
+            titleLabel: titleLabel
+        )
         applyToolIcon(
             toolNamePrefix: configuration.toolNamePrefix,
             toolNameColor: configuration.toolNameColor
         )
-        titleLabel.lineBreakMode = configuration.titleLineBreakMode
-        if configuration.isExpanded {
-            titleLabel.numberOfLines = configuration.titleLineBreakMode == .byTruncatingMiddle ? 1 : 3
-        } else {
-            titleLabel.numberOfLines = 1
-        }
 
-        let badge = configuration.languageBadge?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let badgeSymbolName = Self.languageBadgeSymbolName(for: badge),
-           let badgeImage = UIImage(systemName: badgeSymbolName) {
-            languageBadgeIconView.image = badgeImage
-            languageBadgeIconView.isHidden = false
-        } else {
-            languageBadgeIconView.image = nil
-            languageBadgeIconView.isHidden = true
-        }
+        ToolTimelineRowDisplayState.applyLanguageBadge(
+            badge: configuration.languageBadge,
+            languageBadgeIconView: languageBadgeIconView
+        )
 
-        if let added = configuration.editAdded, let removed = configuration.editRemoved {
-            addedLabel.text = added > 0 ? "+\(added)" : nil
-            addedLabel.isHidden = addedLabel.text == nil
+        ToolTimelineRowDisplayState.applyTrailing(
+            configuration: configuration,
+            addedLabel: addedLabel,
+            removedLabel: removedLabel,
+            trailingLabel: trailingLabel
+        )
+        ToolTimelineRowDisplayState.updateTrailingVisibility(
+            trailingStack: trailingStack,
+            languageBadgeIconView: languageBadgeIconView,
+            addedLabel: addedLabel,
+            removedLabel: removedLabel,
+            trailingLabel: trailingLabel
+        )
 
-            removedLabel.text = removed > 0 ? "-\(removed)" : nil
-            removedLabel.isHidden = removedLabel.text == nil
-
-            if added == 0, removed == 0 {
-                trailingLabel.text = "modified"
-                trailingLabel.isHidden = false
-            } else {
-                trailingLabel.text = nil
-                trailingLabel.isHidden = true
-            }
-        } else {
-            addedLabel.text = nil
-            addedLabel.isHidden = true
-            removedLabel.text = nil
-            removedLabel.isHidden = true
-            if let segmentTrailing = configuration.segmentAttributedTrailing {
-                trailingLabel.attributedText = segmentTrailing
-                trailingLabel.isHidden = false
-            } else {
-                trailingLabel.attributedText = nil
-                trailingLabel.text = configuration.trailing
-                trailingLabel.isHidden = configuration.trailing == nil
-            }
-        }
-
-        trailingStack.isHidden = languageBadgeIconView.isHidden
-            && addedLabel.isHidden
-            && removedLabel.isHidden
-            && trailingLabel.isHidden
-
-        let preview = configuration.preview?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let showPreview = !configuration.isExpanded && !(preview?.isEmpty ?? true)
-        previewLabel.text = preview
-        previewLabel.isHidden = !showPreview
+        let showPreview = ToolTimelineRowDisplayState.applyPreview(
+            configuration: configuration,
+            previewLabel: previewLabel
+        )
 
         // Collapsed image thumbnail for read tool image files
         applyImagePreview(configuration: configuration)
@@ -1135,55 +803,55 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if configuration.isExpanded, let rawExpandedContent = configuration.expandedContent {
             let expandedContent = normalizedExpandedContentForHotPath(rawExpandedContent)
-            let visibility: ExpandedRenderVisibility
-
-            switch expandedContent {
-            case .bash(let command, let output, let unwrapped):
-                visibility = renderExpandedBashMode(
-                    command: command,
-                    output: output,
-                    unwrapped: unwrapped,
-                    configuration: configuration,
-                    outputColor: outputColor,
-                    wasOutputVisible: wasOutputVisible
-                )
-
-            case .diff(let lines, let path):
-                visibility = renderExpandedDiffMode(lines: lines, path: path)
-
-            case .code(let text, let language, let startLine, _):
-                visibility = renderExpandedCodeMode(
-                    text: text,
-                    language: language,
-                    startLine: startLine
-                )
-
-            case .markdown(let text):
-                visibility = renderExpandedMarkdownMode(
-                    text: text,
-                    wasExpandedVisible: wasExpandedVisible
-                )
-
-            case .todoCard(let output):
-                visibility = renderExpandedTodoMode(output: output)
-
-            case .readMedia(let output, let filePath, let startLine):
-                visibility = renderExpandedReadMediaMode(
-                    output: output,
-                    filePath: filePath,
-                    startLine: startLine,
-                    isError: configuration.isError
-                )
-
-            case .text(let text, let language):
-                visibility = renderExpandedTextMode(
-                    text: text,
-                    language: language,
-                    configuration: configuration,
-                    outputColor: outputColor,
-                    wasExpandedVisible: wasExpandedVisible
-                )
-            }
+            let visibility = ToolTimelineRowExpandedModeRouter.route(
+                expandedContent: expandedContent,
+                renderBash: { command, output, unwrapped in
+                    self.renderExpandedBashMode(
+                        command: command,
+                        output: output,
+                        unwrapped: unwrapped,
+                        configuration: configuration,
+                        outputColor: outputColor,
+                        wasOutputVisible: wasOutputVisible
+                    )
+                },
+                renderDiff: { lines, path in
+                    self.renderExpandedDiffMode(lines: lines, path: path)
+                },
+                renderCode: { text, language, startLine in
+                    self.renderExpandedCodeMode(
+                        text: text,
+                        language: language,
+                        startLine: startLine
+                    )
+                },
+                renderMarkdown: { text in
+                    self.renderExpandedMarkdownMode(
+                        text: text,
+                        wasExpandedVisible: wasExpandedVisible
+                    )
+                },
+                renderTodo: { output in
+                    self.renderExpandedTodoMode(output: output)
+                },
+                renderReadMedia: { output, filePath, startLine in
+                    self.renderExpandedReadMediaMode(
+                        output: output,
+                        filePath: filePath,
+                        startLine: startLine,
+                        isError: configuration.isError
+                    )
+                },
+                renderText: { text, language in
+                    self.renderExpandedTextMode(
+                        text: text,
+                        language: language,
+                        configuration: configuration,
+                        outputColor: outputColor,
+                        wasExpandedVisible: wasExpandedVisible
+                    )
+                }
+            )
 
             showExpandedContainer = visibility.showExpandedContainer
             showCommandContainer = visibility.showCommandContainer
@@ -1194,57 +862,46 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if !showExpandedContainer {
             hideExpandedContainer(outputColor: outputColor)
         }
-        expandedContainer.isHidden = !showExpandedContainer
-        if showExpandedContainer {
-            animateInPlaceReveal(
-                expandedContainer,
-                shouldAnimate: isExpandingTransition && !wasExpandedVisible
-            )
-        } else {
-            resetRevealAppearance(expandedContainer)
-        }
+        ToolTimelineRowDisplayState.applyContainerVisibility(
+            expandedContainer,
+            shouldShow: showExpandedContainer,
+            isExpandingTransition: isExpandingTransition,
+            wasVisible: wasExpandedVisible
+        )
 
         if !showCommandContainer {
-            commandLabel.attributedText = nil
-            commandLabel.text = nil
-            commandLabel.textColor = UIColor(Color.themeFg)
-            commandRenderSignature = nil
-        }
-        commandContainer.isHidden = !showCommandContainer
-        if showCommandContainer {
-            animateInPlaceReveal(
-                commandContainer,
-                shouldAnimate: isExpandingTransition && !wasCommandVisible
+            ToolTimelineRowDisplayState.resetCommandState(
+                commandLabel: commandLabel,
+                commandRenderSignature: &commandRenderSignature
             )
-        } else {
-            resetRevealAppearance(commandContainer)
         }
+        ToolTimelineRowDisplayState.applyContainerVisibility(
+            commandContainer,
+            shouldShow: showCommandContainer,
+            isExpandingTransition: isExpandingTransition,
+            wasVisible: wasCommandVisible
+        )
 
         if !showOutputContainer {
-            outputLabel.attributedText = nil
-            outputLabel.text = nil
-            outputLabel.textColor = outputColor
-            outputLabel.lineBreakMode = .byCharWrapping
-            outputScrollView.alwaysBounceHorizontal = false
-            outputScrollView.showsHorizontalScrollIndicator = false
-            outputUsesUnwrappedLayout = false
-            outputRenderedText = nil
-            outputRenderSignature = nil
-            updateOutputLabelWidthIfNeeded()
-            outputViewportHeightConstraint?.isActive = false
-            outputUsesViewport = false
-            outputShouldAutoFollow = true
-            resetScrollPosition(outputScrollView)
-        }
-        outputContainer.isHidden = !showOutputContainer
-        if showOutputContainer {
-            animateInPlaceReveal(
-                outputContainer,
-                shouldAnimate: isExpandingTransition && !wasOutputVisible
+            ToolTimelineRowDisplayState.resetOutputState(
+                outputLabel: outputLabel,
+                outputScrollView: outputScrollView,
+                outputViewportHeightConstraint: outputViewportHeightConstraint,
+                outputColor: outputColor,
+                outputUsesUnwrappedLayout: &outputUsesUnwrappedLayout,
+                outputRenderedText: &outputRenderedText,
+                outputRenderSignature: &outputRenderSignature,
+                outputUsesViewport: &outputUsesViewport,
+                outputShouldAutoFollow: &outputShouldAutoFollow
             )
-        } else {
-            resetRevealAppearance(outputContainer)
+            updateOutputLabelWidthIfNeeded()
         }
+        ToolTimelineRowDisplayState.applyContainerVisibility(
+            outputContainer,
+            shouldShow: showOutputContainer,
+            isExpandingTransition: isExpandingTransition,
+            wasVisible: wasOutputVisible
+        )
 
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
@@ -1253,32 +910,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
         updateExpandFloatingButtonVisibility()
 
-        let symbolName: String
-        let statusColor: UIColor
-        if !configuration.isDone {
-            symbolName = "play.circle.fill"
-            statusColor = UIColor(Color.themeBlue)
-        } else if configuration.isError {
-            symbolName = "xmark.circle.fill"
-            statusColor = UIColor(Color.themeRed)
-        } else {
-            symbolName = "checkmark.circle.fill"
-            statusColor = UIColor(Color.themeGreen)
-        }
-
-        statusImageView.image = UIImage(systemName: symbolName)
-        statusImageView.tintColor = statusColor
-
-        if !configuration.isDone {
-            borderView.backgroundColor = UIColor(Color.themeBgHighlight.opacity(0.75))
-            borderView.layer.borderColor = UIColor(Color.themeBlue.opacity(0.25)).cgColor
-        } else if configuration.isError {
-            borderView.backgroundColor = UIColor(Color.themeRed.opacity(0.08))
-            borderView.layer.borderColor = UIColor(Color.themeRed.opacity(0.25)).cgColor
-        } else {
-            borderView.backgroundColor = UIColor(Color.themeGreen.opacity(0.06))
-            borderView.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
-        }
+        ToolTimelineRowDisplayState.applyStatusAppearance(
+            isDone: configuration.isDone,
+            isError: configuration.isError,
+            statusImageView: statusImageView,
+            borderView: borderView
+        )
     }
 
     private func renderExpandedBashMode(
@@ -1289,115 +926,78 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputColor: UIColor,
         wasOutputVisible: Bool
     ) -> ExpandedRenderVisibility {
-        var showCommandContainer = false
-        var showOutputContainer = false
+        var localCommandRenderSignature = commandRenderSignature
+        var localOutputRenderSignature = outputRenderSignature
+        var localOutputRenderedText = outputRenderedText
+        var localOutputUsesUnwrappedLayout = outputUsesUnwrappedLayout
+        var localOutputUsesViewport = outputUsesViewport
+        var localOutputShouldAutoFollow = outputShouldAutoFollow
+        var outputDidTextChange = false
 
-        if let command, !command.isEmpty {
-            let displayCmd = Self.displayCommandText(command)
-            let signature = Self.commandSignature(displayCommand: displayCmd)
-            if signature != commandRenderSignature {
-                if displayCmd.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
-                    commandLabel.attributedText = ToolRowTextRenderer.shellHighlighted(displayCmd)
-                } else {
-                    commandLabel.attributedText = nil
-                    commandLabel.text = displayCmd
-                    commandLabel.textColor = UIColor(Color.themeFg)
-                }
-                commandRenderSignature = signature
-            }
-            showCommandContainer = true
-        } else {
-            commandRenderSignature = nil
-        }
-
-        if let output, !output.isEmpty {
-            let displayOutput = Self.displayOutputText(output)
-            let signature = Self.outputSignature(
-                displayOutput: displayOutput,
-                isError: configuration.isError,
-                unwrapped: unwrapped
-            )
-
-            var textChanged = false
-            if signature != outputRenderSignature {
-                let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                    displayOutput,
-                    isError: configuration.isError
-                )
-                let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
-                let prevOutputRendered = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
-                textChanged = prevOutputRendered != nextRendered
-
-                ToolRowTextRenderer.applyANSIOutputPresentation(
-                    presentation,
-                    to: outputLabel,
-                    plainTextColor: outputColor
-                )
-                outputRenderSignature = signature
-                outputRenderedText = unwrapped ? nextRendered : nil
-            }
-
-            if unwrapped {
-                outputLabel.lineBreakMode = .byClipping
-                outputScrollView.alwaysBounceHorizontal = true
-                outputScrollView.showsHorizontalScrollIndicator = true
-                outputUsesUnwrappedLayout = true
-            } else {
-                outputLabel.lineBreakMode = .byCharWrapping
-                outputScrollView.alwaysBounceHorizontal = false
-                outputScrollView.showsHorizontalScrollIndicator = false
-                outputUsesUnwrappedLayout = false
-                outputRenderedText = nil
-            }
-            updateOutputLabelWidthIfNeeded()
-            outputViewportHeightConstraint?.isActive = true
-            outputUsesViewport = true
-            showOutputContainer = true
-            if !wasOutputVisible { outputShouldAutoFollow = true }
-            if textChanged { scheduleOutputAutoScrollToBottomIfNeeded() }
-        } else {
-            outputRenderSignature = nil
-        }
-
-        // Bash expanded content uses command + output containers only.
-        hideExpandedContainer(outputColor: outputColor)
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: false,
-            showCommandContainer: showCommandContainer,
-            showOutputContainer: showOutputContainer
+        let visibility = ToolTimelineRowExpandedRenderer.renderBashMode(
+            command: command,
+            output: output,
+            unwrapped: unwrapped,
+            isError: configuration.isError,
+            outputColor: outputColor,
+            commandTextColor: UIColor(Color.themeFg),
+            wasOutputVisible: wasOutputVisible,
+            commandLabel: commandLabel,
+            outputLabel: outputLabel,
+            outputScrollView: outputScrollView,
+            commandRenderSignature: &localCommandRenderSignature,
+            outputRenderSignature: &localOutputRenderSignature,
+            outputRenderedText: &localOutputRenderedText,
+            outputUsesUnwrappedLayout: &localOutputUsesUnwrappedLayout,
+            outputUsesViewport: &localOutputUsesViewport,
+            outputShouldAutoFollow: &localOutputShouldAutoFollow,
+            outputDidTextChange: &outputDidTextChange,
+            outputViewportHeightConstraint: outputViewportHeightConstraint,
+            hideExpandedContainer: { self.hideExpandedContainer(outputColor: outputColor) }
         )
+
+        commandRenderSignature = localCommandRenderSignature
+        outputRenderSignature = localOutputRenderSignature
+        outputRenderedText = localOutputRenderedText
+        outputUsesUnwrappedLayout = localOutputUsesUnwrappedLayout
+        outputUsesViewport = localOutputUsesViewport
+        outputShouldAutoFollow = localOutputShouldAutoFollow
+
+        if visibility.showOutputContainer {
+            updateOutputLabelWidthIfNeeded()
+        }
+        if outputDidTextChange {
+            scheduleOutputAutoScrollToBottomIfNeeded()
+        }
+
+        return visibility
     }
 
     private func renderExpandedDiffMode(lines: [DiffLine], path: String?) -> ExpandedRenderVisibility {
-        let signature = Self.diffSignature(lines: lines, path: path)
-        let shouldRerender = signature != expandedRenderSignature
-            || expandedViewportMode != .diff
-            || expandedLabel.attributedText == nil
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        showExpandedLabel()
-        if shouldRerender {
-            let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
-            expandedLabel.text = nil
-            expandedLabel.attributedText = diffText
-            expandedRenderedText = diffText.string
-            expandedRenderSignature = signature
-        }
-
-        expandedLabel.lineBreakMode = .byClipping
-        expandedScrollView.alwaysBounceHorizontal = true
-        expandedScrollView.showsHorizontalScrollIndicator = true
-        expandedViewportMode = .diff
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldRerender { resetScrollPosition(expandedScrollView) }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let visibility = ToolTimelineRowExpandedRenderer.renderDiffMode(
+            lines: lines,
+            path: path,
+            expandedLabel: expandedLabel,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isCurrentModeDiff: expandedViewportMode == .diff,
+            showExpandedLabel: showExpandedLabel,
+            setModeDiff: { self.expandedViewportMode = .diff },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport
         )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        return visibility
     }
 
     private func renderExpandedCodeMode(
@@ -1405,109 +1005,89 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         language: SyntaxLanguage?,
         startLine: Int?
     ) -> ExpandedRenderVisibility {
-        let displayText = Self.displayOutputText(text)
-        let resolvedStartLine = startLine ?? 1
-        let signature = Self.codeSignature(
-            displayText: displayText,
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolTimelineRowExpandedRenderer.renderCodeMode(
+            text: text,
             language: language,
-            startLine: resolvedStartLine
+            startLine: startLine,
+            expandedLabel: expandedLabel,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isCurrentModeCode: expandedViewportMode == .code,
+            showExpandedLabel: showExpandedLabel,
+            setModeCode: { self.expandedViewportMode = .code },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport
         )
-        let shouldRerender = signature != expandedRenderSignature
-            || expandedViewportMode != .code
-            || expandedLabel.attributedText == nil
 
-        showExpandedLabel()
-        if shouldRerender {
-            let codeText = ToolRowTextRenderer.makeCodeAttributedText(
-                text: displayText,
-                language: language,
-                startLine: resolvedStartLine
-            )
-            expandedLabel.text = nil
-            expandedLabel.attributedText = codeText
-            expandedRenderedText = codeText.string
-            expandedRenderSignature = signature
-        }
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
-        expandedLabel.lineBreakMode = .byClipping
-        expandedScrollView.alwaysBounceHorizontal = true
-        expandedScrollView.showsHorizontalScrollIndicator = true
-        expandedViewportMode = .code
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldRerender { resetScrollPosition(expandedScrollView) }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
-        )
+        return visibility
     }
 
     private func renderExpandedMarkdownMode(
         text: String,
         wasExpandedVisible: Bool
     ) -> ExpandedRenderVisibility {
-        let signature = Self.markdownSignature(text)
-        let shouldRerender = signature != expandedRenderSignature
-            || !expandedUsesMarkdownLayout
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        showExpandedMarkdown()
-        // Markdown expanded content should support native UITextView selection
-        // on double-tap across tool surfaces.
-        setExpandedContainerTapCopyGestureEnabled(false)
-
-        expandedRenderedText = text
-        updateExpandedLabelWidthIfNeeded()
-        if shouldRerender {
-            expandedMarkdownView.apply(configuration: .init(
-                content: text,
-                isStreaming: false,
-                themeID: ThemeRuntimeState.currentThemeID()
-            ))
-            expandedRenderSignature = signature
-        }
-
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        expandedViewportMode = .text
-        showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = true }
-        if shouldRerender { scheduleExpandedAutoScrollToBottomIfNeeded() }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let visibility = ToolTimelineRowExpandedRenderer.renderMarkdownMode(
+            text: text,
+            expandedMarkdownView: expandedMarkdownView,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            wasExpandedVisible: wasExpandedVisible,
+            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+            showExpandedMarkdown: showExpandedMarkdown,
+            setExpandedContainerTapCopyGestureEnabled: setExpandedContainerTapCopyGestureEnabled,
+            setModeText: { self.expandedViewportMode = .text },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
         )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        return visibility
     }
 
     private func renderExpandedTodoMode(output: String) -> ExpandedRenderVisibility {
-        let signature = Self.todoSignature(output)
-        let shouldReinstall = signature != expandedRenderSignature
-            || !expandedUsesReadMediaLayout
-            || expandedReadMediaContentView == nil
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
 
-        showExpandedHostedView()
-        expandedRenderedText = output
-        if shouldReinstall {
-            installExpandedTodoView(output: output)
-            expandedRenderSignature = signature
-        }
-
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        expandedViewportMode = .text
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldReinstall { resetScrollPosition(expandedScrollView) }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
+        let visibility = ToolTimelineRowExpandedRenderer.renderTodoMode(
+            output: output,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+            showExpandedHostedView: showExpandedHostedView,
+            installExpandedTodoView: installExpandedTodoView(output:),
+            setModeText: { self.expandedViewportMode = .text },
+            showExpandedViewport: showExpandedViewport
         )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        return visibility
     }
 
     private func renderExpandedReadMediaMode(
@@ -1516,40 +1096,32 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         startLine: Int,
         isError: Bool
     ) -> ExpandedRenderVisibility {
-        let signature = Self.readMediaSignature(
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolTimelineRowExpandedRenderer.renderReadMediaMode(
             output: output,
             filePath: filePath,
             startLine: startLine,
-            isError: isError
+            isError: isError,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
+            showExpandedHostedView: showExpandedHostedView,
+            installExpandedReadMediaView: installExpandedReadMediaView(output:isError:filePath:startLine:),
+            setModeText: { self.expandedViewportMode = .text },
+            showExpandedViewport: showExpandedViewport
         )
-        let shouldReinstall = signature != expandedRenderSignature
-            || !expandedUsesReadMediaLayout
-            || expandedReadMediaContentView == nil
 
-        showExpandedHostedView()
-        expandedRenderedText = output
-        if shouldReinstall {
-            installExpandedReadMediaView(
-                output: output,
-                isError: isError,
-                filePath: filePath,
-                startLine: startLine
-            )
-            expandedRenderSignature = signature
-        }
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        expandedViewportMode = .text
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldReinstall { resetScrollPosition(expandedScrollView) }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
-        )
+        return visibility
     }
 
     private func renderExpandedTextMode(
@@ -1559,82 +1131,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputColor: UIColor,
         wasExpandedVisible: Bool
     ) -> ExpandedRenderVisibility {
-        let displayText = Self.displayOutputText(text)
-        let signature = Self.textSignature(
-            displayText: displayText,
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolTimelineRowExpandedRenderer.renderTextMode(
+            text: text,
             language: language,
-            isError: configuration.isError
+            isError: configuration.isError,
+            outputColor: outputColor,
+            expandedLabel: expandedLabel,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            wasExpandedVisible: wasExpandedVisible,
+            isCurrentModeText: expandedViewportMode == .text,
+            isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            showExpandedLabel: showExpandedLabel,
+            setModeText: { self.expandedViewportMode = .text },
+            updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
+            showExpandedViewport: showExpandedViewport,
+            scheduleExpandedAutoScrollToBottomIfNeeded: scheduleExpandedAutoScrollToBottomIfNeeded
         )
-        let shouldRerender = signature != expandedRenderSignature
-            || expandedViewportMode != .text
-            || expandedUsesMarkdownLayout
-            || expandedUsesReadMediaLayout
-            || (expandedLabel.attributedText == nil && expandedLabel.text == nil)
 
-        showExpandedLabel()
-        if shouldRerender {
-            let presentation: ToolRowTextRenderer.ANSIOutputPresentation
-            if let language, !configuration.isError {
-                presentation = ToolRowTextRenderer.makeSyntaxOutputPresentation(
-                    displayText,
-                    language: language
-                )
-            } else {
-                presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                    displayText,
-                    isError: configuration.isError
-                )
-            }
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
-            ToolRowTextRenderer.applyANSIOutputPresentation(
-                presentation,
-                to: expandedLabel,
-                plainTextColor: outputColor
-            )
-            expandedRenderedText = presentation.attributedText?.string ?? presentation.plainText ?? ""
-            expandedRenderSignature = signature
-        }
-
-        expandedLabel.lineBreakMode = .byCharWrapping
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        expandedViewportMode = .text
-        updateExpandedLabelWidthIfNeeded()
-        showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = true }
-        if shouldRerender { scheduleExpandedAutoScrollToBottomIfNeeded() }
-
-        return ExpandedRenderVisibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
-        )
-    }
-
-    private func animateInPlaceReveal(_ view: UIView, shouldAnimate: Bool) {
-        guard shouldAnimate else {
-            resetRevealAppearance(view)
-            return
-        }
-
-        view.layer.removeAnimation(forKey: "tool.reveal")
-        // Keep reveal almost imperceptible: tiny in-place opacity settle only.
-        view.alpha = 0.97
-
-        UIView.animate(
-            withDuration: ToolRowExpansionAnimation.contentRevealDuration,
-            delay: ToolRowExpansionAnimation.contentRevealDelay,
-            options: [.allowUserInteraction, .curveLinear, .beginFromCurrentState]
-        ) {
-            // Pure in-place fade (no transform/translation), so panels feel
-            // like they open within the row rather than slide in.
-            view.alpha = 1
-        }
-    }
-
-    private func resetRevealAppearance(_ view: UIView) {
-        view.layer.removeAnimation(forKey: "tool.reveal")
-        view.alpha = 1
+        return visibility
     }
 
     private func updateExpandFloatingButtonVisibility() {
@@ -1715,7 +1241,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     @objc private func handleImagePreviewTap() {
         guard let image = imagePreviewImageView.image else { return }
-        presentFullScreenImage(image)
+        ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
@@ -1759,49 +1285,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private var supportsFullScreenPreview: Bool {
-        switch currentConfiguration.toolNamePrefix {
-        case "read", "write", "edit":
-            return true
-        default:
-            return false
-        }
+        ToolTimelineRowFullScreenSupport.supportsPreview(
+            toolNamePrefix: currentConfiguration.toolNamePrefix
+        )
     }
 
     private var fullScreenContent: FullScreenCodeContent? {
-        guard currentConfiguration.isExpanded,
-              supportsFullScreenPreview,
-              let content = currentConfiguration.expandedContent else {
-            return nil
-        }
-
-        switch content {
-        case .diff(let lines, let path):
-            let newText = outputCopyText ?? DiffEngine.formatUnified(lines)
-            return .diff(
-                oldText: "",
-                newText: newText,
-                filePath: path,
-                precomputedLines: lines
-            )
-
-        case .markdown(let text):
-            guard !text.isEmpty else { return nil }
-            // Extract filePath from code case context — markdown doesn't carry filePath
-            return .markdown(content: text, filePath: nil)
-
-        case .code(let text, let language, let startLine, let filePath):
-            let copyText = outputCopyText ?? text
-            guard !copyText.isEmpty else { return nil }
-            return .code(
-                content: copyText,
-                language: language?.displayName,
-                filePath: filePath,
-                startLine: startLine ?? 1
-            )
-
-        case .readMedia, .todoCard, .bash, .text:
-            return nil
-        }
+        guard supportsFullScreenPreview else { return nil }
+        return ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: currentConfiguration,
+            outputCopyText: outputCopyText
+        )
     }
 
     private var canShowFullScreenContent: Bool {
@@ -1809,179 +1303,61 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     private func showFullScreenContent() {
-        guard let content = fullScreenContent,
-              let presenter = nearestViewController() else {
+        guard let content = fullScreenContent else {
             return
         }
 
-        let controller = FullScreenCodeViewController(content: content)
-        // Use .overFullScreen to keep the presenting VC in the window hierarchy.
-        // .fullScreen removes the presenter's view, which triggers SwiftUI
-        // onDisappear/onAppear on the ChatView — causing a full session
-        // disconnect + reconnect cycle and potential session routing bugs.
-        controller.modalPresentationStyle = .overFullScreen
-        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
-        presenter.present(controller, animated: true)
-    }
-
-    private func presentFullScreenImage(_ image: UIImage) {
-        guard let presenter = nearestViewController() else { return }
-        let controller = FullScreenImageViewController(image: image)
-        // Use .overFullScreen — see showFullScreenContent() comment.
-        controller.modalPresentationStyle = .overFullScreen
-        presenter.present(controller, animated: true)
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let controller = current as? UIViewController {
-                return controller
-            }
-            responder = current.next
-        }
-        return nil
-    }
-
-    /// Walk up the view hierarchy to find the enclosing UICollectionView and
-    /// invalidate its layout so self-sizing cells get re-measured.
-    private func invalidateEnclosingCollectionViewLayout() {
-        var view: UIView? = superview
-        while let current = view {
-            if let collectionView = current as? UICollectionView {
-                UIView.performWithoutAnimation {
-                    collectionView.collectionViewLayout.invalidateLayout()
-                    collectionView.layoutIfNeeded()
-                }
-                return
-            }
-            view = current.superview
-        }
-    }
-
-    private func contextMenuTarget(for interactionView: UIView?) -> ContextMenuTarget? {
-        guard let interactionView else {
-            return nil
-        }
-
-        if interactionView === commandContainer {
-            return .command
-        }
-
-        if interactionView === outputContainer {
-            return .output
-        }
-
-        if interactionView === expandedContainer {
-            return .expanded
-        }
-
-        if interactionView === imagePreviewContainer {
-            return .imagePreview
-        }
-
-        return nil
-    }
-
-    private func feedbackView(for target: ContextMenuTarget) -> UIView {
-        switch target {
-        case .command:
-            commandContainer
-        case .output:
-            outputContainer
-        case .expanded:
-            expandedContainer
-        case .imagePreview:
-            imagePreviewContainer
-        }
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
     }
 
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {
         let command = commandCopyText
         let output = outputCopyText
 
-        var actions: [UIMenuElement] = []
-
-        switch target {
-        case .command:
-            if let command {
-                actions.append(
-                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                        guard let self else { return }
-                        self.copy(text: command, feedbackView: self.feedbackView(for: target))
-                    }
+        return ToolTimelineRowContextMenuBuilder.menu(
+            target: target,
+            hasCommand: command != nil,
+            hasOutput: output != nil,
+            canShowFullScreenContent: canShowFullScreenContent,
+            hasPreviewImage: imagePreviewImageView.image != nil,
+            onCopyCommand: { [weak self] copyTarget in
+                guard let self, let command else { return }
+                let feedbackView = ToolTimelineRowContextMenuTargeting.feedbackView(
+                    for: copyTarget,
+                    commandContainer: self.commandContainer,
+                    outputContainer: self.outputContainer,
+                    expandedContainer: self.expandedContainer,
+                    imagePreviewContainer: self.imagePreviewContainer
                 )
-            }
-
-            if let output {
-                actions.append(
-                    UIAction(title: "Copy Output", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                        guard let self else { return }
-                        self.copy(text: output, feedbackView: self.feedbackView(for: target))
-                    }
+                self.copy(text: command, feedbackView: feedbackView)
+            },
+            onCopyOutput: { [weak self] copyTarget in
+                guard let self, let output else { return }
+                let feedbackView = ToolTimelineRowContextMenuTargeting.feedbackView(
+                    for: copyTarget,
+                    commandContainer: self.commandContainer,
+                    outputContainer: self.outputContainer,
+                    expandedContainer: self.expandedContainer,
+                    imagePreviewContainer: self.imagePreviewContainer
                 )
+                self.copy(text: output, feedbackView: feedbackView)
+            },
+            onOpenFullScreenContent: { [weak self] in
+                self?.showFullScreenContent()
+            },
+            onViewFullScreenImage: { [weak self] in
+                guard let self, let image = self.imagePreviewImageView.image else { return }
+                ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
+            },
+            onCopyImage: { [weak self] in
+                guard let image = self?.imagePreviewImageView.image else { return }
+                UIPasteboard.general.image = image
+            },
+            onSaveImage: { [weak self] in
+                guard let image = self?.imagePreviewImageView.image else { return }
+                PhotoLibrarySaver.save(image)
             }
-
-        case .output, .expanded:
-            guard let output else {
-                return nil
-            }
-
-            if target == .expanded,
-               canShowFullScreenContent {
-                actions.append(
-                    UIAction(
-                        title: "Open Full Screen",
-                        image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
-                    ) { [weak self] _ in
-                        self?.showFullScreenContent()
-                    }
-                )
-            }
-
-            actions.append(
-                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                    guard let self else { return }
-                    self.copy(text: output, feedbackView: self.feedbackView(for: target))
-                }
-            )
-
-            if let command {
-                actions.append(
-                    UIAction(title: "Copy Command", image: UIImage(systemName: "terminal")) { [weak self] _ in
-                        guard let self else { return }
-                        self.copy(text: command, feedbackView: self.feedbackView(for: target))
-                    }
-                )
-            }
-
-        case .imagePreview:
-            guard let image = imagePreviewImageView.image else { return nil }
-            actions.append(
-                UIAction(
-                    title: "View Full Screen",
-                    image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
-                ) { [weak self] _ in
-                    self?.presentFullScreenImage(image)
-                }
-            )
-            actions.append(
-                UIAction(title: "Copy Image", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.image = image
-                }
-            )
-            actions.append(
-                UIAction(title: "Save to Photos", image: UIImage(systemName: "square.and.arrow.down")) { _ in
-                    PhotoLibrarySaver.save(image)
-                }
-            )
-        }
-
-        guard !actions.isEmpty else {
-            return nil
-        }
-
-        return UIMenu(title: "", children: actions)
+        )
     }
 
     private func copy(text: String, feedbackView: UIView) {
@@ -1995,7 +1371,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                   !self.outputContainer.isHidden else {
                 return
             }
-            self.scrollToBottom(self.outputScrollView, animated: false)
+            ToolTimelineRowUIHelpers.scrollToBottom(self.outputScrollView, animated: false)
         }
     }
 
@@ -2006,75 +1382,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                   !self.expandedContainer.isHidden else {
                 return
             }
-            self.scrollToBottom(self.expandedScrollView, animated: false)
+            ToolTimelineRowUIHelpers.scrollToBottom(self.expandedScrollView, animated: false)
         }
-    }
-
-    private func clampScrollOffsetIfNeeded(_ scrollView: UIScrollView) {
-        let inset = scrollView.adjustedContentInset
-        let viewportWidth = max(0, scrollView.bounds.width - inset.left - inset.right)
-        let viewportHeight = max(0, scrollView.bounds.height - inset.top - inset.bottom)
-
-        let minX = -inset.left
-        let minY = -inset.top
-        let maxX = max(minX, scrollView.contentSize.width - viewportWidth + inset.right)
-        let maxY = max(minY, scrollView.contentSize.height - viewportHeight + inset.bottom)
-
-        var clamped = scrollView.contentOffset
-        clamped.x = min(max(clamped.x, minX), maxX)
-        clamped.y = min(max(clamped.y, minY), maxY)
-
-        guard abs(clamped.x - scrollView.contentOffset.x) > 0.5
-                || abs(clamped.y - scrollView.contentOffset.y) > 0.5 else {
-            return
-        }
-
-        scrollView.setContentOffset(clamped, animated: false)
-    }
-
-    private func resetScrollPosition(_ scrollView: UIScrollView) {
-        let inset = scrollView.adjustedContentInset
-        scrollView.setContentOffset(
-            CGPoint(x: -inset.left, y: -inset.top),
-            animated: false
-        )
-    }
-
-    private func scrollToBottom(_ scrollView: UIScrollView, animated: Bool) {
-        let inset = scrollView.adjustedContentInset
-        let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
-        guard viewportHeight > 0 else { return }
-
-        let bottomY = max(
-            -inset.top,
-            scrollView.contentSize.height - viewportHeight + inset.bottom
-        )
-        scrollView.setContentOffset(
-            CGPoint(x: -inset.left, y: bottomY),
-            animated: animated
-        )
-    }
-
-    private func isNearBottom(_ scrollView: UIScrollView) -> Bool {
-        let inset = scrollView.adjustedContentInset
-        let viewportHeight = scrollView.bounds.height - inset.top - inset.bottom
-        guard viewportHeight > 0 else { return true }
-
-        let bottomY = scrollView.contentOffset.y + inset.top + viewportHeight
-        let distance = max(0, scrollView.contentSize.height - bottomY)
-        return distance <= Self.autoFollowBottomThreshold
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if scrollView === outputScrollView {
-            outputShouldAutoFollow = isNearBottom(outputScrollView)
+            outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(outputScrollView)
         } else if scrollView === expandedScrollView {
-            expandedShouldAutoFollow = isNearBottom(expandedScrollView)
+            expandedShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
         }
     }
 
     private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
-        guard let symbolName = Self.toolSymbolName(for: toolNamePrefix),
+        guard let symbolName = ToolTimelineRowUIHelpers.toolSymbolName(for: toolNamePrefix),
               let baseImage = UIImage(systemName: symbolName) else {
             toolImageView.image = nil
             toolImageView.isHidden = true
@@ -2098,757 +1419,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         titleLeadingToToolConstraint?.isActive = true
     }
 
-    private static func toolSymbolName(for toolNamePrefix: String?) -> String? {
-        switch toolNamePrefix {
-        case "$":
-            return "dollarsign"
-        case "read":
-            return "magnifyingglass"
-        case "write":
-            return "pencil"
-        case "edit":
-            return "arrow.left.arrow.right"
-        case "todo":
-            return "checklist"
-        case "remember":
-            return "brain.head.profile"
-        case "recall":
-            return "brain.head.profile"
-        default:
-            return nil
-        }
-    }
-
-    private static func languageBadgeSymbolName(for badge: String?) -> String? {
-        guard let badge, !badge.isEmpty else {
-            return nil
-        }
-
-        let normalized = badge.lowercased()
-        if normalized.contains("⚠︎media") || normalized.contains("media") {
-            return "exclamationmark.triangle"
-        }
-
-        if normalized.contains("swift"), UIImage(systemName: "swift") != nil {
-            return "swift"
-        }
-
-        return Self.genericLanguageBadgeSymbolName
-    }
-
-}
-
-// MARK: - Native Expanded Tool Views (UIKit Hot Path)
-
-private final class NativeExpandedTodoView: UIView {
-    private let rootStack = UIStackView()
-    private var renderSignature: Int?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupViews()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(output: String, themeID: ThemeID) {
-        var hasher = Hasher()
-        hasher.combine(output)
-        hasher.combine(themeID.rawValue)
-        let signature = hasher.finalize()
-
-        guard signature != renderSignature else { return }
-        renderSignature = signature
-
-        let palette = themeID.palette
-        clearRows()
-
-        switch NativeExpandedTodoParser.parse(output) {
-        case .item(let item):
-            rootStack.addArrangedSubview(makeTodoItemCard(item: item, palette: palette))
-
-        case .list(let list):
-            rootStack.addArrangedSubview(makeTodoListCard(list: list, palette: palette))
-
-        case .text(let text):
-            rootStack.addArrangedSubview(
-                makePlainTextCard(
-                    text: String(text.prefix(2_000)),
-                    color: UIColor(palette.fg),
-                    palette: palette
-                )
-            )
-        }
-    }
-
-    private func setupViews() {
-        backgroundColor = .clear
-
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        rootStack.axis = .vertical
-        rootStack.alignment = .fill
-        rootStack.spacing = 8
-
-        addSubview(rootStack)
-        NSLayoutConstraint.activate([
-            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rootStack.topAnchor.constraint(equalTo: topAnchor),
-            rootStack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    private func clearRows() {
-        for view in rootStack.arrangedSubviews {
-            rootStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-    }
-
-    private func makeTodoItemCard(item: NativeExpandedTodoItem, palette: ThemePalette) -> UIView {
-        let container = makeCardContainer(palette: palette)
-
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 8
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-        ])
-
-        let topRow = UIStackView()
-        topRow.axis = .horizontal
-        topRow.alignment = .center
-        topRow.spacing = 8
-
-        let idLabel = UILabel()
-        idLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-        idLabel.textColor = UIColor(palette.cyan)
-        idLabel.text = item.displayID
-        topRow.addArrangedSubview(idLabel)
-
-        if let status = item.status, !status.isEmpty {
-            topRow.addArrangedSubview(makeStatusBadge(status: status, palette: palette))
-        }
-
-        topRow.addArrangedSubview(UIView())
-
-        if let createdAt = item.createdAt, !createdAt.isEmpty {
-            let createdLabel = UILabel()
-            createdLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            createdLabel.textColor = UIColor(palette.comment)
-            createdLabel.text = createdAt
-            topRow.addArrangedSubview(createdLabel)
-        }
-
-        stack.addArrangedSubview(topRow)
-
-        if let title = item.title, !title.isEmpty {
-            let titleLabel = UILabel()
-            titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-            titleLabel.textColor = UIColor(palette.fg)
-            titleLabel.numberOfLines = 0
-            titleLabel.text = title
-            stack.addArrangedSubview(titleLabel)
-        }
-
-        if !item.normalizedTags.isEmpty {
-            let tagsLabel = UILabel()
-            tagsLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            tagsLabel.textColor = UIColor(palette.blue)
-            tagsLabel.numberOfLines = 2
-            let visibleTags = item.normalizedTags.prefix(10).joined(separator: ", ")
-            tagsLabel.text = "tags: \(visibleTags)"
-            stack.addArrangedSubview(tagsLabel)
-        }
-
-        let body = item.trimmedBody
-        if !body.isEmpty {
-            let bodyLabel = UILabel()
-            bodyLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            bodyLabel.textColor = UIColor(palette.fg)
-            bodyLabel.numberOfLines = 0
-            bodyLabel.text = String(body.prefix(8_000))
-            stack.addArrangedSubview(bodyLabel)
-
-            if body.count > 8_000 {
-                let truncated = UILabel()
-                truncated.font = .systemFont(ofSize: 10, weight: .regular)
-                truncated.textColor = UIColor(palette.comment)
-                truncated.text = "… body truncated"
-                stack.addArrangedSubview(truncated)
-            }
-        }
-
-        return container
-    }
-
-    private func makeTodoListCard(list: NativeExpandedTodoListPayload, palette: ThemePalette) -> UIView {
-        let container = makeCardContainer(palette: palette)
-
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 8
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-        ])
-
-        for section in list.sections {
-            guard !section.items.isEmpty else { continue }
-
-            let sectionTitle = UILabel()
-            sectionTitle.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
-            sectionTitle.textColor = UIColor(palette.comment)
-            sectionTitle.text = section.title
-            stack.addArrangedSubview(sectionTitle)
-
-            for item in section.items.prefix(12) {
-                let row = UILabel()
-                row.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                row.textColor = UIColor(palette.fg)
-                row.numberOfLines = 1
-                row.lineBreakMode = .byTruncatingTail
-                row.text = item.listSummaryLine
-                stack.addArrangedSubview(row)
-            }
-
-            if section.items.count > 12 {
-                let more = UILabel()
-                more.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-                more.textColor = UIColor(palette.comment)
-                more.text = "+\(section.items.count - 12) more"
-                stack.addArrangedSubview(more)
-            }
-        }
-
-        if stack.arrangedSubviews.isEmpty {
-            stack.addArrangedSubview(
-                makePlainTextCard(
-                    text: "No todo items in output",
-                    color: UIColor(palette.comment),
-                    palette: palette
-                )
-            )
-        }
-
-        return container
-    }
-
-    private func makePlainTextCard(text: String, color: UIColor, palette: ThemePalette) -> UIView {
-        let container = makeCardContainer(palette: palette)
-
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        label.textColor = color
-        label.numberOfLines = 0
-        label.text = text
-
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-        ])
-
-        return container
-    }
-
-    private func makeCardContainer(palette: ThemePalette) -> UIView {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.cornerRadius = 8
-        container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-        return container
-    }
-
-    private func makeStatusBadge(status: String, palette: ThemePalette) -> UIView {
-        let normalized = status.lowercased()
-        let tint: UIColor
-        switch normalized {
-        case "done", "closed":
-            tint = UIColor(palette.green)
-        case "in-progress", "in_progress", "inprogress":
-            tint = UIColor(palette.orange)
-        case "open":
-            tint = UIColor(palette.blue)
-        default:
-            tint = UIColor(palette.comment)
-        }
-
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
-        label.textColor = tint
-        label.text = status
-
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = tint.withAlphaComponent(0.12)
-        container.layer.cornerRadius = 8
-        container.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
-        ])
-
-        return container
-    }
-}
-
-private enum NativeExpandedTodoParsed {
-    case item(NativeExpandedTodoItem)
-    case list(NativeExpandedTodoListPayload)
-    case text(String)
-}
-
-private struct NativeExpandedTodoItem: Decodable {
-    let id: String?
-    let title: String?
-    let tags: [String]?
-    let status: String?
-    let createdAt: String?
-    let body: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case tags
-        case status
-        case createdAt = "created_at"
-        case body
-    }
-
-    var looksLikeTodo: Bool {
-        id != nil || title != nil || status != nil || createdAt != nil || body != nil || !(tags ?? []).isEmpty
-    }
-
-    var displayID: String {
-        let trimmed = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "TODO-unknown" : trimmed
-    }
-
-    var normalizedTags: [String] {
-        tags?.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? []
-    }
-
-    var trimmedBody: String {
-        (body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var listSummaryLine: String {
-        var parts: [String] = [displayID]
-        if let status, !status.isEmpty {
-            parts.append("[\(status)]")
-        }
-        if let title, !title.isEmpty {
-            parts.append(title)
-        }
-        return parts.joined(separator: " ")
-    }
-}
-
-private struct NativeExpandedTodoSection {
-    let title: String
-    let items: [NativeExpandedTodoItem]
-}
-
-private struct NativeExpandedTodoListPayload: Decodable {
-    let assigned: [NativeExpandedTodoItem]?
-    let open: [NativeExpandedTodoItem]?
-    let closed: [NativeExpandedTodoItem]?
-
-    var hasSections: Bool {
-        assigned != nil || open != nil || closed != nil
-    }
-
-    var sections: [NativeExpandedTodoSection] {
-        [
-            NativeExpandedTodoSection(title: "Assigned", items: assigned ?? []),
-            NativeExpandedTodoSection(title: "Open", items: open ?? []),
-            NativeExpandedTodoSection(title: "Closed", items: closed ?? []),
-        ]
-    }
-}
-
-private enum NativeExpandedTodoParser {
-    static func parse(_ output: String) -> NativeExpandedTodoParsed {
-        guard let data = output.data(using: .utf8) else {
-            return .text(output)
-        }
-
-        let decoder = JSONDecoder()
-
-        if let list = try? decoder.decode(NativeExpandedTodoListPayload.self, from: data), list.hasSections {
-            return .list(list)
-        }
-
-        if let item = try? decoder.decode(NativeExpandedTodoItem.self, from: data), item.looksLikeTodo {
-            return .item(item)
-        }
-
-        return .text(output)
-    }
-}
-
-private final class NativeExpandedReadMediaView: UIView {
-    private let rootStack = UIStackView()
-    private var decodeTasks: [Task<Void, Never>] = []
-    private var renderGeneration = 0
-    private var renderSignature: Int?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupViews()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(
-        output: String,
-        isError: Bool,
-        filePath: String?,
-        startLine: Int,
-        themeID: ThemeID
-    ) {
-        var hasher = Hasher()
-        hasher.combine(output)
-        hasher.combine(isError)
-        hasher.combine(filePath ?? "")
-        hasher.combine(startLine)
-        hasher.combine(themeID.rawValue)
-        let signature = hasher.finalize()
-
-        guard signature != renderSignature else { return }
-        renderSignature = signature
-
-        cancelDecodeTasks()
-        clearRows()
-
-        let palette = themeID.palette
-        let parsed = NativeExpandedReadMediaParser.parse(output)
-
-        if let filePath, !filePath.isEmpty {
-            let pathLabel = UILabel()
-            pathLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-            pathLabel.textColor = UIColor(palette.comment)
-            pathLabel.numberOfLines = 1
-            pathLabel.lineBreakMode = .byTruncatingMiddle
-            pathLabel.text = filePath.shortenedPath
-            rootStack.addArrangedSubview(pathLabel)
-        }
-
-        if !parsed.strippedText.isEmpty {
-            let textLabel = UILabel()
-            textLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
-            textLabel.numberOfLines = 0
-            textLabel.text = String(parsed.strippedText.prefix(3_000))
-            rootStack.addArrangedSubview(makeCardView(contentView: textLabel, palette: palette))
-        }
-
-        if !parsed.images.isEmpty {
-            let countLabel = UILabel()
-            countLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
-            countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = "Images (\(parsed.images.count))"
-            rootStack.addArrangedSubview(countLabel)
-
-            let visibleImages = parsed.images.prefix(4)
-            for image in visibleImages {
-                rootStack.addArrangedSubview(makeImageCard(image: image, palette: palette))
-            }
-            if parsed.images.count > visibleImages.count {
-                let more = UILabel()
-                more.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-                more.textColor = UIColor(palette.comment)
-                more.text = "+\(parsed.images.count - visibleImages.count) more image attachment(s)"
-                rootStack.addArrangedSubview(more)
-            }
-        }
-
-        if !parsed.audio.isEmpty {
-            let countLabel = UILabel()
-            countLabel.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
-            countLabel.textColor = UIColor(palette.comment)
-            countLabel.text = "Audio (\(parsed.audio.count))"
-            rootStack.addArrangedSubview(countLabel)
-
-            for (index, clip) in parsed.audio.prefix(6).enumerated() {
-                let row = UILabel()
-                row.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                row.textColor = UIColor(palette.fg)
-                row.numberOfLines = 1
-                row.lineBreakMode = .byTruncatingTail
-                row.text = "🔊 Clip \(index + 1) • \(clip.mimeType ?? "audio/unknown")"
-                rootStack.addArrangedSubview(makeCardView(contentView: row, palette: palette))
-            }
-            if parsed.audio.count > 6 {
-                let more = UILabel()
-                more.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-                more.textColor = UIColor(palette.comment)
-                more.text = "+\(parsed.audio.count - 6) more audio attachment(s)"
-                rootStack.addArrangedSubview(more)
-            }
-        }
-
-        if parsed.strippedText.isEmpty && parsed.images.isEmpty && parsed.audio.isEmpty {
-            let empty = UILabel()
-            empty.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            empty.textColor = UIColor(palette.comment)
-            empty.numberOfLines = 0
-            empty.text = "No readable media output"
-            rootStack.addArrangedSubview(makeCardView(contentView: empty, palette: palette))
-        }
-    }
-
-    private func setupViews() {
-        backgroundColor = .clear
-
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        rootStack.axis = .vertical
-        rootStack.alignment = .fill
-        rootStack.spacing = 8
-
-        addSubview(rootStack)
-        NSLayoutConstraint.activate([
-            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rootStack.topAnchor.constraint(equalTo: topAnchor),
-            rootStack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    private func makeCardView(contentView: UIView, palette: ThemePalette) -> UIView {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.cornerRadius = 8
-        container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-
-        contentView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(contentView)
-
-        NSLayoutConstraint.activate([
-            contentView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            contentView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            contentView.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            contentView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-        ])
-
-        return container
-    }
-
-    private func makeImageCard(image: ImageExtractor.ExtractedImage, palette: ThemePalette) -> UIView {
-        let card = TappableImageCard()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = UIColor(palette.bgDark)
-        card.layer.cornerRadius = 8
-        card.layer.borderWidth = 1
-        card.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-
-        NSLayoutConstraint.activate([
-            card.heightAnchor.constraint(equalToConstant: 180),
-        ])
-
-        card.configure(placeholderColor: UIColor(palette.comment))
-
-        let generation = renderGeneration
-        let base64 = image.base64
-        let task = Task { [weak self] in
-            let decoded = await Task.detached(priority: .userInitiated) {
-                ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600)
-            }.value
-
-            guard !Task.isCancelled,
-                  let self,
-                  self.renderGeneration == generation else {
-                return
-            }
-
-            card.setDecodedImage(decoded)
-        }
-
-        decodeTasks.append(task)
-        return card
-    }
-
-    private func clearRows() {
-        renderGeneration += 1
-        for view in rootStack.arrangedSubviews {
-            rootStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-    }
-
-    private func cancelDecodeTasks() {
-        for task in decodeTasks {
-            task.cancel()
-        }
-        decodeTasks.removeAll(keepingCapacity: false)
-    }
-}
-
-/// Interactive image card with tap-to-fullscreen and context menu (Copy/Save/Share).
-///
-/// Used by `NativeExpandedReadMediaView` for expanded image cards and designed
-/// to be self-contained — handles its own gestures and modal presentation.
-private final class TappableImageCard: UIView, UIContextMenuInteractionDelegate {
-    private let cardImageView = UIImageView()
-    private let placeholderLabel = UILabel()
-    private(set) var decodedImage: UIImage?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = true
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
-        addInteraction(UIContextMenuInteraction(delegate: self))
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func configure(placeholderColor: UIColor) {
-        cardImageView.translatesAutoresizingMaskIntoConstraints = false
-        cardImageView.contentMode = .scaleAspectFit
-        cardImageView.clipsToBounds = true
-        addSubview(cardImageView)
-
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        placeholderLabel.textColor = placeholderColor
-        placeholderLabel.text = "Decoding image…"
-        addSubview(placeholderLabel)
-
-        NSLayoutConstraint.activate([
-            cardImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            cardImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            cardImageView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            cardImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-
-            placeholderLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            placeholderLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-    }
-
-    @MainActor
-    func setDecodedImage(_ image: UIImage?) {
-        decodedImage = image
-        if let image {
-            cardImageView.image = image
-            placeholderLabel.isHidden = true
-        } else {
-            placeholderLabel.text = "Image preview unavailable"
-            placeholderLabel.isHidden = false
-        }
-    }
-
-    @objc private func handleTap() {
-        guard let image = decodedImage else { return }
-        presentFullScreenImage(image)
-    }
-
-    private func presentFullScreenImage(_ image: UIImage) {
-        guard let presenter = nearestViewController() else { return }
-        let controller = FullScreenImageViewController(image: image)
-        // Use .overFullScreen — see ToolTimelineRowContentView.showFullScreenContent() comment.
-        controller.modalPresentationStyle = .overFullScreen
-        presenter.present(controller, animated: true)
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let vc = current as? UIViewController { return vc }
-            responder = current.next
-        }
-        return nil
-    }
-
-    // MARK: - UIContextMenuInteractionDelegate
-
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let image = decodedImage else { return nil }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            UIMenu(title: "", children: [
-                UIAction(
-                    title: "View Full Screen",
-                    image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
-                ) { _ in
-                    self?.presentFullScreenImage(image)
-                },
-                UIAction(
-                    title: "Copy Image",
-                    image: UIImage(systemName: "doc.on.doc")
-                ) { _ in
-                    UIPasteboard.general.image = image
-                },
-                UIAction(
-                    title: "Save to Photos",
-                    image: UIImage(systemName: "square.and.arrow.down")
-                ) { _ in
-                    PhotoLibrarySaver.save(image)
-                },
-            ])
-        }
-    }
-}
-
-private struct NativeExpandedReadMediaParsed {
-    let strippedText: String
-    let images: [ImageExtractor.ExtractedImage]
-    let audio: [AudioExtractor.ExtractedAudio]
-}
-
-private enum NativeExpandedReadMediaParser {
-    static func parse(_ output: String) -> NativeExpandedReadMediaParsed {
-        let images = ImageExtractor.extract(from: output)
-        let audio = AudioExtractor.extract(from: output)
-
-        let strippedText: String
-        if images.isEmpty && audio.isEmpty {
-            strippedText = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            var text = output
-            let ranges = (images.map(\.range) + audio.map(\.range))
-                .sorted { $0.lowerBound > $1.lowerBound }
-            for range in ranges {
-                text.removeSubrange(range)
-            }
-            strippedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        return NativeExpandedReadMediaParsed(
-            strippedText: strippedText,
-            images: images,
-            audio: audio
-        )
-    }
 }
 
 extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {
@@ -2856,7 +1426,13 @@ extension ToolTimelineRowContentView: UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let target = contextMenuTarget(for: interaction.view),
+        guard let target = ToolTimelineRowContextMenuTargeting.target(
+            for: interaction.view,
+            commandContainer: commandContainer,
+            outputContainer: outputContainer,
+            expandedContainer: expandedContainer,
+            imagePreviewContainer: imagePreviewContainer
+        ),
               contextMenu(for: target) != nil else {
             return nil
         }
