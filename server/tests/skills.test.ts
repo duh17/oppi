@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -450,60 +450,47 @@ describe("SkillRegistry", () => {
   });
 
   describe("watch", () => {
-    async function nudgeWatcher(): Promise<void> {
-      // fs.watch can miss deep-tree events under load; touching the watched
-      // root dir makes the re-scan deterministic without changing semantics.
-      // Wait briefly so the original fs event arrives before the nudge resets
-      // the debounce timer.
-      await new Promise((r) => setTimeout(r, 100));
-      const marker = join(scanDir, `.watch-nudge-${Date.now()}`);
-      writeFileSync(marker, "1");
-      unlinkSync(marker);
+    async function triggerDebouncedRescan(): Promise<void> {
+      (registry as any).debouncedRescan();
+      await new Promise((r) => setTimeout(r, 120));
     }
 
-    // fs.watch is broken on Node 25 + macOS — events never fire.
-    // These tests pass on Node 22 LTS. Skip until Node fixes the regression.
-    it.skip("re-scans when a new skill is added", async () => {
+    // Node 25 + macOS has flaky fs.watch delivery in tests. Instead of
+    // asserting OS watcher behavior, assert the registry logic that watch
+    // relies on: debounced re-scan updates add/remove/modify state.
+    it("debounced re-scan picks up newly added skills", async () => {
       registry.scan();
-      registry.watch();
-      await new Promise((r) => setTimeout(r, 150));
 
-      // Create a new skill while watching
-      makeSkillDir(scanDir, "new-skill", SKILL_A);
-      await nudgeWatcher();
+      const NEW_SKILL = `---\nname: new-skill\ndescription: "A newly added skill"\n---\n# New Skill\n`;
+      makeSkillDir(scanDir, "new-skill", NEW_SKILL);
+      await triggerDebouncedRescan();
 
-      await vi.waitFor(() => {
-        expect(registry.get("new-skill")).toBeDefined();
-      }, { timeout: 5000, interval: 50 });
+      expect(registry.get("new-skill")).toBeDefined();
     });
 
-    it.skip("re-scans when a skill is removed", async () => {
-      makeSkillDir(scanDir, "doomed", SKILL_A);
+    it("debounced re-scan picks up removed skills", async () => {
+      const DOOMED_SKILL = `---\nname: doomed\ndescription: "A doomed skill"\n---\n# Doomed\n`;
+      makeSkillDir(scanDir, "doomed", DOOMED_SKILL);
       registry.scan();
-      registry.watch();
-      await new Promise((r) => setTimeout(r, 150));
+      expect(registry.get("doomed")).toBeDefined();
 
       rmSync(join(scanDir, "doomed"), { recursive: true });
-      await nudgeWatcher();
+      await triggerDebouncedRescan();
 
-      await vi.waitFor(() => {
-        expect(registry.get("doomed")).toBeUndefined();
-      }, { timeout: 5000, interval: 50 });
+      expect(registry.get("doomed")).toBeUndefined();
     });
 
-    it.skip("re-scans when SKILL.md is modified", async () => {
-      makeSkillDir(scanDir, "evolving", SKILL_A);
+    it("debounced re-scan picks up SKILL.md modifications", async () => {
+      const EVOLVING = `---\nname: evolving\ndescription: "First description"\n---\n# Evolving\n`;
+      makeSkillDir(scanDir, "evolving", EVOLVING);
       registry.scan();
-      registry.watch();
-      await new Promise((r) => setTimeout(r, 150));
+      expect(registry.get("evolving")?.description).toBe("First description");
 
-      const updated = SKILL_A.replace("First test skill", "Changed description");
+      const updated = EVOLVING.replace("First description", "Changed description");
       writeFileSync(join(scanDir, "evolving", "SKILL.md"), updated);
-      await nudgeWatcher();
+      await triggerDebouncedRescan();
 
-      await vi.waitFor(() => {
-        expect(registry.get("evolving")?.description).toBe("Changed description");
-      }, { timeout: 5000, interval: 50 });
+      expect(registry.get("evolving")?.description).toBe("Changed description");
     });
 
     it("stopWatching prevents further re-scans", async () => {

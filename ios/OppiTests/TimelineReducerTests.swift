@@ -828,7 +828,7 @@ struct TimelineReducerTests {
     }
 
     @MainActor
-    @Test func loadSessionLongThinkingStoresFullText() {
+    @Test func loadSessionLongThinkingKeepsFullPreview() {
         let reducer = TimelineReducer()
         let longThinking = String(repeating: "x", count: 600) // > maxPreviewLength
         let events = [
@@ -839,12 +839,12 @@ struct TimelineReducerTests {
         ]
         reducer.loadSession(events)
 
-        guard case .thinking(_, _, let hasMore, _) = reducer.items[0] else {
+        guard case .thinking(_, let preview, let hasMore, _) = reducer.items[0] else {
             Issue.record("Expected thinking")
             return
         }
         #expect(hasMore)
-        #expect(reducer.toolOutputStore.fullOutput(for: "t1") == longThinking)
+        #expect(preview == longThinking)
     }
 
     @MainActor
@@ -1004,10 +1004,10 @@ struct TimelineReducerTests {
         #expect(isError, "Error flag should propagate when any chunk is error")
     }
 
-    // MARK: - Thinking finalization stores full text
+    // MARK: - Thinking finalization keeps full text inline
 
     @MainActor
-    @Test func longThinkingStoresFullTextOnAgentEnd() {
+    @Test func longThinkingStaysInThinkingPreviewOnAgentEnd() {
         let reducer = TimelineReducer()
         let longThinking = String(repeating: "y", count: 600) // > maxPreviewLength
 
@@ -1015,17 +1015,17 @@ struct TimelineReducerTests {
         reducer.process(.thinkingDelta(sessionId: "s1", delta: longThinking))
         reducer.process(.agentEnd(sessionId: "s1"))
 
-        guard case .thinking(let id, _, let hasMore, let isDone) = reducer.items[0] else {
+        guard case .thinking(_, let preview, let hasMore, let isDone) = reducer.items[0] else {
             Issue.record("Expected thinking")
             return
         }
         #expect(hasMore)
         #expect(isDone)
-        #expect(reducer.toolOutputStore.fullOutput(for: id) == longThinking)
+        #expect(preview == longThinking)
     }
 
     @MainActor
-    @Test func thinkingOverflowSkipsNoOpRerenders() {
+    @Test func thinkingOverflowContinuesUpdatingPreview() {
         let reducer = TimelineReducer()
 
         let firstChunk = String(repeating: "a", count: ChatItem.maxPreviewLength + 50)
@@ -1039,7 +1039,7 @@ struct TimelineReducerTests {
         ])
 
         guard let firstItem = reducer.items.first,
-              case .thinking(let id, let previewAfterFirst, let hasMore, _) = firstItem else {
+              case .thinking(_, let previewAfterFirst, let hasMore, _) = firstItem else {
             Issue.record("Expected thinking row after first chunk")
             return
         }
@@ -1057,11 +1057,9 @@ struct TimelineReducerTests {
             return
         }
         #expect(hasMoreAfterSecond)
-        #expect(previewAfterSecond == previewAfterFirst)
-        #expect(reducer.renderVersion == afterFirst)
-
-        let fullThinking = reducer.toolOutputStore.fullOutput(for: id)
-        #expect(fullThinking.count == firstChunk.count + tailChunk.count)
+        #expect(previewAfterSecond == firstChunk + tailChunk)
+        #expect(previewAfterSecond.count > previewAfterFirst.count)
+        #expect(reducer.renderVersion > afterFirst)
     }
 
     // MARK: - Tool args stored on toolStart
@@ -1375,13 +1373,13 @@ struct TimelineReducerTests {
 
         #expect(reducer._lastLoadWasIncrementalForTesting)
         #expect(reducer.items.count == 3)
-        guard case .thinking(_, _, let hasMore, let isDone) = reducer.items[2] else {
+        guard case .thinking(_, let preview, let hasMore, let isDone) = reducer.items[2] else {
             Issue.record("Expected incremental thinking at index 2")
             return
         }
         #expect(hasMore)
         #expect(isDone)
-        #expect(reducer.toolOutputStore.fullOutput(for: "th1") == longThinking)
+        #expect(preview == longThinking)
     }
 
     @MainActor

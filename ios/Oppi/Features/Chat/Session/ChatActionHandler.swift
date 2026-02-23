@@ -356,6 +356,8 @@ final class ChatActionHandler {
 
     func compact(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task { @MainActor in
+            // Show immediate "Compacting context..." indicator before the server responds.
+            reducer.process(.compactionStart(sessionId: sessionId, reason: "manual"))
             do {
                 try await connection.compact()
                 try? await connection.requestState()

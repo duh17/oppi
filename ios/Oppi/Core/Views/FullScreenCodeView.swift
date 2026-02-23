@@ -11,6 +11,7 @@ enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
     case markdown(content: String, filePath: String?)
+    case thinking(content: String)
 }
 
 /// SwiftUI wrapper around ``FullScreenCodeViewController``.

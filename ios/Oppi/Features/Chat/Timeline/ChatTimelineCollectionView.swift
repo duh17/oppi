@@ -100,7 +100,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     let configuration: Configuration
 
     func makeUIView(context: Context) -> UICollectionView {
-        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: Self.makeLayout())
+        let collectionView = AnchoredCollectionView(frame: .zero, collectionViewLayout: Self.makeLayout())
         collectionView.backgroundColor = UIColor(Color.themeBg)
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
@@ -124,10 +124,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         Controller()
     }
 
+    /// Exposed for tests that need the same layout as the real timeline.
+    static func makeTestLayout() -> UICollectionViewLayout { makeLayout() }
+
     private static func makeLayout() -> UICollectionViewLayout {
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .fractionalWidth(1.0),
-            heightDimension: .estimated(44)
+            heightDimension: .estimated(100)
         )
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: itemSize, subitems: [item])
@@ -177,6 +180,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         private var lastObservedContentOffsetY: CGFloat?
+        private var lastDistanceFromBottom: CGFloat = 0
         private let toolOutputLoader = ExpandedToolOutputLoader()
 
         #if DEBUG
@@ -402,6 +406,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     item: itemID
                 )
             }
+
         }
 
         // MARK: - Diffing
@@ -733,8 +738,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // updateScrollState here to avoid flipping isNearBottom=false before
             // the throttled auto-scroll fires. User-initiated scroll changes
             // are still detected via scrollViewDidScroll delegate callbacks.
+            //
+            // When idle (!isBusy), only update scroll state if the user is
+            // currently attached. A detached user must not be re-attached by
+            // the idle transition — re-attachment only happens through explicit
+            // user-driven scrolls back toward the bottom.
             let isBusy = configuration.isBusy
-            if !isBusy {
+            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
+            if !isBusy, alreadyAttached {
                 updateScrollState(collectionView)
             }
             updateDetachedStreamingHintVisibility()
@@ -760,16 +771,44 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
 
-            if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+            // Always track distance for hint visibility, even when
+            // updateScrollState is skipped.
+            let insets = scrollView.adjustedContentInset
+            let visH = scrollView.bounds.height - insets.top - insets.bottom
+            if visH > 0 {
+                let botY = scrollView.contentOffset.y + insets.top + visH
+                lastDistanceFromBottom = max(0, scrollView.contentSize.height - botY)
+            }
+
+            let isUserDriven = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+
+            if isUserDriven {
                 let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
                 let deltaY = scrollView.contentOffset.y - previousOffset
                 if deltaY < -0.5 {
+                    // User is scrolling up: detach and skip position-based
+                    // re-evaluation so updateScrollState cannot immediately
+                    // re-attach within the same callback.
                     scrollController?.detachFromBottomForUserScroll()
+                    lastObservedContentOffsetY = scrollView.contentOffset.y
+                    updateDetachedStreamingHintVisibility()
+                    return
                 }
             }
 
             lastObservedContentOffsetY = scrollView.contentOffset.y
-            updateScrollState(collectionView)
+
+            // For user-driven scrolls (scrolling back down toward bottom),
+            // always update state so re-attach can happen.
+            //
+            // For programmatic offset changes (layout invalidation during
+            // snapshot apply), only update when already attached. This prevents
+            // a detached user from being re-attached by a layout-triggered
+            // contentOffset adjustment.
+            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
+            if isUserDriven || alreadyAttached {
+                updateScrollState(collectionView)
+            }
             updateDetachedStreamingHintVisibility()
         }
 
@@ -821,13 +860,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     )
                 }
                 animateToolRowExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
-            case .thinking(_, _, _, let isDone):
+            case .thinking(_, let preview, _, let isDone):
                 guard isDone else {
                     return
                 }
-                // Thought rows auto-expand by default and are not interactive.
-                // Keep tap as no-op so accidental touches don't churn reconfigures.
-                return
+                let displayText = preview.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !displayText.isEmpty else { return }
+
+                // Only expand if text would overflow the 200pt bubble cap.
+                if !Self.thinkingTextOverflows(displayText, availableWidth: collectionView.bounds.width) {
+                    return
+                }
+
+                let content = FullScreenCodeContent.thinking(content: displayText)
+                ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: collectionView)
 
             case .systemEvent:
                 // Compaction rows now use an explicit chevron button affordance
@@ -896,14 +942,28 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
         }
 
+        /// Check if thinking text would overflow the bubble's max height (200pt).
+        /// Measures text at callout font, accounting for brain icon indent.
+        private static func thinkingTextOverflows(_ text: String, availableWidth: CGFloat) -> Bool {
+            let padding: CGFloat = 10
+            let brainIndent: CGFloat = 14 + 6 // icon + spacing
+            let textWidth = max(1, availableWidth - brainIndent - padding * 2)
+            let font = UIFont.preferredFont(forTextStyle: .callout)
+            let size = (text as NSString).boundingRect(
+                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font],
+                context: nil
+            )
+            let intrinsic = ceil(size.height) + padding * 2
+            return intrinsic > ThinkingTimelineRowContentView.maxBubbleHeight
+        }
+
         private func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
             guard case .thinking(_, let preview, _, let isDone) = item else { return nil }
 
-            // Thought content should be visible by default once complete.
-            let isExpanded = isDone
             return ThinkingTimelineRowConfiguration(
                 isDone: isDone,
-                isExpanded: isExpanded,
                 previewText: preview,
                 fullText: toolOutputStore?.fullOutput(for: itemID),
                 themeID: currentThemeID
@@ -1188,22 +1248,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated)
 
             if command.animated {
-                // Use a spring animation for a more obvious push-up feel
-                // when new items appear. scrollToItem's default animation is
-                // too fast/subtle to notice.
-                collectionView.scrollToItem(at: indexPath, at: position, animated: false)
-                let targetOffset = collectionView.contentOffset
-                // Rewind to pre-scroll position and animate to target
-                collectionView.contentOffset.y = max(0, targetOffset.y - 60)
-                UIView.animate(
-                    withDuration: 0.4,
-                    delay: 0,
-                    usingSpringWithDamping: 0.85,
-                    initialSpringVelocity: 0.5,
-                    options: [.allowUserInteraction, .curveEaseOut]
-                ) {
-                    collectionView.contentOffset = targetOffset
-                }
+                collectionView.scrollToItem(at: indexPath, at: position, animated: true)
             } else {
                 collectionView.scrollToItem(at: indexPath, at: position, animated: false)
             }
@@ -1224,14 +1269,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             return true
         }
 
+        /// Minimum distance from bottom before showing the jump-to-bottom
+        /// button. One viewport height prevents flash from bounce/small scrolls.
+        private let jumpToBottomMinDistance: CGFloat = 500
+
         private func updateDetachedStreamingHintVisibility() {
             guard let scrollController else { return }
 
             let isDetached = !scrollController.isCurrentlyNearBottom
+            let isFarFromBottom = isDetached && lastDistanceFromBottom > jumpToBottomMinDistance
+
             let showsStreamingState = streamingAssistantID != nil && isDetached
 
-            scrollController.setDetachedStreamingHintVisible(showsStreamingState)
-            scrollController.setJumpToBottomHintVisible(isDetached)
+            scrollController.setDetachedStreamingHintVisible(showsStreamingState && isFarFromBottom)
+            scrollController.setJumpToBottomHintVisible(isFarFromBottom)
         }
 
         private func updateScrollState(_ collectionView: UICollectionView) {
@@ -1244,6 +1295,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let bottomY = collectionView.contentOffset.y + insets.top + visibleHeight
             let contentHeight = collectionView.contentSize.height
             let distanceFromBottom = max(0, contentHeight - bottomY)
+            lastDistanceFromBottom = distanceFromBottom
             let nearBottomThreshold = scrollController.isCurrentlyNearBottom
                 ? nearBottomExitThreshold
                 : nearBottomEnterThreshold

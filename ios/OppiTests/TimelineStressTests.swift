@@ -638,14 +638,12 @@ struct TimelineStressTests {
         let elapsed = ContinuousClock.now - start
 
         #expect(reducer.items.count == 1)
-        guard case .thinking(let id, _, let hasMore, _) = reducer.items[0] else {
+        guard case .thinking(_, let preview, let hasMore, _) = reducer.items[0] else {
             Issue.record("Expected thinking item")
             return
         }
         #expect(hasMore)
-
-        let fullText = reducer.toolOutputStore.fullOutput(for: id)
-        #expect(fullText.count > 9000, "Full thinking should be stored: got \(fullText.count)")
+        #expect(preview.count > 9000, "Full thinking should stay inline: got \(preview.count)")
         #expect(elapsed < .milliseconds(200),
             "10K thinking overflow took \(elapsed) — budget 200ms")
     }
