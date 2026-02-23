@@ -1,6 +1,4 @@
-import type { GateServer } from "./gate.js";
 import { ts } from "./log-utils.js";
-import type { SessionManager } from "./sessions.js";
 import type { ClientMessage, ImageAttachment, ServerMessage, Session } from "./types.js";
 
 interface TurnCommandMessage {
@@ -10,9 +8,67 @@ interface TurnCommandMessage {
   requestId?: string;
 }
 
-interface WsMessageHandlerDeps {
-  sessions: SessionManager;
-  gate: GateServer;
+interface ExtensionUIResponseMessage {
+  type: "extension_ui_response";
+  id: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+}
+
+interface WsSessionCommands {
+  sendPrompt: (
+    sessionId: string,
+    message: string,
+    opts: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      clientTurnId?: string;
+      requestId?: string;
+      streamingBehavior?: "steer" | "followUp";
+      timestamp: number;
+    },
+  ) => Promise<void>;
+  sendSteer: (
+    sessionId: string,
+    message: string,
+    opts: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      clientTurnId?: string;
+      requestId?: string;
+    },
+  ) => Promise<void>;
+  sendFollowUp: (
+    sessionId: string,
+    message: string,
+    opts: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      clientTurnId?: string;
+      requestId?: string;
+    },
+  ) => Promise<void>;
+  sendAbort: (sessionId: string) => Promise<void>;
+  stopSession: (sessionId: string) => Promise<void>;
+  getActiveSession: (sessionId: string) => Session | undefined;
+  respondToUIRequest: (sessionId: string, response: ExtensionUIResponseMessage) => boolean;
+  forwardClientCommand: (
+    sessionId: string,
+    message: Record<string, unknown>,
+    requestId: string | undefined,
+  ) => Promise<void>;
+}
+
+interface WsGateDecisions {
+  resolveDecision: (
+    requestId: string,
+    action: "allow" | "deny",
+    scope?: "once" | "session" | "global",
+    expiresInMs?: number,
+  ) => boolean;
+}
+
+export interface WsMessageHandlerDeps {
+  sessions: WsSessionCommands;
+  gate: WsGateDecisions;
   ensureSessionContextWindow: (session: Session) => Session;
 }
 
@@ -115,23 +171,11 @@ export class WsMessageHandler {
       case "set_auto_retry":
       case "abort_retry":
       case "abort_bash": {
-        const command = this.toCommandRecord(msg);
-        await this.deps.sessions.forwardClientCommand(
-          session.id,
-          command,
-          this.getRequestId(command),
-        );
+        const command: Record<string, unknown> = { ...msg };
+        await this.deps.sessions.forwardClientCommand(session.id, command, msg.requestId);
         return;
       }
     }
-  }
-
-  private toCommandRecord(message: ClientMessage): Record<string, unknown> {
-    return message as unknown as Record<string, unknown>;
-  }
-
-  private getRequestId(command: Record<string, unknown>): string | undefined {
-    return typeof command.requestId === "string" ? command.requestId : undefined;
   }
 
   /**
