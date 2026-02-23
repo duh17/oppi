@@ -101,6 +101,34 @@ struct ToolTimelineRowModeDispatchTests {
             )
         }
     }
+
+    @Test func reproducesFatalAccessConflictWhenResettingOutputScrollOnReconfigure() throws {
+        let longOutput = Array(repeating: "line", count: 300).joined(separator: "\n")
+        let initial = makeToolConfiguration(
+            toolNamePrefix: "$",
+            expandedContent: .bash(command: "tail -f log", output: longOutput, unwrapped: true),
+            isExpanded: true
+        )
+        let cleared = makeToolConfiguration(
+            toolNamePrefix: "$",
+            expandedContent: .bash(command: nil, output: nil, unwrapped: true),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: initial)
+        _ = fittedSize(for: view, width: 360)
+
+        let outputScrollView = try #require(privateScrollView(named: "outputScrollView", in: view))
+        outputScrollView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
+
+        // Reconfiguring to empty output triggers resetOutputState(), which
+        // programmatically resets contentOffset and synchronously calls
+        // scrollViewDidScroll(). Current code passes outputShouldAutoFollow
+        // as inout into resetOutputState, which can trigger a Swift exclusivity trap.
+        view.configuration = cleared
+
+        _ = fittedSize(for: view, width: 360)
+    }
 }
 
 private func makeToolConfiguration(
@@ -132,10 +160,17 @@ private func makeToolConfiguration(
     )
 }
 
+@MainActor
 private func privateView(named name: String, in view: ToolTimelineRowContentView) -> UIView? {
     Mirror(reflecting: view).children.first { $0.label == name }?.value as? UIView
 }
 
+@MainActor
+private func privateScrollView(named name: String, in view: ToolTimelineRowContentView) -> UIScrollView? {
+    Mirror(reflecting: view).children.first { $0.label == name }?.value as? UIScrollView
+}
+
+@MainActor
 private func fittedSize(for view: UIView, width: CGFloat) -> CGSize {
     let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 2_000))
     container.backgroundColor = .black
