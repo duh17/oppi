@@ -552,13 +552,6 @@ describe("SessionManager SDK state bootstrap", () => {
     manager.contextWindowResolver = (modelId: string) =>
       modelId === "openai-codex/gpt-5.3-codex" ? 272_000 : 200_000;
 
-    (sdkBackend.getState as ReturnType<typeof vi.fn>).mockReturnValue({
-      model: "gpt-5.3-codex",
-      thinkingLevel: "medium",
-      isStreaming: false,
-      sessionFile: undefined,
-    });
-
     (sdkBackend.getStateSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({
       model: { provider: "openai-codex", id: "gpt-5.3-codex" },
       thinkingLevel: "medium",
@@ -574,7 +567,6 @@ describe("SessionManager SDK state bootstrap", () => {
     expect(session.model).toBe("openai-codex/gpt-5.3-codex");
     expect(session.contextWindow).toBe(272_000);
     expect(sdkBackend.getStateSnapshot).toHaveBeenCalledTimes(1);
-    expect(sdkBackend.getState).not.toHaveBeenCalled();
   });
 });
 

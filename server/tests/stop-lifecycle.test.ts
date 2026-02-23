@@ -194,7 +194,7 @@ describe("stop lifecycle", () => {
 
     await manager.sendAbort("s1");
 
-    expect(sdkBackend.abortBash).toHaveBeenCalledTimes(1);
+    expect(sdkBackend.session.abortBash).toHaveBeenCalledTimes(1);
   });
 
   it("abort escalation retries abortBash alongside abort", async () => {
@@ -203,13 +203,13 @@ describe("stop lifecycle", () => {
       const { manager, sdkBackend } = makeManagerHarness("busy");
 
       await manager.sendAbort("s1");
-      expect(sdkBackend.abortBash).toHaveBeenCalledTimes(1);
+      expect(sdkBackend.session.abortBash).toHaveBeenCalledTimes(1);
 
       // Phase 1 timeout: escalation should call abortBash again
       vi.advanceTimersByTime(
         (manager as unknown as { stopAbortTimeoutMs: number }).stopAbortTimeoutMs,
       );
-      expect(sdkBackend.abortBash).toHaveBeenCalledTimes(2);
+      expect(sdkBackend.session.abortBash).toHaveBeenCalledTimes(2);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
