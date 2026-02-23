@@ -100,6 +100,11 @@ final class ServerConnection {
     /// fire-and-forget unsubscribe from racing past the new subscribe.
     var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
 
+    /// In-flight auto-recovery when server rejects a command because the
+    /// session lost full subscription level on `/stream`.
+    var fullSubscriptionRecoveryTask: Task<Void, Never>?
+    var lastFullSubscriptionRecoveryAt: Date?
+
     init() {
         // Wire coalescer to reducer (batch) + Live Activity (throttled).
         // Single renderVersion bump per flush, not per event.
@@ -274,6 +279,7 @@ final class ServerConnection {
 
     private static let resubscribeMaxAttempts = 3
     private static let resubscribeBaseDelay: Duration = .milliseconds(500)
+    private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
 
     private func resubscribeTrackedSessions() async {
         guard wsClient != nil else { return }
@@ -337,6 +343,52 @@ final class ServerConnection {
             }
         }
         return false
+    }
+
+    func triggerFullSubscriptionRecovery(sessionId: String, serverError: String) {
+        guard activeSessionId == sessionId else { return }
+
+        if let inFlight = fullSubscriptionRecoveryTask, !inFlight.isCancelled {
+            return
+        }
+
+        if let lastAttempt = lastFullSubscriptionRecoveryAt,
+           Date().timeIntervalSince(lastAttempt) < Self.fullSubscriptionRecoveryCooldown {
+            return
+        }
+
+        fullSubscriptionRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.lastFullSubscriptionRecoveryAt = Date()
+                self.fullSubscriptionRecoveryTask = nil
+            }
+
+            logger.warning(
+                "Detected missing full subscription for \(sessionId, privacy: .public): \(serverError, privacy: .public). Attempting auto-recover"
+            )
+
+            do {
+                _ = try await self.sendCommandAwaitingResult(
+                    command: "subscribe",
+                    timeout: .seconds(6)
+                ) { requestId in
+                    .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
+                }
+
+                try? await self.requestState()
+                ClientLog.info(
+                    "WebSocket",
+                    "Recovered full subscription",
+                    metadata: ["sessionId": sessionId]
+                )
+            } catch {
+                logger.error(
+                    "Auto-recover subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+                self.reducer.appendSystemEvent("Connection hiccup — trying to resync session")
+            }
+        }
     }
 
     /// Handle notification-level events from non-active sessions
