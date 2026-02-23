@@ -435,6 +435,47 @@ struct ServerConnectionTests {
     }
 
     @MainActor
+    @Test func routeMissingFullSubscriptionErrorTriggersAutoRecover() async {
+        let conn = makeConnection()
+        let subscribeCounter = MessageCounter()
+
+        conn._sendMessageForTesting = { message in
+            switch message {
+            case .subscribe(let sessionId, let level, _, let requestId):
+                await subscribeCounter.increment()
+                #expect(sessionId == "s1")
+                #expect(level == .full)
+                conn.handleServerMessage(
+                    .commandResult(
+                        command: "subscribe",
+                        requestId: requestId,
+                        success: true,
+                        data: nil,
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+            default:
+                break
+            }
+        }
+
+        conn.handleServerMessage(
+            .error(message: "Session s1 is not subscribed at level=full", code: nil, fatal: false),
+            sessionId: "s1"
+        )
+
+        #expect(await waitForCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
+
+        conn.flushAndSuspend()
+        let errors = conn.reducer.items.filter {
+            if case .error = $0 { return true }
+            return false
+        }
+        #expect(errors.isEmpty)
+    }
+
+    @MainActor
     @Test func routeExtensionUIRequest() {
         let conn = makeConnection()
         let request = ExtensionUIRequest(
@@ -1235,6 +1276,18 @@ private actor AckStageRecorder {
 
     func snapshot() -> [TurnAckStage] {
         stages
+    }
+}
+
+private actor MessageCounter {
+    private var value = 0
+
+    func increment() {
+        value += 1
+    }
+
+    func count() -> Int {
+        value
     }
 }
 
