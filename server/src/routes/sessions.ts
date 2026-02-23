@@ -220,11 +220,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
 
     try {
-      const started = await ctx.sessions.startSession(
-        sessionId,
-        ctx.storage.getOwnerName(),
-        workspace,
-      );
+      const started = await ctx.sessions.startSession(sessionId, workspace);
       const hydrated = ctx.ensureSessionContextWindow(started);
       helpers.json(res, { session: hydrated });
     } catch (err: unknown) {
@@ -300,8 +296,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     ctx.storage.saveSession(forkSession);
 
     try {
-      await ctx.sessions.startSession(forkSession.id, ctx.storage.getOwnerName(), workspace);
-      await ctx.sessions.runCommand(forkSession.id, { type: "fork", entryId }, 30_000);
+      await ctx.sessions.startSession(forkSession.id, workspace);
+      await ctx.sessions.runCommand(forkSession.id, { type: "fork", entryId });
       await ctx.sessions.refreshSessionState(forkSession.id);
     } catch (err: unknown) {
       await ctx.sessions.stopSession(forkSession.id).catch(() => {});

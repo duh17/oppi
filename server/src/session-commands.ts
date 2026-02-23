@@ -157,11 +157,7 @@ export class SessionCommandCoordinator {
     this.routeSdkCommand(active.sdkBackend, command);
   }
 
-  async sendCommandAsync(
-    key: string,
-    command: Record<string, unknown>,
-    _timeoutMs = 10_000,
-  ): Promise<unknown> {
+  async sendCommandAsync(key: string, command: Record<string, unknown>): Promise<unknown> {
     const active = this.deps.getActiveSession(key);
     if (!active) {
       return Promise.reject(new Error("Session not active"));
@@ -180,11 +176,7 @@ export class SessionCommandCoordinator {
     key: string,
     message: Record<string, unknown>,
     requestId: string | undefined,
-    sendCommandAsync: (
-      key: string,
-      command: Record<string, unknown>,
-      timeoutMs?: number,
-    ) => Promise<unknown>,
+    sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>,
   ): Promise<void> {
     const cmdType = message.type as string;
     if (!this.isAllowedCommand(cmdType)) {
@@ -197,7 +189,7 @@ export class SessionCommandCoordinator {
     }
 
     try {
-      let rpcData: unknown = await sendCommandAsync(key, { ...message }, 30_000);
+      let rpcData: unknown = await sendCommandAsync(key, { ...message });
       const rpcObject = toRecord(rpcData);
 
       if (cmdType === "get_state") {
@@ -289,7 +281,7 @@ export class SessionCommandCoordinator {
       // Refresh state immediately so reconnect/resume uses the new branch.
       if (cmdType === "fork" || cmdType === "new_session" || cmdType === "switch_session") {
         try {
-          const refreshed = await sendCommandAsync(key, { type: "get_state" }, 8_000);
+          const refreshed = await sendCommandAsync(key, { type: "get_state" });
           const snapshot = parsePiStateSnapshot(refreshed);
           if (snapshot && this.deps.applyPiStateSnapshot(active.session, snapshot)) {
             this.deps.persistSessionNow(key, active.session);

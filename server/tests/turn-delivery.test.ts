@@ -293,14 +293,12 @@ describe("turn delivery idempotency", () => {
       1,
       "s1",
       expect.objectContaining({ type: "fork", entryId: "msg-123" }),
-      30_000,
     );
 
     expect(sendCommandAsync).toHaveBeenNthCalledWith(
       2,
       "s1",
       expect.objectContaining({ type: "get_state" }),
-      8_000,
     );
 
     expect(session.piSessionFile).toBe("/tmp/child.jsonl");
@@ -404,21 +402,18 @@ describe("turn delivery idempotency", () => {
         provider: "anthropic",
         modelId: "claude-sonnet-4-0",
       }),
-      30_000,
     );
 
     expect(sendCommandAsync).toHaveBeenNthCalledWith(
       2,
       "s1",
       expect.objectContaining({ type: "set_thinking_level", level: "minimal" }),
-      8_000,
     );
 
     expect(sendCommandAsync).toHaveBeenNthCalledWith(
       3,
       "s1",
       expect.objectContaining({ type: "get_state" }),
-      8_000,
     );
 
     expect(session.model).toBe("anthropic/claude-sonnet-4-0");

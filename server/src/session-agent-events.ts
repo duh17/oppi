@@ -10,7 +10,8 @@ import type { SessionStopCoordinator, StopSessionState } from "./session-stop.js
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import type { ServerMessage } from "./types.js";
 
-export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
+export interface SessionAgentEventState
+  extends EventProcessorSessionState, TurnSessionState, StopSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
 }
 
@@ -82,10 +83,7 @@ export class SessionAgentEventCoordinator {
     this.deps.eventProcessor.updateSessionFromEvent(key, active, data);
 
     if (data.type === "agent_end") {
-      this.deps.stopCoordinator.finishPendingAbortWithSuccess(
-        key,
-        active as unknown as StopSessionState,
-      );
+      this.deps.stopCoordinator.finishPendingAbortWithSuccess(key, active);
     }
 
     if (data.type === "message_end") {
