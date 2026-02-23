@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-COLLECT_SCRIPT="$ROOT_DIR/ios/scripts/collect-device-logs.sh"
+COLLECT_SCRIPT="$ROOT_DIR/ios/scripts/device-logs.sh"
 
 SESSION_ID=""
 DEVICE_QUERY=""
