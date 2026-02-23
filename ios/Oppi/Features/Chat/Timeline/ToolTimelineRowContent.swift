@@ -883,17 +883,34 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
 
         if !showOutputContainer {
+            // Do not pass stored properties by `inout` directly here.
+            // resetOutputState() programmatically updates contentOffset, which
+            // synchronously triggers scrollViewDidScroll and can re-enter
+            // outputShouldAutoFollow mutation while inout access is active.
+            var localOutputUsesUnwrappedLayout = outputUsesUnwrappedLayout
+            var localOutputRenderedText = outputRenderedText
+            var localOutputRenderSignature = outputRenderSignature
+            var localOutputUsesViewport = outputUsesViewport
+            var localOutputShouldAutoFollow = outputShouldAutoFollow
+
             ToolTimelineRowDisplayState.resetOutputState(
                 outputLabel: outputLabel,
                 outputScrollView: outputScrollView,
                 outputViewportHeightConstraint: outputViewportHeightConstraint,
                 outputColor: outputColor,
-                outputUsesUnwrappedLayout: &outputUsesUnwrappedLayout,
-                outputRenderedText: &outputRenderedText,
-                outputRenderSignature: &outputRenderSignature,
-                outputUsesViewport: &outputUsesViewport,
-                outputShouldAutoFollow: &outputShouldAutoFollow
+                outputUsesUnwrappedLayout: &localOutputUsesUnwrappedLayout,
+                outputRenderedText: &localOutputRenderedText,
+                outputRenderSignature: &localOutputRenderSignature,
+                outputUsesViewport: &localOutputUsesViewport,
+                outputShouldAutoFollow: &localOutputShouldAutoFollow
             )
+
+            outputUsesUnwrappedLayout = localOutputUsesUnwrappedLayout
+            outputRenderedText = localOutputRenderedText
+            outputRenderSignature = localOutputRenderSignature
+            outputUsesViewport = localOutputUsesViewport
+            outputShouldAutoFollow = localOutputShouldAutoFollow
+
             updateOutputLabelWidthIfNeeded()
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
