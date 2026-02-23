@@ -62,6 +62,13 @@ describe("session-protocol translatePiEvent", () => {
     expect(ctx.streamedAssistantText).toBe("hello");
   });
 
+  it("drops turn_start and turn_end events", () => {
+    const ctx = makeCtx();
+
+    expect(translatePiEvent({ type: "turn_start" }, ctx)).toEqual([]);
+    expect(translatePiEvent({ type: "turn_end" }, ctx)).toEqual([]);
+  });
+
   it("converts tool partialResult replace semantics into append deltas", () => {
     const ctx = makeCtx();
 

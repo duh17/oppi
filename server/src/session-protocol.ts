@@ -201,10 +201,10 @@ export function translatePiEvent(event: PiEvent, ctx: TranslationContext): Serve
       return [{ type: "agent_end" }];
 
     case "turn_start":
-      return [{ type: "turn_start" }];
+      return [];
 
     case "turn_end":
-      return [{ type: "turn_end" }];
+      return [];
 
     case "message_start":
       // Structural lifecycle marker. No payload needed for iOS —
