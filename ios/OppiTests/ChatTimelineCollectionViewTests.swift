@@ -846,10 +846,9 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func thinkingRowsAutoRenderExpandedWithNativeConfiguration() throws {
         let harness = makeHarness(sessionId: "session-a")
-        harness.toolOutputStore.append("full reasoning block", to: "thinking-1")
 
         let rows: [ChatItem] = [
-            .thinking(id: "thinking-1", preview: "preview text", hasMore: false, isDone: true),
+            .thinking(id: "thinking-1", preview: "full reasoning block", hasMore: false, isDone: true),
         ]
 
         let config = makeConfiguration(
@@ -866,7 +865,7 @@ struct ChatTimelineCoordinatorTests {
 
         let cell = try configuredCell(in: harness.collectionView, item: 0)
         let thinkingConfig = try #require(cell.contentConfiguration as? ThinkingTimelineRowConfiguration)
-        #expect(thinkingConfig.isExpanded)
+        #expect(thinkingConfig.isDone)
         #expect(thinkingConfig.displayText == "full reasoning block")
     }
 
@@ -1140,6 +1139,34 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func compactionRowCollapseAfterExpandShrinksHeight() {
+        let detail = String(repeating: "reasoning line\n", count: 100)
+
+        // Expand first: markdown view renders fully.
+        let expandedConfig = CompactionTimelineRowConfiguration(
+            presentation: .init(phase: .completed, detail: detail, tokensBefore: 42_000),
+            isExpanded: true,
+            themeID: .dark
+        )
+        let view = CompactionTimelineRowContentView(configuration: expandedConfig)
+        let expandedSize = fittedSize(for: view, width: 338)
+
+        // Collapse: reconfigure with isExpanded = false.
+        let collapsedConfig = CompactionTimelineRowConfiguration(
+            presentation: .init(phase: .completed, detail: detail, tokensBefore: 42_000),
+            isExpanded: false,
+            themeID: .dark
+        )
+        view.configuration = collapsedConfig
+        let collapsedSize = fittedSize(for: view, width: 338)
+
+        // Collapsed must be substantially shorter than expanded (header + 1-line detail).
+        // Expanded 100 lines of text should be > 500pt. Collapsed should be < 80pt.
+        #expect(expandedSize.height > 200, "expanded should be tall, got \(expandedSize.height)")
+        #expect(collapsedSize.height < 80, "collapsed should shrink, got \(collapsedSize.height)")
+    }
+
+    @MainActor
     @Test func assistantRowContentViewReportsFiniteFittingSizeForMarkdown() {
         let markdown = """
         # Opus Session
@@ -1194,7 +1221,6 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowContentViewExpandedReportsFiniteFittingSize() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 500),
             themeID: .dark
@@ -1212,7 +1238,6 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowExpandedUsesCappedViewportHeight() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 900),
             themeID: .dark
@@ -1229,14 +1254,12 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowExpandedShrinksForShortText() {
         let short = ThinkingTimelineRowConfiguration(
             isDone: true,
-            isExpanded: true,
             previewText: "preview",
             fullText: "short thought",
             themeID: .dark
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: true,
-            isExpanded: true,
             previewText: "preview",
             fullText: String(repeating: "reasoning line\n", count: 900),
             themeID: .dark
@@ -1252,11 +1275,10 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
-    @Test func thinkingRowMarkdownPreviewStripsFormattingMarkers() throws {
+    @Test func thinkingRowShowsTextContent() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            isExpanded: true,
-            previewText: "**Reviewing checklist for updates**",
+            previewText: "Reviewing checklist for updates",
             fullText: nil,
             themeID: .dark
         )
@@ -1264,18 +1286,14 @@ struct ChatTimelineCoordinatorTests {
         let view = ThinkingTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 338)
 
-        let textView = try #require(allTextViews(in: view).first)
-        let rendered = textView.attributedText?.string ?? ""
-
-        #expect(rendered.contains("Reviewing checklist for updates"))
-        #expect(!rendered.contains("**"))
+        let label = try #require(allLabels(in: view).first { $0.text?.contains("Reviewing") == true })
+        #expect(label.text == "Reviewing checklist for updates")
     }
 
     @MainActor
     @Test func thinkingRowStreamingShowsLivePreviewText() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
-            isExpanded: false,
             previewText: "Let me analyze this step by step",
             fullText: nil,
             themeID: .dark
@@ -1287,17 +1305,15 @@ struct ChatTimelineCoordinatorTests {
         // Should have nonzero height (spinner header + preview container)
         #expect(fitting.height > 20)
 
-        // Preview text should be rendered
-        let textView = try #require(allTextViews(in: view).first)
-        let rendered = textView.attributedText?.string ?? ""
-        #expect(rendered.contains("Let me analyze"))
+        // Preview text should be rendered in a label
+        let label = try #require(allLabels(in: view).first { $0.text?.contains("Let me analyze") == true })
+        #expect(label.text?.contains("Let me analyze") == true)
     }
 
     @MainActor
     @Test func thinkingRowStreamingWithEmptyPreviewHidesContainer() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
-            isExpanded: false,
             previewText: "",
             fullText: nil,
             themeID: .dark
@@ -1306,24 +1322,22 @@ struct ChatTimelineCoordinatorTests {
         let view = ThinkingTimelineRowContentView(configuration: config)
         _ = fittedSize(for: view, width: 338)
 
-        // The text view should have no content when preview is empty
-        let textViews = allTextViews(in: view)
-        let rendered = textViews.first?.attributedText?.string ?? ""
-        #expect(rendered.isEmpty)
+        // No content labels should have thinking text
+        let labels = allLabels(in: view)
+        let thinkingLabels = labels.filter { ($0.text ?? "").count > 0 && $0.text != "Thinking…" }
+        #expect(thinkingLabels.isEmpty)
     }
 
     @MainActor
     @Test func thinkingRowStreamingGrowsWithPreviewText() {
         let short = ThinkingTimelineRowConfiguration(
             isDone: false,
-            isExpanded: false,
             previewText: "hmm",
             fullText: nil,
             themeID: .dark
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: false,
-            isExpanded: false,
             previewText: String(repeating: "thinking about this problem ", count: 15),
             fullText: nil,
             themeID: .dark
@@ -1803,15 +1817,103 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func smallUpwardScrollDetachSticksUntilDragEnds() async {
+        // User scrolls up just a little (50pt from bottom), within the enter
+        // threshold (120pt). The detach must still stick — the user clearly
+        // intends to scroll away. Re-attach should only happen when the user
+        // scrolls back *down* near the bottom.
+        let harness = makeHarness(sessionId: "session-a")
+        let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testContentSize = CGSize(width: 390, height: 1_100)
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+
+        harness.scrollController.updateNearBottom(true)
+
+        // Start at the bottom.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 0, in: metricsView))
+        metricsView.testIsTracking = true
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
+
+        // Small scroll up: only 50pt from bottom (within enter threshold 120pt).
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 50, in: metricsView))
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        // Must stay detached — the user is actively scrolling up.
+        #expect(!harness.scrollController.isCurrentlyNearBottom,
+                "detach should stick even within enter threshold during upward scroll")
+
+        // Auto-scroll must not fire while detached.
+        var scrollCount = 0
+        harness.scrollController.handleContentChange(
+            isBusy: true,
+            streamingAssistantID: "stream-1",
+            bottomItemID: "bottom-1"
+        ) { _ in scrollCount += 1 }
+
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(scrollCount == 0,
+                "auto-scroll must not fire while user is scrolled up")
+    }
+
+    @MainActor
+    @Test func busyToIdleTransitionDoesNotReattachDetachedUser() {
+        // When isBusy transitions false between tool calls, the apply method's
+        // updateScrollState must not re-attach a detached user — even if the
+        // user's scroll position is within the enter threshold.
+        let harness = makeHarness(sessionId: "session-a")
+        let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testContentSize = CGSize(width: 390, height: 2_000)
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+
+        // User is attached, at the bottom.
+        harness.scrollController.updateNearBottom(true)
+
+        // Simulate upward scroll → detach (user scrolls up).
+        metricsView.testIsTracking = true
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 0, in: metricsView))
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 80, in: metricsView))
+        harness.coordinator.scrollViewDidScroll(metricsView)
+        metricsView.testIsTracking = false
+        harness.coordinator.scrollViewDidEndDragging(metricsView, willDecelerate: false)
+
+        #expect(!harness.scrollController.isCurrentlyNearBottom,
+                "user should be detached after upward scroll")
+
+        // Now apply a configuration with isBusy=false (agent idle between tools).
+        // The apply method's updateScrollState runs when !isBusy. It must not
+        // re-attach a user who explicitly detached, even though 80pt is within
+        // the 120pt enter threshold.
+        let idleConfig = makeConfiguration(
+            isBusy: false,
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: idleConfig, to: harness.collectionView)
+
+        #expect(!harness.scrollController.isCurrentlyNearBottom,
+                "busy->idle apply re-attached a detached user")
+    }
+
+    @MainActor
     @Test func nearBottomHysteresisRequiresCloserReentryAfterDetach() {
         // Thresholds: enter=120, exit=200.
         // When detached, must get within enter threshold (120) to re-attach.
+        // Re-attach only happens during user-driven scrolls (back toward bottom).
         let harness = makeHarness(sessionId: "session-a")
         let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
         metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
 
         harness.scrollController.updateNearBottom(false)
+
+        // Simulate user-driven scroll (e.g., scrolling back down toward bottom).
+        metricsView.testIsDecelerating = true
 
         // Distance 150 — beyond enter threshold (120), stays detached.
         metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 150, in: metricsView))
@@ -1843,11 +1945,11 @@ struct ChatTimelineCoordinatorTests {
         harness.coordinator.apply(configuration: streamingConfig, to: harness.collectionView)
 
         let metricsView = ScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
-        metricsView.testContentSize = CGSize(width: 390, height: 1_100)
+        metricsView.testContentSize = CGSize(width: 390, height: 3_000)
         metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
 
-        // Distance 250 — beyond enter threshold (120), detached from bottom.
-        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 250, in: metricsView))
+        // Distance 800 — well past the 500pt minimum for showing the button.
+        metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 800, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(harness.scrollController.isDetachedStreamingHintVisible)
 
@@ -1868,8 +1970,11 @@ struct ChatTimelineCoordinatorTests {
         #expect(!harness.scrollController.isDetachedStreamingHintVisible)
 
         harness.coordinator.apply(configuration: streamingConfig, to: harness.collectionView)
+        // Simulate user scrolling back to bottom (user-driven scroll).
+        metricsView.testIsDecelerating = true
         metricsView.contentOffset = CGPoint(x: 0, y: offsetY(forDistanceFromBottom: 0, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
+        metricsView.testIsDecelerating = false
         #expect(!harness.scrollController.isDetachedStreamingHintVisible)
     }
 
@@ -3315,6 +3420,349 @@ struct TimelineCopyContextMenuTests {
             return tap.numberOfTapsRequired == 2
         }
         #expect(hasDoubleTap)
+    }
+
+    // MARK: - Scroll Stability
+
+    @MainActor
+    @Test func contentOffsetStaysStableWhenNewItemsAppendedWhileScrolledUp() {
+        // Reproduce: user is scrolled up; tool calls transition from running
+        // to done (height changes), new items are inserted. Viewport must stay.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        collectionView.contentInset.bottom = 12
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+
+        // Many items with varying heights: tall assistant messages and short
+        // tool calls. This creates large gaps between estimated (44pt) and
+        // actual cell heights, which stresses the layout's offset adjustment.
+        var items: [ChatItem] = []
+        for i in 0..<25 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Long line \(i) with content. ", count: (i % 3 == 0) ? 40 : 8),
+                timestamp: Date()
+            ))
+            // Tool calls at the end are still "running" (isDone: false).
+            let isDone = i < 20
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "cmd \(i)",
+                outputPreview: isDone ? "ok \(i)" : "",
+                outputByteCount: isDone ? 16 : 0,
+                isError: false, isDone: isDone
+            ))
+        }
+        // Streaming assistant at the tail.
+        items.append(.assistantMessage(id: "stream-1", text: "Thinking...", timestamp: Date()))
+
+        func applyItems(_ currentItems: [ChatItem], streamingID: String? = nil, isBusy: Bool = true) {
+            let config = makeConfiguration(
+                items: currentItems,
+                isBusy: isBusy,
+                streamingAssistantID: streamingID,
+                sessionId: "s1",
+                reducer: reducer,
+                toolOutputStore: ToolOutputStore(),
+                toolArgsStore: ToolArgsStore(),
+                connection: connection,
+                scrollController: scrollController,
+                audioPlayer: audioPlayer
+            )
+            coordinator.apply(configuration: config, to: collectionView)
+            collectionView.layoutIfNeeded()
+        }
+
+        // Initial render, scroll to bottom so all cells measure.
+        applyItems(items, streamingID: "stream-1")
+        let fullHeight = collectionView.contentSize.height
+        let viewHeight = collectionView.bounds.height
+        collectionView.contentOffset.y = max(0, fullHeight - viewHeight)
+        collectionView.layoutIfNeeded()
+
+        // Scroll up to ~40% mark and detach.
+        let midY = (fullHeight - viewHeight) * 0.4
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        let anchorY = collectionView.contentOffset.y
+
+        // Transition running tool calls to done (they grow taller).
+        for i in 20..<25 {
+            let idx = items.firstIndex { $0.id == "tc-\(i)" }!
+            items[idx] = .toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "cmd \(i)",
+                outputPreview: "completed output line \(i)",
+                outputByteCount: 64,
+                isError: false, isDone: true
+            )
+        }
+        applyItems(items, streamingID: "stream-1")
+
+        let driftAfterTransition = abs(collectionView.contentOffset.y - anchorY)
+        #expect(driftAfterTransition < 2.0,
+                "contentOffset drifted \(driftAfterTransition)pt after tool transitions")
+
+        // Insert new tool calls at the bottom.
+        items.append(.toolCall(id: "tc-new-1", tool: "Read", argsSummary: "file.swift",
+                               outputPreview: "contents", outputByteCount: 200,
+                               isError: false, isDone: true))
+        items.append(.toolCall(id: "tc-new-2", tool: "Write", argsSummary: "output.txt",
+                               outputPreview: "written", outputByteCount: 100,
+                               isError: false, isDone: true))
+        items.append(.assistantMessage(id: "a-final",
+                                       text: String(repeating: "Final paragraph. ", count: 20),
+                                       timestamp: Date()))
+        applyItems(items, streamingID: nil)
+
+        let driftAfterInsert = abs(collectionView.contentOffset.y - anchorY)
+        #expect(driftAfterInsert < 2.0,
+                "contentOffset drifted \(driftAfterInsert)pt after inserting new items")
+
+        #expect(!scrollController.isCurrentlyNearBottom,
+                "user should still be detached")
+    }
+
+    @MainActor
+    @Test func contentOffsetStableAcrossMultipleStreamingUpdatesWhileScrolledUp() {
+        // Simulate rapid streaming: user is scrolled to a mid-point (not top),
+        // streaming text grows and new tool calls are appended. The viewport
+        // must stay pinned. This exercises the estimated-size layout path
+        // where items above AND below the viewport have been estimated.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+
+        // Items with wildly varying heights to stress the estimated-size layout.
+        var items: [ChatItem] = []
+        for i in 0..<20 {
+            // Alternate between short tool calls and long assistant messages
+            // so actual cell heights differ greatly from the 44pt estimate.
+            items.append(.toolCall(id: "tc-\(i)", tool: "bash",
+                                   argsSummary: "cmd \(i)", outputPreview: "ok",
+                                   outputByteCount: 8, isError: false, isDone: true))
+            let lineCount = (i % 5 == 0) ? 30 : 5
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Line \(i) text. ", count: lineCount),
+                timestamp: Date()
+            ))
+        }
+        // Streaming assistant at the end.
+        let streamingID = "stream-1"
+        items.append(.assistantMessage(id: streamingID, text: "Starting...",
+                                       timestamp: Date()))
+
+        func applyItems(_ currentItems: [ChatItem], streamingID: String?) {
+            let config = makeConfiguration(
+                items: currentItems,
+                isBusy: true,
+                streamingAssistantID: streamingID,
+                sessionId: "s1",
+                reducer: reducer,
+                toolOutputStore: ToolOutputStore(),
+                toolArgsStore: ToolArgsStore(),
+                connection: connection,
+                scrollController: scrollController,
+                audioPlayer: audioPlayer
+            )
+            coordinator.apply(configuration: config, to: collectionView)
+            collectionView.layoutIfNeeded()
+        }
+
+        // Initial apply — scroll to bottom first so all cells get measured.
+        applyItems(items, streamingID: streamingID)
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        // Now scroll to mid-point and detach.
+        let midOffset = maxOffset * 0.4
+        collectionView.contentOffset.y = midOffset
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        let anchorOffset = collectionView.contentOffset.y
+
+        // 10 rounds of streaming text growth + reconfigure.
+        for round in 1...10 {
+            let lastIndex = items.count - 1
+            items[lastIndex] = .assistantMessage(
+                id: streamingID,
+                text: String(repeating: "Streaming round \(round). ", count: round * 20),
+                timestamp: Date()
+            )
+            applyItems(items, streamingID: streamingID)
+
+            let drift = abs(collectionView.contentOffset.y - anchorOffset)
+            #expect(drift < 2.0,
+                    "contentOffset drifted \(drift)pt on streaming round \(round)")
+        }
+
+        // New tool calls appear (streaming ends, multiple items inserted).
+        for j in 0..<3 {
+            items.append(.toolCall(id: "tc-new-\(j)", tool: "Read",
+                                   argsSummary: "path: file\(j).swift",
+                                   outputPreview: String(repeating: "content ", count: 20),
+                                   outputByteCount: 512, isError: false, isDone: true))
+        }
+        items.append(.assistantMessage(id: "a-final",
+                                       text: String(repeating: "Final result. ", count: 30),
+                                       timestamp: Date()))
+        applyItems(items, streamingID: nil)
+
+        let finalDrift = abs(collectionView.contentOffset.y - anchorOffset)
+        #expect(finalDrift < 2.0,
+                "contentOffset jumped \(finalDrift)pt after inserting tool calls")
+
+        #expect(!scrollController.isCurrentlyNearBottom,
+                "user should still be detached after streaming updates")
+    }
+
+    // MARK: - Upward Scroll Stability
+
+    @MainActor
+    @Test func anchorItemStaysStableDuringUpwardScrollThroughUnmeasuredCells() {
+        // Reproduce upward-scroll stutter: cells above the viewport have only
+        // estimated heights.  When they first appear, preferredLayoutAttributesFitting
+        // reports the real (larger) height, the layout invalidates, and contentOffset
+        // is adjusted.  If the adjustment is wrong the visible "anchor" item
+        // shifts → visible stutter.
+        //
+        // The test scrolls from the bottom upward in small increments,
+        // performing layoutIfNeeded at each step (simulating frames).
+        // After every step it checks that the *first visible item's screen-
+        // relative position* hasn't jumped by more than a small tolerance.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        collectionView.contentInset.bottom = 12
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+        collectionView.layoutIfNeeded()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+
+        // Build 40 items with very different heights so estimated→actual
+        // deltas are large.  Even-indexed items are short tool calls (~50pt),
+        // odd-indexed are long assistant messages (200–600pt).
+        var items: [ChatItem] = []
+        for i in 0..<40 {
+            if i.isMultiple(of: 2) {
+                items.append(.toolCall(
+                    id: "tc-\(i)", tool: "bash",
+                    argsSummary: "cmd \(i)",
+                    outputPreview: "ok",
+                    outputByteCount: 8,
+                    isError: false, isDone: true
+                ))
+            } else {
+                let wordCount = 10 + (i % 5) * 30   // 10…130 words
+                items.append(.assistantMessage(
+                    id: "a-\(i)",
+                    text: String(repeating: "Word\(i) ", count: wordCount),
+                    timestamp: Date()
+                ))
+            }
+        }
+
+        let config = makeConfiguration(
+            items: items,
+            sessionId: "s-upward",
+            reducer: reducer,
+            toolOutputStore: ToolOutputStore(),
+            toolArgsStore: ToolArgsStore(),
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll to absolute bottom so cells near the bottom are measured;
+        // cells near the top are still at estimated heights.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        scrollController.detachFromBottomForUserScroll()
+
+        // Simulate upward scroll in 60pt increments (≈ one short cell).
+        // After each step, measure the anchor item's screen position.
+        let scrollStep: CGFloat = 60
+        var maxJump: CGFloat = 0
+        var jumpDetails: [(step: Int, jump: CGFloat)] = []
+
+        for step in 1...30 {
+            // Record anchor: first visible item's frame relative to viewport.
+            guard let anchorIP = collectionView.indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
+                  let anchorAttrs = collectionView.layoutAttributesForItem(at: anchorIP) else {
+                continue
+            }
+            let anchorScreenY = anchorAttrs.frame.origin.y - collectionView.contentOffset.y
+
+            // Scroll up by one step.
+            let actualStep = min(scrollStep, collectionView.contentOffset.y)
+            collectionView.contentOffset.y -= actualStep
+            collectionView.layoutIfNeeded()
+
+            // The anchor item should move down on screen by exactly `actualStep`
+            // (viewport moved up → item's screen position increases).
+            // Any EXTRA shift is stutter from layout re-estimation.
+            let expectedScreenY = anchorScreenY + actualStep
+            if let newAttrs = collectionView.layoutAttributesForItem(at: anchorIP) {
+                let newScreenY = newAttrs.frame.origin.y - collectionView.contentOffset.y
+                let stutter = abs(newScreenY - expectedScreenY)
+                if stutter > maxJump {
+                    maxJump = stutter
+                }
+                if stutter > 2 {
+                    jumpDetails.append((step: step, jump: stutter))
+                }
+            }
+        }
+
+        // Tolerance: 2pt per step.  Any larger stutter is visible jitter.
+        let detail = jumpDetails.map { "step \($0.step): \($0.jump)pt" }.joined(separator: ", ")
+        #expect(maxJump <= 2.0,
+                "anchor item stuttered \(maxJump)pt during upward scroll [\(detail)]")
     }
 }
 

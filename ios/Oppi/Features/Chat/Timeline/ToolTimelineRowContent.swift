@@ -1014,6 +1014,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
+        if visibility.showExpandedContainer {
+            updateExpandedLabelWidthIfNeeded()
+        }
+
         return visibility
     }
 
@@ -1045,6 +1049,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        if visibility.showExpandedContainer {
+            updateExpandedLabelWidthIfNeeded()
+        }
 
         return visibility
     }
@@ -1189,18 +1197,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func expandedContentOverflowsViewport() -> Bool {
         let inset = expandedScrollView.adjustedContentInset
-        let viewportWidth = max(0, expandedScrollView.bounds.width - inset.left - inset.right)
         let viewportHeight = max(0, expandedScrollView.bounds.height - inset.top - inset.bottom)
 
-        guard viewportWidth > 1, viewportHeight > 1 else {
+        guard viewportHeight > 1 else {
             return false
         }
 
-        let overflowX = expandedScrollView.contentSize.width - viewportWidth
         let overflowY = expandedScrollView.contentSize.height - viewportHeight
-
-        return overflowX > Self.fullScreenOverflowThreshold
-            || overflowY > Self.fullScreenOverflowThreshold
+        return overflowY > Self.fullScreenOverflowThreshold
     }
 
     private func normalizedExpandedContentForHotPath(

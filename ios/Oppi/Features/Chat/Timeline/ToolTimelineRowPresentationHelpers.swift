@@ -34,11 +34,15 @@ enum ToolTimelineRowPresentationHelpers {
         }
 
         let controller = FullScreenCodeViewController(content: content)
-        // Use .overFullScreen to keep the presenting VC in the window hierarchy.
-        // .fullScreen removes the presenter's view, which triggers SwiftUI
-        // onDisappear/onAppear on the ChatView — causing a full session
-        // disconnect + reconnect cycle and potential session routing bugs.
-        controller.modalPresentationStyle = .overFullScreen
+        // .pageSheet keeps the presenting VC in the window hierarchy (unlike
+        // .fullScreen which removes it, triggering SwiftUI onDisappear).
+        // On iPhone, .pageSheet at .large() detent is visually full-screen
+        // and gives free interactive swipe-to-dismiss.
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
     }
@@ -47,8 +51,12 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else { return }
 
         let controller = FullScreenImageViewController(image: image)
-        // Use .overFullScreen — see presentFullScreenContent() comment.
-        controller.modalPresentationStyle = .overFullScreen
+        // .pageSheet — see presentFullScreenContent() comment.
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
         presenter.present(controller, animated: true)
     }
 

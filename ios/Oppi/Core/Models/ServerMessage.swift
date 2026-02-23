@@ -10,6 +10,7 @@ enum ServerMessage: Sendable, Equatable {
     case connected(session: Session)
     case state(session: Session)
     case sessionEnded(reason: String)
+    case sessionDeleted(sessionId: String)
     case stopRequested(source: StopLifecycleSource, reason: String?)
     case stopConfirmed(source: StopLifecycleSource, reason: String?)
     case stopFailed(source: StopLifecycleSource, reason: String)
@@ -150,6 +151,10 @@ extension ServerMessage: Decodable {
         case "session_ended":
             let reason = try c.decode(String.self, forKey: .reason)
             self = .sessionEnded(reason: reason)
+
+        case "session_deleted":
+            let sid = try c.decode(String.self, forKey: .sessionId)
+            self = .sessionDeleted(sessionId: sid)
 
         case "stop_requested":
             let source = try c.decode(StopLifecycleSource.self, forKey: .source)
@@ -360,6 +365,7 @@ extension ServerMessage {
         case .connected: "connected"
         case .state: "state"
         case .sessionEnded: "sessionEnded"
+        case .sessionDeleted: "sessionDeleted"
         case .stopRequested: "stopRequested"
         case .stopConfirmed: "stopConfirmed"
         case .stopFailed: "stopFailed"
