@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RouteHandler, type RouteContext } from "../src/routes.js";
+import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 import { SkillRegistry, UserSkillStore } from "../src/skills.js";
 import type { Workspace } from "../src/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
