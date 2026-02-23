@@ -95,6 +95,6 @@ jobs:
         run: |
           BUILD_NUM=$(git rev-list --count HEAD)
           echo "::notice::Releasing build $BUILD_NUM"
-          bash scripts/testflight.sh \
+          bash scripts/release.sh \
             --build-number "$BUILD_NUM" \
             --submit-external
