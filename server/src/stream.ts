@@ -103,6 +103,7 @@ export class UserStreamMux {
       case "agent_end":
       case "state":
       case "session_ended":
+      case "session_deleted":
       case "stop_requested":
       case "stop_confirmed":
       case "stop_failed":

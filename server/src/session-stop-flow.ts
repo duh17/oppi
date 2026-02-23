@@ -43,7 +43,7 @@ export class SessionStopFlowCoordinator {
       this.deps.sendCommand(key, { type: "abort" });
 
       try {
-        active.sdkBackend.abortBash();
+        active.sdkBackend.session.abortBash();
       } catch {
         // no bash running — fine
       }

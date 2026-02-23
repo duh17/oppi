@@ -1,12 +1,27 @@
+import type { AgentSession } from "@mariozechner/pi-coding-agent";
+
+import { ts } from "./log-utils.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { composeModelId, type SessionStateActiveSession } from "./session-state.js";
 import type { SdkBackend } from "./sdk-backend.js";
-import { ts } from "./log-utils.js";
 import type { Session, ServerMessage } from "./types.js";
 
 function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function readCompactInstructions(command: Record<string, unknown>): string | undefined {
+  if (typeof command.customInstructions === "string") {
+    return command.customInstructions;
+  }
+
+  // Backward compatibility with previous internal field name.
+  if (typeof command.instructions === "string") {
+    return command.instructions;
+  }
+
+  return undefined;
 }
 
 export interface CommandSessionState extends SessionStateActiveSession {
@@ -25,22 +40,25 @@ export interface SessionCommandCoordinatorDeps {
   getContextWindowResolver: () => ((modelId: string) => number) | null;
 }
 
+type BackendCommandHandler = (
+  backend: SdkBackend,
+  cmd: Record<string, unknown>,
+) => unknown | Promise<unknown>;
+
+type SessionCommandHandler = (
+  session: AgentSession,
+  cmd: Record<string, unknown>,
+) => unknown | Promise<unknown>;
+
 export class SessionCommandCoordinator {
   constructor(private readonly deps: SessionCommandCoordinatorDeps) {}
 
-  private static readonly SDK_HANDLERS = new Map<
-    string,
-    (backend: SdkBackend, cmd: Record<string, unknown>) => unknown | Promise<unknown>
-  >([
-    // State
-    ["get_state", (b) => b.getStateSnapshot()],
-    ["get_messages", (b) => b.getMessages()],
-    ["get_session_stats", (b) => b.getSessionStats()],
+  private static readonly SERVER_LOGIC_HANDLERS = new Map<string, BackendCommandHandler>([
+    ["get_state", (backend) => backend.getStateSnapshot()],
 
-    // Model
     [
       "set_model",
-      async (b, cmd) => {
+      async (backend, cmd) => {
         const modelFromCommand =
           typeof cmd.model === "string" && cmd.model.trim().length > 0
             ? cmd.model.trim()
@@ -56,96 +74,112 @@ export class SessionCommandCoordinator {
         if (!model) {
           throw new Error("Invalid set_model payload: expected model or provider+modelId");
         }
-        const result = await b.setModel(model);
+
+        const result = await backend.setModel(model);
         if (!result.success) {
           throw new Error(result.error);
         }
         return result;
       },
     ],
-    ["cycle_model", (b, cmd) => b.cycleModel(cmd.direction as string)],
-    ["get_available_models", () => []],
 
-    // Thinking
+    ["cycle_model", (backend, cmd) => backend.session.cycleModel(cmd.direction as never)],
+
     [
       "set_thinking_level",
-      (b, cmd) => {
-        b.setThinkingLevel(cmd.level as string);
+      (backend, cmd) => {
+        backend.session.setThinkingLevel(
+          cmd.level as Parameters<AgentSession["setThinkingLevel"]>[0],
+        );
         return { level: cmd.level };
       },
     ],
-    ["cycle_thinking_level", (b) => ({ level: b.cycleThinkingLevel() })],
 
-    // Session
+    ["cycle_thinking_level", (backend) => ({ level: backend.session.cycleThinkingLevel() })],
+
     [
       "new_session",
-      async (b) => {
-        await b.newSession();
+      async (backend) => {
+        await backend.session.newSession();
         return { success: true };
       },
     ],
+
     [
       "set_session_name",
-      (b, cmd) => {
-        b.setSessionName(cmd.name as string);
+      (backend, cmd) => {
+        backend.session.setSessionName(cmd.name as string);
         return { name: cmd.name };
       },
     ],
-    ["compact", (b, cmd) => b.compact(cmd.instructions as string | undefined)],
+
+    ["fork", (backend, cmd) => backend.session.fork(cmd.entryId as string)],
+    ["switch_session", (backend, cmd) => backend.session.switchSession(cmd.sessionPath as string)],
+  ]);
+
+  private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
+    ["get_messages", (session) => session.messages],
+    ["get_session_stats", (session) => session.getSessionStats()],
+    ["get_available_models", () => []],
+
+    ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
+
     [
       "set_auto_compaction",
-      (b, cmd) => {
-        b.setAutoCompaction(!!cmd.enabled);
+      (session, cmd) => {
+        session.setAutoCompactionEnabled(!!cmd.enabled);
         return { enabled: !!cmd.enabled };
       },
     ],
-    ["fork", (b, cmd) => b.fork(cmd.entryId as string)],
-    ["switch_session", (b, cmd) => b.switchSession(cmd.sessionPath as string)],
 
-    // Queue modes
     [
       "set_steering_mode",
-      (b, cmd) => {
-        b.setSteeringMode(cmd.mode as string);
-        return { mode: cmd.mode };
-      },
-    ],
-    [
-      "set_follow_up_mode",
-      (b, cmd) => {
-        b.setFollowUpMode(cmd.mode as string);
+      (session, cmd) => {
+        session.setSteeringMode(cmd.mode as "all" | "one-at-a-time");
         return { mode: cmd.mode };
       },
     ],
 
-    // Retry
+    [
+      "set_follow_up_mode",
+      (session, cmd) => {
+        session.setFollowUpMode(cmd.mode as "all" | "one-at-a-time");
+        return { mode: cmd.mode };
+      },
+    ],
+
     [
       "set_auto_retry",
-      (b, cmd) => {
-        b.setAutoRetry(!!cmd.enabled);
+      (session, cmd) => {
+        session.setAutoRetryEnabled(!!cmd.enabled);
         return { enabled: !!cmd.enabled };
       },
     ],
+
     [
       "abort_retry",
-      (b) => {
-        b.abortRetry();
+      (session) => {
+        session.abortRetry();
         return { success: true };
       },
     ],
 
-    // Bash
     [
       "abort_bash",
-      (b) => {
-        b.abortBash();
+      (session) => {
+        session.abortBash();
         return { success: true };
       },
     ],
   ]);
 
+  private static readonly ALLOWED_COMMANDS = new Set<string>([
+    ...SessionCommandCoordinator.SERVER_LOGIC_HANDLERS.keys(),
+    ...SessionCommandCoordinator.SESSION_PASSTHROUGH_HANDLERS.keys(),
+  ]);
+
   isAllowedCommand(commandType: string): boolean {
-    return SessionCommandCoordinator.SDK_HANDLERS.has(commandType);
+    return SessionCommandCoordinator.ALLOWED_COMMANDS.has(commandType);
   }
 
   sendCommand(key: string, command: Record<string, unknown>): void {
@@ -164,12 +198,17 @@ export class SessionCommandCoordinator {
     }
 
     const type = command.type as string;
-    const handler = SessionCommandCoordinator.SDK_HANDLERS.get(type);
-    if (!handler) {
+    const backendHandler = SessionCommandCoordinator.SERVER_LOGIC_HANDLERS.get(type);
+    if (backendHandler) {
+      return backendHandler(active.sdkBackend, command);
+    }
+
+    const sessionHandler = SessionCommandCoordinator.SESSION_PASSTHROUGH_HANDLERS.get(type);
+    if (!sessionHandler) {
       throw new Error(`Unhandled SDK command: ${type}`);
     }
 
-    return handler(active.sdkBackend, command);
+    return sessionHandler(active.sdkBackend.session, command);
   }
 
   async forwardClientCommand(
