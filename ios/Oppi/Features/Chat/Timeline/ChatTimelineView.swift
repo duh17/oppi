@@ -155,6 +155,9 @@ struct ChatTimelineView: View {
 
     private func jumpToLatest() {
         guard let bottomItemID else { return }
+        // Re-attach so auto-follow resumes and the programmatic scroll
+        // animation doesn't re-flash the hints.
+        scrollController.updateNearBottom(true)
         scrollController.setDetachedStreamingHintVisible(false)
         scrollController.setJumpToBottomHintVisible(false)
         issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)

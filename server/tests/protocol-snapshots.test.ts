@@ -68,6 +68,10 @@ function buildCanonicalMessages(): Record<string, ServerMessage> {
       type: "session_ended",
       reason: "Process exited with code 0",
     },
+    session_deleted: {
+      type: "session_deleted",
+      sessionId: "test-session-id",
+    },
     stop_requested: {
       type: "stop_requested",
       source: "user",
@@ -302,6 +306,7 @@ describe("protocol snapshots", () => {
       "stream_connected",
       "state",
       "session_ended",
+      "session_deleted",
       "stop_requested",
       "stop_confirmed",
       "stop_failed",

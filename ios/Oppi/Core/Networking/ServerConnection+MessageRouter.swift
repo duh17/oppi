@@ -138,6 +138,9 @@ extension ServerConnection {
             }
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
+        case .sessionDeleted(let deletedId):
+            sessionStore.remove(id: deletedId)
+
         case .error(let msg, _, let fatal):
             coalescer.receive(.error(sessionId: sessionId, message: msg))
             // Fatal setup errors (e.g. session limit reached) — stop auto-reconnect.
@@ -190,12 +193,26 @@ extension ServerConnection {
     }
 
     func handleState(_ session: Session) {
-        let previousWorkspaceId = sessionStore.sessions.first(where: { $0.id == session.id })?.workspaceId
+        let previous = sessionStore.sessions.first(where: { $0.id == session.id })
+        let previousWorkspaceId = previous?.workspaceId
+        let previousStatus = previous?.status
+
         sessionStore.upsert(session)
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
         }
+
+        // Recovery hardening: if server state says the session is no longer
+        // running but we never observed agentEnd/messageEnd (reconnect gap,
+        // stop lifecycle path), finalize in-flight timeline artifacts.
+        if let previousStatus,
+           previousStatus == .busy || previousStatus == .stopping,
+           session.status == .ready || session.status == .stopped || session.status == .error {
+            coalescer.receive(.agentEnd(sessionId: session.id))
+            silenceWatchdog.stop()
+        }
+
         syncLiveActivityPermissions()
     }
 
@@ -209,6 +226,10 @@ extension ServerConnection {
             return true
         case .stopConfirmed(_, let reason):
             updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
+            // Match TUI behavior: stop-confirmed without agentEnd should still
+            // close any in-flight thinking/tool state.
+            coalescer.receive(.agentEnd(sessionId: sessionId))
+            silenceWatchdog.stop()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
             return true
         case .stopFailed(_, let reason):

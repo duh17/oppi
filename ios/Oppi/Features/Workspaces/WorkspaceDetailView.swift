@@ -488,10 +488,15 @@ struct WorkspaceDetailView: View {
         sessionStore.remove(id: session.id)
         do {
             try await api.deleteWorkspaceSession(workspaceId: workspace.id, sessionId: session.id)
-            await refreshLineage()
+        } catch let apiError as APIError {
+            // 404 means already deleted server-side — local removal above is sufficient.
+            if case .server(let status, _) = apiError, status == 404 { /* ok */ } else {
+                self.error = "Delete failed: \(apiError.localizedDescription)"
+            }
         } catch {
             self.error = "Delete failed: \(error.localizedDescription)"
         }
+        await refreshLineage()
     }
 
     private func importAndResumeLocal(_ local: LocalSession) async {

@@ -44,6 +44,29 @@ struct SyntaxOutputTests {
         #expect(result.attributedText != nil)
     }
 
+    @Test func knownLanguageUsesMonospaceFontAcrossHighlightedRuns() throws {
+        let result = ToolRowTextRenderer.makeSyntaxOutputPresentation("let x = 1", language: .swift)
+        let attributed = try #require(result.attributedText)
+        let expected = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        var sawMissingFont = false
+        var sawUnexpectedFont = false
+
+        attributed.enumerateAttribute(.font, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
+            guard let font = value as? UIFont else {
+                sawMissingFont = true
+                return
+            }
+
+            if font.fontName != expected.fontName || abs(font.pointSize - expected.pointSize) > 0.01 {
+                sawUnexpectedFont = true
+            }
+        }
+
+        #expect(!sawMissingFont)
+        #expect(!sawUnexpectedFont)
+    }
+
     @Test func oversizedSyntaxFallsBackToPlain() {
         let huge = String(repeating: "a", count: ToolRowTextRenderer.maxSyntaxHighlightBytes + 1)
         let result = ToolRowTextRenderer.makeSyntaxOutputPresentation(huge, language: .swift)

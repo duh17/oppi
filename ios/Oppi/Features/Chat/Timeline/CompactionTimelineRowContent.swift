@@ -48,6 +48,8 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
     private let detailContainerView = UIView()
     private let detailLabel = UILabel()
     private let detailMarkdownView = AssistantMarkdownContentView()
+    private var detailLabelBottom: NSLayoutConstraint?
+    private var detailMarkdownBottom: NSLayoutConstraint?
 
     private var currentConfiguration: CompactionTimelineRowConfiguration
 
@@ -162,13 +164,19 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
             detailLabel.leadingAnchor.constraint(equalTo: detailContainerView.leadingAnchor),
             detailLabel.trailingAnchor.constraint(equalTo: detailContainerView.trailingAnchor),
             detailLabel.topAnchor.constraint(equalTo: detailContainerView.topAnchor),
-            detailLabel.bottomAnchor.constraint(equalTo: detailContainerView.bottomAnchor),
 
             detailMarkdownView.leadingAnchor.constraint(equalTo: detailContainerView.leadingAnchor),
             detailMarkdownView.trailingAnchor.constraint(equalTo: detailContainerView.trailingAnchor),
             detailMarkdownView.topAnchor.constraint(equalTo: detailContainerView.topAnchor),
-            detailMarkdownView.bottomAnchor.constraint(equalTo: detailContainerView.bottomAnchor),
         ])
+
+        // Bottom constraints stored separately — only the visible view drives container height.
+        let labelBottom = detailLabel.bottomAnchor.constraint(equalTo: detailContainerView.bottomAnchor)
+        let mdBottom = detailMarkdownView.bottomAnchor.constraint(equalTo: detailContainerView.bottomAnchor)
+        labelBottom.isActive = true
+        mdBottom.isActive = false
+        detailLabelBottom = labelBottom
+        detailMarkdownBottom = mdBottom
     }
 
     private func apply(configuration: CompactionTimelineRowConfiguration) {
@@ -208,6 +216,10 @@ final class CompactionTimelineRowContentView: UIView, UIContentView {
 
             detailLabel.isHidden = showMarkdown
             detailMarkdownView.isHidden = !showMarkdown
+
+            // Only the visible view's bottom constraint drives container height.
+            detailLabelBottom?.isActive = !showMarkdown
+            detailMarkdownBottom?.isActive = showMarkdown
 
             if showMarkdown {
                 detailMarkdownView.apply(

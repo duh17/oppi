@@ -129,6 +129,88 @@ struct ToolTimelineRowModeDispatchTests {
 
         _ = fittedSize(for: view, width: 360)
     }
+
+    @Test func expandedDiffInitialSizingBeforeLayoutPassStaysCompact() {
+        let config = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: "let oldValue = false"),
+                DiffLine(kind: .added, text: "let oldValue = true"),
+            ], path: "Timeline/ChatTimelineCollectionView.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 300)
+
+        #expect(firstPassSize.height.isFinite)
+        #expect(firstPassSize.height > 0)
+        #expect(firstPassSize.height < 300, "Initial diff sizing should stay compact; got \(firstPassSize.height)")
+    }
+
+    @Test func expandedCodeInitialSizingBeforeLayoutPassStaysCompact() {
+        let config = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: "let title = \"tool expansion\"",
+                language: .swift,
+                startLine: 824,
+                filePath: "Timeline/ChatTimelineCollectionView.swift"
+            ),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 300)
+
+        #expect(firstPassSize.height.isFinite)
+        #expect(firstPassSize.height > 0)
+        #expect(firstPassSize.height < 300, "Initial code sizing should stay compact; got \(firstPassSize.height)")
+    }
+
+    @Test func expandedCodeApplySetsUnwrappedWidthImmediately() throws {
+        let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
+        let config = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: longCodeLine,
+                language: .swift,
+                startLine: 824,
+                filePath: "Timeline/ChatTimelineCollectionView.swift"
+            ),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+
+        #expect(widthConstraint.priority == .required)
+        #expect(
+            widthConstraint.constant > 1,
+            "Expanded code should set a positive unwrapped width delta during apply; got \(widthConstraint.constant)"
+        )
+    }
+
+    @Test func expandedDiffApplySetsUnwrappedWidthImmediately() throws {
+        let longDiffLine = String(repeating: "abcdefghijklmnopqrstuvwxyz", count: 20)
+        let config = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: longDiffLine),
+                DiffLine(kind: .added, text: longDiffLine + "-updated"),
+            ], path: "Timeline/ChatTimelineCollectionView.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+
+        #expect(widthConstraint.priority == .required)
+        #expect(
+            widthConstraint.constant > 1,
+            "Expanded diff should set a positive unwrapped width delta during apply; got \(widthConstraint.constant)"
+        )
+    }
 }
 
 private func makeToolConfiguration(
@@ -171,6 +253,11 @@ private func privateScrollView(named name: String, in view: ToolTimelineRowConte
 }
 
 @MainActor
+private func privateConstraint(named name: String, in view: ToolTimelineRowContentView) -> NSLayoutConstraint? {
+    Mirror(reflecting: view).children.first { $0.label == name }?.value as? NSLayoutConstraint
+}
+
+@MainActor
 private func fittedSize(for view: UIView, width: CGFloat) -> CGSize {
     let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 2_000))
     container.backgroundColor = .black
@@ -186,6 +273,27 @@ private func fittedSize(for view: UIView, width: CGFloat) -> CGSize {
 
     container.setNeedsLayout()
     container.layoutIfNeeded()
+
+    return view.systemLayoutSizeFitting(
+        CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+    )
+}
+
+@MainActor
+private func fittedSizeWithoutPrelayout(for view: UIView, width: CGFloat) -> CGSize {
+    let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 2_000))
+    container.backgroundColor = .black
+
+    view.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(view)
+
+    NSLayoutConstraint.activate([
+        view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        view.topAnchor.constraint(equalTo: container.topAnchor),
+    ])
 
     return view.systemLayoutSizeFitting(
         CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),

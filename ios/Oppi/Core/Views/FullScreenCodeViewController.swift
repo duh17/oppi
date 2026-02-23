@@ -5,6 +5,10 @@ import UIKit
 /// Supports code (with syntax highlighting), diff, and markdown modes.
 /// Presented via ``FullScreenCodeView`` (UIViewControllerRepresentable wrapper)
 /// from SwiftUI callers, and directly from UIKit timeline cells.
+private enum FullScreenCodeTypography {
+    static let codeFont = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+}
+
 final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private var showSource = false
@@ -45,7 +49,12 @@ final class FullScreenCodeViewController: UIViewController {
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
         // Toolbar setup
-        let doneButton = UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(doneTapped))
+        let doneButton = UIBarButtonItem(
+            image: UIImage(systemName: "chevron.down"),
+            style: .plain,
+            target: self,
+            action: #selector(doneTapped)
+        )
         doneButton.tintColor = UIColor(palette.cyan)
         vc.navigationItem.leftBarButtonItem = doneButton
 
@@ -57,11 +66,14 @@ final class FullScreenCodeViewController: UIViewController {
         copyButton = copy
         rightItems.append(copy)
 
-        if case .markdown = content {
+        switch content {
+        case .markdown:
             let toggle = UIBarButtonItem(title: "Source", style: .plain, target: self, action: #selector(toggleSource))
             toggle.tintColor = UIColor(palette.blue)
             sourceToggleButton = toggle
             rightItems.append(toggle)
+        default:
+            break
         }
         vc.navigationItem.rightBarButtonItems = rightItems
 
@@ -139,6 +151,13 @@ final class FullScreenCodeViewController: UIViewController {
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
+
+        case .thinking:
+            let typeLabel = UILabel()
+            typeLabel.text = "Thinking"
+            typeLabel.font = .systemFont(ofSize: 11)
+            typeLabel.textColor = UIColor(palette.comment)
+            stack.addArrangedSubview(typeLabel)
         }
 
         return stack
@@ -153,6 +172,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(let oldText, let newText, let filePath, let precomputedLines):
             return NativeFullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath, precomputedLines: precomputedLines, palette: palette)
         case .markdown(let text, _):
+            return NativeFullScreenMarkdownBody(content: text, palette: palette)
+        case .thinking(let text):
             return NativeFullScreenMarkdownBody(content: text, palette: palette)
         }
     }
@@ -169,6 +190,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .code(let t, _, _, _): text = t
         case .diff(_, let newText, _, _): text = newText
         case .markdown(let t, _): text = t
+        case .thinking(let t): text = t
         }
         UIPasteboard.general.string = text
         copyButton?.image = UIImage(systemName: "checkmark")
@@ -206,6 +228,13 @@ final class FullScreenCodeViewController: UIViewController {
             body.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor),
         ])
     }
+}
+
+private func fullScreenAttributedCodeText(from attributed: NSAttributedString) -> NSAttributedString {
+    let mutable = NSMutableAttributedString(attributedString: attributed)
+    let fullRange = NSRange(location: 0, length: mutable.length)
+    mutable.addAttribute(.font, value: FullScreenCodeTypography.codeFont, range: fullRange)
+    return mutable
 }
 
 // MARK: - Code Body
@@ -252,7 +281,7 @@ private final class NativeFullScreenCodeBody: UIView {
 
         // Gutter
         gutterLabel.translatesAutoresizingMaskIntoConstraints = false
-        gutterLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        gutterLabel.font = FullScreenCodeTypography.codeFont
         gutterLabel.textColor = UIColor(palette.comment)
         gutterLabel.textAlignment = .right
         gutterLabel.numberOfLines = 0
@@ -269,7 +298,7 @@ private final class NativeFullScreenCodeBody: UIView {
 
         // Code text
         codeTextView.translatesAutoresizingMaskIntoConstraints = false
-        codeTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        codeTextView.font = FullScreenCodeTypography.codeFont
         codeTextView.textColor = UIColor(palette.fg)
         codeTextView.backgroundColor = .clear
         codeTextView.isEditable = false
@@ -325,7 +354,9 @@ private final class NativeFullScreenCodeBody: UIView {
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.codeTextView.attributedText = NSAttributedString(highlighted)
+                self?.codeTextView.attributedText = fullScreenAttributedCodeText(
+                    from: NSAttributedString(highlighted)
+                )
             }
         }
     }
@@ -498,26 +529,28 @@ private final class DiffRowView: UIView {
 
         let oldNumLabel = UILabel()
         oldNumLabel.translatesAutoresizingMaskIntoConstraints = false
-        oldNumLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        oldNumLabel.font = FullScreenCodeTypography.codeFont
         oldNumLabel.text = oldLineNumber.map(String.init) ?? ""
         oldNumLabel.textAlignment = .right
         oldNumLabel.textColor = UIColor(palette.comment)
 
         let newNumLabel = UILabel()
         newNumLabel.translatesAutoresizingMaskIntoConstraints = false
-        newNumLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        newNumLabel.font = FullScreenCodeTypography.codeFont
         newNumLabel.text = newLineNumber.map(String.init) ?? ""
         newNumLabel.textAlignment = .right
         newNumLabel.textColor = UIColor(palette.comment)
 
         let codeLabel = UILabel()
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
-        codeLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        codeLabel.font = FullScreenCodeTypography.codeFont
         codeLabel.numberOfLines = 1
         codeLabel.lineBreakMode = .byClipping
 
         if language != .unknown, line.kind == .context {
-            codeLabel.attributedText = NSAttributedString(SyntaxHighlighter.highlightLine(line.text, language: language))
+            codeLabel.attributedText = fullScreenAttributedCodeText(
+                from: NSAttributedString(SyntaxHighlighter.highlightLine(line.text, language: language))
+            )
         } else {
             codeLabel.text = line.text
             codeLabel.textColor = textColor
@@ -621,7 +654,7 @@ private final class NativeFullScreenSourceBody: UIView {
 
         let textView = UITextView()
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.font = FullScreenCodeTypography.codeFont
         textView.textColor = UIColor(palette.fg)
         textView.backgroundColor = .clear
         textView.isEditable = false
