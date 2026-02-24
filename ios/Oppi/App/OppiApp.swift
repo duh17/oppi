@@ -90,6 +90,7 @@ struct OppiApp: App {
             .onOpenURL { url in Task { @MainActor in await handleIncomingInviteURL(url) } }
             .task {
                 await SentryService.shared.configure()
+                MetricKitService.shared.configure()
 #if DEBUG
                 configureWatchdogHooks()
                 mainThreadLagWatchdog.start()
@@ -142,7 +143,10 @@ struct OppiApp: App {
             connection.sessionStore.markSyncSucceeded()
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
-            if let api = connection.apiClient { await connection.workspaceStore.load(api: api) }
+            if let api = connection.apiClient {
+                MetricKitService.shared.setUploadClient(api)
+                await connection.workspaceStore.load(api: api)
+            }
             if ReleaseFeatures.pushNotificationsEnabled {
                 await PushRegistration.shared.requestAndRegister()
                 await coordinator.registerPushWithAllServers()
@@ -440,6 +444,8 @@ struct OppiApp: App {
             navigation.showOnboarding = true
             return
         }
+
+        MetricKitService.shared.setUploadClient(api)
 
         // Never show onboarding when we have valid credentials.
         // Even if security profile check fails (server offline), show cached workspace.

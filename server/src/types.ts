@@ -273,6 +273,28 @@ export interface ClientLogUploadRequest {
   entries: ClientLogUploadEntry[];
 }
 
+export interface MetricKitPayloadItem {
+  /** "metric" (MXMetricPayload) or "diagnostic" (MXDiagnosticPayload). */
+  kind: "metric" | "diagnostic";
+  /** Window start of telemetry sample (ms since epoch). */
+  windowStartMs: number;
+  /** Window end of telemetry sample (ms since epoch). */
+  windowEndMs: number;
+  /** Low-cardinality summary suitable for dashboards/alerts. */
+  summary: Record<string, string>;
+  /** Sanitized raw payload JSON for later inspection/replay. */
+  raw: Record<string, unknown> | string;
+}
+
+export interface MetricKitUploadRequest {
+  generatedAt: number;
+  appVersion?: string;
+  buildNumber?: string;
+  osVersion?: string;
+  deviceModel?: string;
+  payloads: MetricKitPayloadItem[];
+}
+
 // ─── WebSocket Messages ───
 
 export interface ImageAttachment {
