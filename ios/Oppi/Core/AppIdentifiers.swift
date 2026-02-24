@@ -21,7 +21,7 @@ enum ReleaseFeatures {
     static let pushNotificationsEnabled = false
 
     /// Dynamic Island / Lock Screen session activity surface.
-    static let liveActivitiesEnabled = false
+    static let liveActivitiesEnabled = true
 
     /// Composer microphone button + custom speech-to-text flow.
     static let composerDictationEnabled = false

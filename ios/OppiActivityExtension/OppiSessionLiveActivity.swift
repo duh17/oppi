@@ -1,58 +1,51 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Live Activity + Dynamic Island UI for an active pi session.
-///
-/// Shows supervision state only — no token-level streaming.
-/// Keeps battery/update budget low by using coarse state.
+/// Aggregate Live Activity + Dynamic Island UI for Oppi sessions.
 struct PiSessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PiSessionAttributes.self) { context in
-            // Lock Screen / StandBy / Always-On Display presentation
             LockScreenView(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded Dynamic Island
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(context.attributes.sessionName, systemImage: "terminal")
-                        .font(.caption2.bold())
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Image(systemName: phaseIcon(context.state.primaryPhase))
+                        Text(context.state.primarySessionName)
+                            .font(.caption.bold())
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(phaseColor(context.state.primaryPhase))
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    StatusBadge(status: context.state.status)
+                    if context.state.pendingApprovalCount > 0 {
+                        Text("+\(context.state.pendingApprovalCount)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(phaseLabel(context.state.primaryPhase))
+                            .font(.caption2.bold())
+                            .foregroundStyle(phaseColor(context.state.primaryPhase))
+                    }
                 }
 
                 DynamicIslandExpandedRegion(.center) {
-                    if context.state.pendingPermissions > 0 {
+                    if let summary = context.state.topPermissionSummary,
+                       !summary.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
-                                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
-                                Text(permissionHeadline(context.state))
-                                    .font(.caption.bold())
-                                    .lineLimit(1)
-                            }
-
-                            if let summary = context.state.pendingPermissionSummary,
-                               !summary.isEmpty {
-                                Text(summary)
-                                    .font(.caption2.monospaced())
-                                    .lineLimit(1)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } else if let tool = context.state.activeTool {
-                        HStack(spacing: 4) {
-                            Image(systemName: iconForTool(tool))
+                            Text("Approval required")
+                                .font(.caption.bold())
+                            Text(summary)
+                                .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
-                            Text("Running \(tool)")
-                                .font(.caption)
                                 .lineLimit(1)
                         }
-                    } else if let event = context.state.lastEvent {
-                        Text(event)
+                    } else if let activity = context.state.primaryLastActivity,
+                              !activity.isEmpty {
+                        Text(activity)
                             .font(.caption)
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
@@ -60,266 +53,210 @@ struct PiSessionLiveActivity: Widget {
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    if context.state.pendingPermissions > 0 {
-                        if let reason = context.state.pendingPermissionReason,
-                           !reason.isEmpty {
-                            Text(reason)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text(sessionSummary(context.state))
                                 .font(.caption2)
-                                .lineLimit(1)
-                                .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
-                        } else {
-                            Text("Tap to review approval")
-                                .font(.caption2)
-                                .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            if context.state.primaryPhase == .working,
+                               let start = context.state.sessionStartDate {
+                                Text(timerInterval: start...Date.distantFuture, countsDown: false)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                    } else {
-                        Text(elapsedString(context.state.elapsedSeconds))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+
+                        if let permissionId = context.state.topPermissionId {
+                            PermissionActionButtons(permissionId: permissionId)
+                        }
                     }
                 }
             } compactLeading: {
-                // Compact leading — small icon with motion hint while working.
-                Image(systemName: compactLeadingSymbol(context.state))
+                Image(systemName: phaseIcon(context.state.primaryPhase))
                     .font(.caption2)
-                    .foregroundStyle(statusColor(context.state.status))
-                    .symbolEffect(.pulse, options: .repeating, isActive: isWorking(context.state.status))
+                    .foregroundStyle(phaseColor(context.state.primaryPhase))
+                    .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse(context.state.primaryPhase))
             } compactTrailing: {
-                if context.state.pendingPermissions > 0 {
-                    HStack(spacing: 2) {
-                        Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
-                            .font(.caption2)
-                        Text("\(context.state.pendingPermissions)")
-                            .font(.caption2.bold())
-                    }
-                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
-                } else if context.state.status == "busy" || context.state.status == "stopping" {
-                    Text(elapsedCompactString(context.state.elapsedSeconds))
+                if context.state.pendingApprovalCount > 0 {
+                    Text("\(context.state.pendingApprovalCount)")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.orange)
+                        .contentTransition(.numericText())
+                } else if context.state.primaryPhase == .working,
+                          let start = context.state.sessionStartDate {
+                    Text(timerInterval: start...Date.distantFuture, countsDown: false)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 } else {
-                    StatusDot(status: context.state.status)
+                    Text(phaseShortLabel(context.state.primaryPhase))
+                        .font(.caption2.bold())
+                        .foregroundStyle(phaseColor(context.state.primaryPhase))
                 }
             } minimal: {
-                if context.state.pendingPermissions > 0 {
-                    Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
-                        .font(.caption2)
-                        .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
-                } else if context.state.status == "error" {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                } else {
-                    Image(systemName: "terminal")
-                        .font(.caption2)
-                        .foregroundStyle(statusColor(context.state.status))
-                }
+                Image(systemName: phaseIcon(context.state.primaryPhase))
+                    .font(.caption2)
+                    .foregroundStyle(phaseColor(context.state.primaryPhase))
             }
         }
     }
 }
 
-// MARK: - Lock Screen View
+// MARK: - Lock Screen
 
 private struct LockScreenView: View {
     let context: ActivityViewContext<PiSessionAttributes>
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Left: session info
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.caption)
-                    Text(context.attributes.sessionName)
-                        .font(.subheadline.bold())
-                        .lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: phaseIcon(context.state.primaryPhase))
+                            .font(.caption)
+                            .foregroundStyle(phaseColor(context.state.primaryPhase))
+                        Text(context.state.primarySessionName)
+                            .font(.subheadline.bold())
+                            .lineLimit(1)
+                    }
 
-                if context.state.pendingPermissions > 0 {
-                    if let summary = context.state.pendingPermissionSummary,
+                    if let summary = context.state.topPermissionSummary,
                        !summary.isEmpty {
                         Text(summary)
                             .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    } else if let activity = context.state.primaryLastActivity,
+                              !activity.isEmpty {
+                        Text(activity)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
                     }
-                    if let reason = context.state.pendingPermissionReason,
-                       !reason.isEmpty {
-                        Text(reason)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(phaseLabel(context.state.primaryPhase))
+                        .font(.caption2.bold())
+                        .foregroundStyle(phaseColor(context.state.primaryPhase))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(phaseColor(context.state.primaryPhase).opacity(0.15))
+                        .clipShape(Capsule())
+
+                    if context.state.pendingApprovalCount > 0 {
+                        Text("\(context.state.pendingApprovalCount) approvals")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(sessionSummary(context.state))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
                     }
-                } else if let tool = context.state.activeTool {
-                    Text("Running \(tool)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if let event = context.state.lastEvent {
-                    Text(event)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+
+                    if context.state.primaryPhase == .working,
+                       let start = context.state.sessionStartDate {
+                        Text(timerInterval: start...Date.distantFuture, countsDown: false)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
-            Spacer()
-
-            // Right: status + pending
-            VStack(alignment: .trailing, spacing: 4) {
-                StatusBadge(status: context.state.status)
-
-                if context.state.pendingPermissions > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: permissionRiskIcon(context.state.pendingPermissionRisk))
-                            .font(.caption2)
-                        Text(permissionHeadline(context.state))
-                            .font(.caption2.bold())
-                    }
-                    .foregroundStyle(permissionRiskColor(context.state.pendingPermissionRisk))
-
-                    if let session = context.state.pendingPermissionSession,
-                       !session.isEmpty {
-                        Text(session)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                } else {
-                    Text(elapsedString(context.state.elapsedSeconds))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+            if let permissionId = context.state.topPermissionId {
+                PermissionActionButtons(permissionId: permissionId)
             }
         }
         .padding(16)
-        .activityBackgroundTint(
-            context.state.pendingPermissions > 0
-                ? permissionRiskColor(context.state.pendingPermissionRisk).opacity(0.15)
-                : .clear
-        )
     }
 }
 
-// MARK: - Shared Components
-
-private struct StatusBadge: View {
-    let status: String
+private struct PermissionActionButtons: View {
+    let permissionId: String
 
     var body: some View {
-        Text(statusLabel)
-            .font(.caption2.bold())
-            .foregroundStyle(statusColor(status))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(statusColor(status).opacity(0.15))
-            .clipShape(Capsule())
-    }
+        HStack(spacing: 8) {
+            Button(intent: DenyPermissionIntent(permissionId: permissionId)) {
+                Label("Deny", systemImage: "xmark")
+                    .font(.caption2.bold())
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
 
-    private var statusLabel: String {
-        switch status {
-        case "busy": return "Working"
-        case "stopping": return "Stopping"
-        case "ready": return "Ready"
-        case "stopped": return "Done"
-        case "error": return "Error"
-        default: return status
+            Button(intent: ApprovePermissionIntent(permissionId: permissionId)) {
+                Label("Approve", systemImage: "checkmark")
+                    .font(.caption2.bold())
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
         }
-    }
-}
-
-private struct StatusDot: View {
-    let status: String
-
-    var body: some View {
-        Circle()
-            .fill(statusColor(status))
-            .frame(width: 8, height: 8)
-            .symbolEffect(.pulse, options: .repeating, isActive: isWorking(status))
     }
 }
 
 // MARK: - Helpers
 
-private func statusColor(_ status: String) -> Color {
-    switch status {
-    case "busy": return .yellow
-    case "stopping": return .orange
-    case "ready": return .green
-    case "stopped": return .gray
-    case "error": return .red
-    default: return .secondary
+private func phaseLabel(_ phase: SessionPhase) -> String {
+    switch phase {
+    case .working: return "Working"
+    case .awaitingReply: return "Your turn"
+    case .needsApproval: return "Approval"
+    case .error: return "Attention"
+    case .ended: return "Idle"
     }
 }
 
-private func isWorking(_ status: String) -> Bool {
-    status == "busy" || status == "stopping"
-}
-
-private func compactLeadingSymbol(_ state: PiSessionAttributes.ContentState) -> String {
-    if state.pendingPermissions > 0 {
-        return permissionRiskIcon(state.pendingPermissionRisk)
-    }
-    if state.status == "error" {
-        return "exclamationmark.triangle.fill"
-    }
-    if isWorking(state.status) {
-        return "waveform.path.ecg"
-    }
-    return "terminal"
-}
-
-private func permissionRiskColor(_ risk: String?) -> Color {
-    switch risk {
-    case "critical": return .red
-    case "high": return .orange
-    case "medium": return .yellow
-    case "low": return .green
-    default: return .orange
+private func phaseShortLabel(_ phase: SessionPhase) -> String {
+    switch phase {
+    case .working: return "Run"
+    case .awaitingReply: return "Reply"
+    case .needsApproval: return "Ask"
+    case .error: return "Err"
+    case .ended: return "Idle"
     }
 }
 
-private func permissionRiskIcon(_ risk: String?) -> String {
-    switch risk {
-    case "critical": return "xmark.octagon.fill"
-    case "high": return "exclamationmark.triangle.fill"
-    case "medium": return "exclamationmark.shield"
-    case "low": return "checkmark.shield"
-    default: return "exclamationmark.triangle.fill"
+private func phaseIcon(_ phase: SessionPhase) -> String {
+    switch phase {
+    case .working: return "waveform.path.ecg"
+    case .awaitingReply: return "bubble.left.fill"
+    case .needsApproval: return "exclamationmark.shield.fill"
+    case .error: return "exclamationmark.triangle.fill"
+    case .ended: return "terminal"
     }
 }
 
-private func permissionHeadline(_ state: PiSessionAttributes.ContentState) -> String {
-    if state.pendingPermissions <= 1 {
-        return "Approval needed"
-    }
-    return "\(state.pendingPermissions) approvals"
-}
-
-private func iconForTool(_ tool: String) -> String {
-    switch tool {
-    case "Bash", "bash": return "terminal"
-    case "Read", "read": return "doc.text"
-    case "Write", "write": return "doc.badge.plus"
-    case "Edit", "edit": return "pencil"
-    case "__compaction": return "arrow.triangle.2.circlepath"
-    default: return "gearshape"
+private func phaseColor(_ phase: SessionPhase) -> Color {
+    switch phase {
+    case .working: return .yellow
+    case .awaitingReply: return .green
+    case .needsApproval: return .orange
+    case .error: return .red
+    case .ended: return .secondary
     }
 }
 
-private func elapsedString(_ seconds: Int) -> String {
-    let m = seconds / 60
-    let s = seconds % 60
-    return String(format: "%d:%02d", m, s)
+private func shouldPulse(_ phase: SessionPhase) -> Bool {
+    switch phase {
+    case .working, .needsApproval:
+        return true
+    case .awaitingReply, .error, .ended:
+        return false
+    }
 }
 
-private func elapsedCompactString(_ seconds: Int) -> String {
-    if seconds >= 3600 {
-        return "\(seconds / 3600)h"
+private func sessionSummary(_ state: PiSessionAttributes.ContentState) -> String {
+    if state.totalActiveSessions <= 1 {
+        return phaseLabel(state.primaryPhase)
     }
-    if seconds >= 60 {
-        return "\(seconds / 60)m"
+    if state.sessionsWorking > 0 {
+        return "\(state.sessionsWorking) working · \(state.totalActiveSessions) active"
     }
-    return "\(max(1, seconds))s"
+    if state.sessionsAwaitingReply > 0 {
+        return "\(state.sessionsAwaitingReply) awaiting reply"
+    }
+    return "\(state.totalActiveSessions) active"
 }

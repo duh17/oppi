@@ -204,6 +204,7 @@ final class ConnectionCoordinator {
         do {
             let sessions = try await api.listSessions()
             conn.sessionStore.applyServerSnapshot(sessions)
+            conn.syncLiveActivityPermissions()
         } catch {
             logger.error("Failed to refresh sessions from server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
