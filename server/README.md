@@ -48,8 +48,6 @@ npx oppi status                  # show running sessions
 npx oppi config show             # show config
 npx oppi config set <key> <val>  # update config
 npx oppi token rotate            # rotate owner bearer token
-npx oppi env init                # capture shell PATH for sessions
-npx oppi env show                # show resolved session PATH
 ```
 
 ## Configuration

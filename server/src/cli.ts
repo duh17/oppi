@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { hostname as osHostname, networkInterfaces } from "node:os";
 import { Storage } from "./storage.js";
 import { Server } from "./server.js";
-import { envInit, envShow } from "./host-env.js";
+import { applyHostEnv, resolveExecutableOnPath, resolveHostEnv } from "./host-env.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
 import type { InviteData, InvitePayloadV3, ServerConfig } from "./types.js";
@@ -141,12 +141,10 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   }
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
-  // Capture host env if interactive shell and not already captured.
-  if (process.env.PATH && process.env.PATH.includes("/homebrew/")) {
-    envInit();
-  }
-
   const config = storage.getConfig();
+
+  // Apply runtime environment from config.json (explicit configuration only).
+  applyHostEnv(config);
   const tailscaleHostname = getTailscaleHostname();
   const tailscaleIp = getTailscaleIp();
   const localHostname = getLocalHostname();
@@ -392,8 +390,6 @@ function cmdDoctor(storage: Storage): void {
   const host = config.host;
   const loopback = isLoopbackHost(host);
 
-  const allowedCidrs = config.allowedCidrs || [];
-
   if (!loopback && !config.token) {
     checks.push({
       level: "fail",
@@ -433,37 +429,22 @@ function cmdDoctor(storage: Storage): void {
     checks.push({ level: "warn", message: "could not inspect data directory permissions" });
   }
 
-  if (allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
-    checks.push({ level: "warn", message: "allowedCidrs contains global network range" });
+  const runtimeEnv = resolveHostEnv(config);
+  const runtimePath = runtimeEnv.env.PATH || "";
+  const runtimePathEntries = runtimePath.split(":").filter(Boolean).length;
+  checks.push({
+    level: runtimePathEntries > 0 ? "pass" : "warn",
+    message:
+      runtimePathEntries > 0
+        ? `runtime PATH has ${runtimePathEntries} configured entries`
+        : "runtime PATH is empty (configure runtimePathEntries in config)",
+  });
+
+  const piPath = resolveExecutableOnPath("pi", runtimePath);
+  if (piPath) {
+    checks.push({ level: "pass", message: `pi executable found (${piPath})` });
   } else {
-    checks.push({ level: "pass", message: "allowedCidrs excludes global ranges" });
-  }
-
-  if ((host === "0.0.0.0" || host === "::") && allowedCidrs.length > 0) {
-    checks.push({
-      level: "warn",
-      message: "wildcard bind in use; rely on CIDR/firewall for exposure control",
-    });
-  }
-  if (loopback && allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
-    checks.push({ level: "warn", message: "loopback bind with wide CIDRs is inconsistent" });
-  }
-
-  try {
-    execSync("command -v pi", { stdio: "ignore" });
-    checks.push({ level: "pass", message: "pi executable found" });
-  } catch {
-    checks.push({ level: "warn", message: "pi executable not found in PATH" });
-  }
-
-  const nodeMajor = Number(process.versions.node.split(".")[0] || "0");
-  if (nodeMajor < 22) {
-    checks.push({
-      level: "warn",
-      message: `Node.js ${process.versions.node} detected (recommend >= 22)`,
-    });
-  } else {
-    checks.push({ level: "pass", message: `Node.js ${process.versions.node}` });
+    checks.push({ level: "warn", message: "pi executable not found in runtime PATH" });
   }
 
   let criticalFailures = 0;
@@ -608,15 +589,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
   console.log(c.green("  ✓ Identity keys generated"));
 
-  // 5. Capture env if interactive shell
-  if (process.env.PATH && process.env.PATH.includes("/homebrew/")) {
-    envInit();
-    console.log(c.green("  ✓ Host environment captured"));
-  } else {
-    console.log(c.yellow("  ⚠ Run 'oppi env init' from your interactive shell to capture PATH"));
-  }
-
-  // 6. Summary
+  // 5. Summary
   console.log("");
   console.log(c.bold("  Next steps:"));
   console.log("");
@@ -631,7 +604,10 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 // ─── Config Command ───
 
 /** Settable config keys and their types for `oppi config set`. */
-const SETTABLE_KEYS: Record<string, { type: "number" | "string" | "boolean"; desc: string }> = {
+const SETTABLE_KEYS: Record<
+  string,
+  { type: "number" | "string" | "boolean" | "json"; desc: string }
+> = {
   port: { type: "number", desc: "Server port" },
   host: { type: "string", desc: "Bind address" },
   defaultModel: { type: "string", desc: "Default model for new sessions" },
@@ -640,12 +616,11 @@ const SETTABLE_KEYS: Record<string, { type: "number" | "string" | "boolean"; des
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },
   workspaceIdleTimeoutMs: { type: "number", desc: "Workspace idle timeout (ms)" },
   approvalTimeoutMs: { type: "number", desc: "Permission approval timeout (ms)" },
+  runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
+  runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
 };
 
-function coerceValue(
-  raw: string,
-  type: "number" | "string" | "boolean",
-): number | string | boolean {
+function coerceValue(raw: string, type: "number" | "string" | "boolean" | "json"): unknown {
   switch (type) {
     case "number": {
       const n = Number(raw);
@@ -660,6 +635,13 @@ function coerceValue(
     }
     case "string":
       return raw;
+    case "json": {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        throw new Error(`"${raw}" is not valid JSON`);
+      }
+    }
   }
 }
 
@@ -786,28 +768,6 @@ function cmdConfig(
   process.exit(1);
 }
 
-// ─── Env Command ───
-
-function cmdEnv(action: string | undefined): void {
-  switch (action) {
-    case "init":
-      envInit();
-      break;
-    case "show":
-      envShow();
-      break;
-    default:
-      console.log(c.bold("  oppi env") + " — manage local session environment");
-      console.log("");
-      console.log(`    ${c.cyan("env init")}    Capture current $PATH into ~/.config/oppi/env`);
-      console.log(`    ${c.cyan("env show")}    Show resolved session PATH`);
-      console.log("");
-      console.log(c.dim("  Run 'env init' from your interactive shell (fish, zsh, bash)."));
-      console.log(c.dim("  The server reads this file at startup for local sessions."));
-      break;
-  }
-}
-
 function cmdHelp(): void {
   printHeader();
 
@@ -823,8 +783,6 @@ function cmdHelp(): void {
   console.log(`    ${c.cyan("status")}                     Show server status`);
   console.log(`    ${c.cyan("doctor")}                     Security + environment diagnostics`);
   console.log(`    ${c.cyan("token rotate")}               Rotate owner bearer token`);
-  console.log(`    ${c.cyan("env init")}                   Capture shell PATH for local sessions`);
-  console.log(`    ${c.cyan("env show")}                   Show resolved session PATH`);
   console.log("");
 
   console.log("  " + c.bold("Configuration:"));
@@ -848,7 +806,6 @@ function cmdHelp(): void {
   console.log(`    ${c.dim("oppi serve")}`);
   console.log(`    ${c.dim('oppi config set defaultModel "openai-codex/gpt-5.3-codex"')}`);
   console.log(`    ${c.dim("oppi config set port 8080")}`);
-  console.log(`    ${c.dim("oppi env init   # run from fish/zsh/bash")}`);
   console.log("");
 }
 
@@ -908,10 +865,6 @@ async function main(): Promise<void> {
 
     case "config":
       cmdConfig(storage, positional[0], positional.slice(1), flags);
-      break;
-
-    case "env":
-      cmdEnv(positional[0]);
       break;
 
     default:

@@ -7,7 +7,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { BlockList, isIP, type Socket } from "node:net";
+import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -101,58 +101,6 @@ function isWildcardBindHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::";
 }
 
-export function normalizeRemoteAddress(
-  remoteAddress: string | undefined,
-): { ip: string; family: "ipv4" | "ipv6" } | null {
-  if (!remoteAddress) return null;
-
-  const trimmed = remoteAddress.trim();
-  if (!trimmed) return null;
-
-  // IPv4-mapped IPv6 (::ffff:192.168.1.10)
-  if (trimmed.toLowerCase().startsWith("::ffff:")) {
-    const mapped = trimmed.slice(7);
-    if (isIP(mapped) === 4) {
-      return { ip: mapped, family: "ipv4" };
-    }
-  }
-
-  const family = isIP(trimmed);
-  if (family === 4) return { ip: trimmed, family: "ipv4" };
-  if (family === 6) return { ip: trimmed, family: "ipv6" };
-  return null;
-}
-
-export function buildClientAllowlist(cidrs: string[] | undefined): BlockList | null {
-  if (!cidrs || cidrs.length === 0) return null;
-
-  const list = new BlockList();
-  for (const cidr of cidrs) {
-    const [rawBase, rawPrefix] = cidr.split("/");
-    const base = rawBase?.trim();
-    const prefix = Number(rawPrefix);
-    if (!base || !Number.isInteger(prefix)) continue;
-
-    const family = isIP(base);
-    if (family === 4) {
-      list.addSubnet(base, prefix, "ipv4");
-    } else if (family === 6) {
-      list.addSubnet(base, prefix, "ipv6");
-    }
-  }
-  return list;
-}
-
-export function isClientAllowed(
-  remoteAddress: string | undefined,
-  allowlist: BlockList | null,
-): boolean {
-  if (!allowlist) return true;
-  const normalized = normalizeRemoteAddress(remoteAddress);
-  if (!normalized) return false;
-  return allowlist.check(normalized.ip, normalized.family);
-}
-
 /**
  * Startup-only warnings for insecure server bind + transport posture.
  *
@@ -178,12 +126,6 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   if (wildcardBind) {
     warnings.push(
       `host=${config.host} listens on all interfaces; ensure access is constrained by firewall rules.`,
-    );
-  }
-
-  if (config.allowedCidrs.some((cidr) => cidr === "0.0.0.0/0" || cidr === "::/0")) {
-    warnings.push(
-      "allowedCidrs contains a global range (0.0.0.0/0 or ::/0); this permits connections from any source network.",
     );
   }
 
@@ -627,26 +569,12 @@ export class Server {
     return false;
   }
 
-  private isSourceAllowed(remoteAddress: string | undefined): boolean {
-    const allowedCidrs = this.storage.getConfig().allowedCidrs;
-    const allowlist = buildClientAllowlist(allowedCidrs);
-    return isClientAllowed(remoteAddress, allowlist);
-  }
-
   // ─── HTTP Router ───
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const path = url.pathname;
     const method = req.method || "GET";
-
-    if (!this.isSourceAllowed(req.socket.remoteAddress)) {
-      console.log(
-        `${ts()} [auth] 403 ${method} ${path} — source ip not in allowedCidrs (${req.socket.remoteAddress ?? "unknown"})`,
-      );
-      this.error(res, 403, "Forbidden");
-      return;
-    }
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -722,14 +650,6 @@ export class Server {
     (socket as Socket).setNoDelay?.(true);
 
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
-    if (!this.isSourceAllowed((socket as Socket).remoteAddress)) {
-      console.log(
-        `${ts()} [auth] 403 WS upgrade ${url.pathname} — source ip not in allowedCidrs (${(socket as Socket).remoteAddress ?? "unknown"})`,
-      );
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
 
     const authenticated = this.authenticate(req);
     if (!authenticated) {
