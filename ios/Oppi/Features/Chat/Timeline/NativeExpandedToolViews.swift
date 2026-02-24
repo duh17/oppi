@@ -29,7 +29,7 @@ final class NativeExpandedTodoView: UIView {
 
         switch NativeExpandedTodoParser.parse(output) {
         case .item(let item):
-            rootStack.addArrangedSubview(makeTodoItemCard(item: item, palette: palette))
+            rootStack.addArrangedSubview(makeTodoItemCard(item: item, palette: palette, themeID: themeID))
 
         case .list(let list):
             rootStack.addArrangedSubview(makeTodoListCard(list: list, palette: palette))
@@ -69,7 +69,7 @@ final class NativeExpandedTodoView: UIView {
         }
     }
 
-    private func makeTodoItemCard(item: NativeExpandedTodoItem, palette: ThemePalette) -> UIView {
+    private func makeTodoItemCard(item: NativeExpandedTodoItem, palette: ThemePalette, themeID: ThemeID) -> UIView {
         let container = makeCardContainer(palette: palette)
 
         let stack = UIStackView()
@@ -134,12 +134,14 @@ final class NativeExpandedTodoView: UIView {
 
         let body = item.trimmedBody
         if !body.isEmpty {
-            let bodyLabel = UILabel()
-            bodyLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            bodyLabel.textColor = UIColor(palette.fg)
-            bodyLabel.numberOfLines = 0
-            bodyLabel.text = String(body.prefix(8_000))
-            stack.addArrangedSubview(bodyLabel)
+            let bodyMarkdown = String(body.prefix(8_000))
+            let markdownView = AssistantMarkdownContentView()
+            markdownView.apply(configuration: .init(
+                content: bodyMarkdown,
+                isStreaming: false,
+                themeID: themeID
+            ))
+            stack.addArrangedSubview(markdownView)
 
             if body.count > 8_000 {
                 let truncated = UILabel()
