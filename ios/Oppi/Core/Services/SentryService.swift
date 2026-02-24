@@ -41,6 +41,7 @@ actor SentryService {
             options.maxBreadcrumbs = 300
             options.sendDefaultPii = false
             options.enableAppHangTracking = true
+            options.enableAutoPerformanceTracing = true
 #if DEBUG
             options.debug = true
             options.tracesSampleRate = 1.0
