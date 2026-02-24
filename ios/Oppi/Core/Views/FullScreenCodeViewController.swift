@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 /// Full-screen content viewer for tool output (UIKit).
@@ -158,6 +159,13 @@ final class FullScreenCodeViewController: UIViewController {
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
+
+        case .terminal(_, let command):
+            let typeLabel = UILabel()
+            typeLabel.text = command == nil ? "Terminal" : "Terminal output"
+            typeLabel.font = .systemFont(ofSize: 11)
+            typeLabel.textColor = UIColor(palette.comment)
+            stack.addArrangedSubview(typeLabel)
         }
 
         return stack
@@ -175,6 +183,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenMarkdownBody(content: text, palette: palette)
         case .thinking(let text):
             return NativeFullScreenMarkdownBody(content: text, palette: palette)
+        case .terminal(let text, let command):
+            return NativeFullScreenTerminalBody(content: text, command: command, palette: palette)
         }
     }
 
@@ -191,6 +201,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(_, let newText, _, _): text = newText
         case .markdown(let t, _): text = t
         case .thinking(let t): text = t
+        case .terminal(let t, _): text = t
         }
         UIPasteboard.general.string = text
         copyButton?.image = UIImage(systemName: "checkmark")
@@ -590,6 +601,113 @@ private final class DiffRowView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+}
+
+// MARK: - Terminal Body
+
+private final class NativeFullScreenTerminalBody: UIView {
+    private static let maxSynchronousANSIBytes = 64 * 1024
+
+    private let scrollView = UIScrollView()
+    private let stack = UIStackView()
+    private let commandView = UITextView()
+    private let outputView = UITextView()
+    private let content: String
+    private let command: String?
+    private let palette: ThemePalette
+    private var renderTask: Task<Void, Never>?
+
+    init(content: String, command: String?, palette: ThemePalette) {
+        self.content = content
+        self.command = command
+        self.palette = palette
+        super.init(frame: .zero)
+        setup()
+        renderTerminalOutput()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit { renderTask?.cancel() }
+
+    private func setup() {
+        backgroundColor = UIColor(palette.bgDark)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.alignment = .fill
+
+        commandView.translatesAutoresizingMaskIntoConstraints = false
+        commandView.isEditable = false
+        commandView.isScrollEnabled = false
+        commandView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        commandView.textContainer.lineFragmentPadding = 0
+        commandView.backgroundColor = UIColor(palette.bgHighlight)
+        commandView.layer.cornerRadius = 8
+
+        outputView.translatesAutoresizingMaskIntoConstraints = false
+        outputView.isEditable = false
+        outputView.isScrollEnabled = false
+        outputView.backgroundColor = .clear
+        outputView.textContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
+        outputView.textContainer.lineFragmentPadding = 0
+        outputView.font = FullScreenCodeTypography.codeFont
+        outputView.textColor = UIColor(palette.fg)
+
+        addSubview(scrollView)
+        scrollView.addSubview(stack)
+
+        if let command, !command.isEmpty {
+            stack.addArrangedSubview(commandView)
+            commandView.attributedText = ToolRowTextRenderer.shellHighlighted(command)
+        } else {
+            commandView.isHidden = true
+        }
+
+        stack.addArrangedSubview(outputView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -20),
+        ])
+    }
+
+    private func renderTerminalOutput() {
+        if content.utf8.count <= Self.maxSynchronousANSIBytes {
+            outputView.attributedText = NSAttributedString(
+                ANSIParser.attributedString(from: content, baseForeground: .themeFg)
+            )
+            return
+        }
+
+        outputView.text = ANSIParser.strip(content)
+
+        let source = content
+        renderTask = Task { [weak self] in
+            let attributed = await Task.detached(priority: .userInitiated) {
+                ANSIParser.attributedString(from: source, baseForeground: .themeFg)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.outputView.attributedText = NSAttributedString(attributed)
+            }
+        }
+    }
 }
 
 // MARK: - Markdown Body

@@ -245,99 +245,103 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func configureDataSource(collectionView: UICollectionView) {
             self.collectionView = collectionView
 
-            let chatRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                let configureStartNs = ChatTimelinePerf.timestampNs()
-                guard let self,
-                      let item = self.currentItemByID[itemID],
-                      self.toolOutputStore != nil,
-                      self.reducer != nil,
-                      self.toolArgsStore != nil,
-                      self.connection != nil,
-                      self.audioPlayer != nil
-                else {
-                    var fallback = UIListContentConfiguration.subtitleCell()
-                    fallback.text = "⚠️ Timeline row unavailable"
-                    fallback.secondaryText = "Native timeline dependencies missing."
-                    fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-                    fallback.textProperties.color = UIColor(Color.themeOrange)
-                    fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                    fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
-                    cell.contentConfiguration = fallback
-                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: "placeholder",
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
-                    return
+            let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "assistant"
+                ) { item in
+                    self?.assistantRowConfiguration(itemID: itemID, item: item)
                 }
+            }
 
-                let applyNativeRow: (_ configuration: any UIContentConfiguration, _ rowType: String) -> Void = { configuration, rowType in
-                    cell.contentConfiguration = configuration
-                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: rowType,
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
+            let userRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "user"
+                ) { item in
+                    self?.userRowConfiguration(itemID: itemID, item: item)
                 }
+            }
 
-                let applyNativeFrictionRow: (_ title: String, _ detail: String, _ rowType: String) -> Void = { title, detail, rowType in
-                    var fallback = UIListContentConfiguration.subtitleCell()
-                    fallback.text = title
-                    fallback.secondaryText = detail
-                    fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-                    fallback.textProperties.color = UIColor(Color.themeOrange)
-                    fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                    fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
-                    cell.contentConfiguration = fallback
-                    cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: rowType,
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
+            let thinkingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "thinking"
+                ) { item in
+                    self?.thinkingRowConfiguration(itemID: itemID, item: item)
                 }
+            }
 
-                // Resolve native configuration for each item type.
-                let rowLabel: String
-                let nativeConfig: (any UIContentConfiguration)?
-
-                switch item {
-                case .userMessage:
-                    rowLabel = "user"
-                    nativeConfig = self.userRowConfiguration(itemID: itemID, item: item)
-                case .assistantMessage:
-                    rowLabel = "assistant"
-                    nativeConfig = self.assistantRowConfiguration(itemID: itemID, item: item)
-                case .thinking:
-                    rowLabel = "thinking"
-                    nativeConfig = self.thinkingRowConfiguration(itemID: itemID, item: item)
-                case .toolCall:
-                    rowLabel = "tool"
-                    nativeConfig = self.toolRowConfiguration(itemID: itemID, item: item)
-                case .audioClip:
-                    rowLabel = "audio"
-                    nativeConfig = self.audioRowConfiguration(item: item)
-                case .permission, .permissionResolved:
-                    rowLabel = "permission"
-                    nativeConfig = self.permissionRowConfiguration(item: item)
-                case .systemEvent(_, let message):
-                    rowLabel = Self.compactionPresentation(from: message) == nil ? "system" : "compaction"
-                    nativeConfig = self.systemEventRowConfiguration(itemID: itemID, item: item)
-                case .error:
-                    rowLabel = "error"
-                    nativeConfig = self.errorRowConfiguration(item: item)
+            let toolRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "tool"
+                ) { item in
+                    self?.toolRowConfiguration(itemID: itemID, item: item)
                 }
+            }
 
-                if let nativeConfig {
-                    applyNativeRow(nativeConfig, "\(rowLabel)_native")
-                } else {
-                    // Defensive failsafe — should not fire for any current item type.
-                    Self.reportNativeRendererGap("Native \(rowLabel) configuration missing.")
-                    applyNativeFrictionRow(
-                        "⚠️ Native \(rowLabel) row unavailable",
-                        "Native \(rowLabel) renderer gap.",
-                        "\(rowLabel)_native_failsafe"
-                    )
+            let audioRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "audio"
+                ) { item in
+                    self?.audioRowConfiguration(item: item)
                 }
+            }
+
+            let permissionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "permission"
+                ) { item in
+                    self?.permissionRowConfiguration(item: item)
+                }
+            }
+
+            let systemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "system"
+                ) { item in
+                    self?.systemEventRowConfiguration(itemID: itemID, item: item)
+                }
+            }
+
+            let compactionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "compaction"
+                ) { item in
+                    self?.systemEventRowConfiguration(itemID: itemID, item: item)
+                }
+            }
+
+            let errorRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+                self?.configureNativeCell(
+                    cell,
+                    itemID: itemID,
+                    rowLabel: "error"
+                ) { item in
+                    self?.errorRowConfiguration(item: item)
+                }
+            }
+
+            let missingItemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
+                self?.applyNativeFrictionRow(
+                    to: cell,
+                    title: "⚠️ Timeline row unavailable",
+                    detail: "Timeline item missing from snapshot.",
+                    rowType: "placeholder"
+                )
             }
 
             let loadMoreRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
@@ -383,7 +387,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             dataSource = UICollectionViewDiffableDataSource<Int, String>(
                 collectionView: collectionView
-            ) { collectionView, indexPath, itemID in
+            ) { [weak self] collectionView, indexPath, itemID in
                 if itemID == ChatTimelineCollectionHost.loadMoreID {
                     return collectionView.dequeueConfiguredReusableCell(
                         using: loadMoreRegistration,
@@ -400,13 +404,151 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     )
                 }
 
-                return collectionView.dequeueConfiguredReusableCell(
-                    using: chatRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
+                guard let self,
+                      let item = self.currentItemByID[itemID] else {
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: missingItemRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                }
+
+                switch item {
+                case .assistantMessage:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: assistantRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .userMessage:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: userRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .thinking:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: thinkingRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .toolCall:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: toolRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .audioClip:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: audioRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .permission, .permissionResolved:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: permissionRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .systemEvent(_, let message):
+                    let registration = Self.compactionPresentation(from: message) == nil
+                        ? systemRegistration
+                        : compactionRegistration
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: registration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                case .error:
+                    return collectionView.dequeueConfiguredReusableCell(
+                        using: errorRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                }
             }
 
+        }
+
+        private func configureNativeCell(
+            _ cell: SafeSizingCell,
+            itemID: String,
+            rowLabel: String,
+            builder: (ChatItem) -> (any UIContentConfiguration)?
+        ) {
+            let configureStartNs = ChatTimelinePerf.timestampNs()
+
+            guard let item = currentItemByID[itemID],
+                  toolOutputStore != nil,
+                  reducer != nil,
+                  toolArgsStore != nil,
+                  connection != nil,
+                  audioPlayer != nil
+            else {
+                applyNativeFrictionRow(
+                    to: cell,
+                    title: "⚠️ Timeline row unavailable",
+                    detail: "Native timeline dependencies missing.",
+                    rowType: "placeholder",
+                    startNs: configureStartNs
+                )
+                return
+            }
+
+            guard let nativeConfig = builder(item) else {
+                Self.reportNativeRendererGap("Native \(rowLabel) configuration missing.")
+                applyNativeFrictionRow(
+                    to: cell,
+                    title: "⚠️ Native \(rowLabel) row unavailable",
+                    detail: "Native \(rowLabel) renderer gap.",
+                    rowType: "\(rowLabel)_native_failsafe",
+                    startNs: configureStartNs
+                )
+                return
+            }
+
+            applyNativeRow(
+                to: cell,
+                configuration: nativeConfig,
+                rowType: "\(rowLabel)_native",
+                startNs: configureStartNs
+            )
+        }
+
+        private func applyNativeRow(
+            to cell: SafeSizingCell,
+            configuration: any UIContentConfiguration,
+            rowType: String,
+            startNs: UInt64
+        ) {
+            cell.contentConfiguration = configuration
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            ChatTimelinePerf.recordCellConfigure(
+                rowType: rowType,
+                durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
+            )
+        }
+
+        private func applyNativeFrictionRow(
+            to cell: SafeSizingCell,
+            title: String,
+            detail: String,
+            rowType: String,
+            startNs: UInt64 = ChatTimelinePerf.timestampNs()
+        ) {
+            var fallback = UIListContentConfiguration.subtitleCell()
+            fallback.text = title
+            fallback.secondaryText = detail
+            fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+            fallback.textProperties.color = UIColor(Color.themeOrange)
+            fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
+            cell.contentConfiguration = fallback
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            ChatTimelinePerf.recordCellConfigure(
+                rowType: rowType,
+                durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
+            )
         }
 
         // MARK: - Diffing
@@ -683,6 +825,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentIDs = nextIDs
             currentItemByID = nextItemByID
 
+            ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
+            ChatTimelinePerf.beginSnapshotBuildPhase()
+
             var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
             snapshot.appendSections([0])
             snapshot.appendItems(nextIDs)
@@ -711,6 +856,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             if !dedupedChangedIDs.isEmpty {
                 snapshot.reconfigureItems(dedupedChangedIDs)
             }
+            ChatTimelinePerf.endSnapshotBuildPhase()
+            ChatTimelinePerf.updateTimelineApplyCycle(
+                itemCount: nextIDs.count,
+                changedCount: dedupedChangedIDs.count
+            )
 
             let applyToken = ChatTimelinePerf.beginCollectionApply(
                 itemCount: nextIDs.count,
@@ -727,10 +877,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: nextIDs.count)
             collectionView.layoutIfNeeded()
             ChatTimelinePerf.endLayoutPass(layoutToken)
+            var didScroll = false
             if let scrollCommand = configuration.scrollCommand,
                scrollCommand.nonce != lastHandledScrollCommandNonce,
                performScroll(scrollCommand, in: collectionView) {
                 lastHandledScrollCommandNonce = scrollCommand.nonce
+                didScroll = true
             }
 
             // When the session is busy (streaming or running tools), new items
@@ -749,6 +901,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 updateScrollState(collectionView)
             }
             updateDetachedStreamingHintVisibility()
+            ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
         }
 
         // MARK: - UIScrollViewDelegate
@@ -1105,7 +1258,21 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     }
 
                     fetchToolOutput = { sessionId, toolCallId in
-                        try await apiClient.getNonEmptyToolOutput(
+                        let isShellTool = ToolCallFormatting.isBashTool(tool)
+                            || ToolCallFormatting.isGrepTool(tool)
+                            || ToolCallFormatting.isFindTool(tool)
+                            || ToolCallFormatting.isLsTool(tool)
+
+                        if isShellTool,
+                           let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
+                               workspaceId: workspaceId,
+                               sessionId: sessionId,
+                               toolCallId: toolCallId
+                           ) {
+                            return fullOutput
+                        }
+
+                        return try await apiClient.getNonEmptyToolOutput(
                             workspaceId: workspaceId,
                             sessionId: sessionId,
                             toolCallId: toolCallId
@@ -1120,7 +1287,21 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
 
                 fetchToolOutput = { sessionId, toolCallId in
-                    try await apiClient.getNonEmptyToolOutput(
+                    let isShellTool = ToolCallFormatting.isBashTool(tool)
+                        || ToolCallFormatting.isGrepTool(tool)
+                        || ToolCallFormatting.isFindTool(tool)
+                        || ToolCallFormatting.isLsTool(tool)
+
+                    if isShellTool,
+                       let fullOutput = try await apiClient.getNonEmptyFullToolOutput(
+                           workspaceId: workspaceId,
+                           sessionId: sessionId,
+                           toolCallId: toolCallId
+                       ) {
+                        return fullOutput
+                    }
+
+                    return try await apiClient.getNonEmptyToolOutput(
                         workspaceId: workspaceId,
                         sessionId: sessionId,
                         toolCallId: toolCallId
