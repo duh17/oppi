@@ -795,6 +795,32 @@ struct APIClientTests {
         #expect(response.cacheKey == "s1:Sources/App.swift:tc-3")
     }
 
+    // MARK: - Permissions
+
+    @Test func respondToPermissionUsesRestEndpoint() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/permissions/perm-123/respond")
+
+            let body = self.requestBodyData(request)
+            guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+                Issue.record("Expected JSON body")
+                return self.mockResponse(status: 400, json: "{\"error\":\"bad request\"}")
+            }
+
+            #expect(json["action"] as? String == "allow")
+            #expect(json["scope"] as? String == "once")
+            #expect(json["expiresInMs"] as? Int == nil)
+
+            return self.mockResponse(json: "{\"ok\":true}")
+        }
+
+        try await client.respondToPermission(id: "perm-123", action: .allow)
+    }
+
     // MARK: - Device Token
 
     @Test func registerDeviceToken() async throws {

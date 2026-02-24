@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { RouteHandler, type RouteContext } from "../src/routes/index.js";
 import type { PendingDecision } from "../src/gate.js";
@@ -54,14 +55,21 @@ function makeHarness(options?: {
   pending?: PendingDecision[];
   sessions?: Set<string>;
   workspaces?: Set<string>;
-}): { routes: RouteHandler; pending: PendingDecision[] } {
+  resolveDecisionResult?: boolean;
+}): {
+  routes: RouteHandler;
+  pending: PendingDecision[];
+  resolveDecision: ReturnType<typeof vi.fn>;
+} {
   const pending = options?.pending ?? [];
   const sessions = options?.sessions ?? new Set(["s1", "s2"]);
   const workspaces = options?.workspaces ?? new Set(["w1", "w2"]);
+  const resolveDecision = vi.fn(() => options?.resolveDecisionResult ?? true);
 
   const ctx = {
     gate: {
       getPendingForUser: vi.fn(() => pending),
+      resolveDecision,
     },
     storage: {
       getSession: vi.fn((sessionId: string) => {
@@ -76,7 +84,7 @@ function makeHarness(options?: {
   } as unknown as RouteContext;
 
   const routes = new RouteHandler(ctx);
-  return { routes, pending };
+  return { routes, pending, resolveDecision };
 }
 
 async function callPendingEndpoint(
@@ -85,11 +93,27 @@ async function callPendingEndpoint(
 ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
   const res = makeResponse();
 
+  await routes.dispatch("GET", "/permissions/pending", url, {} as never, res as never);
+
+  return {
+    statusCode: res.statusCode,
+    body: JSON.parse(res.body) as Record<string, unknown>,
+  };
+}
+
+async function callRespondEndpoint(
+  routes: RouteHandler,
+  permissionId: string,
+  body: Record<string, unknown>,
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+  const res = makeResponse();
+  const req = Readable.from([JSON.stringify(body)]);
+
   await routes.dispatch(
-    "GET",
-    "/permissions/pending",
-    url,
-    {} as never,
+    "POST",
+    `/permissions/${permissionId}/respond`,
+    new URL(`http://localhost/permissions/${permissionId}/respond`),
+    req as never,
     res as never,
   );
 
@@ -110,7 +134,10 @@ describe("GET /permissions/pending", () => {
     const expired = makePending({ id: "perm-expired", timeoutAt: now - 1 });
 
     const { routes } = makeHarness({ pending: [activeA, expired, activeB] });
-    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
+    const result = await callPendingEndpoint(
+      routes,
+      new URL("http://localhost/permissions/pending"),
+    );
 
     expect(result.statusCode).toBe(200);
     const body = result.body;
@@ -179,7 +206,10 @@ describe("GET /permissions/pending", () => {
     });
 
     const { routes } = makeHarness({ pending: [nonExpiring, expiring] });
-    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
+    const result = await callPendingEndpoint(
+      routes,
+      new URL("http://localhost/permissions/pending"),
+    );
 
     expect(result.statusCode).toBe(200);
     const pending = result.body.pending as { id: string; expires?: boolean }[];
@@ -196,8 +226,7 @@ describe("GET /permissions/pending", () => {
 
     const baseTime = Date.now();
 
-    const makeTimedPending = (id: string, timeoutAt: number) =>
-      makePending({ id, timeoutAt });
+    const makeTimedPending = (id: string, timeoutAt: number) => makePending({ id, timeoutAt });
 
     const allPending = [
       makeTimedPending("cycle-1", baseTime + 500),
@@ -209,12 +238,70 @@ describe("GET /permissions/pending", () => {
 
     const { routes } = makeHarness({ pending: allPending });
 
-    const result = await callPendingEndpoint(routes, new URL("http://localhost/permissions/pending"));
+    const result = await callPendingEndpoint(
+      routes,
+      new URL("http://localhost/permissions/pending"),
+    );
     expect(result.statusCode).toBe(200);
 
     const ids = (result.body.pending as { id: string }[]).map((p) => p.id);
     expect(ids).toEqual(["cycle-1", "cycle-3", "cycle-5"]);
 
     vi.useRealTimers();
+  });
+
+  it("POST /permissions/:id/respond resolves a pending decision", async () => {
+    const { routes, resolveDecision } = makeHarness();
+
+    const result = await callRespondEndpoint(routes, "perm-1", {
+      action: "allow",
+      scope: "session",
+      expiresInMs: 60_000,
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toMatchObject({
+      ok: true,
+      id: "perm-1",
+      action: "allow",
+      scope: "session",
+      expiresInMs: 60_000,
+    });
+
+    expect(resolveDecision).toHaveBeenCalledWith("perm-1", "allow", "session", 60_000);
+  });
+
+  it("POST /permissions/:id/respond validates payload", async () => {
+    const { routes, resolveDecision } = makeHarness();
+
+    const invalidAction = await callRespondEndpoint(routes, "perm-1", {
+      action: "ship-it",
+    });
+    expect(invalidAction.statusCode).toBe(400);
+
+    const invalidScope = await callRespondEndpoint(routes, "perm-1", {
+      action: "allow",
+      scope: "forever",
+    });
+    expect(invalidScope.statusCode).toBe(400);
+
+    const invalidExpiry = await callRespondEndpoint(routes, "perm-1", {
+      action: "allow",
+      expiresInMs: -5,
+    });
+    expect(invalidExpiry.statusCode).toBe(400);
+
+    expect(resolveDecision).not.toHaveBeenCalled();
+  });
+
+  it("POST /permissions/:id/respond returns 404 when decision not found", async () => {
+    const { routes, resolveDecision } = makeHarness({ resolveDecisionResult: false });
+
+    const result = await callRespondEndpoint(routes, "perm-missing", {
+      action: "deny",
+    });
+
+    expect(result.statusCode).toBe(404);
+    expect(resolveDecision).toHaveBeenCalledWith("perm-missing", "deny", "once", undefined);
   });
 });
