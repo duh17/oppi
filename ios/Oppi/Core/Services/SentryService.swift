@@ -181,7 +181,17 @@ actor SentryService {
 #if DEBUG
         return "debug"
 #else
-        return "release"
+        let configuredMode = Bundle.main.object(forInfoDictionaryKey: "OPPITelemetryMode") as? String
+        let configured = configuredMode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        switch configured {
+        case "public", "release", "prod", "production":
+            return "release"
+        case "test", "staging", "qa", "internal":
+            return "test"
+        default:
+            return configured ?? "release"
+        }
 #endif
     }
 

@@ -25,6 +25,7 @@ settings:
     INFOPLIST_KEY_UILaunchScreen_Generation: true
     ENABLE_USER_SCRIPT_SANDBOXING: true
     SENTRY_DSN: ""
+    OPPI_TELEMETRY_MODE: "public"
 targets:
   Oppi:
     type: application
@@ -81,6 +82,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         SentryDSN: "$(SENTRY_DSN)"
+        OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSExceptionDomains:
