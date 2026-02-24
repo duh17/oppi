@@ -437,6 +437,31 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
   // ─── Tool Output by ID ───
 
+  function handleGetFullToolOutput(
+    sessionId: string,
+    toolCallId: string,
+    res: ServerResponse,
+  ): void {
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+
+    const fullOutputPath = ctx.sessions.getToolFullOutputPath(sessionId, toolCallId);
+    if (!fullOutputPath) {
+      helpers.error(res, 404, "Full tool output not found");
+      return;
+    }
+
+    try {
+      const output = readFileSync(fullOutputPath, "utf8");
+      helpers.json(res, { toolCallId, output });
+    } catch {
+      helpers.error(res, 404, "Full tool output not found");
+    }
+  }
+
   function handleGetToolOutput(sessionId: string, toolCallId: string, res: ServerResponse): void {
     const session = ctx.storage.getSession(sessionId);
     if (!session) {
@@ -764,6 +789,18 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionForkMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/);
     if (wsSessionForkMatch && method === "POST") {
       await handleForkWorkspaceSession(wsSessionForkMatch[1], wsSessionForkMatch[2], req, res);
+      return true;
+    }
+
+    const wsSessionToolOutputFullMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)\/full$/,
+    );
+    if (wsSessionToolOutputFullMatch && method === "GET") {
+      handleGetFullToolOutput(
+        wsSessionToolOutputFullMatch[2],
+        wsSessionToolOutputFullMatch[3],
+        res,
+      );
       return true;
     }
 

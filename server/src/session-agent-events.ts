@@ -2,7 +2,11 @@ import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 import { ts } from "./log-utils.js";
 import type { SessionBackendEvent } from "./pi-events.js";
-import { extractAssistantText, translatePiEvent } from "./session-protocol.js";
+import {
+  extractAssistantText,
+  extractToolFullOutputPath,
+  translatePiEvent,
+} from "./session-protocol.js";
 import type {
   EventProcessorSessionState,
   ExtensionUIRequest,
@@ -15,6 +19,7 @@ import type { ServerMessage } from "./types.js";
 export interface SessionAgentEventState
   extends EventProcessorSessionState, TurnSessionState, StopSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
+  toolFullOutputPaths: Map<string, string>;
 }
 
 export interface SessionAgentEventCoordinatorDeps {
@@ -83,6 +88,20 @@ export class SessionAgentEventCoordinator {
     const messages = translatePiEvent(event, ctx);
     active.streamedAssistantText = ctx.streamedAssistantText;
     active.hasStreamedThinking = ctx.hasStreamedThinking;
+
+    if (event.type === "tool_execution_end") {
+      const toolCallId =
+        typeof event.toolCallId === "string" && event.toolCallId.length > 0
+          ? event.toolCallId
+          : null;
+
+      if (toolCallId) {
+        const fullOutputPath = extractToolFullOutputPath(event.result?.details);
+        if (fullOutputPath) {
+          active.toolFullOutputPaths.set(toolCallId, fullOutputPath);
+        }
+      }
+    }
 
     for (const message of messages) {
       this.deps.broadcast(key, message);
