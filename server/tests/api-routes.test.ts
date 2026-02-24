@@ -12,6 +12,7 @@ const ROUTES = {
   wsSessionResume: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/,
   wsSessionFork: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/fork$/,
   wsSessionToolOutput: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
+  wsSessionToolOutputFull: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)\/full$/,
   wsSessionFiles: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/files$/,
   wsSessionOverallDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/overall-diff$/,
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
@@ -58,6 +59,16 @@ describe("Workspace-scoped API routes", () => {
   it("matches GET /workspaces/:wid/sessions/:sid/tool-output/:tid", () => {
     const m = "/workspaces/ws-1/sessions/s1/tool-output/tc_abc123".match(
       ROUTES.wsSessionToolOutput,
+    );
+    expect(m).toBeTruthy();
+    expect(m![1]).toBe("ws-1");
+    expect(m![2]).toBe("s1");
+    expect(m![3]).toBe("tc_abc123");
+  });
+
+  it("matches GET /workspaces/:wid/sessions/:sid/tool-output/:tid/full", () => {
+    const m = "/workspaces/ws-1/sessions/s1/tool-output/tc_abc123/full".match(
+      ROUTES.wsSessionToolOutputFull,
     );
     expect(m).toBeTruthy();
     expect(m![1]).toBe("ws-1");

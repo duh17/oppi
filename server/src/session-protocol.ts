@@ -47,6 +47,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+export function extractToolFullOutputPath(details: unknown): string | null {
+  const record = asRecord(details);
+  const path = record?.fullOutputPath;
+  if (typeof path !== "string") {
+    return null;
+  }
+
+  const normalized = path.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 export function extractAssistantText(message: PiMessage): string {
   const content = message.content;
 
