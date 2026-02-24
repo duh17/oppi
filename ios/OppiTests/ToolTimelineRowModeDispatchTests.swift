@@ -57,6 +57,33 @@ struct ToolTimelineRowModeDispatchTests {
                 expected: .init(expanded: true, command: false, output: false)
             ),
             DispatchCase(
+                name: "plot",
+                toolNamePrefix: "plot",
+                content: .plot(
+                    spec: PlotChartSpec(
+                        title: "Pace",
+                        rows: [
+                            .init(id: 0, values: ["x": .number(0), "pace": .number(295)]),
+                            .init(id: 1, values: ["x": .number(1), "pace": .number(292)]),
+                        ],
+                        marks: [
+                            .init(
+                                id: "pace-line",
+                                type: .line,
+                                x: "x",
+                                y: "pace"
+                            ),
+                        ],
+                        xAxis: .init(label: "Distance", invert: false),
+                        yAxis: .init(label: "Pace", invert: true),
+                        interaction: .init(xSelection: true, xRangeSelection: false, scrollableX: false),
+                        preferredHeight: 200
+                    ),
+                    fallbackText: "pace chart"
+                ),
+                expected: .init(expanded: true, command: false, output: false)
+            ),
+            DispatchCase(
                 name: "readMedia",
                 toolNamePrefix: "read",
                 content: .readMedia(
@@ -100,6 +127,35 @@ struct ToolTimelineRowModeDispatchTests {
                 "Mode \(testCase.name): output container visibility mismatch"
             )
         }
+    }
+
+    @Test func expandedTodoItemBodyUsesMarkdownWhileKeepingMetadataRows() throws {
+        let output = """
+        {
+          "id": "TODO-md-1",
+          "title": "Render todo body as markdown",
+          "status": "open",
+          "created_at": "2026-02-24T09:00:00.000Z",
+          "tags": ["ios", "live-activity"],
+          "body": "## Summary\\n- Render markdown body\\n- Keep tags visible"
+        }
+        """
+
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "todo",
+            expandedContent: .todoCard(output: output),
+            isExpanded: true
+        ))
+
+        _ = fittedSize(for: view, width: 360)
+
+        let hosted = try #require(privateHostedExpandedView(in: view))
+        let markdownView = firstView(ofType: AssistantMarkdownContentView.self, in: hosted)
+        #expect(markdownView != nil)
+
+        let labels = allLabels(in: hosted).map(renderedText(of:))
+        #expect(labels.contains(where: { $0.contains("TODO-md-1") }))
+        #expect(labels.contains(where: { $0.contains("tags: ios, live-activity") }))
     }
 
     @Test func reproducesFatalAccessConflictWhenResettingOutputScrollOnReconfigure() throws {
@@ -255,6 +311,46 @@ private func privateScrollView(named name: String, in view: ToolTimelineRowConte
 @MainActor
 private func privateConstraint(named name: String, in view: ToolTimelineRowContentView) -> NSLayoutConstraint? {
     Mirror(reflecting: view).children.first { $0.label == name }?.value as? NSLayoutConstraint
+}
+
+@MainActor
+private func privateHostedExpandedView(in view: ToolTimelineRowContentView) -> UIView? {
+    Mirror(reflecting: view).children.first { $0.label == "expandedReadMediaContentView" }?.value as? UIView
+}
+
+@MainActor
+private func firstView<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
+    if let match = root as? T {
+        return match
+    }
+
+    for child in root.subviews {
+        if let found = firstView(ofType: type, in: child) {
+            return found
+        }
+    }
+
+    return nil
+}
+
+@MainActor
+private func allLabels(in root: UIView) -> [UILabel] {
+    var result: [UILabel] = []
+
+    if let label = root as? UILabel {
+        result.append(label)
+    }
+
+    for child in root.subviews {
+        result.append(contentsOf: allLabels(in: child))
+    }
+
+    return result
+}
+
+@MainActor
+private func renderedText(of label: UILabel) -> String {
+    label.attributedText?.string ?? label.text ?? ""
 }
 
 @MainActor
