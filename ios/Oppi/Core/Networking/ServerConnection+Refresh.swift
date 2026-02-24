@@ -110,6 +110,7 @@ extension ServerConnection {
             if self.sessionStore.sessions.isEmpty,
                let cached = await TimelineCache.shared.loadSessionList() {
                 self.sessionStore.applyServerSnapshot(cached)
+                self.syncLiveActivityPermissions()
             }
 
             self.sessionStore.markSyncStarted()
@@ -117,6 +118,7 @@ extension ServerConnection {
                 let sessions = try await apiClient.listSessions()
                 self.sessionStore.applyServerSnapshot(sessions)
                 self.sessionStore.markSyncSucceeded()
+                self.syncLiveActivityPermissions()
                 Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
 
                 self.recordRefreshBreadcrumb(
@@ -290,6 +292,7 @@ extension ServerConnection {
             do {
                 let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
                 sessionStore.upsert(session)
+                syncLiveActivityPermissions()
             } catch {
                 logger.error("Failed to refresh session \(sessionId): \(error)")
             }
@@ -297,6 +300,7 @@ extension ServerConnection {
             do {
                 let (session, _) = try await apiClient.getSession(workspaceId: workspaceId, id: sessionId)
                 sessionStore.upsert(session)
+                syncLiveActivityPermissions()
             } catch {
                 logger.error("Failed to refresh session metadata: \(error)")
             }
