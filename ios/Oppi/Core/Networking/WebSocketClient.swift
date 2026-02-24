@@ -37,6 +37,12 @@ final class WebSocketClient {
     private var reconnectTask: Task<Void, Never>?
     private var continuation: AsyncStream<StreamMessage>.Continuation?
     private var inboundMetaQueueBySessionID: [String: [InboundMeta]] = [:]
+    private var lastReceiveErrorFingerprint: String?
+    private var lastReceiveErrorLogNs: UInt64 = 0
+
+    /// Deduplicate repeated receive error logs (common during lifecycle
+    /// transitions) while preserving first occurrence signal.
+    private let receiveErrorLogCooldownNs: UInt64 = 3_000_000_000
 
     /// Active subscriptions tracked for resubscription after reconnect.
     /// Key: sessionId, Value: subscription level.
@@ -275,6 +281,8 @@ final class WebSocketClient {
         continuation = nil
         inboundMetaQueueBySessionID.removeAll(keepingCapacity: false)
         activeSubscriptions.removeAll()
+        lastReceiveErrorFingerprint = nil
+        lastReceiveErrorLogNs = 0
 
         status = .disconnected
     }
@@ -306,6 +314,20 @@ final class WebSocketClient {
 
     private func wsLogError(_ message: String, metadata: [String: String] = [:]) {
         ClientLog.error("WebSocket", message, metadata: wsLogMetadata(extra: metadata))
+    }
+
+    private func shouldLogReceiveError(_ error: Error) -> Bool {
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let fingerprint = String(describing: error)
+
+        if lastReceiveErrorFingerprint == fingerprint,
+           nowNs &- lastReceiveErrorLogNs < receiveErrorLogCooldownNs {
+            return false
+        }
+
+        lastReceiveErrorFingerprint = fingerprint
+        lastReceiveErrorLogNs = nowNs
+        return true
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamMessage>.Continuation) {
@@ -390,11 +412,15 @@ final class WebSocketClient {
                     continuation.yield(streamMessage)
                 } catch {
                     if Task.isCancelled { break }
-                    logger.error("WebSocket receive error: \(error)")
-                    self?.wsLogError(
-                        "WebSocket receive error",
-                        metadata: ["error": String(describing: error)]
-                    )
+                    if let self, self.shouldLogReceiveError(error) {
+                        logger.error("WebSocket receive error: \(error)")
+                        self.wsLogError(
+                            "WebSocket receive error",
+                            metadata: ["error": String(describing: error)]
+                        )
+                    } else {
+                        logger.debug("Suppressed duplicate WebSocket receive error: \(String(describing: error), privacy: .public)")
+                    }
                     break
                 }
             }
