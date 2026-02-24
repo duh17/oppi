@@ -68,6 +68,7 @@ npx oppi config set <k> <v>    update config
 - [Config schema](server/docs/config-schema.md)
 - [Policy engine](server/docs/policy-engine.md)
 - [Theme system](docs/theme-system.md)
+- [Telemetry stack (Sentry + MetricKit)](docs/telemetry.md)
 
 ## License
 
