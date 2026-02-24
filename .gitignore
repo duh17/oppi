@@ -12,6 +12,7 @@ ios/.env.testflight.local
 # Agent
 .internal/
 .pi/
+.claude/
 
 # Secrets & credentials (never commit)
 auth.json
