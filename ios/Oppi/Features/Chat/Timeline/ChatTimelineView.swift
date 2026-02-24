@@ -144,9 +144,7 @@ struct ChatTimelineView: View {
         }
         .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
             guard let bottomItemID else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
-            }
+            issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
         }
         .sheet(item: $fileToOpen) { file in
             RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)
