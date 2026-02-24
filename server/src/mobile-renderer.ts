@@ -6,7 +6,7 @@
  * serializable StyledSegment[] instead of TUI Component objects.
  *
  * Sources (load order, later overrides earlier):
- * 1. Built-in renderers (bash, read, edit, write, grep, find, ls, todo)
+ * 1. Built-in renderers (bash, read, edit, write, grep, find, ls, todo, plot)
  * 2. User renderers (~/.pi/agent/mobile-renderers/*.ts)
  *
  * User renderers live in a dedicated directory separate from pi extensions
@@ -250,6 +250,41 @@ const todo: MobileToolRenderer = {
   },
 };
 
+const plot: MobileToolRenderer = {
+  renderCall(args) {
+    const title = str(args.title).trim();
+    const segs: StyledSegment[] = [{ text: "plot", style: "bold" }];
+
+    if (title) {
+      segs.push({ text: ` ${firstLine(title, 64)}`, style: "accent" });
+      return segs;
+    }
+
+    const spec = asRecord(args.spec);
+    const marks = Array.isArray(spec?.marks) ? spec.marks.length : 0;
+    const rows = Array.isArray(recordField(spec, "dataset")?.rows)
+      ? (recordField(spec, "dataset")?.rows as unknown[]).length
+      : 0;
+    if (marks > 0 || rows > 0) {
+      const summary: string[] = [];
+      if (marks > 0) summary.push(`${marks} mark${marks === 1 ? "" : "s"}`);
+      if (rows > 0) summary.push(`${rows} row${rows === 1 ? "" : "s"}`);
+      segs.push({ text: ` ${summary.join(" • ")}`, style: "accent" });
+    }
+
+    return segs;
+  },
+  renderResult(details: unknown, isError) {
+    if (isError) return [];
+    const payload = asRecord(details);
+    const ui = payload?.ui;
+    if (Array.isArray(ui) && ui.length > 0) {
+      return [{ text: `${ui.length} visual`, style: "success" }];
+    }
+    return [{ text: "chart", style: "success" }];
+  },
+};
+
 // ─── Registry ───
 
 const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
@@ -261,6 +296,7 @@ const BUILTIN_RENDERERS: Record<string, MobileToolRenderer> = {
   find,
   ls,
   todo,
+  plot,
 };
 
 export class MobileRendererRegistry {

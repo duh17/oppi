@@ -91,10 +91,57 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let toolOutputStore: ToolOutputStore
         let toolArgsStore: ToolArgsStore
         let toolSegmentStore: ToolSegmentStore
+        let toolDetailsStore: ToolDetailsStore
         let connection: ServerConnection
         let audioPlayer: AudioPlayerService
         let theme: AppTheme
         let themeID: ThemeID
+
+        init(
+            items: [ChatItem],
+            hiddenCount: Int,
+            renderWindowStep: Int,
+            isBusy: Bool,
+            streamingAssistantID: String?,
+            sessionId: String,
+            workspaceId: String?,
+            onFork: @escaping (String) -> Void,
+            onOpenFile: @escaping (FileToOpen) -> Void,
+            onShowEarlier: @escaping () -> Void,
+            scrollCommand: ChatTimelineScrollCommand?,
+            scrollController: ChatScrollController,
+            reducer: TimelineReducer,
+            toolOutputStore: ToolOutputStore,
+            toolArgsStore: ToolArgsStore,
+            toolSegmentStore: ToolSegmentStore,
+            toolDetailsStore: ToolDetailsStore? = nil,
+            connection: ServerConnection,
+            audioPlayer: AudioPlayerService,
+            theme: AppTheme,
+            themeID: ThemeID
+        ) {
+            self.items = items
+            self.hiddenCount = hiddenCount
+            self.renderWindowStep = renderWindowStep
+            self.isBusy = isBusy
+            self.streamingAssistantID = streamingAssistantID
+            self.sessionId = sessionId
+            self.workspaceId = workspaceId
+            self.onFork = onFork
+            self.onOpenFile = onOpenFile
+            self.onShowEarlier = onShowEarlier
+            self.scrollCommand = scrollCommand
+            self.scrollController = scrollController
+            self.reducer = reducer
+            self.toolOutputStore = toolOutputStore
+            self.toolArgsStore = toolArgsStore
+            self.toolSegmentStore = toolSegmentStore
+            self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
+            self.connection = connection
+            self.audioPlayer = audioPlayer
+            self.theme = theme
+            self.themeID = themeID
+        }
     }
 
     let configuration: Configuration
@@ -161,6 +208,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var toolOutputStore: ToolOutputStore?
         private var toolArgsStore: ToolArgsStore?
         private var toolSegmentStore: ToolSegmentStore?
+        private var toolDetailsStore: ToolDetailsStore?
         private var connection: ServerConnection?
         private var audioPlayer: AudioPlayerService?
         private weak var collectionView: UICollectionView?
@@ -482,6 +530,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                   toolOutputStore != nil,
                   reducer != nil,
                   toolArgsStore != nil,
+                  toolDetailsStore != nil,
                   connection != nil,
                   audioPlayer != nil
             else {
@@ -788,6 +837,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             toolOutputStore = configuration.toolOutputStore
             toolArgsStore = configuration.toolArgsStore
             toolSegmentStore = configuration.toolSegmentStore
+            toolDetailsStore = configuration.toolDetailsStore
             connection = configuration.connection
             self.collectionView = collectionView
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
@@ -1217,6 +1267,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             let context = ToolPresentationBuilder.Context(
                 args: toolArgsStore?.args(for: itemID),
+                details: toolDetailsStore?.details(for: itemID),
                 expandedItemIDs: reducer?.expandedItemIDs ?? [],
                 fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
                 isLoadingOutput: toolOutputLoader.isLoading(itemID),

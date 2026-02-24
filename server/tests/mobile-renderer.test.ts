@@ -15,7 +15,7 @@ function styleOf(segs: StyledSegment[] | undefined, index: number): string | und
 describe("MobileRendererRegistry", () => {
   it("has built-in renderers for all standard tools", () => {
     const reg = new MobileRendererRegistry();
-    for (const tool of ["bash", "read", "edit", "write", "grep", "find", "ls", "todo"]) {
+    for (const tool of ["bash", "read", "edit", "write", "grep", "find", "ls", "todo", "plot"]) {
       expect(reg.has(tool), `missing renderer for ${tool}`).toBe(true);
     }
   });
@@ -225,5 +225,43 @@ describe("todo renderer", () => {
   it("renderResult error returns empty (icon is sufficient)", () => {
     const segs = reg.renderResult("todo", { error: "not found" }, true);
     expect(segs).toBeUndefined();
+  });
+});
+
+describe("plot renderer", () => {
+  const reg = new MobileRendererRegistry();
+
+  it("renderCall prefers title", () => {
+    const segs = reg.renderCall("plot", {
+      title: "Kypu Pace",
+      spec: {
+        dataset: { rows: [{ x: 0, pace: 295 }] },
+        marks: [{ type: "line", x: "x", y: "pace" }],
+      },
+    });
+
+    expect(textOf(segs)).toBe("plot Kypu Pace");
+  });
+
+  it("renderCall summarizes marks and rows without title", () => {
+    const segs = reg.renderCall("plot", {
+      spec: {
+        dataset: { rows: [{ x: 0, pace: 295 }, { x: 1, pace: 292 }] },
+        marks: [{ type: "line" }, { type: "rule" }],
+      },
+    });
+
+    expect(textOf(segs)).toContain("2 marks");
+    expect(textOf(segs)).toContain("2 rows");
+  });
+
+  it("renderResult shows visual count when ui payload exists", () => {
+    const segs = reg.renderResult(
+      "plot",
+      { ui: [{ kind: "chart", version: 1 }, { kind: "chart", version: 1 }] },
+      false,
+    );
+
+    expect(textOf(segs)).toBe("2 visual");
   });
 });

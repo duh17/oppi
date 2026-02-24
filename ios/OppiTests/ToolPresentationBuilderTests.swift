@@ -10,12 +10,14 @@ struct ToolPresentationBuilderTests {
 
     private func emptyContext(
         args: [String: JSONValue]? = nil,
+        details: JSONValue? = nil,
         expanded: Set<String> = [],
         fullOutput: String = "",
         isLoadingOutput: Bool = false
     ) -> ToolPresentationBuilder.Context {
         ToolPresentationBuilder.Context(
             args: args,
+            details: details,
             expandedItemIDs: expanded,
             fullOutput: fullOutput,
             isLoadingOutput: isLoadingOutput
@@ -486,6 +488,96 @@ struct ToolPresentationBuilderTests {
         // Without segments, falls through to default: tool + argsSummary
         #expect(config.segmentAttributedTitle == nil)
         #expect(config.title.contains("recall"))
+    }
+
+    // MARK: - Plot
+
+    @Test("plot collapsed prefers details title")
+    func plotCollapsedPrefersDetailsTitle() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-plot",
+            tool: "plot",
+            argsSummary: "spec: {…}",
+            outputPreview: "",
+            isError: false,
+            isDone: true,
+            context: emptyContext(
+                args: [
+                    "title": .string("args title"),
+                ],
+                details: .object([
+                    "ui": .array([
+                        .object([
+                            "id": .string("chart-1"),
+                            "kind": .string("chart"),
+                            "version": .number(1),
+                            "title": .string("details title"),
+                            "spec": .object([
+                                "dataset": .object([
+                                    "rows": .array([
+                                        .object(["x": .number(0), "y": .number(1)]),
+                                    ]),
+                                ]),
+                                "marks": .array([
+                                    .object(["type": .string("line"), "x": .string("x"), "y": .string("y")]),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
+                ])
+            )
+        )
+
+        #expect(config.title == "details title")
+        #expect(config.toolNamePrefix == "plot")
+    }
+
+    @Test("plot expanded uses details ui when args spec missing")
+    func plotExpandedUsesDetailsChart() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-plot",
+            tool: "plot",
+            argsSummary: "",
+            outputPreview: "fallback output",
+            isError: false,
+            isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "ui": .array([
+                        .object([
+                            "id": .string("chart-1"),
+                            "kind": .string("chart"),
+                            "version": .number(1),
+                            "fallbackText": .string("details fallback"),
+                            "spec": .object([
+                                "title": .string("details chart"),
+                                "dataset": .object([
+                                    "rows": .array([
+                                        .object(["x": .number(0), "pace": .number(295)]),
+                                        .object(["x": .number(1), "pace": .number(292)]),
+                                    ]),
+                                ]),
+                                "marks": .array([
+                                    .object(["type": .string("line"), "x": .string("x"), "y": .string("pace")]),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+                expanded: ["t-plot"],
+                fullOutput: "fallback output"
+            )
+        )
+
+        guard case .plot(let spec, let fallbackText) = config.expandedContent else {
+            Issue.record("Expected .plot content from details ui")
+            return
+        }
+
+        #expect(spec.title == "details chart")
+        #expect(spec.rows.count == 2)
+        #expect(spec.marks.count == 1)
+        #expect(fallbackText == "details fallback")
     }
 
     // MARK: - Unknown Tool

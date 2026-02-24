@@ -164,6 +164,49 @@ describe("session-protocol translatePiEvent", () => {
     ]);
   });
 
+  it("sanitizes tool_end details.ui payloads", () => {
+    const ctx = makeCtx();
+
+    const messages = translatePiEvent(
+      {
+        type: "tool_execution_end",
+        toolName: "plot",
+        toolCallId: "tc-plot",
+        result: {
+          content: [],
+          details: {
+            note: "keep",
+            ui: [
+              {
+                id: "bad-chart",
+                kind: "chart",
+                version: 1,
+                spec: {
+                  dataset: {
+                    rows: [{ x: 1, y: 2 }],
+                  },
+                  marks: [{ type: "heatmap", x: "x", y: "y" }],
+                },
+              },
+            ],
+          },
+        },
+        isError: false,
+      } as unknown as AgentSessionEvent,
+      ctx,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: "tool_end",
+      tool: "plot",
+      toolCallId: "tc-plot",
+      details: {
+        note: "keep",
+      },
+    });
+  });
+
   it("falls back to event id when toolCallId is missing", () => {
     const ctx = makeCtx();
 

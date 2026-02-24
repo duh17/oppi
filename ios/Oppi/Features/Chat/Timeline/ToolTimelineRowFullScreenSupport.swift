@@ -64,7 +64,7 @@ enum ToolTimelineRowFullScreenSupport {
                 command: configuration.copyCommandText
             )
 
-        case .readMedia, .todoCard:
+        case .readMedia, .todoCard, .plot:
             return nil
         }
     }

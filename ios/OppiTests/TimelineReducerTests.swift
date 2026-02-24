@@ -429,7 +429,14 @@ struct TimelineReducerTests {
         reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
         reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "result", isError: false))
+        reducer.process(.toolEnd(
+            sessionId: "s1",
+            toolEventId: "t1",
+            details: .object(["ui": .array([.object(["kind": .string("chart")])])])
+        ))
         reducer.process(.agentEnd(sessionId: "s1"))
+
+        #expect(reducer.toolDetailsStore.details(for: "t1") != nil)
 
         let preResetVersion = reducer.renderVersion
         reducer.reset()
@@ -437,6 +444,7 @@ struct TimelineReducerTests {
         #expect(reducer.items.isEmpty)
         #expect(reducer.streamingAssistantID == nil)
         #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.toolDetailsStore.details(for: "t1") == nil)
         #expect(reducer.renderVersion > preResetVersion)
     }
 
@@ -448,7 +456,11 @@ struct TimelineReducerTests {
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "bash", args: ["command": "ls"]))
         reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false))
-        reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolID))
+        reducer.process(.toolEnd(
+            sessionId: "s1",
+            toolEventId: toolID,
+            details: .object(["ui": .array([.object(["kind": .string("chart")])])])
+        ))
         reducer.process(.agentEnd(sessionId: "s1"))
 
         reducer.expandedItemIDs.insert(toolID)
@@ -459,6 +471,7 @@ struct TimelineReducerTests {
         #expect(stats.toolOutputBytesCleared > 0)
         #expect(stats.expandedItemsCollapsed == 1)
         #expect(reducer.toolOutputStore.totalBytes == 0)
+        #expect(reducer.toolDetailsStore.details(for: toolID) == nil)
         #expect(reducer.expandedItemIDs.isEmpty)
         #expect(reducer.renderVersion > versionBefore)
         #expect(!reducer.items.isEmpty)
@@ -1085,6 +1098,30 @@ struct TimelineReducerTests {
 
         let stored = reducer.toolArgsStore.args(for: "t1")
         #expect(stored == nil, "Empty args should not be stored")
+    }
+
+    @MainActor
+    @Test func toolEndStoresDetails() {
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "plot", args: [:]))
+        reducer.process(.toolEnd(
+            sessionId: "s1",
+            toolEventId: "t1",
+            details: .object([
+                "ui": .array([
+                    .object([
+                        "id": .string("chart-1"),
+                        "kind": .string("chart"),
+                        "version": .number(1),
+                    ]),
+                ]),
+            ])
+        ))
+
+        let stored = reducer.toolDetailsStore.details(for: "t1")
+        #expect(stored?.objectValue?["ui"]?.arrayValue?.count == 1)
     }
 
     // loadFromREST system messages test removed — REST path eliminated.
