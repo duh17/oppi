@@ -146,6 +146,25 @@ describe("oppi token", () => {
     const { stdout: after } = run(["config", "get", "token"]);
     expect(after.trim()).not.toBe(before.trim());
   });
+
+  it("token rotate remains valid across consecutive rotations", () => {
+    run(["pair"]);
+
+    const { stdout: firstBefore } = run(["config", "get", "token"]);
+    const rotate1 = run(["token", "rotate"]);
+    const { stdout: firstAfter } = run(["config", "get", "token"]);
+
+    expect(rotate1.exitCode).toBe(0);
+    expect(firstAfter.trim()).not.toBe(firstBefore.trim());
+    expect(firstAfter.trim()).toMatch(/^sk_/);
+
+    const rotate2 = run(["token", "rotate"]);
+    const { stdout: secondAfter } = run(["config", "get", "token"]);
+
+    expect(rotate2.exitCode).toBe(0);
+    expect(secondAfter.trim()).not.toBe(firstAfter.trim());
+    expect(secondAfter.trim()).toMatch(/^sk_/);
+  });
 });
 
 // ── Env ──
