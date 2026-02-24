@@ -9,6 +9,7 @@ import { createSessionRoutes } from "./sessions.js";
 import { createStreamingRoutes } from "./streaming.js";
 import { createPolicyRoutes } from "./policy.js";
 import { createThemeRoutes } from "./themes.js";
+import { createTelemetryRoutes } from "./telemetry.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -24,6 +25,7 @@ export class RouteHandler {
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),
       createSessionRoutes(this.ctx, this.helpers),
+      createTelemetryRoutes(this.ctx, this.helpers),
       createThemeRoutes(this.ctx, this.helpers),
     ];
   }
