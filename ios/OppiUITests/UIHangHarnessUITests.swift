@@ -275,9 +275,7 @@ final class UIHangHarnessUITests: XCTestCase {
         } else {
             app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "0"
         }
-        if includeVisualFixtures {
-            app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = "1"
-        }
+        app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = includeVisualFixtures ? "1" : "0"
         app.launch()
 
         XCTAssertTrue(
