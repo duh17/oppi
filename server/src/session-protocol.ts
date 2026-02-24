@@ -14,6 +14,7 @@ import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ServerMessage, Session, SessionMessage } from "./types.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { PiMessage } from "./pi-events.js";
+import { sanitizeToolResultDetails } from "./visual-schema.js";
 
 // ─── Text Helpers ───
 
@@ -336,7 +337,14 @@ export function translatePiEvent(
       // Forward structured details and error status from pi tool results.
       // Extensions emit typed details (e.g. remember: {file, redacted}, recall: {matches, topHeader})
       // and built-in tools emit BashToolDetails, ReadToolDetails, etc.
-      const details = event.result?.details;
+      const detailsResult = sanitizeToolResultDetails(event.result?.details);
+      if (detailsResult.warnings.length > 0) {
+        console.warn(
+          `[session:${ctx.sessionId}] tool_end details sanitized for ${event.toolName}: ${detailsResult.warnings.join("; ")}`,
+        );
+      }
+
+      const details = detailsResult.details;
       const resultSegments = ctx.mobileRenderers?.renderResult(
         event.toolName,
         details,

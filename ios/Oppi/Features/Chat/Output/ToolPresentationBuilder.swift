@@ -11,6 +11,7 @@ enum ToolPresentationBuilder {
 
     struct Context {
         let args: [String: JSONValue]?
+        let details: JSONValue?
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -19,6 +20,7 @@ enum ToolPresentationBuilder {
 
         init(
             args: [String: JSONValue]?,
+            details: JSONValue? = nil,
             expandedItemIDs: Set<String>,
             fullOutput: String,
             isLoadingOutput: Bool,
@@ -26,6 +28,7 @@ enum ToolPresentationBuilder {
             resultSegments: [StyledSegment]? = nil
         ) {
             self.args = args
+            self.details = details
             self.expandedItemIDs = expandedItemIDs
             self.fullOutput = fullOutput
             self.isLoadingOutput = isLoadingOutput
@@ -61,6 +64,7 @@ enum ToolPresentationBuilder {
             normalizedTool: normalizedTool,
             tool: tool,
             args: args,
+            details: context.details,
             argsSummary: argsSummary,
             isExpanded: isExpanded,
             isError: isError,
@@ -77,6 +81,7 @@ enum ToolPresentationBuilder {
             expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 args: args,
+                details: context.details,
                 argsSummary: argsSummary,
                 fullOutput: context.fullOutput,
                 outputPreview: outputPreview,
@@ -193,6 +198,7 @@ enum ToolPresentationBuilder {
         normalizedTool: String,
         tool: String,
         args: [String: JSONValue]?,
+        details: JSONValue?,
         argsSummary: String,
         isExpanded: Bool,
         isError: Bool,
@@ -244,6 +250,12 @@ enum ToolPresentationBuilder {
                 }
             }
 
+        case "plot":
+            let title = PlotChartSpec.collapsedTitle(from: args, details: details)
+            result.title = title ?? (argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)")
+            result.toolNamePrefix = tool
+            result.toolNameColor = UIColor(Color.themePurple)
+
         default:
             // Extension tools (todo, remember, recall, etc.) are rendered via
             // server-provided StyledSegments. This default case is the fallback
@@ -273,6 +285,8 @@ enum ToolPresentationBuilder {
         case markdown(text: String)
         /// Rich todo card rendered natively
         case todoCard(output: String)
+        /// Native chart renderer for `plot` tool specs.
+        case plot(spec: PlotChartSpec, fallbackText: String?)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int)
         /// Plain/ANSI text with optional syntax highlighting
@@ -288,6 +302,7 @@ enum ToolPresentationBuilder {
     private static func buildExpanded(
         normalizedTool: String,
         args: [String: JSONValue]?,
+        details: JSONValue?,
         argsSummary: String,
         fullOutput: String,
         outputPreview: String,
@@ -390,6 +405,21 @@ enum ToolPresentationBuilder {
                 content = .todoCard(output: outputTrimmed)
             }
 
+        case "plot":
+            if let detailsChart = PlotChartSpec.fromToolDetails(details) {
+                content = .plot(
+                    spec: detailsChart.spec,
+                    fallbackText: detailsChart.fallbackText ?? (outputTrimmed.isEmpty ? nil : outputTrimmed)
+                )
+            } else if let spec = PlotChartSpec.fromPlotArgs(args) {
+                content = .plot(
+                    spec: spec,
+                    fallbackText: outputTrimmed.isEmpty ? nil : outputTrimmed
+                )
+            } else if !outputTrimmed.isEmpty {
+                content = .text(text: outputTrimmed, language: .json)
+            }
+
         case "remember":
             var parts: [String] = []
             if let text = args?["text"]?.stringValue {
@@ -447,7 +477,7 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let tool = ToolCallFormatting.normalized(normalizedTool)
         switch tool {
-        case "bash", "read", "write", "edit", "todo", "remember", "recall":
+        case "bash", "read", "write", "edit", "todo", "remember", "recall", "plot":
             return false
         default:
             break
