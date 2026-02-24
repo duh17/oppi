@@ -1,10 +1,15 @@
-# Demo
+# Demo Screenshots
 
-Streaming diffs with syntax highlighting
-<img src="diff-rendering.png" width="300" />
+These screenshots show how tool output is rendered in Oppi chat.
 
-ANSI terminal output
-<img src="ansi-terminal-colors.png" width="300" />
+## Streaming diffs with syntax highlighting
 
-Extension rendering
-<img src="extension-rendering.png" width="300" />
+![Streaming diffs with syntax highlighting](diff-rendering.png)
+
+## ANSI terminal output
+
+![ANSI terminal output](ansi-terminal-colors.png)
+
+## Extension rendering
+
+![Extension rendering](extension-rendering.png)

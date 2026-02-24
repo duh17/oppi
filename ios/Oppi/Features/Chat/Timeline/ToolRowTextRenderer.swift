@@ -215,8 +215,8 @@ enum ToolRowTextRenderer {
         lines: [DiffLine],
         filePath: String?
     ) -> NSAttributedString {
-        let renderedLines = Array(lines.prefix(maxRenderedDiffLines))
-        let truncatedByLineCount = lines.count > renderedLines.count
+        let window = diffRenderWindow(for: lines)
+        let renderedLines = Array(window.lines)
 
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
@@ -224,7 +224,11 @@ enum ToolRowTextRenderer {
         paragraph.lineSpacing = 1
 
         let language = diffLanguage(for: filePath)
-        let numberDigits = max(2, lineNumberDigits(for: renderedLines))
+        let numberDigits = max(2, lineNumberDigits(
+            for: renderedLines,
+            startOldLine: window.startingOldLine,
+            startNewLine: window.startingNewLine
+        ))
 
         if renderedLines.isEmpty {
             result.append(
@@ -272,9 +276,21 @@ enum ToolRowTextRenderer {
         let codeDimAttrs: [NSAttributedString.Key: Any] = [
             .font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph,
         ]
+        let omissionAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+            .foregroundColor: UIColor(Color.themeComment),
+            .paragraphStyle: paragraph,
+        ]
 
-        var oldLineNumber = 1
-        var newLineNumber = 1
+        if window.omittedAbove > 0 {
+            result.append(NSAttributedString(
+                string: "… \(window.omittedAbove) lines omitted above\n",
+                attributes: omissionAttrs
+            ))
+        }
+
+        var oldLineNumber = window.startingOldLine
+        var newLineNumber = window.startingNewLine
 
         for (index, line) in renderedLines.enumerated() {
             let lineNumber: Int?
@@ -291,12 +307,7 @@ enum ToolRowTextRenderer {
                 newLineNumber += 1
             }
 
-            let clippedText: String
-            if line.text.count > maxRenderedDiffLineCharacters {
-                clippedText = String(line.text.prefix(maxRenderedDiffLineCharacters - 1)) + "…"
-            } else {
-                clippedText = line.text
-            }
+            let clippedText = clippedDiffLineText(line.text)
 
             let rowStart = result.length
 
@@ -371,14 +382,10 @@ enum ToolRowTextRenderer {
             }
         }
 
-        if truncatedByLineCount {
+        if window.omittedBelow > 0 {
             result.append(NSAttributedString(
-                string: "\n… diff truncated for display",
-                attributes: [
-                    .font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-                    .foregroundColor: UIColor(Color.themeComment),
-                    .paragraphStyle: paragraph,
-                ]
+                string: "\n… \(window.omittedBelow) lines omitted below",
+                attributes: omissionAttrs
             ))
         }
 
@@ -387,10 +394,153 @@ enum ToolRowTextRenderer {
 
     // MARK: - Helpers
 
+    private struct DiffRenderWindow {
+        let lines: ArraySlice<DiffLine>
+        let omittedAbove: Int
+        let omittedBelow: Int
+        let startingOldLine: Int
+        let startingNewLine: Int
+    }
+
+    private static func clippedDiffLineText(_ text: String) -> String {
+        guard text.count > maxRenderedDiffLineCharacters else {
+            return text
+        }
+
+        guard maxRenderedDiffLineCharacters > 1 else {
+            return "…"
+        }
+
+        return String(text.prefix(maxRenderedDiffLineCharacters - 1)) + "…"
+    }
+
+    private static func diffRenderWindow(for lines: [DiffLine]) -> DiffRenderWindow {
+        guard !lines.isEmpty else {
+            return DiffRenderWindow(
+                lines: lines[0..<0],
+                omittedAbove: 0,
+                omittedBelow: 0,
+                startingOldLine: 1,
+                startingNewLine: 1
+            )
+        }
+
+        let maxLines = maxRenderedDiffLines
+        guard lines.count > maxLines else {
+            return makeDiffRenderWindow(for: lines, start: 0, end: lines.count)
+        }
+
+        guard let changedRange = changedLineRange(in: lines) else {
+            return makeDiffRenderWindow(for: lines, start: 0, end: maxLines)
+        }
+
+        let bounds = diffWindowBounds(
+            around: changedRange,
+            totalLineCount: lines.count,
+            maxWindowSize: maxLines
+        )
+
+        return makeDiffRenderWindow(for: lines, start: bounds.start, end: bounds.end)
+    }
+
+    private static func makeDiffRenderWindow(
+        for lines: [DiffLine],
+        start: Int,
+        end: Int
+    ) -> DiffRenderWindow {
+        let startingLines = startingLineNumbers(for: lines, at: start)
+
+        return DiffRenderWindow(
+            lines: lines[start..<end],
+            omittedAbove: start,
+            omittedBelow: lines.count - end,
+            startingOldLine: startingLines.old,
+            startingNewLine: startingLines.new
+        )
+    }
+
+    private static func changedLineRange(in lines: [DiffLine]) -> ClosedRange<Int>? {
+        guard let firstChanged = lines.firstIndex(where: { $0.kind != .context }),
+              let lastChanged = lines.lastIndex(where: { $0.kind != .context }) else {
+            return nil
+        }
+
+        return firstChanged...lastChanged
+    }
+
+    private static func diffWindowBounds(
+        around changedRange: ClosedRange<Int>,
+        totalLineCount: Int,
+        maxWindowSize: Int
+    ) -> (start: Int, end: Int) {
+        let changedLineCount = changedRange.upperBound - changedRange.lowerBound + 1
+        if changedLineCount >= maxWindowSize {
+            let start = changedRange.lowerBound
+            return (start, min(totalLineCount, start + maxWindowSize))
+        }
+
+        let remainingContext = maxWindowSize - changedLineCount
+        let availableBefore = changedRange.lowerBound
+        let availableAfter = totalLineCount - changedRange.upperBound - 1
+
+        var contextBefore = min(availableBefore, remainingContext / 2)
+        var contextAfter = min(availableAfter, remainingContext - contextBefore)
+
+        let unallocatedContext = remainingContext - contextBefore - contextAfter
+        if unallocatedContext > 0 {
+            let extraBefore = min(availableBefore - contextBefore, unallocatedContext)
+            contextBefore += extraBefore
+            contextAfter += min(availableAfter - contextAfter, unallocatedContext - extraBefore)
+        }
+
+        var start = changedRange.lowerBound - contextBefore
+        var end = changedRange.upperBound + 1 + contextAfter
+
+        let missingLines = maxWindowSize - (end - start)
+        if missingLines > 0 {
+            let shiftUp = min(start, missingLines)
+            start -= shiftUp
+            end = min(totalLineCount, end + (missingLines - shiftUp))
+        }
+
+        return (start, end)
+    }
+
+    private static func startingLineNumbers(for lines: [DiffLine], at index: Int) -> (old: Int, new: Int) {
+        var oldLine = 1
+        var newLine = 1
+
+        guard index > 0 else {
+            return (oldLine, newLine)
+        }
+
+        for line in lines[..<index] {
+            switch line.kind {
+            case .context:
+                oldLine += 1
+                newLine += 1
+            case .removed:
+                oldLine += 1
+            case .added:
+                newLine += 1
+            }
+        }
+
+        return (oldLine, newLine)
+    }
+
     static func lineNumberDigits(for lines: [DiffLine]) -> Int {
-        var oldNumber = 1
-        var newNumber = 1
-        var maxSeen = 1
+        lineNumberDigits(for: lines, startOldLine: 1, startNewLine: 1)
+    }
+
+    private static func lineNumberDigits(
+        for lines: [DiffLine],
+        startOldLine: Int,
+        startNewLine: Int
+    ) -> Int {
+        var oldNumber = startOldLine
+        var newNumber = startNewLine
+        var maxSeen = max(1, oldNumber, newNumber)
 
         for line in lines {
             switch line.kind {

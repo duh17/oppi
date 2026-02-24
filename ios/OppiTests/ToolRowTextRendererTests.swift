@@ -171,6 +171,53 @@ struct DiffHelperTests {
         #expect(ToolRowTextRenderer.diffLanguage(for: nil) == nil)
         #expect(ToolRowTextRenderer.diffLanguage(for: "") == nil)
     }
+
+    @Test func largeDiffWindowIncludesChangedLines() {
+        let leadingContextCount = ToolRowTextRenderer.maxRenderedDiffLines + 60
+        var lines = makeContextLines(count: leadingContextCount)
+
+        lines.append(DiffLine(kind: .removed, text: "old changed line"))
+        lines.append(DiffLine(kind: .added, text: "new changed line"))
+        lines.append(DiffLine(kind: .context, text: "trailing context"))
+
+        let rendered = renderDiff(lines)
+
+        #expect(rendered.contains("old changed line"))
+        #expect(rendered.contains("new changed line"))
+        #expect(rendered.contains("omitted above"))
+    }
+
+    @Test func largeDiffWindowIncludesTrailingOmissionMarker() {
+        let trailingContextCount = ToolRowTextRenderer.maxRenderedDiffLines + 60
+        var lines: [DiffLine] = [
+            DiffLine(kind: .removed, text: "old changed line"),
+            DiffLine(kind: .added, text: "new changed line"),
+        ]
+        lines.append(contentsOf: makeContextLines(count: trailingContextCount, prefix: "tail"))
+
+        let rendered = renderDiff(lines)
+
+        #expect(rendered.contains("old changed line"))
+        #expect(rendered.contains("new changed line"))
+        #expect(rendered.contains("omitted below"))
+    }
+
+    private func makeContextLines(count: Int, prefix: String = "context") -> [DiffLine] {
+        guard count > 0 else { return [] }
+
+        var lines: [DiffLine] = []
+        lines.reserveCapacity(count)
+
+        for index in 1...count {
+            lines.append(DiffLine(kind: .context, text: "\(prefix) \(index)"))
+        }
+
+        return lines
+    }
+
+    private func renderDiff(_ lines: [DiffLine]) -> String {
+        ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: nil).string
+    }
 }
 
 // MARK: - Shell / ANSI
