@@ -548,6 +548,30 @@ actor APIClient {
         return trimmed.isEmpty ? nil : output
     }
 
+    /// Fetch raw full (untruncated) tool output from the server temp-file side channel.
+    ///
+    /// Returns nil when the server no longer has the backing temp file (404).
+    func getFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
+        do {
+            let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/tool-output/\(toolCallId)/full")
+            struct Response: Decodable { let output: String }
+            let response = try JSONDecoder().decode(Response.self, from: data)
+            return response.output
+        } catch APIError.server(let status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    /// Fetch full untruncated tool output and return nil if empty/whitespace-only.
+    func getNonEmptyFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
+        guard let output = try await getFullToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId) else {
+            return nil
+        }
+
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : output
+    }
+
     /// Fetch a file from the session's working directory.
     ///
     /// Returns the raw file content as a string. Used when the user taps a file path
