@@ -107,11 +107,54 @@ describe("auth", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rejects malformed Authorization header variants", async () => {
+    const variants = [
+      "Bearer",
+      "Bearer    ",
+      "Bearer\t",
+      "bearer sk_wrong_token_123",
+      "Token sk_wrong_token_123",
+    ];
+
+    for (const value of variants) {
+      const res = await fetch(`${baseUrl}/me`, {
+        headers: { Authorization: value },
+      });
+      expect(res.status).toBe(401);
+    }
+  });
+
   it("rejects requests with wrong token", async () => {
     const res = await fetch(`${baseUrl}/me`, {
       headers: { Authorization: "Bearer sk_wrong_token_123" },
     });
     expect(res.status).toBe(401);
+  });
+
+  it("recovers from invalid->valid token attempts", async () => {
+    const bad = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: "Bearer sk_wrong_token_123" },
+    });
+    expect(bad.status).toBe(401);
+
+    const good = await get("/me");
+    expect(good.status).toBe(200);
+  });
+
+  it("invalidates old owner token after rotation", async () => {
+    const oldToken = token;
+    const rotated = storage.rotateToken();
+    token = rotated;
+
+    const oldRes = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${oldToken}` },
+    });
+    expect(oldRes.status).toBe(401);
+
+    const newRes = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${rotated}` },
+    });
+    expect(newRes.status).toBe(200);
   });
 
   it("accepts requests with correct token", async () => {
@@ -255,6 +298,23 @@ describe("WebSocket", () => {
         resolve(false);
       });
     });
+    expect(closed).toBe(true);
+  });
+
+  it("rejects WS upgrade with malformed Authorization header", async () => {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/stream`, {
+      headers: { Authorization: "bearer malformed" },
+    });
+
+    const closed = await new Promise<boolean>((resolve) => {
+      ws.on("error", () => resolve(true));
+      ws.on("close", () => resolve(true));
+      ws.on("open", () => {
+        ws.close();
+        resolve(false);
+      });
+    });
+
     expect(closed).toBe(true);
   });
 
@@ -874,11 +934,11 @@ describe("pairing token flow", () => {
       });
       expect(auth.status).toBe(200);
 
-      // Replay rejected
+      // Replay rejected (even if caller identity fields differ)
       const replay = await fetch(`${pairingBaseUrl}/pair`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairingToken: pt, deviceName: "test-iphone" }),
+        body: JSON.stringify({ pairingToken: pt, deviceName: "different-device" }),
       });
       expect(replay.status).toBe(401);
     });

@@ -396,6 +396,20 @@ export class SessionManager extends EventEmitter {
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
+  getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {
+    const active = this.active.get(this.sessionKey(sessionId));
+    if (!active) {
+      return null;
+    }
+
+    const normalizedToolCallId = toolCallId.trim();
+    if (normalizedToolCallId.length === 0) {
+      return null;
+    }
+
+    return active.toolFullOutputPaths.get(normalizedToolCallId) ?? null;
+  }
+
   getCurrentSeq(sessionId: string): number {
     return this.broadcaster.getCurrentSeq(this.sessionKey(sessionId));
   }
