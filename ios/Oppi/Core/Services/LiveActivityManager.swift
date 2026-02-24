@@ -59,7 +59,11 @@ final class LiveActivityManager {
 
     private(set) var activeActivity: Activity<PiSessionAttributes>?
 
-    private var currentState: PiSessionAttributes.ContentState = LiveActivityManager.emptyState
+    /// Observes `activityStateUpdates` to detect system-initiated endings
+    /// (8-hour limit, user removal from Lock Screen).
+    private var activityObservationTask: Task<Void, Never>?
+
+    private(set) var currentState: PiSessionAttributes.ContentState = LiveActivityManager.emptyState
     private var connectionSnapshots: [String: ConnectionSnapshot] = [:]
 
     private var idleDismissTask: Task<Void, Never>?
@@ -73,19 +77,39 @@ final class LiveActivityManager {
     private var pushThrottleTask: Task<Void, Never>?
 
     /// Last pushed state used for alert transitions.
-    private var lastPushedPrimaryPhase: SessionPhase = .ended
-    private var lastPushedApprovalCount = 0
+    var lastPushedPrimaryPhase: SessionPhase = .ended
+    var lastPushedApprovalCount = 0
 
     /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
     private let pushThrottleInterval: Duration = .seconds(1)
-    /// End the activity shortly after all sessions become non-actionable.
-    private let idleDismissDelay: Duration = .seconds(60)
+    /// Brief grace period before ending the activity after all sessions go idle.
+    /// Short enough to feel responsive, long enough to absorb rapid state flicker.
+    private let idleDismissDelay: Duration = .seconds(5)
     /// Keep `.awaitingReply` visible briefly, then auto-dismiss if nothing else is active.
     private let awaitingReplyVisibilitySeconds: TimeInterval = 5
     /// Working/error/approval states should eventually go stale if we stop receiving events.
     private let staleIntervalSeconds: TimeInterval = 300
+    /// How long the ended activity lingers on the Lock Screen after `activity.end()`.
+    /// HIG: "In most cases, 15 to 30 minutes is adequate." We use 60s — sessions are
+    /// short-lived and the summary goes stale fast.
+    private let lockScreenDismissDelaySeconds: TimeInterval = 60
 
-    private init() {}
+    init() {}
+
+    /// Pure alert decision — no ActivityKit dependency, used by `executePush()`
+    /// and testable independently.
+    ///
+    /// HIG: "Alert people only for essential updates that require their attention."
+    /// Only `.needsApproval` (permission requests) warrant a vibration/sound.
+    nonisolated static func shouldAlert(
+        state: PiSessionAttributes.ContentState,
+        lastPushedPhase: SessionPhase,
+        lastPushedApprovalCount: Int
+    ) -> Bool {
+        state.primaryPhase == .needsApproval
+            && (state.pendingApprovalCount > lastPushedApprovalCount
+                || state.primaryPhase != lastPushedPhase)
+    }
 
     // MARK: - Public API
 
@@ -250,9 +274,59 @@ final class LiveActivityManager {
     }
 
     /// End the current Live Activity.
-    func endIfNeeded() {
+    ///
+    /// HIG: "Always end a Live Activity immediately when the task or event ends,
+    /// and consider setting a custom dismissal time."
+    /// We end immediately but use a Lock Screen dismissal window so users can
+    /// glance at the final state. `.immediate` is reserved for explicit user action.
+    func endIfNeeded(immediate: Bool = false) {
         guard let activity = activeActivity else { return }
 
+        cleanupTimers()
+
+        let finalState = Self.emptyState
+        let policy: ActivityUIDismissalPolicy = immediate
+            ? .immediate
+            : .after(Date().addingTimeInterval(lockScreenDismissDelaySeconds))
+
+        Task {
+            await activity.end(
+                .init(state: finalState, staleDate: nil),
+                dismissalPolicy: policy
+            )
+        }
+
+        activeActivity = nil
+        currentState = finalState
+        let dismissalLabel = immediate ? "immediate" : "after \(Int(self.lockScreenDismissDelaySeconds))s"
+        logger.error("Live Activity ended (dismissal=\(dismissalLabel, privacy: .public))")
+    }
+
+    /// Check for orphaned activities on app launch / foreground.
+    ///
+    /// If the system ended the activity (8-hour limit, user removal) while
+    /// the app was suspended, `activeActivity` is stale. Detect and recover.
+    func recoverIfNeeded() {
+        // Clean up any activities the system ended while we were suspended.
+        let allActivities = Activity<PiSessionAttributes>.activities
+        for activity in allActivities {
+            if activity.activityState == .ended || activity.activityState == .dismissed {
+                if activity.id == activeActivity?.id {
+                    logger.error("Recovered stale activeActivity reference (state=\(String(describing: activity.activityState), privacy: .public))")
+                    cleanupTimers()
+                    activeActivity = nil
+                    currentState = Self.emptyState
+                }
+            }
+        }
+
+        // If we have tracked sessions but no live activity, restart.
+        if activeActivity == nil && shouldShowLiveActivity(state: aggregateState()) {
+            refreshLifecycle()
+        }
+    }
+
+    private func cleanupTimers() {
         pushThrottleTask?.cancel()
         pushThrottleTask = nil
         idleDismissTask?.cancel()
@@ -260,22 +334,11 @@ final class LiveActivityManager {
         awaitingReplyExpiryTask?.cancel()
         awaitingReplyExpiryTask = nil
         awaitingReplyExpiryDate = nil
+        activityObservationTask?.cancel()
+        activityObservationTask = nil
         hasPendingPush = false
         lastPushedPrimaryPhase = .ended
         lastPushedApprovalCount = 0
-
-        let finalState = Self.emptyState
-
-        Task {
-            await activity.end(
-                .init(state: finalState, staleDate: nil),
-                dismissalPolicy: .immediate
-            )
-        }
-
-        activeActivity = nil
-        currentState = finalState
-        logger.error("Live Activity ended")
     }
 
     // MARK: - Lifecycle
@@ -372,6 +435,16 @@ final class LiveActivityManager {
     }
 
     private func ensureActivityStartedIfNeeded() {
+        // Check if our tracked activity was ended by the system (8-hour limit,
+        // user removal). activityState is synchronously available.
+        if let existing = activeActivity,
+           existing.activityState == .ended || existing.activityState == .dismissed {
+            logger.error("Detected system-ended activity, clearing stale reference")
+            cleanupTimers()
+            activeActivity = nil
+            currentState = Self.emptyState
+        }
+
         guard activeActivity == nil else { return }
 
         let authInfo = ActivityAuthorizationInfo()
@@ -390,9 +463,42 @@ final class LiveActivityManager {
                 pushType: nil
             )
             activeActivity = activity
+            observeActivityLifecycle(activity)
             logger.error("Live Activity started")
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Watch for system-initiated activity endings (8-hour limit, user removal).
+    /// When detected, nil out `activeActivity` so the next `refreshLifecycle()`
+    /// can restart it if sessions are still active.
+    private func observeActivityLifecycle(_ activity: Activity<PiSessionAttributes>) {
+        activityObservationTask?.cancel()
+        activityObservationTask = Task { [weak self] in
+            for await state in activity.activityStateUpdates {
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
+
+                switch state {
+                case .ended, .dismissed:
+                    logger.error("Activity ended by system (state=\(String(describing: state), privacy: .public))")
+                    if self.activeActivity?.id == activity.id {
+                        self.cleanupTimers()
+                        self.activeActivity = nil
+                        self.currentState = Self.emptyState
+
+                        // If we still have active sessions, restart the activity.
+                        if self.shouldShowLiveActivity(state: self.aggregateState()) {
+                            self.refreshLifecycle()
+                        }
+                    }
+                case .active, .stale:
+                    break
+                @unknown default:
+                    break
+                }
+            }
         }
     }
 
@@ -440,35 +546,23 @@ final class LiveActivityManager {
         hasPendingPush = false
 
         let state = currentState
-        let shouldAlertForNewApproval = state.pendingApprovalCount > lastPushedApprovalCount
-        let shouldAlertForPhaseTransition =
-            state.primaryPhase != lastPushedPrimaryPhase
-            && (state.primaryPhase == .awaitingReply || state.primaryPhase == .needsApproval)
+
+        let shouldAlertNow = Self.shouldAlert(
+            state: state,
+            lastPushedPhase: lastPushedPrimaryPhase,
+            lastPushedApprovalCount: lastPushedApprovalCount
+        )
 
         lastPushedPrimaryPhase = state.primaryPhase
         lastPushedApprovalCount = state.pendingApprovalCount
 
-        let alertConfiguration: AlertConfiguration?
-        if shouldAlertForNewApproval || shouldAlertForPhaseTransition {
-            switch state.primaryPhase {
-            case .needsApproval:
-                alertConfiguration = AlertConfiguration(
-                    title: "Approval required",
-                    body: "Open Oppi to review",
-                    sound: .default
-                )
-            case .awaitingReply:
-                alertConfiguration = AlertConfiguration(
-                    title: "Awaiting reply",
-                    body: "Open Oppi to continue",
-                    sound: .default
-                )
-            default:
-                alertConfiguration = nil
-            }
-        } else {
-            alertConfiguration = nil
-        }
+        let alertConfiguration: AlertConfiguration? = shouldAlertNow
+            ? AlertConfiguration(
+                title: "Approval required",
+                body: "Open Oppi to review",
+                sound: .default
+            )
+            : nil
 
         Task {
             await activity.update(

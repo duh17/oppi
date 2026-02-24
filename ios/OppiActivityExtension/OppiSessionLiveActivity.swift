@@ -8,16 +8,20 @@ struct PiSessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PiSessionAttributes.self) { context in
             LockScreenView(context: context)
+                .widgetURL(deepLinkURL(for: context.state))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
                         Image(systemName: phaseIcon(context.state.primaryPhase))
+                            .accessibilityHidden(true)
                         Text(context.state.primarySessionName)
                             .font(.caption.bold())
                             .lineLimit(1)
                     }
                     .foregroundStyle(phaseColor(context.state.primaryPhase))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(context.state.primarySessionName), \(phaseLabel(context.state.primaryPhase))")
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
@@ -79,26 +83,31 @@ struct PiSessionLiveActivity: Widget {
                     .font(.caption2)
                     .foregroundStyle(phaseColor(context.state.primaryPhase))
                     .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse(context.state.primaryPhase))
+                    .accessibilityLabel(accessibilitySummary(context.state))
             } compactTrailing: {
                 if context.state.pendingApprovalCount > 0 {
                     Text("\(context.state.pendingApprovalCount)")
                         .font(.caption2.bold())
                         .foregroundStyle(.orange)
                         .contentTransition(.numericText())
+                        .accessibilityLabel("\(context.state.pendingApprovalCount) pending approvals")
                 } else if context.state.primaryPhase == .working,
                           let start = context.state.sessionStartDate {
                     Text(timerInterval: start...Date.distantFuture, countsDown: false)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Session timer")
                 } else {
                     Text(phaseShortLabel(context.state.primaryPhase))
                         .font(.caption2.bold())
                         .foregroundStyle(phaseColor(context.state.primaryPhase))
+                        .accessibilityLabel(phaseLabel(context.state.primaryPhase))
                 }
             } minimal: {
                 Image(systemName: phaseIcon(context.state.primaryPhase))
                     .font(.caption2)
                     .foregroundStyle(phaseColor(context.state.primaryPhase))
+                    .accessibilityLabel(accessibilitySummary(context.state))
             }
         }
     }
@@ -117,6 +126,7 @@ private struct LockScreenView: View {
                         Image(systemName: phaseIcon(context.state.primaryPhase))
                             .font(.caption)
                             .foregroundStyle(phaseColor(context.state.primaryPhase))
+                            .accessibilityHidden(true)
                         Text(context.state.primarySessionName)
                             .font(.subheadline.bold())
                             .lineLimit(1)
@@ -163,9 +173,12 @@ private struct LockScreenView: View {
                         Text(timerInterval: start...Date.distantFuture, countsDown: false)
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Session timer")
                     }
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilitySummary(context.state))
 
             if let permissionId = context.state.topPermissionId {
                 PermissionActionButtons(permissionId: permissionId)
@@ -186,6 +199,7 @@ private struct PermissionActionButtons: View {
             }
             .buttonStyle(.bordered)
             .tint(.red)
+            .accessibilityLabel("Deny permission request")
 
             Button(intent: ApprovePermissionIntent(permissionId: permissionId)) {
                 Label("Approve", systemImage: "checkmark")
@@ -193,6 +207,7 @@ private struct PermissionActionButtons: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
+            .accessibilityLabel("Approve permission request")
         }
     }
 }
@@ -259,4 +274,33 @@ private func sessionSummary(_ state: PiSessionAttributes.ContentState) -> String
         return "\(state.sessionsAwaitingReply) awaiting reply"
     }
     return "\(state.totalActiveSessions) active"
+}
+
+/// VoiceOver summary combining session name, phase, and key details.
+private func accessibilitySummary(_ state: PiSessionAttributes.ContentState) -> String {
+    var parts = ["\(state.primarySessionName), \(phaseLabel(state.primaryPhase))"]
+    if state.pendingApprovalCount > 0 {
+        parts.append("\(state.pendingApprovalCount) pending approval\(state.pendingApprovalCount == 1 ? "" : "s")")
+    }
+    if let activity = state.primaryLastActivity, !activity.isEmpty {
+        parts.append(activity)
+    }
+    return parts.joined(separator: ". ")
+}
+
+/// Deep link URL for tapping the Live Activity.
+///
+/// HIG: "Take people directly to related details and actions."
+/// - Permission pending → `oppi://permission/<id>` (navigates to approval UI)
+/// - Otherwise → `oppi://session/<id>` (opens the primary session)
+private func deepLinkURL(for state: PiSessionAttributes.ContentState) -> URL? {
+    if let permissionId = state.topPermissionId,
+       let encoded = permissionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
+        return URL(string: "oppi://permission/\(encoded)")
+    }
+    if let sessionId = state.primarySessionId,
+       let encoded = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
+        return URL(string: "oppi://session/\(encoded)")
+    }
+    return nil
 }
