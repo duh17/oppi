@@ -148,7 +148,41 @@ struct OppiApp: App {
         if await handleIncomingPermissionURL(url) {
             return
         }
+        if handleIncomingSessionURL(url) {
+            return
+        }
         await handleIncomingInviteURL(url)
+    }
+
+    /// Handle `oppi://session/<sessionId>` deep links from Live Activity taps.
+    @MainActor
+    private func handleIncomingSessionURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+            return false
+        }
+        guard url.host?.lowercased() == "session" else {
+            return false
+        }
+        let pathParts = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard let rawId = pathParts.first, !rawId.isEmpty else {
+            return false
+        }
+        let sessionId = rawId.removingPercentEncoding ?? rawId
+
+        // Find which server owns this session and switch to it.
+        for (serverId, conn) in coordinator.connections
+            where conn.sessionStore.sessions.contains(where: { $0.id == sessionId }) {
+            coordinator.switchToServer(serverId)
+            conn.sessionStore.activeSessionId = sessionId
+            navigation.selectedTab = .workspaces
+            return true
+        }
+
+        // Session not found locally — just open the app to workspaces tab.
+        navigation.selectedTab = .workspaces
+        return true
     }
 
     @MainActor
@@ -267,6 +301,11 @@ struct OppiApp: App {
                 "footprintMB": footprint.map(String.init) ?? "n/a",
                 "reconnect": shouldReconnect ? "true" : "false",
             ])
+
+            // Recover Live Activity if system ended it while backgrounded (8-hour limit, user removal).
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recoverIfNeeded()
+            }
 
             if shouldReconnect {
                 Task {
