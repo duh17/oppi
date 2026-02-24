@@ -200,11 +200,6 @@ final class ChatSessionManager {
         sessionStore.activeSessionId = sessionId
         markSyncStarted()
 
-        if ReleaseFeatures.liveActivitiesEnabled {
-            let sessionName = sessionStore.sessions.first(where: { $0.id == sessionId })?.name ?? "Session"
-            LiveActivityManager.shared.start(sessionId: sessionId, sessionName: sessionName)
-        }
-
         // Show cached timeline immediately (before network).
         let cached = await TimelineCache.shared.loadTrace(sessionId)
         if let cached {

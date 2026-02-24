@@ -29,6 +29,43 @@ struct ForegroundReconnectGate {
     }
 }
 
+enum PermissionDeepLink {
+    static func permissionID(from url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+            return nil
+        }
+
+        let host = url.host?.lowercased()
+        let pathParts = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        if host == "permission" {
+            if let first = pathParts.first, !first.isEmpty {
+                return first.removingPercentEncoding ?? first
+            }
+
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let queryItems = components.queryItems,
+               let rawId = queryItems.first(where: { $0.name == "id" })?.value,
+               !rawId.isEmpty {
+                return rawId.removingPercentEncoding ?? rawId
+            }
+
+            return nil
+        }
+
+        if host == nil || host?.isEmpty == true,
+           pathParts.count >= 2,
+           pathParts[0].lowercased() == "permission" {
+            let rawId = pathParts[1]
+            return rawId.removingPercentEncoding ?? rawId
+        }
+
+        return nil
+    }
+}
+
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -85,9 +122,9 @@ struct OppiApp: App {
             }
             .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
                 guard let url = notification.object as? URL else { return }
-                Task { @MainActor in await handleIncomingInviteURL(url) }
+                Task { @MainActor in await handleIncomingURL(url) }
             }
-            .onOpenURL { url in Task { @MainActor in await handleIncomingInviteURL(url) } }
+            .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
             .task {
                 await SentryService.shared.configure()
                 MetricKitService.shared.configure()
@@ -98,6 +135,62 @@ struct OppiApp: App {
                 await setupNotifications()
                 await reconnectOnLaunch()
             }
+    }
+
+    private struct PendingPermissionLocation {
+        let serverId: String
+        let sessionId: String
+        let connection: ServerConnection
+    }
+
+    @MainActor
+    private func handleIncomingURL(_ url: URL) async {
+        if await handleIncomingPermissionURL(url) {
+            return
+        }
+        await handleIncomingInviteURL(url)
+    }
+
+    @MainActor
+    private func handleIncomingPermissionURL(_ url: URL) async -> Bool {
+        guard let permissionId = PermissionDeepLink.permissionID(from: url) else {
+            return false
+        }
+
+        if let location = pendingPermissionLocation(id: permissionId) {
+            coordinator.switchToServer(location.serverId)
+            location.connection.sessionStore.activeSessionId = location.sessionId
+            location.connection.syncLiveActivityPermissions()
+            navigation.selectedTab = .workspaces
+            return true
+        }
+
+        // Best-effort refresh when app woke from deep link before local stores synced.
+        await coordinator.refreshAllServers()
+
+        if let location = pendingPermissionLocation(id: permissionId) {
+            coordinator.switchToServer(location.serverId)
+            location.connection.sessionStore.activeSessionId = location.sessionId
+            location.connection.syncLiveActivityPermissions()
+            navigation.selectedTab = .workspaces
+            return true
+        }
+
+        connection.extensionToast = "Permission request no longer pending"
+        return true
+    }
+
+    private func pendingPermissionLocation(id: String) -> PendingPermissionLocation? {
+        for (serverId, conn) in coordinator.connections {
+            if let request = conn.permissionStore.pending.first(where: { $0.id == id }) {
+                return PendingPermissionLocation(
+                    serverId: serverId,
+                    sessionId: request.sessionId,
+                    connection: conn
+                )
+            }
+        }
+        return nil
     }
 
     @MainActor
@@ -141,6 +234,7 @@ struct OppiApp: App {
             connection.sessionStore.markSyncStarted()
             connection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
             connection.sessionStore.markSyncSucceeded()
+            connection.syncLiveActivityPermissions()
             navigation.showOnboarding = false
             navigation.selectedTab = .workspaces
             if let api = connection.apiClient {
@@ -467,6 +561,7 @@ struct OppiApp: App {
         if let cachedSessions = await cache.loadSessionList() {
             usedCachedSessions = true
             connection.sessionStore.applyServerSnapshot(cachedSessions)
+            connection.syncLiveActivityPermissions()
         }
 
         // 4. Refresh session list from server
@@ -477,6 +572,7 @@ struct OppiApp: App {
 
             connection.sessionStore.applyServerSnapshot(sessions)
             connection.sessionStore.markSyncSucceeded()
+            connection.syncLiveActivityPermissions()
             Task.detached { await TimelineCache.shared.saveSessionList(sessions) }
 
             // 5. Evict trace caches for deleted sessions

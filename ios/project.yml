@@ -26,6 +26,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: true
     SENTRY_DSN: ""
     OPPI_TELEMETRY_MODE: "public"
+    APP_GROUP_IDENTIFIER: group.oppi
 targets:
   Oppi:
     type: application
@@ -53,6 +54,9 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: false
     entitlements:
       path: Oppi/Resources/Oppi.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
     info:
       path: Oppi/Resources/Info.plist
       properties:
@@ -116,6 +120,11 @@ targets:
         type: group
       - path: Shared
         type: group
+    entitlements:
+      path: OppiActivityExtension/OppiActivityExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
