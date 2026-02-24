@@ -22,7 +22,7 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
-    expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
+    expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
     expect(result.config?.approvalTimeoutMs).toBe(120_000);
   });
 
@@ -35,17 +35,6 @@ describe("Storage config validation", () => {
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("config.unknownKey: unknown key"))).toBe(true);
-  });
-
-  it("rejects invalid top-level allowedCidrs", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      allowedCidrs: ["not-a-cidr"],
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
-    expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("config.allowedCidrs[0]"))).toBe(true);
   });
 
   it("accepts approvalTimeoutMs = 0 for non-expiring approvals", () => {
@@ -88,7 +77,7 @@ describe("Storage config validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.config?.configVersion).toBe(2);
-    expect(result.config?.allowedCidrs.length).toBeGreaterThan(0);
+    expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
   });
 
   it("rejects unknown top-level keys in strict mode", () => {

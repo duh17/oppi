@@ -167,17 +167,6 @@ describe("oppi token", () => {
   });
 });
 
-// ── Env ──
-
-describe("oppi env", () => {
-  it("env show prints PATH info", () => {
-    const { stdout, exitCode } = run(["env", "show"]);
-    expect(exitCode).toBe(0);
-    // Should print something about PATH/env
-    expect(stdout.length).toBeGreaterThan(0);
-  });
-});
-
 // ── Pair ──
 
 describe("oppi pair", () => {

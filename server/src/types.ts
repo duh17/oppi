@@ -172,8 +172,11 @@ export interface ServerConfig {
   approvalTimeoutMs?: number;
   /** Set to false to disable the permission gate. All tool calls run without approval. */
   permissionGate?: boolean;
-  /** Source CIDRs allowed to connect to HTTP/WS endpoints. */
-  allowedCidrs: string[];
+
+  /** PATH entries used for runtime tool execution. */
+  runtimePathEntries?: string[];
+  /** Additional runtime environment variables. */
+  runtimeEnv?: Record<string, string>;
 
   /** Declarative global policy config (guardrails + permissions). */
   policy?: PolicyConfig;
