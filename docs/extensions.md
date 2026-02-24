@@ -28,7 +28,7 @@ How Oppi handles pi extensions end-to-end: discovery, selection, spawning, mobil
 │    resolveWorkspaceExtensions()  → extension paths    │
 │                                                      │
 │  mobile-renderer.ts                                  │
-│    Built-in renderers (bash, read, edit, write, …)   │
+│    Built-in renderers (bash, read, edit, write, plot, …) │
 │    + ~/.pi/agent/mobile-renderers/ → StyledSegment[]  │
 │                                                      │
 │  sdk-backend.ts                                      │
@@ -115,7 +115,7 @@ interface MobileToolRenderer {
 
 | Source | Location | Covers |
 |--------|----------|--------|
-| Built-in | `server/src/mobile-renderer.ts` | `bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`, `todo` |
+| Built-in | `server/src/mobile-renderer.ts` | `bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`, `todo`, `plot` |
 | User renderers | `~/.pi/agent/mobile-renderers/*.ts` | Custom extension tools (`remember`, `recall`, etc.) |
 
 User renderers live in a **separate directory** from pi extensions (`~/.pi/agent/mobile-renderers/`). This prevents the pi CLI from trying to load them as extensions — they're pure rendering hints, not extension modules.
@@ -213,6 +213,18 @@ export default renderers;
 - One file can cover multiple tools from the same extension
 - Keep summaries short — they're collapsed one-liners on mobile
 - Never throw — return `[]` as fallback
+
+### Dynamic UI via `plot` Tool
+
+For dynamic chart UI in chat, use the `plot` extension tool contract documented in:
+
+- [`docs/dynamic-ui-plot.md`](dynamic-ui-plot.md)
+
+Short version:
+- `plot` returns normal text in `content` (for LLM context and fallback)
+- preferred payload is `tool_end.details.ui[]`
+- Oppi server validates/sanitizes `details.ui`
+- iOS renders supported charts natively; falls back to `args.spec` then text
 
 ### Step 4: Restart Server
 

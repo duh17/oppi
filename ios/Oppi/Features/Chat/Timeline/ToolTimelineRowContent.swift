@@ -464,6 +464,23 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         native.apply(output: output, themeID: ThemeRuntimeState.currentThemeID())
     }
 
+    private func installExpandedPlotView(spec: PlotChartSpec, fallbackText: String?) {
+        let native: NativeExpandedPlotView
+        if let existing = expandedReadMediaContentView as? NativeExpandedPlotView {
+            native = existing
+        } else {
+            clearExpandedReadMediaView()
+            native = NativeExpandedPlotView()
+            installExpandedEmbeddedView(native)
+        }
+
+        native.apply(
+            spec: spec,
+            fallbackText: fallbackText,
+            themeID: ThemeRuntimeState.currentThemeID()
+        )
+    }
+
     private func installExpandedEmbeddedView(_ view: UIView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         expandedReadMediaContainer.addSubview(view)
@@ -834,6 +851,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 renderTodo: { output in
                     self.renderExpandedTodoMode(output: output)
                 },
+                renderPlot: { spec, fallbackText in
+                    self.renderExpandedPlotMode(spec: spec, fallbackText: fallbackText)
+                },
                 renderReadMedia: { output, filePath, startLine in
                     self.renderExpandedReadMediaMode(
                         output: output,
@@ -1104,6 +1124,36 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
             showExpandedHostedView: showExpandedHostedView,
             installExpandedTodoView: installExpandedTodoView(output:),
+            setModeText: { self.expandedViewportMode = .text },
+            showExpandedViewport: showExpandedViewport
+        )
+
+        expandedRenderSignature = localExpandedRenderSignature
+        expandedRenderedText = localExpandedRenderedText
+        expandedShouldAutoFollow = localExpandedShouldAutoFollow
+
+        return visibility
+    }
+
+    private func renderExpandedPlotMode(
+        spec: PlotChartSpec,
+        fallbackText: String?
+    ) -> ExpandedRenderVisibility {
+        var localExpandedRenderSignature = expandedRenderSignature
+        var localExpandedRenderedText = expandedRenderedText
+        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
+
+        let visibility = ToolTimelineRowExpandedRenderer.renderPlotMode(
+            spec: spec,
+            fallbackText: fallbackText,
+            expandedScrollView: expandedScrollView,
+            expandedRenderSignature: &localExpandedRenderSignature,
+            expandedRenderedText: &localExpandedRenderedText,
+            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
+            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            hasExpandedPlotContentView: expandedReadMediaContentView is NativeExpandedPlotView,
+            showExpandedHostedView: showExpandedHostedView,
+            installExpandedPlotView: installExpandedPlotView(spec:fallbackText:),
             setModeText: { self.expandedViewportMode = .text },
             showExpandedViewport: showExpandedViewport
         )

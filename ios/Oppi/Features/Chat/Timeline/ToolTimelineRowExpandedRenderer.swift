@@ -295,6 +295,49 @@ enum ToolTimelineRowExpandedRenderer {
         )
     }
 
+    static func renderPlotMode(
+        spec: PlotChartSpec,
+        fallbackText: String?,
+        expandedScrollView: UIScrollView,
+        expandedRenderSignature: inout Int?,
+        expandedRenderedText: inout String?,
+        expandedShouldAutoFollow: inout Bool,
+        isUsingReadMediaLayout: Bool,
+        hasExpandedPlotContentView: Bool,
+        showExpandedHostedView: () -> Void,
+        installExpandedPlotView: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Void,
+        setModeText: () -> Void,
+        showExpandedViewport: () -> Void
+    ) -> Visibility {
+        let signature = ToolTimelineRowRenderMetrics.plotSignature(
+            spec: spec,
+            fallbackText: fallbackText
+        )
+        let shouldReinstall = signature != expandedRenderSignature
+            || !isUsingReadMediaLayout
+            || !hasExpandedPlotContentView
+
+        showExpandedHostedView()
+        expandedRenderedText = fallbackText
+        if shouldReinstall {
+            installExpandedPlotView(spec, fallbackText)
+            expandedRenderSignature = signature
+        }
+
+        expandedScrollView.alwaysBounceHorizontal = false
+        expandedScrollView.showsHorizontalScrollIndicator = false
+        setModeText()
+        showExpandedViewport()
+        expandedShouldAutoFollow = false
+        if shouldReinstall { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
+
+        return Visibility(
+            showExpandedContainer: true,
+            showCommandContainer: false,
+            showOutputContainer: false
+        )
+    }
+
     static func renderReadMediaMode(
         output: String,
         filePath: String?,

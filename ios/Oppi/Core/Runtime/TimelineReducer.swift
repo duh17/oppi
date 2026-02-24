@@ -66,6 +66,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Populated from `callSegments`/`resultSegments` in tool_start/tool_end.
     let toolSegmentStore = ToolSegmentStore()
 
+    /// Separate store for structured tool result details (`tool_end.details`).
+    let toolDetailsStore = ToolDetailsStore()
+
     /// Trace event IDs from the last successful history load.
     /// Used to detect append-only reloads and avoid full rebuilds.
     private var loadedTraceEventIDs: [String] = []
@@ -107,6 +110,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
+        toolDetailsStore.clearAll()
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
@@ -124,6 +128,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
+        toolDetailsStore.clearAll()
 
         let expandedCount = expandedItemIDs.count
         expandedItemIDs.removeAll()
@@ -204,6 +209,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
+        toolDetailsStore.clearAll()
 
         var assistantTextsToCache: [String] = []
         assistantTextsToCache.reserveCapacity(events.count)
@@ -584,7 +590,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             toolOutputStore.append(output, to: toolEventId)
             updateToolCallPreview(id: toolEventId, isError: isError)
 
-        case .toolEnd(_, let toolEventId, _, let isError, let resultSegments):
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
+            if let details {
+                toolDetailsStore.set(details, for: toolEventId)
+            } else {
+                toolDetailsStore.remove(for: toolEventId)
+            }
+
             if let resultSegments, !resultSegments.isEmpty {
                 toolSegmentStore.setResultSegments(resultSegments, for: toolEventId)
             }
