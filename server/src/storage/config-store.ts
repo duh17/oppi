@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { defaultPolicy } from "../policy.js";
@@ -19,32 +18,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isValidCidr(value: string): boolean {
-  const parts = value.trim().split("/");
-  if (parts.length !== 2) return false;
-
-  const base = parts[0].trim();
-  const prefix = Number(parts[1]);
-  if (!Number.isInteger(prefix)) return false;
-
-  const family = isIP(base);
-  if (family === 4) return prefix >= 0 && prefix <= 32;
-  if (family === 6) return prefix >= 0 && prefix <= 128;
-  return false;
-}
-
-function defaultAllowedCidrs(): string[] {
-  // Loopback + RFC1918 + CGNAT (covers Tailscale, carrier-grade NAT) + link-local + ULA.
+function defaultRuntimePathEntries(): string[] {
+  const home = homedir();
   return [
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "100.64.0.0/10",
-    "169.254.0.0/16",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
+    join(home, ".local", "bin"),
+    join(home, ".cargo", "bin"),
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
   ];
 }
 
@@ -62,7 +47,8 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     approvalTimeoutMs: 120 * 1000,
     permissionGate: true,
 
-    allowedCidrs: defaultAllowedCidrs(),
+    runtimePathEntries: defaultRuntimePathEntries(),
+    runtimeEnv: {},
     policy: defaultPolicy(),
   };
 }
@@ -79,7 +65,6 @@ function normalizeConfig(
 
   const config: ServerConfig = {
     ...defaults,
-    allowedCidrs: defaultAllowedCidrs(),
   };
 
   if (!isRecord(raw)) {
@@ -101,7 +86,8 @@ function normalizeConfig(
     "maxSessionsGlobal",
     "approvalTimeoutMs",
     "permissionGate",
-    "allowedCidrs",
+    "runtimePathEntries",
+    "runtimeEnv",
     "policy",
 
     "token",
@@ -222,40 +208,41 @@ function normalizeConfig(
     config.permissionGate = raw.permissionGate;
   }
 
-  const allowedCidrsDefaults = defaultAllowedCidrs();
-  const parseAllowedCidrs = (value: unknown, path: string): string[] | null => {
-    if (!Array.isArray(value)) {
-      errors.push(`${path}: expected array of CIDR strings`);
-      changed = true;
-      return null;
-    }
-
-    const parsed: string[] = [];
-    for (let i = 0; i < value.length; i++) {
-      const item = value[i];
-      if (typeof item !== "string" || !isValidCidr(item)) {
-        errors.push(`${path}[${i}]: expected CIDR like 192.168.0.0/16`);
+  if (!("runtimePathEntries" in obj)) {
+    changed = true;
+  } else if (Array.isArray(obj.runtimePathEntries)) {
+    const entries: string[] = [];
+    for (let i = 0; i < obj.runtimePathEntries.length; i++) {
+      const value = obj.runtimePathEntries[i];
+      if (typeof value !== "string" || value.trim().length === 0) {
+        errors.push(`config.runtimePathEntries[${i}]: expected non-empty string`);
         changed = true;
         continue;
       }
-      parsed.push(item.trim());
+      entries.push(value.trim());
     }
-
-    if (parsed.length === 0) {
-      errors.push(`${path}: must contain at least one valid CIDR`);
-      changed = true;
-      return null;
-    }
-
-    return parsed;
-  };
-
-  if (!("allowedCidrs" in obj)) {
-    changed = true;
-    config.allowedCidrs = allowedCidrsDefaults;
+    config.runtimePathEntries = entries;
   } else {
-    const parsed = parseAllowedCidrs(obj.allowedCidrs, "config.allowedCidrs");
-    if (parsed) config.allowedCidrs = parsed;
+    errors.push("config.runtimePathEntries: expected array of strings");
+    changed = true;
+  }
+
+  if (!("runtimeEnv" in obj)) {
+    changed = true;
+  } else if (isRecord(obj.runtimeEnv)) {
+    const runtimeEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(obj.runtimeEnv)) {
+      if (typeof value !== "string") {
+        errors.push(`config.runtimeEnv.${key}: expected string`);
+        changed = true;
+        continue;
+      }
+      runtimeEnv[key] = value;
+    }
+    config.runtimeEnv = runtimeEnv;
+  } else {
+    errors.push("config.runtimeEnv: expected object with string values");
+    changed = true;
   }
 
   const parsePolicyConfig = (
