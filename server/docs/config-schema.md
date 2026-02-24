@@ -18,31 +18,29 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
   "maxSessionsGlobal": 5,
   "approvalTimeoutMs": 120000,
   "permissionGate": true,
-  "allowedCidrs": [
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "100.64.0.0/10"
-  ],
+  "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
+  "runtimeEnv": {
+    "EDITOR": "nvim"
+  },
   "thinkingLevelByModel": {}
 }
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `port` | number | `7749` | HTTP + WebSocket port |
-| `host` | string | `0.0.0.0` | Bind address (all interfaces — needed for phone access; `allowedCidrs` restricts who can connect) |
-| `dataDir` | string | `~/.config/oppi` | State directory |
-| `defaultModel` | string | `openai-codex/gpt-5.3-codex` | Default model for new sessions |
-| `sessionIdleTimeoutMs` | number | `600000` | Kill idle sessions after 10 min |
-| `workspaceIdleTimeoutMs` | number | `1800000` | Stop idle workspaces after 30 min |
-| `maxSessionsPerWorkspace` | number | `3` | Max concurrent sessions per workspace |
-| `maxSessionsGlobal` | number | `5` | Max concurrent sessions total |
-| `approvalTimeoutMs` | number | `120000` | Permission gate timeout; `0` = no expiry |
-| `permissionGate` | boolean | `true` | Gate on with `fallback: allow` — heuristics catch dangerous ops, everything else auto-runs |
-| `allowedCidrs` | string[] | private ranges | Source IP allowlist for HTTP + WS |
-| `thinkingLevelByModel` | object | `{}` | Per-model thinking level (e.g. `"high"`) |
+| Key                       | Type     | Default                      | Description                                                                                       |
+| ------------------------- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `port`                    | number   | `7749`                       | HTTP + WebSocket port                                                                             |
+| `host`                    | string   | `0.0.0.0`                    | Bind address |
+| `dataDir`                 | string   | `~/.config/oppi`             | State directory                                                                                   |
+| `defaultModel`            | string   | `openai-codex/gpt-5.3-codex` | Default model for new sessions                                                                    |
+| `sessionIdleTimeoutMs`    | number   | `600000`                     | Kill idle sessions after 10 min                                                                   |
+| `workspaceIdleTimeoutMs`  | number   | `1800000`                    | Stop idle workspaces after 30 min                                                                 |
+| `maxSessionsPerWorkspace` | number   | `3`                          | Max concurrent sessions per workspace                                                             |
+| `maxSessionsGlobal`       | number   | `5`                          | Max concurrent sessions total                                                                     |
+| `approvalTimeoutMs`       | number   | `120000`                     | Permission gate timeout; `0` = no expiry                                                          |
+| `permissionGate`          | boolean  | `true`                       | Gate on with `fallback: allow` — heuristics catch dangerous ops, everything else auto-runs        |
+| `runtimePathEntries`      | string[] | sane executable paths        | Runtime PATH entries used by tools (explicit, config-driven)                                      |
+| `runtimeEnv`              | object   | `{}`                         | Additional runtime env vars (string values)                                                       |
+| `thinkingLevelByModel`    | object   | `{}`                         | Per-model thinking level (e.g. `"high"`)                                                          |
 
 Auth tokens (`token`, `authDeviceTokens`, `pairingToken`) are managed by `oppi pair` and `oppi token rotate`. Don't edit manually.
 
