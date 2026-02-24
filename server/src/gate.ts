@@ -48,7 +48,7 @@ interface GateResponse {
 
 // ─── Constants ───
 
-const DEFAULT_APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
+const DEFAULT_APPROVAL_TIMEOUT_MS = 0; // never expire — wait indefinitely for phone approval
 const NO_TIMEOUT_PLACEHOLDER_MS = 100 * 365 * 24 * 60 * 60 * 1000; // 100 years
 const MAX_RULE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // Cap temporary learned rules at 1 year
 
