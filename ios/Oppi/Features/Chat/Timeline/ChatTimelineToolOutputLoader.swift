@@ -87,7 +87,18 @@ final class ExpandedToolOutputLoader {
                 output = try await request.fetchToolOutput(request.activeSessionID, request.itemID)
             } catch {
                 await MainActor.run {
-                    self?.loadState.finish(itemID: request.itemID)
+                    guard let self else { return }
+                    defer {
+                        self.loadState.finish(itemID: request.itemID)
+                    }
+
+                    // Clear stale "Loading …" UI for terminal fetch failures.
+                    // Canceled tasks are handled by explicit cancel paths.
+                    if !Task.isCancelled,
+                       request.activeSessionID == request.currentSessionID(),
+                       request.itemExists() {
+                        request.reconfigureItem()
+                    }
                 }
                 return
             }
