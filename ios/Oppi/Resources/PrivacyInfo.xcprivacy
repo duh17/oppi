@@ -10,7 +10,7 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 
-	<!-- No data collected by the app or sent to third parties -->
+	<!-- No tracking. In internal test builds, anonymous crash/diagnostic telemetry may be sent for quality telemetry. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array/>
 
