@@ -241,26 +241,24 @@ final class ChatScrollController: NSObject {
         }
     }
 
-    /// Called when `needsInitialScroll` becomes true. Scrolls to bottom
-    /// after a short layout delay.
+    /// Called when `needsInitialScroll` becomes true. Issues a scroll
+    /// command synchronously — the actual scroll executes inside
+    /// `Coordinator.apply()` after `dataSource.apply` + `layoutIfNeeded`.
     func handleInitialScroll(bottomItemID: String?, performScrollToBottom: @escaping (String) -> Void) {
         guard needsInitialScroll else { return }
         needsInitialScroll = false
 
         guard let bottomItemID else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            performScrollToBottom(bottomItemID)
-        }
+        performScrollToBottom(bottomItemID)
     }
 
-    /// Called when `scrollTargetID` changes. Scrolls to the target item
-    /// with animation after a layout delay.
+    /// Called when `scrollTargetID` changes. Issues a scroll command
+    /// synchronously — the actual scroll executes inside
+    /// `Coordinator.apply()` after `dataSource.apply` + `layoutIfNeeded`.
     func handleScrollTarget(performScrollToTop: @escaping (String) -> Void) {
         guard let target = scrollTargetID else { return }
         scrollTargetID = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            performScrollToTop(target)
-        }
+        performScrollToTop(target)
     }
 
     // MARK: - Imperative Scroll
