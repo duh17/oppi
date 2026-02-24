@@ -5,23 +5,42 @@ import SwiftUI
 // MARK: - Harness Configuration
 
 enum UIHangHarnessConfig {
+    private struct LaunchContext {
+        let isEnabled: Bool
+        let streamDisabled: Bool
+        let includeVisualFixtures: Bool
+    }
+
+    private struct StickyState {
+        let noStream: Bool
+        let includeVisualFixtures: Bool
+    }
+
+    // XCTest repeat mode can transiently reinstall/relaunch the app without
+    // preserving our explicit harness launch args/env. Persist the last
+    // harness launch knobs briefly so simulator relaunches stay in harness mode.
+    private static let stickyTimestampKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.timestamp"
+    private static let stickyNoStreamKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.noStream"
+    private static let stickyVisualFixturesKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.visualFixtures"
+    private static let stickyTTLSeconds: TimeInterval = 180
+
+    private static let launchContext = resolveLaunchContext()
+
     static var isEnabled: Bool {
 #if DEBUG
 #if targetEnvironment(simulator)
-        let processInfo = ProcessInfo.processInfo
-        return processInfo.arguments.contains("--ui-hang-harness")
-            || processInfo.environment["PI_UI_HANG_HARNESS"] == "1"
+        launchContext.isEnabled
 #else
-        return false
+        false
 #endif
 #else
-        return false
+        false
 #endif
     }
 
     static var streamDisabled: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.environment["PI_UI_HANG_NO_STREAM"] == "1"
+        launchContext.streamDisabled
 #else
         true
 #endif
@@ -32,6 +51,7 @@ enum UIHangHarnessConfig {
         let environment = ProcessInfo.processInfo.environment
         return environment["PI_UI_HANG_UI_TEST_MODE"] == "1"
             || environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
 #else
         false
 #endif
@@ -39,12 +59,107 @@ enum UIHangHarnessConfig {
 
     static var includeVisualFixtures: Bool {
 #if DEBUG
-        let environment = ProcessInfo.processInfo.environment
-        return !uiTestMode || environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
+        if !uiTestMode { return true }
+        return launchContext.includeVisualFixtures
 #else
         false
 #endif
     }
+
+#if DEBUG
+#if targetEnvironment(simulator)
+    private static func resolveLaunchContext() -> LaunchContext {
+        let processInfo = ProcessInfo.processInfo
+        let environment = processInfo.environment
+
+        let explicitHarness = processInfo.arguments.contains("--ui-hang-harness")
+            || environment["PI_UI_HANG_HARNESS"] == "1"
+        let explicitNoStream = environment["PI_UI_HANG_NO_STREAM"] == "1"
+        let explicitVisualFixtures = environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
+
+        if explicitHarness {
+            persistStickyState(noStream: explicitNoStream, includeVisualFixtures: explicitVisualFixtures)
+            return LaunchContext(
+                isEnabled: true,
+                streamDisabled: explicitNoStream,
+                includeVisualFixtures: explicitVisualFixtures
+            )
+        }
+
+        if isLikelyXCTestHarnessRelaunch(environment: environment),
+           let stickyState = loadStickyState() {
+            return LaunchContext(
+                isEnabled: true,
+                streamDisabled: stickyState.noStream,
+                includeVisualFixtures: stickyState.includeVisualFixtures
+            )
+        }
+
+        if !isLikelyXCTestHarnessRelaunch(environment: environment) {
+            clearStickyState()
+        }
+
+        return LaunchContext(
+            isEnabled: false,
+            streamDisabled: explicitNoStream,
+            includeVisualFixtures: explicitVisualFixtures
+        )
+    }
+
+    private static func isLikelyXCTestHarnessRelaunch(environment: [String: String]) -> Bool {
+        let hasSession = environment["XCTestSessionIdentifier"] != nil
+        let hasBundleInjectPath = environment["XCTestBundleInjectPath"] != nil
+        let injectedIntoUnusedHost = environment["XCInjectBundleInto"] == "unused"
+        return hasSession && hasBundleInjectPath && injectedIntoUnusedHost
+    }
+
+    private static var stickyDefaults: UserDefaults {
+        guard let bundleID = Bundle.main.bundleIdentifier?.lowercased() else {
+            return .standard
+        }
+        return UserDefaults(suiteName: "group.\(bundleID)") ?? .standard
+    }
+
+    private static func persistStickyState(noStream: Bool, includeVisualFixtures: Bool) {
+        let now = Date().timeIntervalSince1970
+        stickyDefaults.set(now, forKey: stickyTimestampKey)
+        stickyDefaults.set(noStream, forKey: stickyNoStreamKey)
+        stickyDefaults.set(includeVisualFixtures, forKey: stickyVisualFixturesKey)
+    }
+
+    private static func loadStickyState(now: Date = Date()) -> StickyState? {
+        let defaults = stickyDefaults
+        guard let timestamp = defaults.object(forKey: stickyTimestampKey) as? TimeInterval else {
+            return nil
+        }
+
+        if now.timeIntervalSince1970 - timestamp > stickyTTLSeconds {
+            clearStickyState()
+            return nil
+        }
+
+        return StickyState(
+            noStream: defaults.bool(forKey: stickyNoStreamKey),
+            includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey)
+        )
+    }
+
+    private static func clearStickyState() {
+        let defaults = stickyDefaults
+        defaults.removeObject(forKey: stickyTimestampKey)
+        defaults.removeObject(forKey: stickyNoStreamKey)
+        defaults.removeObject(forKey: stickyVisualFixturesKey)
+    }
+#else
+    private static func resolveLaunchContext() -> LaunchContext {
+        LaunchContext(isEnabled: false, streamDisabled: true, includeVisualFixtures: false)
+    }
+#endif
+#else
+    private static func resolveLaunchContext() -> LaunchContext {
+        LaunchContext(isEnabled: false, streamDisabled: true, includeVisualFixtures: false)
+    }
+#endif
 }
 
 // MARK: - Harness View
