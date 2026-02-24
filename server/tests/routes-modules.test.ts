@@ -1,4 +1,7 @@
 import type { IncomingMessage } from "node:http";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +13,7 @@ import { createSessionRoutes } from "../src/routes/sessions.js";
 import { createSkillRoutes } from "../src/routes/skills.js";
 import { createStreamingRoutes } from "../src/routes/streaming.js";
 import { createThemeRoutes } from "../src/routes/themes.js";
+import { createTelemetryRoutes } from "../src/routes/telemetry.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import type { RouteContext } from "../src/routes/types.js";
 
@@ -350,9 +354,7 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           ensureDefaultWorkspaces: vi.fn(),
-          listWorkspaces: vi.fn(() => [
-            { id: "ws-1", name: "Default", skills: [] },
-          ]),
+          listWorkspaces: vi.fn(() => [{ id: "ws-1", name: "Default", skills: [] }]),
         },
       } as unknown as RouteContext;
 
@@ -455,9 +457,7 @@ describe("routes modules", () => {
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
-          listSessions: vi.fn(() => [
-            { id: "s1", workspaceId: "ws-1", name: "Session 1" },
-          ]),
+          listSessions: vi.fn(() => [{ id: "s1", workspaceId: "ws-1", name: "Session 1" }]),
         },
         ensureSessionContextWindow: vi.fn((s: unknown) => s),
       } as unknown as RouteContext;
@@ -664,6 +664,141 @@ describe("routes modules", () => {
         method: "GET",
         path: "/not/themes",
         url: new URL("http://localhost/not/themes"),
+        req: {} as never,
+        res: makeResponse() as never,
+      });
+
+      expect(handled).toBe(false);
+    });
+  });
+
+  describe("telemetry module", () => {
+    it("stores normalized MetricKit payloads in daily JSONL files", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-telemetry-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/metrickit",
+          url: new URL("http://localhost/telemetry/metrickit"),
+          req: makeRequest({
+            generatedAt,
+            appVersion: "1.0.0",
+            buildNumber: "1",
+            payloads: [
+              {
+                kind: "metric",
+                windowStartMs: generatedAt - 4_000,
+                windowEndMs: generatedAt,
+                summary: { kind: "metric", count: 2 },
+                raw: { payload: "{" },
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const dayFile = join(
+          dataDir,
+          "diagnostics",
+          "telemetry",
+          `metrickit-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+        );
+        const lines = readFileSync(dayFile, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(1);
+
+        const record = JSON.parse(lines[0]) as {
+          appVersion?: string;
+          payloadCount: number;
+          payloads: Array<{ kind: string }>;
+        };
+        expect(record.appVersion).toBe("1.0.0");
+        expect(record.payloadCount).toBe(1);
+        expect(record.payloads[0]?.kind).toBe("metric");
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("prunes old telemetry files based on retention window", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-telemetry-prune-"));
+      const previousRetention = process.env.OPPI_METRICKIT_RETENTION_DAYS;
+      process.env.OPPI_METRICKIT_RETENTION_DAYS = "1";
+
+      try {
+        const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+        mkdirSync(telemetryDir, { recursive: true });
+
+        const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1_000);
+        const oldPath = join(
+          telemetryDir,
+          `metrickit-${oldDate.toISOString().slice(0, 10)}.jsonl`,
+        );
+        writeFileSync(oldPath, '{"legacy":true}\n');
+
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/metrickit",
+          url: new URL("http://localhost/telemetry/metrickit"),
+          req: makeRequest({
+            generatedAt: Date.now(),
+            payloads: [
+              {
+                kind: "metric",
+                windowStartMs: Date.now() - 2_000,
+                windowEndMs: Date.now(),
+                summary: { reason: "prune-test" },
+                raw: { payload: "{}" },
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const files = readdirSync(telemetryDir);
+        expect(files.length).toBe(1);
+        expect(files[0]).not.toContain(oldDate.toISOString().slice(0, 10));
+      } finally {
+        if (previousRetention === undefined) {
+          delete process.env.OPPI_METRICKIT_RETENTION_DAYS;
+        } else {
+          process.env.OPPI_METRICKIT_RETENTION_DAYS = previousRetention;
+        }
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("returns false for unrelated routes", async () => {
+      const dispatch = createTelemetryRoutes({} as RouteContext, createRouteHelpers());
+
+      const handled = await dispatch({
+        method: "GET",
+        path: "/telemetry/missing",
+        url: new URL("http://localhost/telemetry/missing"),
         req: {} as never,
         res: makeResponse() as never,
       });

@@ -612,6 +612,11 @@ actor APIClient {
         _ = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/client-logs", body: body)
     }
 
+    /// Upload raw MetricKit payloads for backend trend dashboards.
+    func uploadMetricKitPayload(request body: MetricKitUploadRequest) async throws {
+        _ = try await post("/telemetry/metrickit", body: body)
+    }
+
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {

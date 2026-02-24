@@ -110,6 +110,7 @@ final class ConnectionCoordinator {
         guard conn.credentials != nil else { return false }
 
         activeServerId = serverId
+        MetricKitService.shared.setUploadClient(conn.apiClient)
 
         logger.info("Switched to server \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
         return true
