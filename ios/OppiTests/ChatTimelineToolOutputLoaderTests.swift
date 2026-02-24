@@ -190,6 +190,32 @@ struct ExpandedToolOutputLoaderTests {
         #expect(loader.staleDiscardCountForTesting == 1)
     }
 
+    @Test func fetchFailureReconfiguresToClearLoadingState() async {
+        let loader = ExpandedToolOutputLoader()
+        var reconfigureCount = 0
+
+        let request = makeRequest(
+            tool: "read",
+            fetchToolOutput: { _, _ in
+                throw NSError(domain: "ExpandedToolOutputLoaderTests", code: -1)
+            },
+            reconfigureItem: {
+                reconfigureCount += 1
+            }
+        )
+
+        loader.loadIfNeeded(request)
+
+        #expect(await waitForCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                loader.taskCountForTesting == 0
+                    && !loader.isLoading("tool-1")
+                    && reconfigureCount == 1
+            }
+        })
+        #expect(loader.appliedCountForTesting == 0)
+    }
+
     @Test func cancelLoadTasksCancelsInFlightRequest() async {
         actor Probe {
             var started = 0
