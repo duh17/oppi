@@ -235,9 +235,6 @@ struct ChatView: View {
                 || connection.activeSessionId == nil {
                 connection.disconnectSession()
             }
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.endIfNeeded()
-            }
         }
     }
 

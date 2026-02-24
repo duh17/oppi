@@ -140,6 +140,8 @@ extension ServerConnection {
 
         case .sessionDeleted(let deletedId):
             sessionStore.remove(id: deletedId)
+            notificationSessionIds.remove(deletedId)
+            syncLiveActivityPermissions()
 
         case .error(let msg, _, let fatal):
             if msg.contains("is not subscribed at level=full") {
@@ -329,14 +331,16 @@ extension ServerConnection {
     // MARK: - Live Activity Sync
 
     func syncLiveActivityPermissions() {
+        syncNotificationSubscriptions()
+
         guard ReleaseFeatures.liveActivitiesEnabled else {
             return
         }
 
-        LiveActivityManager.shared.syncPermissions(
-            permissionStore.pending,
+        LiveActivityManager.shared.sync(
+            connectionId: liveActivityConnectionId,
             sessions: sessionStore.sessions,
-            activeSessionId: sessionStore.activeSessionId
+            pendingPermissions: permissionStore.pending
         )
     }
 

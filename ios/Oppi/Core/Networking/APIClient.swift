@@ -185,6 +185,30 @@ actor APIClient {
         _ = try await request("DELETE", path: "/workspaces/\(workspaceId)/sessions/\(id)")
     }
 
+    // MARK: - Permissions
+
+    /// Resolve a pending permission request through REST.
+    ///
+    /// Used by action surfaces that may not have a live WebSocket (for example,
+    /// Live Activity intents waking the app process).
+    func respondToPermission(
+        id: String,
+        action: PermissionAction,
+        scope: PermissionScope = .once,
+        expiresInMs: Int? = nil
+    ) async throws {
+        struct Body: Encodable {
+            let action: String
+            let scope: String
+            let expiresInMs: Int?
+        }
+
+        _ = try await post(
+            "/permissions/\(id)/respond",
+            body: Body(action: action.rawValue, scope: scope.rawValue, expiresInMs: expiresInMs)
+        )
+    }
+
     // MARK: - Models
 
     /// Fetch available models from the server.

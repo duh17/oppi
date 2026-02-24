@@ -100,6 +100,14 @@ final class ServerConnection {
     /// fire-and-forget unsubscribe from racing past the new subscribe.
     var pendingUnsubscribeTasks: [String: Task<Void, Never>] = [:]
 
+    /// Sessions we intentionally keep at notification-level subscription.
+    /// Excludes the current `activeSessionId` (which is subscribed at full level).
+    var notificationSessionIds: Set<String> = []
+
+    /// Notification-level subscribes in flight; prevents duplicate subscribe storms
+    /// when `syncNotificationSubscriptions()` is triggered repeatedly.
+    var pendingNotificationSubscriptionIds: Set<String> = []
+
     /// In-flight auto-recovery when server rejects a command because the
     /// session lost full subscription level on `/stream`.
     var fullSubscriptionRecoveryTask: Task<Void, Never>?
@@ -113,8 +121,12 @@ final class ServerConnection {
             self.reducer.processBatch(events)
             if ReleaseFeatures.liveActivitiesEnabled {
                 for event in events {
-                    LiveActivityManager.shared.updateFromEvent(event)
+                    LiveActivityManager.shared.recordEvent(
+                        connectionId: self.liveActivityConnectionId,
+                        event: event
+                    )
                 }
+                self.syncLiveActivityPermissions()
             }
         }
 
@@ -126,6 +138,11 @@ final class ServerConnection {
 
     /// Fingerprint of the currently connected server (set after configure).
     private(set) var currentServerId: String?
+
+    /// Stable key used by LiveActivityManager to merge multi-server snapshots.
+    var liveActivityConnectionId: String {
+        currentServerId ?? "default"
+    }
 
     // MARK: - Setup
 
@@ -212,7 +229,13 @@ final class ServerConnection {
             task.cancel()
         }
         pendingUnsubscribeTasks.removeAll()
+        notificationSessionIds.removeAll()
+        pendingNotificationSubscriptionIds.removeAll()
         wsClient?.disconnect()
+
+        if ReleaseFeatures.liveActivitiesEnabled {
+            LiveActivityManager.shared.removeConnection(liveActivityConnectionId)
+        }
     }
 
     /// Route a message from the multiplexed stream to the appropriate session.
@@ -303,7 +326,7 @@ final class ServerConnection {
         }
 
         // Re-subscribe notification-level sessions (best-effort, single attempt)
-        for (sessionId, _) in sessionContinuations where sessionId != activeSessionId {
+        for sessionId in notificationSessionIds where sessionId != activeSessionId {
             _ = await resubscribeWithRetry(
                 sessionId: sessionId,
                 level: .notifications,
@@ -343,6 +366,83 @@ final class ServerConnection {
             }
         }
         return false
+    }
+
+    /// Keep non-active sessions subscribed at notification level so cross-session
+    /// state transitions (agent_start/agent_end/permissions) continue flowing.
+    func syncNotificationSubscriptions() {
+        guard wsClient != nil else { return }
+
+        if let activeSessionId {
+            notificationSessionIds.remove(activeSessionId)
+            pendingNotificationSubscriptionIds.remove(activeSessionId)
+        }
+
+        let desired = desiredNotificationSessionIds()
+        let toRemove = notificationSessionIds.subtracting(desired)
+
+        for sessionId in toRemove {
+            notificationSessionIds.remove(sessionId)
+            pendingNotificationSubscriptionIds.remove(sessionId)
+            Task { [weak self] in
+                try? await self?.wsClient?.send(
+                    .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
+                )
+            }
+        }
+
+        let toAdd = desired
+            .subtracting(notificationSessionIds)
+            .subtracting(pendingNotificationSubscriptionIds)
+
+        for sessionId in toAdd {
+            if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
+                pendingUnsub.cancel()
+            }
+
+            pendingNotificationSubscriptionIds.insert(sessionId)
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.pendingNotificationSubscriptionIds.remove(sessionId) }
+
+                do {
+                    _ = try await self.sendCommandAwaitingResult(
+                        command: "subscribe",
+                        timeout: .seconds(6)
+                    ) { requestId in
+                        .subscribe(
+                            sessionId: sessionId,
+                            level: .notifications,
+                            requestId: requestId
+                        )
+                    }
+
+                    if self.desiredNotificationSessionIds().contains(sessionId) {
+                        self.notificationSessionIds.insert(sessionId)
+                    } else {
+                        try? await self.wsClient?.send(
+                            .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
+                        )
+                        self.notificationSessionIds.remove(sessionId)
+                    }
+                } catch {
+                    logger.warning(
+                        "Notification subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func desiredNotificationSessionIds() -> Set<String> {
+        let active = activeSessionId
+        return Set(
+            sessionStore.sessions
+                .filter { $0.status != .stopped }
+                .map(\.id)
+                .filter { $0 != active }
+        )
     }
 
     func triggerFullSubscriptionRecovery(sessionId: String, serverError: String) {
@@ -407,7 +507,6 @@ final class ServerConnection {
 
         case .permissionExpired(let id, _):
             if let request = permissionStore.take(id: id) {
-                // Don't add to reducer timeline (not the active session)
                 _ = request
             }
             if ReleaseFeatures.pushNotificationsEnabled {
@@ -422,8 +521,76 @@ final class ServerConnection {
             }
             syncLiveActivityPermissions()
 
+        case .agentStart:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }), current.status != .stopping {
+                current.status = .busy
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .agentStart(sessionId: sessionId)
+                )
+            }
+            syncLiveActivityPermissions()
+
+        case .agentEnd:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
+               current.status == .busy || current.status == .stopping {
+                current.status = .ready
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .agentEnd(sessionId: sessionId)
+                )
+            }
+            syncLiveActivityPermissions()
+
+        case .stopRequested:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                current.status = .stopping
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            syncLiveActivityPermissions()
+
+        case .stopConfirmed:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
+               current.status == .stopping {
+                current.status = .ready
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .agentEnd(sessionId: sessionId)
+                )
+            }
+            syncLiveActivityPermissions()
+
+        case .stopFailed:
+            if var current = sessionStore.sessions.first(where: { $0.id == sessionId }),
+               current.status == .stopping {
+                current.status = .busy
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .agentStart(sessionId: sessionId)
+                )
+            }
+            syncLiveActivityPermissions()
+
         case .state(let session):
             sessionStore.upsert(session)
+            syncLiveActivityPermissions()
 
         case .sessionEnded(let reason):
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
@@ -431,7 +598,33 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
-            _ = reason
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .sessionEnded(sessionId: sessionId, reason: reason)
+                )
+            }
+            syncLiveActivityPermissions()
+
+        case .sessionDeleted(let deletedId):
+            sessionStore.remove(id: deletedId)
+            notificationSessionIds.remove(deletedId)
+            syncLiveActivityPermissions()
+
+        case .error(let message, _, _):
+            if !message.hasPrefix("Retrying ("),
+               var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
+                current.status = .error
+                current.lastActivity = Date()
+                sessionStore.upsert(current)
+            }
+            if ReleaseFeatures.liveActivitiesEnabled {
+                LiveActivityManager.shared.recordEvent(
+                    connectionId: liveActivityConnectionId,
+                    event: .error(sessionId: sessionId, message: message)
+                )
+            }
+            syncLiveActivityPermissions()
 
         default:
             break
@@ -498,6 +691,8 @@ final class ServerConnection {
             logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
 
+        syncNotificationSubscriptions()
+
         return perSessionStream
     }
 
@@ -545,6 +740,9 @@ final class ServerConnection {
         slashCommandsRequestId = nil
         slashCommandsCacheKey = nil
         slashCommands = []
+
+        syncNotificationSubscriptions()
+
         // Don't end Live Activity on disconnect — it should persist
         // on Lock Screen until the session actually ends.
         // Don't disconnect /stream WS — it stays open for other subscriptions.
