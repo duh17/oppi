@@ -36,6 +36,30 @@ enum LiveActivityPreferences {
     }
 }
 
+/// User-facing preference for native chart rendering of `plot` tool output.
+///
+/// Default is OFF in app builds. When off, plot output falls back to raw
+/// JSON text display. Tests default ON so chart rendering tests remain stable.
+enum NativePlotPreferences {
+    private static let enabledDefaultsKey = "\(AppIdentifiers.subsystem).nativePlot.enabled"
+
+    private static var defaultEnabled: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+
+    static var isEnabled: Bool {
+        if let stored = UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool {
+            return stored
+        }
+        return defaultEnabled
+    }
+
+    static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+    }
+}
+
 /// Shipping toggles for first release hardening.
 ///
 /// Keep these centralized so we can re-enable features intentionally
@@ -47,6 +71,10 @@ enum ReleaseFeatures {
     /// Live Activity codepath availability (runtime opt-in handled by
     /// `LiveActivityPreferences`).
     static let liveActivitiesEnabled = true
+
+    /// Native chart rendering for `plot` tool output (runtime opt-in handled
+    /// by `NativePlotPreferences`).
+    static let nativePlotRenderingEnabled = true
 
     /// Composer microphone button + custom speech-to-text flow.
     static let composerDictationEnabled = false

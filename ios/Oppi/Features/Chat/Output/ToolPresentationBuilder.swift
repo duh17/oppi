@@ -406,16 +406,20 @@ enum ToolPresentationBuilder {
             }
 
         case "plot":
-            if let detailsChart = PlotChartSpec.fromToolDetails(details) {
-                content = .plot(
-                    spec: detailsChart.spec,
-                    fallbackText: detailsChart.fallbackText ?? (outputTrimmed.isEmpty ? nil : outputTrimmed)
-                )
-            } else if let spec = PlotChartSpec.fromPlotArgs(args) {
-                content = .plot(
-                    spec: spec,
-                    fallbackText: outputTrimmed.isEmpty ? nil : outputTrimmed
-                )
+            if NativePlotPreferences.isEnabled {
+                if let detailsChart = PlotChartSpec.fromToolDetails(details) {
+                    content = .plot(
+                        spec: detailsChart.spec,
+                        fallbackText: detailsChart.fallbackText ?? (outputTrimmed.isEmpty ? nil : outputTrimmed)
+                    )
+                } else if let spec = PlotChartSpec.fromPlotArgs(args) {
+                    content = .plot(
+                        spec: spec,
+                        fallbackText: outputTrimmed.isEmpty ? nil : outputTrimmed
+                    )
+                } else if !outputTrimmed.isEmpty {
+                    content = .text(text: outputTrimmed, language: .json)
+                }
             } else if !outputTrimmed.isEmpty {
                 content = .text(text: outputTrimmed, language: .json)
             }
