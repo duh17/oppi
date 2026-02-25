@@ -149,6 +149,68 @@ if [[ "${DISABLE_METRICKIT_FOR_TESTFLIGHT:-1}" == "1" ]]; then
   echo "── MetricKit upload: disabled for TestFlight build (OPPI_DISABLE_METRICKIT_UPLOAD=1)"
 fi
 
+# ─── Changelog ───────────────────────────────────────────────────
+
+CHANGELOG_TEXT=""
+
+generate_changelog() {
+  local prev_tag
+  prev_tag="$(git tag -l 'testflight/*' --sort=-version:refname | head -1)"
+
+  local log_args=(--oneline --no-decorate --no-merges)
+  if [[ -n "$prev_tag" ]]; then
+    log_args+=("$prev_tag..HEAD")
+  else
+    log_args+=(-20)
+  fi
+
+  local feats=()
+  local fixes=()
+
+  while IFS= read -r line; do
+    local msg="${line#* }"
+    local clean
+    clean=$(printf '%s' "$msg" | sed -E 's/^(feat|fix)(\([^)]*\))?: //')
+    # Capitalize first letter
+    clean="$(printf '%s' "${clean:0:1}" | tr '[:lower:]' '[:upper:]')${clean:1}"
+
+    case "$msg" in
+      feat*) feats+=("$clean") ;;
+      fix*)  fixes+=("$clean") ;;
+    esac
+  done < <(git log "${log_args[@]}")
+
+  local text="Build $BUILD_NUMBER"
+  if [[ -n "$prev_tag" ]]; then
+    text+=" (changes since ${prev_tag})"
+  fi
+
+  if [[ ${#feats[@]} -gt 0 ]]; then
+    text+=$'\n\n'"New:"
+    for f in "${feats[@]}"; do
+      text+=$'\n'"- $f"
+    done
+  fi
+
+  if [[ ${#fixes[@]} -gt 0 ]]; then
+    text+=$'\n\n'"Fixed:"
+    for f in "${fixes[@]}"; do
+      text+=$'\n'"- $f"
+    done
+  fi
+
+  if [[ ${#feats[@]} -eq 0 && ${#fixes[@]} -eq 0 ]]; then
+    text+=$'\n\n'"Internal improvements only."
+  fi
+
+  # ASC betaBuildLocalizations limit is 4000 chars
+  if [[ ${#text} -gt 4000 ]]; then
+    text="${text:0:3990}..."
+  fi
+
+  CHANGELOG_TEXT="$text"
+}
+
 # ─── Tag + Changelog ────────────────────────────────────────────
 
 tag_release() {
@@ -624,6 +686,174 @@ SUBMIT_NODE
   echo "$submit_output"
 }
 
+# ─── What to Test (TestFlight notes) ────────────────────────────
+
+set_what_to_test() {
+  if [[ -z "$CHANGELOG_TEXT" ]]; then
+    echo "── Skipping What to Test (no changelog generated)"
+    return 0
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "warning: node not found; cannot set What to Test" >&2
+    return 0
+  fi
+
+  local bundle_id
+  bundle_id=$(grep 'PRODUCT_BUNDLE_IDENTIFIER:' project.yml | head -1 | awk '{print $2}')
+  if [[ -z "$bundle_id" ]]; then
+    echo "warning: failed to resolve bundle id; skipping What to Test" >&2
+    return 0
+  fi
+
+  echo "── Setting What to Test for build $BUILD_NUMBER..."
+
+  local wtt_output
+  if ! wtt_output=$(ASC_KEY_ID="$ASC_KEY_ID" \
+      ASC_ISSUER_ID="$ASC_ISSUER_ID" \
+      ASC_KEY_PATH="$ASC_KEY_PATH" \
+      ASC_BUNDLE_ID="$bundle_id" \
+      ASC_BUILD_NUMBER="$BUILD_NUMBER" \
+      ASC_WHATS_NEW="$CHANGELOG_TEXT" \
+      ASC_COMPLIANCE_WAIT_SECONDS="${ASC_COMPLIANCE_WAIT_SECONDS:-300}" \
+      ASC_COMPLIANCE_POLL_SECONDS="${ASC_COMPLIANCE_POLL_SECONDS:-5}" \
+      node <<'WTT_NODE'
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+
+const keyId = process.env.ASC_KEY_ID;
+const issuer = process.env.ASC_ISSUER_ID;
+const keyPath = process.env.ASC_KEY_PATH;
+const bundleId = process.env.ASC_BUNDLE_ID;
+const buildNumber = process.env.ASC_BUILD_NUMBER;
+const whatsNew = process.env.ASC_WHATS_NEW;
+const waitSeconds = Number(process.env.ASC_COMPLIANCE_WAIT_SECONDS || "300");
+const pollSeconds = Number(process.env.ASC_COMPLIANCE_POLL_SECONDS || "5");
+
+if (!keyId || !issuer || !keyPath || !bundleId || !buildNumber || !whatsNew) {
+  throw new Error("missing required env for What to Test update");
+}
+
+const b64url = (input) =>
+  Buffer.from(input)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+
+function token() {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: "ES256", kid: keyId, typ: "JWT" }));
+  const payload = b64url(
+    JSON.stringify({ iss: issuer, exp: now + 600, aud: "appstoreconnect-v1" }),
+  );
+  const unsigned = `${header}.${payload}`;
+  const sign = crypto.createSign("sha256");
+  sign.update(unsigned);
+  sign.end();
+  const sig = sign.sign({ key: fs.readFileSync(keyPath, "utf8"), dsaEncoding: "ieee-p1363" });
+  return `${unsigned}.${b64url(sig)}`;
+}
+
+async function asc(method, path, query = undefined, body = undefined) {
+  const url = new URL(`https://api.appstoreconnect.apple.com${path}`);
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token()}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    // non-json response
+  }
+
+  if (!res.ok) {
+    const detail = json?.errors?.[0]?.detail || text.slice(0, 240);
+    throw new Error(`${method} ${url.pathname} failed (${res.status}): ${detail}`);
+  }
+
+  return json;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+(async () => {
+  const appResp = await asc("GET", "/v1/apps", {
+    "filter[bundleId]": bundleId,
+    limit: 1,
+  });
+
+  const appId = appResp?.data?.[0]?.id;
+  if (!appId) throw new Error(`app not found for bundle id ${bundleId}`);
+
+  const deadline = Date.now() + waitSeconds * 1000;
+  let build = null;
+
+  while (Date.now() <= deadline) {
+    const buildResp = await asc("GET", "/v1/builds", {
+      "filter[app]": appId,
+      "filter[version]": buildNumber,
+      sort: "-uploadedDate",
+      limit: 1,
+    });
+
+    build = buildResp?.data?.[0] ?? null;
+    if (build) break;
+    await sleep(Math.max(1, pollSeconds) * 1000);
+  }
+
+  if (!build?.id) {
+    throw new Error(`build ${buildNumber} not found for app ${bundleId} within ${waitSeconds}s`);
+  }
+
+  // Check existing localizations for this build
+  const locResp = await asc("GET", `/v1/builds/${build.id}/betaBuildLocalizations`);
+  const existing = (locResp?.data ?? []).find((l) => l.attributes?.locale === "en-US");
+
+  if (existing) {
+    await asc("PATCH", `/v1/betaBuildLocalizations/${existing.id}`, undefined, {
+      data: {
+        type: "betaBuildLocalizations",
+        id: existing.id,
+        attributes: { whatsNew },
+      },
+    });
+    console.log(`   updated "What to Test" (en-US)`);
+  } else {
+    await asc("POST", "/v1/betaBuildLocalizations", undefined, {
+      data: {
+        type: "betaBuildLocalizations",
+        attributes: { locale: "en-US", whatsNew },
+        relationships: {
+          build: { data: { type: "builds", id: build.id } },
+        },
+      },
+    });
+    console.log(`   created "What to Test" (en-US)`);
+  }
+})();
+WTT_NODE
+  ); then
+    echo "warning: What to Test update failed" >&2
+    return 0
+  fi
+
+  echo "$wtt_output"
+}
+
 # Common xcodebuild auth flags — used for archive, export, and upload.
 # This lets xcodebuild auto-create Distribution certificates and profiles.
 AUTH_FLAGS=(
@@ -662,6 +892,12 @@ fi
 
 VERSION=$(grep 'MARKETING_VERSION:' project.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
 echo "── Version: $VERSION ($BUILD_NUMBER)"
+
+generate_changelog
+echo ""
+echo "── What to Test (preview):"
+echo "$CHANGELOG_TEXT" | sed 's/^/   /'
+echo ""
 
 # ─── Generate project ───────────────────────────────────────────
 
@@ -739,6 +975,7 @@ xcodebuild -exportArchive \
 if grep -q "EXPORT SUCCEEDED" "$EXPORT_LOG"; then
   if grep -q "Upload succeeded" "$EXPORT_LOG"; then
     apply_export_compliance
+    set_what_to_test
     submit_external_beta
     tag_release
     echo ""
@@ -776,6 +1013,7 @@ xcrun altool --upload-package "$IPA_PATH" \
   2>&1
 
 apply_export_compliance
+set_what_to_test
 submit_external_beta
 tag_release
 
