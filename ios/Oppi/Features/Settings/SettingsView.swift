@@ -106,15 +106,20 @@ struct SettingsView: View {
                 )
             }
 
-            if ReleaseFeatures.liveActivitiesEnabled {
+            if ReleaseFeatures.liveActivitiesEnabled || ReleaseFeatures.nativePlotRenderingEnabled {
                 Section {
-                    Toggle("Enable Live Activities", isOn: liveActivityToggle)
+                    if ReleaseFeatures.liveActivitiesEnabled {
+                        Toggle("Live Activities", isOn: liveActivityToggle)
+                    }
+                    if ReleaseFeatures.nativePlotRenderingEnabled {
+                        Toggle("Native Chart Rendering", isOn: nativePlotToggle)
+                    }
                 } header: {
-                    Text("Live Activity")
+                    Text("Experiments")
                 } footer: {
                     Text(
-                        "Off by default. Turn on to show session state in Dynamic Island and Lock Screen. "
-                            + "You must also allow Live Activities in iOS Settings for Oppi."
+                        "These features are under active development and off by default. "
+                            + "Enable them to try early builds — expect rough edges."
                     )
                 }
             }
@@ -197,6 +202,16 @@ struct SettingsView: View {
                     _ = KeychainService.migrateLegacyServersToSharedGroup()
                 }
                 LiveActivityManager.shared.recoverIfNeeded()
+            }
+        )
+    }
+
+    private var nativePlotToggle: Binding<Bool> {
+        Binding(
+            get: { NativePlotPreferences.isEnabled },
+            set: { newValue in
+                guard newValue != NativePlotPreferences.isEnabled else { return }
+                NativePlotPreferences.setEnabled(newValue)
             }
         )
     }
