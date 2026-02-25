@@ -6,6 +6,20 @@ struct User: Codable, Sendable, Equatable {
     let name: String
 }
 
+enum ServerScheme: String, Codable, Sendable {
+    case http
+    case https
+
+    var websocketScheme: String {
+        switch self {
+        case .http:
+            "ws"
+        case .https:
+            "wss"
+        }
+    }
+}
+
 /// Connection credentials from QR code scan.
 ///
 /// Invite payload is decoded by `decodeInvitePayload(_:)`.
@@ -15,6 +29,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     let port: Int
     let token: String
     let name: String
+    let scheme: ServerScheme?
 
     // One-time pairing bootstrap token (preferred over token when present)
     let pairingToken: String?
@@ -22,26 +37,37 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     // Stable server identity metadata
     let serverFingerprint: String?
 
+    // Optional leaf-cert pin for self-signed HTTPS pairing.
+    let tlsCertFingerprint: String?
+
     init(
         host: String,
         port: Int,
         token: String,
         name: String,
+        scheme: ServerScheme = .http,
         pairingToken: String? = nil,
-        serverFingerprint: String? = nil
+        serverFingerprint: String? = nil,
+        tlsCertFingerprint: String? = nil
     ) {
         self.host = host
         self.port = port
         self.token = token
         self.name = name
+        self.scheme = scheme
         self.pairingToken = pairingToken
         self.serverFingerprint = serverFingerprint
+        self.tlsCertFingerprint = tlsCertFingerprint
+    }
+
+    var resolvedScheme: ServerScheme {
+        scheme ?? .http
     }
 
     /// Base URL for REST and WebSocket connections.
     /// Returns `nil` for malformed host (corrupted QR, bad keychain data).
     var baseURL: URL? {
-        URL(string: "http://\(host):\(port)")
+        URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
     }
 
     /// WebSocket URL for the multiplexed `/stream` endpoint.
@@ -49,7 +75,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
     /// Supports subscribing to multiple sessions over a single connection.
     /// Each server gets one persistent `/stream` WebSocket.
     var streamURL: URL? {
-        URL(string: "ws://\(host):\(port)/stream")
+        URL(string: "\(resolvedScheme.websocketScheme)://\(host):\(port)/stream")
     }
 
     /// Decode invite payload JSON.
@@ -70,13 +96,20 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             return nil
         }
 
+        let inviteSchemeRaw = (v3.scheme?.lowercased() ?? ServerScheme.http.rawValue)
+        guard let inviteScheme = ServerScheme(rawValue: inviteSchemeRaw) else {
+            return nil
+        }
+
         return Self(
             host: v3.host,
             port: v3.port,
             token: v3.token,
             name: v3.name,
+            scheme: inviteScheme,
             pairingToken: v3.pairingToken,
-            serverFingerprint: v3.fingerprint
+            serverFingerprint: v3.fingerprint,
+            tlsCertFingerprint: v3.tlsCertFingerprint
         )
     }
 
@@ -141,14 +174,22 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    var normalizedTLSCertFingerprint: String? {
+        guard let tlsCertFingerprint else { return nil }
+        let trimmed = tlsCertFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func withAuthToken(_ newToken: String) -> Self {
         Self(
             host: host,
             port: port,
             token: newToken,
             name: name,
+            scheme: resolvedScheme,
             pairingToken: nil,
-            serverFingerprint: serverFingerprint
+            serverFingerprint: serverFingerprint,
+            tlsCertFingerprint: tlsCertFingerprint
         )
     }
 
@@ -174,8 +215,10 @@ private struct InvitePayloadV3: Decodable {
     let v: Int
     let host: String
     let port: Int
+    let scheme: String?
     let token: String
     let pairingToken: String?
     let name: String
+    let tlsCertFingerprint: String?
     let fingerprint: String?
 }

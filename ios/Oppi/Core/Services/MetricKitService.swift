@@ -17,11 +17,18 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         guard !configured else { return }
         configured = true
 
+        guard Self.metricKitUploadEnabled else {
+            metricKitLog.info("MetricKit upload disabled (OPPIDisableMetricKitUpload=1)")
+            return
+        }
+
         MXMetricManager.shared.add(self)
         metricKitLog.info("MetricKit subscriber registered")
     }
 
     func setUploadClient(_ client: APIClient?) {
+        guard Self.metricKitUploadEnabled else { return }
+
         Task {
             await uploader.setClient(client)
             await uploader.setMetadata(Self.makeMetadata())
@@ -62,6 +69,32 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         Task {
             await uploader.enqueue(payloads: items)
         }
+    }
+
+    private static var metricKitUploadEnabled: Bool {
+        !metricKitUploadDisabled
+    }
+
+    private static var metricKitUploadDisabled: Bool {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "OPPIDisableMetricKitUpload")
+        return boolValue(fromInfoValue: raw)
+    }
+
+    private static func boolValue(fromInfoValue value: Any?) -> Bool {
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "1", "true", "yes", "on":
+                return true
+            default:
+                return false
+            }
+        }
+
+        return false
     }
 
     private static func makeMetadata() -> MetricKitUploadMetadata {

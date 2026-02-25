@@ -502,6 +502,7 @@ struct UIHangHarnessView: View {
                     toolOutputStore: connection.reducer.toolOutputStore,
                     toolArgsStore: connection.reducer.toolArgsStore,
                     toolSegmentStore: connection.reducer.toolSegmentStore,
+                    toolDetailsStore: connection.reducer.toolDetailsStore,
                     connection: connection,
                     audioPlayer: connection.audioPlayer,
                     theme: themeID.appTheme,

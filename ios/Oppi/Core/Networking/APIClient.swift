@@ -16,22 +16,38 @@ actor APIClient {
     let baseURL: URL
     let token: String
     private let session: URLSession
+    private let trustDelegate: PinnedServerTrustDelegate
 
-    init(baseURL: URL, token: String) {
+    init(baseURL: URL, token: String, tlsCertFingerprint: String? = nil) {
         self.baseURL = baseURL
         self.token = token
+        self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
-        self.session = URLSession(configuration: config)
+        self.session = URLSession(
+            configuration: config,
+            delegate: trustDelegate,
+            delegateQueue: nil
+        )
     }
 
     /// Test-only init with custom URLSessionConfiguration.
-    init(baseURL: URL, token: String, configuration: URLSessionConfiguration) {
+    init(
+        baseURL: URL,
+        token: String,
+        configuration: URLSessionConfiguration,
+        tlsCertFingerprint: String? = nil
+    ) {
         self.baseURL = baseURL
         self.token = token
-        self.session = URLSession(configuration: configuration)
+        self.trustDelegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: tlsCertFingerprint)
+        self.session = URLSession(
+            configuration: configuration,
+            delegate: trustDelegate,
+            delegateQueue: nil
+        )
     }
 
     // MARK: - Health & Auth

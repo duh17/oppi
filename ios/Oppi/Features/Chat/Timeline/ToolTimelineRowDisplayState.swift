@@ -18,11 +18,7 @@ enum ToolTimelineRowDisplayState {
         }
 
         titleLabel.lineBreakMode = configuration.titleLineBreakMode
-        if configuration.isExpanded {
-            titleLabel.numberOfLines = configuration.titleLineBreakMode == .byTruncatingMiddle ? 1 : 3
-        } else {
-            titleLabel.numberOfLines = 1
-        }
+        titleLabel.numberOfLines = 1
     }
 
     static func applyLanguageBadge(

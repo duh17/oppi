@@ -1,31 +1,63 @@
-# Telemetry Stack A (Sentry + MetricKit)
+# Telemetry and Privacy Policy (Oppi iOS)
 
-This project emits diagnostics for test builds using two layers:
+## TL;DR (public/TestFlight builds)
 
-1. **Sentry** for near-real-time traces, spans, errors, and breadcrumbs.
-2. **MetricKit** for native iOS aggregated diagnostics (CPU/memory launches/hangs/crashes).
+- **No usage analytics are collected.**
+- **No feature usage logs are sent to any remote service by default.**
+- Public/TestFlight builds are configured to send **zero remote telemetry** unless an operator explicitly changes build settings.
 
-Sentry and MetricKit are intentionally split so each remains lightweight in-app and easy to evolve independently.
+Specifically, the release flow defaults to:
+- `SENTRY_DSN=""` (Sentry disabled)
+- `OPPI_DISABLE_METRICKIT_UPLOAD=1` (MetricKit upload disabled)
 
-## Sentry scope and enablement
+This is enforced by `ios/scripts/release.sh` unless intentionally overridden.
 
-- `SentryService` configures tags:
-  - `app_environment` (e.g. `debug`, `test`, `release`)
-  - `app_release` (`<bundle id>@<version>+<build>`)
-  - `session_id`
-  - `workspace_id`
-- `app_environment` is derived from build/test mode:
-  - `OPPI_TELEMETRY_MODE=public`/`release` -> `release`
-  - `OPPI_TELEMETRY_MODE=test`/`staging`/`qa`/`internal` -> `test`
-  - Debug builds remain `debug`
-- Public TestFlight release workflow keeps Sentry DSN disabled by default.
-- Internal test lanes can set `OPPI_TELEMETRY_MODE=test` via build settings when they intentionally want test telemetry tagging.
-- `SENTRY_DSN` is read from `Info.plist` (`SentryDSN` key)
+## Explicit non-goals (what Oppi does not track)
 
-## MetricKit ingestion
+Oppi is not designed to collect product analytics. We do **not** track:
+- screen views
+- button clicks / tap funnels
+- feature adoption metrics
+- retention cohorts
+- “how people use the app” behavior analytics
 
-- Endpoint: `POST /telemetry/metrickit`
-- Expected payload shape:
+We also do not upload conversation content as telemetry:
+- prompt text
+- assistant responses
+- tool arguments
+- session transcripts
+
+## What exists only for optional internal diagnostics
+
+Oppi has two diagnostics channels that can be enabled intentionally for internal testing:
+
+1. **Sentry** (errors/traces/breadcrumbs)
+2. **MetricKit upload** (`POST /telemetry/metrickit`)
+
+Both are optional and configuration-gated.
+
+### 1) Sentry (optional)
+
+Sentry is active **only** when `SentryDSN` in `Info.plist` is non-empty.
+
+If enabled, it adds environment/release tags (e.g. `app_environment`, `app_release`, `session_id`, `workspace_id`) and captures runtime diagnostics. In public/TestFlight release flow this is disabled by default.
+
+### 2) MetricKit upload (optional)
+
+MetricKit upload is active **only** when:
+- `OPPIDisableMetricKitUpload` is false/0 in `Info.plist`
+- and the app has an API client configured
+
+In public/TestFlight release flow this is disabled by default (`OPPI_DISABLE_METRICKIT_UPLOAD=1`).
+
+When enabled, payloads are diagnostic summaries from Apple MetricKit plus metadata:
+- `appVersion`, `buildNumber`, `osVersion`, `deviceModel`
+- payload window times
+- diagnostic summary fields and sanitized raw MetricKit blob
+
+No prompt/session content is sent in MetricKit payloads.
+
+Example payload shape:
 
 ```json
 {
@@ -36,7 +68,7 @@ Sentry and MetricKit are intentionally split so each remains lightweight in-app 
   "deviceModel": "iPhone16,6",
   "payloads": [
     {
-      "kind": "metric" | "diagnostic",
+      "kind": "metric",
       "windowStartMs": 1739900000000,
       "windowEndMs": 1739901234567,
       "summary": { "key": "value" },
@@ -46,56 +78,32 @@ Sentry and MetricKit are intentionally split so each remains lightweight in-app 
 }
 ```
 
-- Data is normalized server-side and appended to JSONL under:
-  - `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`
-- Retention: keep last `OPPI_METRICKIT_RETENTION_DAYS` (default `14`) daily files.
-  Set `OPPI_METRICKIT_RETENTION_DAYS` in the server environment to tune (e.g. `7`, `30`).
+Server storage (when enabled):
+- `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`
+- retention via `OPPI_METRICKIT_RETENTION_DAYS` (default `14`)
 
-## Dashboard guidance
+## Debug-only client log upload
 
-The codebase now exposes the signals to build dashboards manually:
+Client-log upload tooling exists for development triage and is not product analytics:
+- manual toolbar upload is `#if DEBUG`
+- watchdog auto-upload is `#if DEBUG`
 
-### Sentry (real-time)
+These paths are not active in normal release builds.
 
-Recommended minimum panels:
+## Configuration summary
 
-- **Crash/stability**
-  - Error rate by `app_environment`
-  - Crash-free sessions by `app_environment`
-- **WebSocket health**
-  - `WebSocket` reconnect event count / error rate by `app_environment`
-- **Spans and UX traces**
-  - `chat.timeline.apply` p50/p95/p99
-  - `datasource.apply` p95
-  - `layout.pass` p95
-- **Signals from app-only captures**
-  - Watchdog stall capture volume
-  - Slow-cell rendering and slow tool cell renders
+- `SENTRY_DSN` / `Info.plist:SentryDSN`
+  - Empty => Sentry off
+- `OPPI_DISABLE_METRICKIT_UPLOAD` / `Info.plist:OPPIDisableMetricKitUpload`
+  - `1` => MetricKit upload off
+  - `0` => MetricKit upload on
+- `OPPI_TELEMETRY_MODE`
+  - environment tagging only (does not force telemetry transport)
 
-Tag usage in dashboard filters should include fixed dimensions:
-- `app_environment`
-- `app_release`
-- `session_id`
-- `workspace_id`
+## Policy statement
 
-### MetricKit (trend)
+For public usage, Oppi’s intended posture is:
 
-Recommended charts:
+> **No behavior analytics, no usage tracking, and no remote telemetry by default.**
 
-- Crash/hang trend (MetricKit crash/hang payload windows)
-- CPU time trend
-- Memory footprint trend
-- Launch latency trend
-- Daily volume of payloads accepted
-
-> `MetricKit` summaries are persisted for trend analysis in JSONL and should typically be loaded by a scheduled batch job or BI tool for richer charting than on-device inspection.
-
-## Privacy and retention policy
-
-- No user prompt text, tool arguments, or high-cardinality session text is captured in MetricKit payloads.
-- Telemetry includes only app/runtime metadata and diagnostic summaries:
-  - `appVersion`, `buildNumber`, `osVersion`, `deviceModel`
-  - payload window (`windowStartMs`, `windowEndMs`)
-  - payload `summary` + sanitized raw JSON payload blob
-- Files are written with file-per-day JSONL naming and daily retention pruning.
-- Test builds only can transmit this telemetry by build configuration (`OPPI_TELEMETRY_MODE`) and DSN availability.
+Any diagnostics upload requires explicit operator opt-in via build/runtime configuration.

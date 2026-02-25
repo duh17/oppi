@@ -26,6 +26,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: true
     SENTRY_DSN: ""
     OPPI_TELEMETRY_MODE: "public"
+    OPPI_DISABLE_METRICKIT_UPLOAD: "0"
     APP_GROUP_IDENTIFIER: group.oppi
 targets:
   Oppi:
@@ -87,6 +88,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         SentryDSN: "$(SENTRY_DSN)"
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
+        OPPIDisableMetricKitUpload: "$(OPPI_DISABLE_METRICKIT_UPLOAD)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSExceptionDomains:
