@@ -1134,6 +1134,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
+        // Markdown subviews are added synchronously but Auto Layout hasn't
+        // measured them yet when preferredViewportHeight runs in the same
+        // cycle. Defer a layout invalidation so the collection view
+        // re-measures with the correct intrinsic height — same pattern
+        // used by installExpandedEmbeddedView for todo/plot/readMedia.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.setNeedsLayout()
+            self.layoutIfNeeded()
+            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+
         return visibility
     }
 
