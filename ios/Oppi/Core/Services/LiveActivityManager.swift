@@ -23,6 +23,10 @@ final class LiveActivityManager {
         var lastActivity: String?
         var startDate: Date?
         var updatedAt: Date
+        /// When the session entered `.ready` status. Used for awaitingReply
+        /// expiry so that `sync()` refreshing `updatedAt` doesn't keep the
+        /// expiry window open indefinitely.
+        var readySince: Date?
     }
 
     private struct ConnectionSnapshot {
@@ -90,9 +94,9 @@ final class LiveActivityManager {
     /// Working/error/approval states should eventually go stale if we stop receiving events.
     private let staleIntervalSeconds: TimeInterval = 300
     /// How long the ended activity lingers on the Lock Screen after `activity.end()`.
-    /// HIG: "In most cases, 15 to 30 minutes is adequate." We use 60s — sessions are
-    /// short-lived and the summary goes stale fast.
-    private let lockScreenDismissDelaySeconds: TimeInterval = 60
+    /// Keep it short — stale session info is not useful. 4 seconds is enough for
+    /// a glance at the final state without the activity overstaying its welcome.
+    private let lockScreenDismissDelaySeconds: TimeInterval = 4
 
     init() {}
 
@@ -130,7 +134,8 @@ final class LiveActivityManager {
                 activeTool: nil,
                 lastActivity: nil,
                 startDate: session.createdAt,
-                updatedAt: session.lastActivity
+                updatedAt: session.lastActivity,
+                readySince: session.status == .ready ? session.lastActivity : nil
             )
 
             entry.name = session.displayTitle
@@ -143,8 +148,14 @@ final class LiveActivityManager {
             switch session.status {
             case .starting, .busy, .stopping:
                 entry.phaseHint = .working
+                entry.readySince = nil
             case .ready:
-                // Keep "Your turn" transient. `phase(for:)` auto-expires it.
+                // Record when session first entered .ready so the awaitingReply
+                // expiry window is anchored to the transition, not refreshed by
+                // subsequent syncs.
+                if entry.readySince == nil {
+                    entry.readySince = Date()
+                }
                 if entry.phaseHint != .error {
                     entry.phaseHint = .awaitingReply
                 }
@@ -196,7 +207,8 @@ final class LiveActivityManager {
                 activeTool: nil,
                 lastActivity: nil,
                 startDate: nil,
-                updatedAt: Date()
+                updatedAt: Date(),
+                readySince: Date()
             )
         }
 
@@ -205,6 +217,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             entry.status = .busy
             entry.phaseHint = .working
+            entry.readySince = nil
             entry.lastActivity = "Working"
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
@@ -213,6 +226,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             entry.status = .ready
             entry.phaseHint = .awaitingReply
+            entry.readySince = Date()
             entry.activeTool = nil
             entry.lastActivity = "Your turn"
             entry.updatedAt = Date()
@@ -418,7 +432,8 @@ final class LiveActivityManager {
                 let phase = phase(for: session, hasPendingPermission: false)
                 guard phase == .awaitingReply else { continue }
 
-                let expiry = session.updatedAt.addingTimeInterval(awaitingReplyVisibilitySeconds)
+                let referenceDate = session.readySince ?? session.updatedAt
+                let expiry = referenceDate.addingTimeInterval(awaitingReplyVisibilitySeconds)
                 guard expiry > now else { continue }
 
                 if let current = earliest {
@@ -670,7 +685,11 @@ final class LiveActivityManager {
         case .stopped:
             return .ended
         case .ready:
-            let age = Date().timeIntervalSince(session.updatedAt)
+            // Use readySince (anchored to the .ready transition) rather than
+            // updatedAt (which sync() refreshes on every message). This ensures
+            // the awaitingReply window doesn't get extended indefinitely.
+            let referenceDate = session.readySince ?? session.updatedAt
+            let age = Date().timeIntervalSince(referenceDate)
             if age <= awaitingReplyVisibilitySeconds,
                session.phaseHint != .error {
                 return .awaitingReply
