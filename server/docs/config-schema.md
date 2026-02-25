@@ -22,6 +22,12 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
   "runtimeEnv": {
     "EDITOR": "nvim"
   },
+  "tls": {
+    "mode": "disabled",
+    "certPath": "~/.config/oppi/tls/self-signed/server.crt",
+    "keyPath": "~/.config/oppi/tls/self-signed/server.key",
+    "caPath": "~/.config/oppi/tls/self-signed/ca.crt"
+  },
   "thinkingLevelByModel": {}
 }
 ```
@@ -40,9 +46,34 @@ Auto-created on first `npx oppi serve`, or manually via `npx oppi init`.
 | `permissionGate`          | boolean  | `true`                       | Gate on with `fallback: allow` — heuristics catch dangerous ops, everything else auto-runs        |
 | `runtimePathEntries`      | string[] | sane executable paths        | Runtime PATH entries used by tools (explicit, config-driven)                                      |
 | `runtimeEnv`              | object   | `{}`                         | Additional runtime env vars (string values)                                                       |
+| `tls.mode`                | string   | `"disabled"`                | Transport mode: `disabled`, `self-signed`, `tailscale`, or `manual` (future: `auto`, `cloudflare`) |
+| `tls.certPath`            | string   | self-signed default path     | PEM cert path used for HTTPS/WSS (`manual` requires explicit path)                                 |
+| `tls.keyPath`             | string   | self-signed default path     | PEM private key path used for HTTPS/WSS (`manual` requires explicit path)                          |
+| `tls.caPath`              | string   | self-signed default path     | Optional CA chain path (required in `self-signed` mode for client pinning)                         |
 | `thinkingLevelByModel`    | object   | `{}`                         | Per-model thinking level (e.g. `"high"`)                                                          |
 
 Auth tokens (`token`, `authDeviceTokens`, `pairingToken`) are managed by `oppi pair` and `oppi token rotate`. Don't edit manually.
+
+For local HTTPS/WSS in a container or LAN setup, set:
+
+```bash
+oppi config set tls '{"mode":"self-signed"}'
+```
+
+`oppi serve`/`oppi pair` will auto-generate cert material under `~/.config/oppi/tls/self-signed/`.
+
+For Tailscale HTTPS/WSS on a host with Tailscale installed, set:
+
+```bash
+oppi config set tls '{"mode":"tailscale"}'
+```
+
+In `tailscale` mode, `oppi serve`/`oppi pair` requests/renews certs via `tailscale cert` into `~/.config/oppi/tls/tailscale/` by default.
+
+Prerequisites:
+- MagicDNS enabled in the tailnet
+- HTTPS certificates enabled in the tailnet DNS settings
+- `tailscale` CLI connected on the host (`tailscale status`)
 
 ## Policy rules
 

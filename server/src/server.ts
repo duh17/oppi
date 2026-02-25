@@ -7,9 +7,10 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +42,7 @@ import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
 import type { Session, Workspace, ServerMessage, ApiError, ServerConfig } from "./types.js";
 import { ts } from "./log-utils.js";
+import { prepareTlsForServer, tlsSchemeForConfig } from "./tls.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -123,11 +125,16 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   const warnings: string[] = [];
   const host = normalizeBindHost(config.host);
   const wildcardBind = isWildcardBindHost(host);
+  const loopbackOnly = isLoopbackBindHost(host);
 
   if (wildcardBind) {
     warnings.push(
       `host=${config.host} listens on all interfaces; ensure access is constrained by firewall rules.`,
     );
+  }
+
+  if (!loopbackOnly && tlsSchemeForConfig(config) === "http") {
+    warnings.push(`TLS is disabled while binding to ${config.host}; traffic is unencrypted.`);
   }
 
   return warnings;
@@ -175,7 +182,8 @@ export class Server {
   private skillsInitialized = false;
   private userSkillStore: UserSkillStore;
   private push: PushClient;
-  private httpServer: ReturnType<typeof createServer>;
+  private httpServer: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+  private transportScheme: "http" | "https" = "http";
   private wss: WebSocketServer;
 
   private readonly piExecutable: string;
@@ -295,7 +303,10 @@ export class Server {
       piVersion: Server.detectPiVersion(this.piExecutable),
     });
 
-    this.httpServer = createServer((req, res) => this.handleHttp(req, res));
+    const transport = this.createTransportServer(config);
+    this.httpServer = transport.server;
+    this.transportScheme = transport.scheme;
+
     this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
     this.httpServer.on("upgrade", (req, socket, head) => {
@@ -339,6 +350,39 @@ export class Server {
     );
   }
 
+  private createTransportServer(config: ServerConfig): {
+    server: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
+    scheme: "http" | "https";
+  } {
+    const handler = (req: IncomingMessage, res: ServerResponse): void => {
+      void this.handleHttp(req, res);
+    };
+
+    const tls = prepareTlsForServer(config, this.storage.getDataDir(), {
+      additionalHosts: [config.host],
+    });
+
+    if (!tls.enabled) {
+      return {
+        server: createServer(handler),
+        scheme: "http",
+      };
+    }
+
+    if (!tls.certPath || !tls.keyPath) {
+      throw new Error(`TLS mode "${tls.mode}" requires certPath and keyPath`);
+    }
+
+    const cert = readFileSync(tls.certPath, "utf-8");
+    const key = readFileSync(tls.keyPath, "utf-8");
+    const ca = tls.caPath && existsSync(tls.caPath) ? readFileSync(tls.caPath, "utf-8") : undefined;
+
+    return {
+      server: createHttpsServer({ cert, key, ca }, handler),
+      scheme: "https",
+    };
+  }
+
   // ─── Start / Stop ───
 
   async start(): Promise<void> {
@@ -363,7 +407,7 @@ export class Server {
       this.httpServer.once("error", reject);
       this.httpServer.listen(config.port, config.host, () => {
         this.httpServer.removeListener("error", reject);
-        console.log(`🚀 oppi listening on ${config.host}:${this.port}`);
+        console.log(`🚀 oppi listening on ${this.transportScheme}://${config.host}:${this.port}`);
         resolve();
       });
     });
@@ -374,6 +418,10 @@ export class Server {
     const addr = this.httpServer.address();
     if (addr && typeof addr === "object") return addr.port;
     return this.storage.getConfig().port;
+  }
+
+  get scheme(): "http" | "https" {
+    return this.transportScheme;
   }
 
   async stop(): Promise<void> {
@@ -576,7 +624,7 @@ export class Server {
   // ─── HTTP Router ───
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
     const path = url.pathname;
     const method = req.method || "GET";
 
@@ -653,7 +701,7 @@ export class Server {
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     (socket as Socket).setNoDelay?.(true);
 
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
 
     const authenticated = this.authenticate(req);
     if (!authenticated) {

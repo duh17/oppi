@@ -16,6 +16,18 @@ pi login
 npx oppi serve
 ```
 
+Optional: enable local HTTPS/WSS (self-signed + cert pin in invite):
+
+```bash
+oppi config set tls '{"mode":"self-signed"}'
+```
+
+Optional: enable Tailscale HTTPS/WSS (Let's Encrypt cert via `tailscale cert`):
+
+```bash
+oppi config set tls '{"mode":"tailscale"}'
+```
+
 Create a workspace in the app and start a session.
 
 ## Requirements

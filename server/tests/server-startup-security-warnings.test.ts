@@ -11,6 +11,16 @@ describe("startup security warnings", () => {
     expect(warnings.some((warning) => warning.includes("host=0.0.0.0"))).toBe(true);
   });
 
+  it("warns when tls is disabled on non-loopback host", () => {
+    const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-tls");
+    config.host = "192.168.1.50";
+    config.tls = { mode: "disabled" };
+
+    const warnings = formatStartupSecurityWarnings(config);
+
+    expect(warnings.some((warning) => warning.includes("TLS is disabled"))).toBe(true);
+  });
+
   it("has no warnings for loopback bind", () => {
     const config = Storage.getDefaultConfig("/tmp/oppi-server-security-warnings-loopback");
     config.host = "127.0.0.1";
