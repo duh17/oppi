@@ -67,6 +67,8 @@
 	<true/>
 	<key>OPPITelemetryMode</key>
 	<string>$(OPPI_TELEMETRY_MODE)</string>
+	<key>OPPIDisableMetricKitUpload</key>
+	<string>$(OPPI_DISABLE_METRICKIT_UPLOAD)</string>
 	<key>SentryDSN</key>
 	<string>$(SENTRY_DSN)</string>
 	<key>UIBackgroundModes</key>

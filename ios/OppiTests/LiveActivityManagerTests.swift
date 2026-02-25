@@ -1,4 +1,5 @@
 @testable import Oppi
+import ActivityKit
 import Foundation
 import Testing
 
@@ -113,7 +114,7 @@ struct LiveActivityAlertTests {
 
 // MARK: - State Aggregation
 
-@Suite("LiveActivityManager state aggregation")
+@Suite("LiveActivityManager state aggregation", .serialized)
 struct LiveActivityStateTests {
 
     @Test("sync busy session produces working phase")
@@ -168,6 +169,27 @@ struct LiveActivityStateTests {
         ))
         #expect(mgr.currentState.primaryTool == "Bash")
         #expect(mgr.currentState.primaryPhase == .working)
+    }
+
+    @Test("sync carries primary change stats into content state")
+    @MainActor func syncCarriesChangeStats() {
+        let mgr = LiveActivityManager()
+        var session = makeSession(id: "s1", status: .busy)
+        session.changeStats = SessionChangeStats(
+            mutatingToolCalls: 3,
+            filesChanged: 2,
+            changedFiles: ["a.swift", "b.swift"],
+            changedFilesOverflow: nil,
+            addedLines: 12,
+            removedLines: 4
+        )
+
+        mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
+
+        #expect(mgr.currentState.primaryMutatingToolCalls == 3)
+        #expect(mgr.currentState.primaryFilesChanged == 2)
+        #expect(mgr.currentState.primaryAddedLines == 12)
+        #expect(mgr.currentState.primaryRemovedLines == 4)
     }
 
     @Test("sync with permission sets needsApproval")
@@ -239,7 +261,7 @@ struct LiveActivityStateTests {
 
 // MARK: - Alert Integration (drives state machine → checks alert decision)
 
-@Suite("LiveActivityManager alert integration")
+@Suite("LiveActivityManager alert integration", .serialized)
 struct LiveActivityAlertIntegrationTests {
 
     @Test("working → awaitingReply → working cycle never alerts")
@@ -289,8 +311,31 @@ struct LiveActivityAlertIntegrationTests {
 
 // MARK: - Lifecycle Recovery (P0: 8-hour silent death)
 
-@Suite("LiveActivityManager lifecycle recovery")
+@Suite("LiveActivityManager lifecycle recovery", .serialized)
 struct LiveActivityLifecycleTests {
+
+    @Test("recoverIfNeeded reattaches orphaned ActivityKit activity")
+    @MainActor func recoverReattachesOrphanedActivity() async {
+        await endAllLiveActivitiesImmediately()
+
+        let source = LiveActivityManager()
+        let session = makeSession(id: "s-orphan", status: .busy)
+        source.sync(connectionId: "c-source", sessions: [session], pendingPermissions: [])
+        #expect(source.activeActivity != nil)
+
+        // Simulate app relaunch: a fresh manager instance has no in-memory
+        // reference, but ActivityKit still has the live activity.
+        let recovered = LiveActivityManager()
+        #expect(recovered.activeActivity == nil)
+        #expect(recovered.currentState.primaryPhase == .ended)
+
+        recovered.recoverIfNeeded()
+
+        // Regression: before the fix this stayed nil.
+        #expect(recovered.activeActivity != nil)
+
+        await endAllLiveActivitiesImmediately()
+    }
 
     @Test("recoverIfNeeded with active sessions and no activity triggers refresh")
     @MainActor func recoverWithActiveSessions() {
@@ -298,12 +343,11 @@ struct LiveActivityLifecycleTests {
         let session = makeSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
-        // Precondition: no activity (simulates system killed it)
-        #expect(mgr.activeActivity == nil)
         #expect(mgr.currentState.primaryPhase == .working)
 
         // Recovery should detect that sessions are active and re-aggregate.
-        // (Activity.request will fail in simulator, but state should be valid.)
+        // An existing ActivityKit activity may be reattached in tests, so we
+        // assert on aggregate state rather than `activeActivity` identity.
         mgr.recoverIfNeeded()
         #expect(mgr.currentState.primaryPhase == .working)
         #expect(mgr.currentState.totalActiveSessions == 1)
@@ -313,14 +357,13 @@ struct LiveActivityLifecycleTests {
     @MainActor func recoverWithNoSessions() {
         let mgr = LiveActivityManager()
         mgr.recoverIfNeeded()
-        #expect(mgr.activeActivity == nil)
         #expect(mgr.currentState.primaryPhase == .ended)
     }
 }
 
 // MARK: - Idle Dismiss (P1: proper activity.end)
 
-@Suite("LiveActivityManager idle dismiss")
+@Suite("LiveActivityManager idle dismiss", .serialized)
 struct LiveActivityIdleDismissTests {
 
     @Test("idle dismiss delay is 5 seconds, not 60")
@@ -370,6 +413,10 @@ struct LiveActivityDeepLinkTests {
             totalActiveSessions: 1,
             sessionsAwaitingReply: 0,
             sessionsWorking: 0,
+            primaryMutatingToolCalls: nil,
+            primaryFilesChanged: nil,
+            primaryAddedLines: nil,
+            primaryRemovedLines: nil,
             topPermissionId: "perm-456",
             topPermissionTool: "bash",
             topPermissionSummary: "run ls",
@@ -385,6 +432,21 @@ struct LiveActivityDeepLinkTests {
 
 // MARK: - Helpers
 
+@MainActor
+private func endAllLiveActivitiesImmediately() async {
+    let finalState = makeState(phase: .ended, approvals: 0)
+
+    for activity in Activity<PiSessionAttributes>.activities {
+        await activity.end(
+            .init(state: finalState, staleDate: nil),
+            dismissalPolicy: .immediate
+        )
+    }
+
+    // Give ActivityKit a moment to settle the list before the next test.
+    try? await Task.sleep(for: .milliseconds(50))
+}
+
 private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttributes.ContentState {
     PiSessionAttributes.ContentState(
         primaryPhase: phase,
@@ -395,6 +457,10 @@ private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttribut
         totalActiveSessions: phase == .ended ? 0 : 1,
         sessionsAwaitingReply: phase == .awaitingReply ? 1 : 0,
         sessionsWorking: phase == .working ? 1 : 0,
+        primaryMutatingToolCalls: nil,
+        primaryFilesChanged: nil,
+        primaryAddedLines: nil,
+        primaryRemovedLines: nil,
         topPermissionId: phase == .needsApproval ? "p1" : nil,
         topPermissionTool: phase == .needsApproval ? "bash" : nil,
         topPermissionSummary: nil,

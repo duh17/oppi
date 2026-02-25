@@ -184,7 +184,11 @@ struct ServerDetailView: View {
             return
         }
 
-        let api = APIClient(baseURL: baseURL, token: pairedServer.token)
+        let api = APIClient(
+            baseURL: baseURL,
+            token: pairedServer.token,
+            tlsCertFingerprint: pairedServer.tlsCertFingerprint
+        )
 
         do {
             info = try await api.serverInfo()

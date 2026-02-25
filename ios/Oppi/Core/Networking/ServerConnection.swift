@@ -169,7 +169,11 @@ final class ServerConnection {
         }
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
-        self.apiClient = APIClient(baseURL: baseURL, token: credentials.token)
+        self.apiClient = APIClient(
+            baseURL: baseURL,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
         self.wsClient = WebSocketClient(credentials: credentials)
         return true
     }

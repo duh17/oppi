@@ -30,7 +30,7 @@ enum ToolTimelineRowViewStyler {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = UIColor(Color.themeFg)
-        titleLabel.numberOfLines = 3
+        titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
