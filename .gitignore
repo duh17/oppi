@@ -30,3 +30,6 @@ session-traces/
 *.tgz
 .DS_Store
 server/coverage/
+
+# Screen recordings (large, accidental commits)
+ScreenRecording_*.mov
