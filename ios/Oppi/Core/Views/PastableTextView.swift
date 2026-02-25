@@ -2,7 +2,21 @@ import SwiftUI
 import UIKit
 
 @MainActor
-private func applyStabilityInputTraits(to textView: UITextView) {
+private func applyComposerInputTraits(
+    to textView: UITextView,
+    autocorrectionEnabled: Bool
+) {
+    if autocorrectionEnabled {
+        textView.autocorrectionType = .default
+        textView.autocapitalizationType = .sentences
+        textView.spellCheckingType = .default
+        textView.smartQuotesType = .default
+        textView.smartDashesType = .default
+        textView.smartInsertDeleteType = .default
+        textView.textContentType = .none
+        return
+    }
+
     textView.autocorrectionType = .no
     textView.autocapitalizationType = .none
     textView.spellCheckingType = .no
@@ -107,6 +121,7 @@ struct PastableTextView: UIViewRepresentable {
     let textColor: UIColor
     let tintColor: UIColor
     let maxLines: Int
+    let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
     let onOverflowChange: ((Bool) -> Void)?
@@ -138,10 +153,11 @@ struct PastableTextView: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         textView.setContentHuggingPriority(.required, for: .vertical)
 
-        // Disable predictive/autocorrect pipelines in inline composer.
-        // In captures, stalls moved from sizeThatFits to idle while TextInputUI
-        // candidate generation remained hot around send.
-        applyStabilityInputTraits(to: textView)
+        // Configure input traits for current composer mode.
+        // Monospaced mode uses stability traits (no autocorrect); proportional
+        // mode re-enables natural-language pipelines.
+        applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
+        context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
 
         // Force TextKit 1. The default TextKit 2 path showed pathological
         // layout behavior under SwiftUI pressure on device.
@@ -162,6 +178,17 @@ struct PastableTextView: UIViewRepresentable {
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
+
+        let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
+        context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
+        applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
+        if traitsChanged {
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                textView.reloadInputViews()
+            }
+        }
+
         textView.accessibilityIdentifier = accessibilityIdentifier
 
         if focusRequestID != context.coordinator.lastFocusRequestID {
@@ -267,6 +294,7 @@ struct PastableTextView: UIViewRepresentable {
         var lastFocusRequestID = 0
         var lastBlurRequestID = 0
         var lastDictationRequestID = 0
+        var lastAutocorrectionEnabled: Bool?
         private var lastOverflowState = false
         private var lastDictationState = false
         private var lastReportedLineCount = 1
@@ -356,6 +384,7 @@ struct FullSizeTextView: UIViewRepresentable {
     let font: UIFont
     let textColor: UIColor
     let tintColor: UIColor
+    let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
     let autoFocusOnAppear: Bool
@@ -375,7 +404,8 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.keyboardDismissMode = .interactive
         textView.alwaysBounceVertical = true
 
-        applyStabilityInputTraits(to: textView)
+        applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
+        context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
 
         if autoFocusOnAppear {
             // Auto-focus after sheet animation settles
@@ -400,7 +430,19 @@ struct FullSizeTextView: UIViewRepresentable {
         }
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
+        textView.font = font
+        textView.textColor = textColor
         textView.tintColor = tintColor
+
+        let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
+        context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
+        applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
+        if traitsChanged {
+            DispatchQueue.main.async {
+                guard textView.window != nil else { return }
+                textView.reloadInputViews()
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -409,6 +451,7 @@ struct FullSizeTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding var text: String
+        var lastAutocorrectionEnabled: Bool?
 
         init(text: Binding<String>) {
             _text = text
