@@ -3764,6 +3764,280 @@ struct TimelineCopyContextMenuTests {
         #expect(maxJump <= 2.0,
                 "anchor item stuttered \(maxJump)pt during upward scroll [\(detail)]")
     }
+
+    // MARK: - Tool Row Expansion Scroll Stability
+
+    @MainActor
+    @Test func toolRowExpansionViaTapPreservesContentOffsetWhenScrolledUp() {
+        // Bug: user scrolls up, taps a visible tool row to expand. The row
+        // grows taller via animateToolRowExpansion (direct cell configuration
+        // + invalidateLayout). Without offset compensation the viewport jumps.
+        //
+        // Key: the target cell must be visible (cellForItem != nil) so we hit
+        // the direct-configuration path, NOT the reconfigureItems fallback.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<30 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Response line \(i). ", count: 15),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("echo test-\(i)")], for: "tc-\(i)")
+            toolOutputStore.append(
+                String(repeating: "output line for tool \(i)\n", count: 10),
+                to: "tc-\(i)"
+            )
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "echo test-\(i)",
+                outputPreview: "output for tool \(i)",
+                outputByteCount: 256,
+                isError: false, isDone: true
+            ))
+        }
+
+        let config = makeConfiguration(
+            items: items,
+            sessionId: "s-expand",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll to bottom so all cells measure.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        // Scroll to a mid-point where tool rows are visible.
+        let midY = maxOffset * 0.5
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        // Find a visible tool row to expand.
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let visibleToolIP = visibleIPs.first { ip in
+            ip.item < items.count && items[ip.item].id.hasPrefix("tc-")
+        }
+        guard let targetIP = visibleToolIP else {
+            Issue.record("No visible tool row at midpoint — test setup error")
+            return
+        }
+
+        let offsetBefore = collectionView.contentOffset.y
+
+        // Tap to expand via real didSelectItemAt → animateToolRowExpansion.
+        coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+        let offsetAfter = collectionView.contentOffset.y
+        let drift = abs(offsetAfter - offsetBefore)
+
+        #expect(drift < 2.0,
+                "contentOffset drifted \(drift)pt after tap-expanding tool row at index \(targetIP.item)")
+    }
+
+    @MainActor
+    @Test func toolRowExpansionViaTapDoesNotDetachNearBottomState() {
+        // Bug: user is near bottom, taps a visible tool row to expand.
+        // animateToolRowExpansion invalidates layout, scrollViewDidScroll fires
+        // with negative deltaY, detachFromBottomForUserScroll() breaks follow.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<15 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Line \(i) content. ", count: 10),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("cmd-\(i)")], for: "tc-\(i)")
+            toolOutputStore.append("result \(i)\nmore output", to: "tc-\(i)")
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "cmd-\(i)",
+                outputPreview: "result \(i)",
+                outputByteCount: 64,
+                isError: false, isDone: true
+            ))
+        }
+
+        let config = makeConfiguration(
+            items: items,
+            sessionId: "s-nearbot",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll to bottom — attach.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+        scrollController.updateNearBottom(true)
+        scrollController.requestScrollToBottom()
+
+        #expect(scrollController.isCurrentlyNearBottom, "precondition: should be near bottom")
+
+        // Find a visible tool row near the bottom.
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let visibleToolIP = visibleIPs.last { ip in
+            ip.item < items.count && items[ip.item].id.hasPrefix("tc-")
+        }
+        guard let targetIP = visibleToolIP else {
+            Issue.record("No visible tool row near bottom — test setup error")
+            return
+        }
+
+        coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+        #expect(scrollController.isCurrentlyNearBottom,
+                "expanding a visible tool row via tap should not detach from bottom")
+    }
+
+    @MainActor
+    @Test func toolRowCollapseViaTapPreservesContentOffsetWhenScrolledUp() {
+        // Mirror of the expansion test: collapse a visible expanded tool row
+        // via tap. The row shrinks through animateToolRowExpansion. Without
+        // offset compensation the viewport content jumps.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let collectionView = UICollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+
+        var items: [ChatItem] = []
+        for i in 0..<30 {
+            items.append(.assistantMessage(
+                id: "a-\(i)",
+                text: String(repeating: "Response \(i). ", count: 15),
+                timestamp: Date()
+            ))
+            toolArgsStore.set(["command": .string("echo \(i)")], for: "tc-\(i)")
+            toolOutputStore.append(
+                String(repeating: "output \(i) line\n", count: 10),
+                to: "tc-\(i)"
+            )
+            items.append(.toolCall(
+                id: "tc-\(i)", tool: "bash",
+                argsSummary: "echo \(i)",
+                outputPreview: "output \(i)",
+                outputByteCount: 200,
+                isError: false, isDone: true
+            ))
+        }
+
+        // Pre-expand several tool rows so we have an expanded one visible at
+        // a mid-scroll position.
+        for i in stride(from: 5, to: 20, by: 3) {
+            reducer.expandedItemIDs.insert("tc-\(i)")
+        }
+
+        let config = makeConfiguration(
+            items: items,
+            sessionId: "s-collapse",
+            reducer: reducer,
+            toolOutputStore: toolOutputStore,
+            toolArgsStore: toolArgsStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        // Scroll to bottom then to mid.
+        let maxOffset = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        collectionView.contentOffset.y = maxOffset
+        collectionView.layoutIfNeeded()
+
+        let midY = maxOffset * 0.5
+        collectionView.contentOffset.y = midY
+        collectionView.layoutIfNeeded()
+        scrollController.detachFromBottomForUserScroll()
+
+        // Find a visible expanded tool row.
+        let visibleIPs = collectionView.indexPathsForVisibleItems.sorted { $0.item < $1.item }
+        let expandedToolIP = visibleIPs.first { ip in
+            ip.item < items.count
+                && items[ip.item].id.hasPrefix("tc-")
+                && reducer.expandedItemIDs.contains(items[ip.item].id)
+        }
+        guard let targetIP = expandedToolIP else {
+            Issue.record("No visible expanded tool row at midpoint — test setup error")
+            return
+        }
+
+        let offsetBefore = collectionView.contentOffset.y
+
+        // Tap to collapse via real path.
+        coordinator.collectionView(collectionView, didSelectItemAt: targetIP)
+
+        let offsetAfter = collectionView.contentOffset.y
+        let drift = abs(offsetAfter - offsetBefore)
+
+        #expect(drift < 2.0,
+                "contentOffset drifted \(drift)pt after tap-collapsing tool row at index \(targetIP.item)")
+    }
 }
 
 @MainActor

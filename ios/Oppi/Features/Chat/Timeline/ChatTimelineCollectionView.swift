@@ -249,7 +249,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 toolOutputLoader.appliedCountForTesting
             }
 
-            private(set) var _toolExpansionFallbackCountForTesting = 0
             private(set) var _audioStateRefreshCountForTesting = 0
             private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
 
@@ -1062,7 +1061,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         in: collectionView
                     )
                 }
-                animateToolRowExpansion(itemID: itemID, item: item, isExpanding: !wasExpanded, in: collectionView)
+                reconfigureToolRow(itemID: itemID, in: collectionView)
             case .thinking(_, let preview, _, let isDone):
                 guard isDone else {
                     return
@@ -1409,36 +1408,17 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         // MARK: - Animation + Scroll
 
-        private func animateToolRowExpansion(
+        /// Reconfigure a single tool row through the diffable data source
+        /// snapshot pipeline. This preserves scroll stability through UIKit's
+        /// self-sizing flow. The previous direct cell.contentConfiguration +
+        /// invalidateLayout() approach caused full layout re-estimation that
+        /// reset off-screen cached sizes, shifting contentOffset when a
+        /// visible cell changed height (expand/collapse).
+        private func reconfigureToolRow(
             itemID: String,
-            item: ChatItem,
-            isExpanding _: Bool,
             in collectionView: UICollectionView
         ) {
-            guard let index = currentIDs.firstIndex(of: itemID),
-                  let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)),
-                  let configuration = toolRowConfiguration(itemID: itemID, item: item)
-            else {
-                // Defensive fallback: should be rare for tap-selected visible
-                // rows. Track it so tests can catch regressions.
-                #if DEBUG
-                    _toolExpansionFallbackCountForTesting += 1
-                #endif
-                reconfigureItems([itemID], in: collectionView)
-                return
-            }
-            collectionView.layoutIfNeeded()
-            cell.contentConfiguration = configuration
-
-            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
-            UIView.performWithoutAnimation {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                collectionView.collectionViewLayout.invalidateLayout()
-                collectionView.layoutIfNeeded()
-                CATransaction.commit()
-            }
-            ChatTimelinePerf.endLayoutPass(layoutToken)
+            reconfigureItems([itemID], in: collectionView)
         }
 
         private func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
