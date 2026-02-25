@@ -210,7 +210,7 @@ struct ToolTimelineRowModeDispatchTests {
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(
-            markdownStack.arrangedSubviews.count > 0,
+            !markdownStack.arrangedSubviews.isEmpty,
             "Markdown view should have content after markdown config"
         )
 
@@ -262,7 +262,7 @@ struct ToolTimelineRowModeDispatchTests {
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(markdownStack.arrangedSubviews.count > 0)
+        #expect(!markdownStack.arrangedSubviews.isEmpty)
 
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
@@ -303,7 +303,7 @@ struct ToolTimelineRowModeDispatchTests {
             privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
         )
         let markdownStack = try #require(markdownStackView(in: markdownView))
-        #expect(markdownStack.arrangedSubviews.count > 0)
+        #expect(!markdownStack.arrangedSubviews.isEmpty)
 
         let todoConfig = makeToolConfiguration(
             toolNamePrefix: "todo",
