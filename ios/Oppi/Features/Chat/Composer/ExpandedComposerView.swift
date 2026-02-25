@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 /// Full-screen composer for long-form text input.
 ///
@@ -16,7 +17,7 @@ import SwiftUI
 /// ├─────────────────────────────┤
 /// │                             │
 /// │  Full-height text editor    │
-/// │  (scrollable, monospaced)   │
+/// │  (scrollable)               │
 /// │                             │
 /// ├─────────────────────────────┤
 /// │ [image strip]               │  conditional
@@ -61,6 +62,16 @@ struct ExpandedComposerView: View {
 
     private var accentColor: Color {
         isBashMode ? .themeGreen : .themeBlue
+    }
+
+    private var composerInputFont: UIFont {
+        isBashMode
+            ? .monospacedSystemFont(ofSize: 17, weight: .regular)
+            : .preferredFont(forTextStyle: .body)
+    }
+
+    private var composerAutocorrectionEnabled: Bool {
+        !isBashMode
     }
 
     private var autocompleteContext: ComposerAutocompleteContext {
@@ -120,9 +131,10 @@ struct ExpandedComposerView: View {
 
                 FullSizeTextView(
                     text: textFieldBinding,
-                    font: .monospacedSystemFont(ofSize: 17, weight: .regular),
+                    font: composerInputFont,
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
+                    autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: handlePastedImages,
                     onCommandEnter: handleSend,
                     autoFocusOnAppear: false
