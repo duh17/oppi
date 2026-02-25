@@ -94,8 +94,9 @@ private enum LiveActivityPermissionResponder {
         }
     }
 
-    private static let accountPrefix = "server-"
-    private static let pairedServerIdsKey = "pairedServerIds"
+    private static let accountPrefix = SharedConstants.serverAccountPrefix
+    private static let keychainService = SharedConstants.keychainService
+    private static let keychainAccessGroup = SharedConstants.keychainAccessGroup
 
     static func respond(permissionId: String, action: LiveActivityPermissionAction) async throws {
         let servers = loadServers()
@@ -144,6 +145,7 @@ private enum LiveActivityPermissionResponder {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 10
         request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
@@ -195,97 +197,66 @@ private enum LiveActivityPermissionResponder {
     }
 
     private static func loadServers() -> [StoredServerCredential] {
-        let services = keychainServiceCandidates()
-        guard !services.isEmpty else { return [] }
-
-        let ids = UserDefaults.standard.stringArray(forKey: pairedServerIdsKey) ?? []
+        let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) ?? []
         if !ids.isEmpty {
-            let ordered = ids.compactMap { loadServer(id: $0, services: services) }
+            let ordered = ids.compactMap { loadServer(id: $0) }
             if !ordered.isEmpty {
                 return ordered
             }
         }
 
-        return discoverAllServers(services: services)
+        return discoverAllServers()
     }
 
-    private static func keychainServiceCandidates() -> [String] {
-        var candidates: [String] = []
-
-        if let bundleId = Bundle.main.bundleIdentifier, !bundleId.isEmpty {
-            candidates.append(bundleId)
-
-            let parts = bundleId.split(separator: ".")
-            if parts.count > 1 {
-                let parentBundleId = parts.dropLast().joined(separator: ".")
-                if !parentBundleId.isEmpty {
-                    candidates.append(parentBundleId)
-                }
-            }
-        }
-
-        // Preserve order while removing duplicates.
-        var deduped: [String] = []
-        for candidate in candidates where !deduped.contains(candidate) {
-            deduped.append(candidate)
-        }
-        return deduped
-    }
-
-    private static func loadServer(id: String, services: [String]) -> StoredServerCredential? {
+    private static func loadServer(id: String) -> StoredServerCredential? {
         let account = "\(accountPrefix)\(id)"
 
-        for service in services {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccessGroup as String: keychainAccessGroup,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
 
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            guard status == errSecSuccess else { continue }
-            guard let data = result as? Data else { continue }
-
-            if let decoded = try? JSONDecoder().decode(StoredServerCredential.self, from: data) {
-                return decoded
-            }
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            return nil
         }
 
-        return nil
+        return try? JSONDecoder().decode(StoredServerCredential.self, from: data)
     }
 
-    private static func discoverAllServers(services: [String]) -> [StoredServerCredential] {
+    private static func discoverAllServers() -> [StoredServerCredential] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccessGroup as String: keychainAccessGroup,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+            return []
+        }
+
         var discoveredById: [String: StoredServerCredential] = [:]
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix(accountPrefix),
+                  let data = item[kSecValueData as String] as? Data,
+                  let decoded = try? JSONDecoder().decode(StoredServerCredential.self, from: data)
+            else {
+                continue
+            }
 
-        for service in services {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecReturnAttributes as String: true,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitAll,
-            ]
-
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            guard status == errSecSuccess else { continue }
-            guard let items = result as? [[String: Any]] else { continue }
-
-            for item in items {
-                guard let account = item[kSecAttrAccount as String] as? String,
-                      account.hasPrefix(accountPrefix),
-                      let data = item[kSecValueData as String] as? Data,
-                      let decoded = try? JSONDecoder().decode(StoredServerCredential.self, from: data)
-                else {
-                    continue
-                }
-
-                if discoveredById[decoded.id] == nil {
-                    discoveredById[decoded.id] = decoded
-                }
+            if discoveredById[decoded.id] == nil {
+                discoveredById[decoded.id] = decoded
             }
         }
 

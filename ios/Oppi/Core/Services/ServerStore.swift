@@ -103,9 +103,13 @@ final class ServerStore {
         }
     }
 
-    /// Persist the ordered list of server IDs to UserDefaults.
+    /// Persist the ordered list of server IDs to both shared and standard UserDefaults.
+    ///
+    /// Shared suite: readable by widget extension for Live Activity intents.
+    /// Standard: backward-compatible fallback.
     private func saveIndex() {
         let ids = servers.map(\.id)
-        UserDefaults.standard.set(ids, forKey: "pairedServerIds")
+        SharedConstants.sharedDefaults.set(ids, forKey: SharedConstants.pairedServerIdsKey)
+        UserDefaults.standard.set(ids, forKey: SharedConstants.pairedServerIdsKey)
     }
 }
