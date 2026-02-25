@@ -13,7 +13,7 @@ struct PiSessionLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Image(systemName: phaseIcon(context.state.primaryPhase))
+                        Image(systemName: primarySymbol(context.state))
                             .accessibilityHidden(true)
                         Text(context.state.primarySessionName)
                             .font(.caption.bold())
@@ -47,8 +47,7 @@ struct PiSessionLiveActivity: Widget {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                    } else if let activity = context.state.primaryLastActivity,
-                              !activity.isEmpty {
+                    } else if let activity = centerActivityText(context.state) {
                         Text(activity)
                             .font(.caption)
                             .lineLimit(1)
@@ -59,9 +58,14 @@ struct PiSessionLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text(sessionSummary(context.state))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            if context.state.pendingApprovalCount == 0,
+                               let changeSummary = changeStatsSummary(context.state) {
+                                ChangeStatsSummaryView(summary: changeSummary)
+                            } else {
+                                Text(sessionSummary(context.state))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
 
                             Spacer()
 
@@ -79,7 +83,7 @@ struct PiSessionLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: phaseIcon(context.state.primaryPhase))
+                Image(systemName: primarySymbol(context.state))
                     .font(.caption2)
                     .foregroundStyle(phaseColor(context.state.primaryPhase))
                     .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse(context.state.primaryPhase))
@@ -91,12 +95,13 @@ struct PiSessionLiveActivity: Widget {
                         .foregroundStyle(.orange)
                         .contentTransition(.numericText())
                         .accessibilityLabel("\(context.state.pendingApprovalCount) pending approvals")
-                } else if context.state.primaryPhase == .working,
-                          let start = context.state.sessionStartDate {
-                    Text(timerInterval: start...Date.distantFuture, countsDown: false)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Session timer")
+                } else if let badge = compactChangeBadge(context.state) {
+                    Text(badge)
+                        .font(.caption2.monospacedDigit().bold())
+                        .foregroundStyle(phaseColor(context.state.primaryPhase))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .accessibilityLabel(compactChangeAccessibilityLabel(context.state))
                 } else {
                     Text(phaseShortLabel(context.state.primaryPhase))
                         .font(.caption2.bold())
@@ -104,7 +109,7 @@ struct PiSessionLiveActivity: Widget {
                         .accessibilityLabel(phaseLabel(context.state.primaryPhase))
                 }
             } minimal: {
-                Image(systemName: phaseIcon(context.state.primaryPhase))
+                Image(systemName: primarySymbol(context.state))
                     .font(.caption2)
                     .foregroundStyle(phaseColor(context.state.primaryPhase))
                     .accessibilityLabel(accessibilitySummary(context.state))
@@ -123,7 +128,7 @@ private struct LockScreenView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Image(systemName: phaseIcon(context.state.primaryPhase))
+                        Image(systemName: primarySymbol(context.state))
                             .font(.caption)
                             .foregroundStyle(phaseColor(context.state.primaryPhase))
                             .accessibilityHidden(true)
@@ -138,8 +143,7 @@ private struct LockScreenView: View {
                             .font(.caption.monospaced())
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
-                    } else if let activity = context.state.primaryLastActivity,
-                              !activity.isEmpty {
+                    } else if let activity = centerActivityText(context.state) {
                         Text(activity)
                             .font(.caption)
                             .lineLimit(1)
@@ -162,6 +166,9 @@ private struct LockScreenView: View {
                         Text("\(context.state.pendingApprovalCount) approvals")
                             .font(.caption2.bold())
                             .foregroundStyle(.orange)
+                    } else if let changeSummary = changeStatsSummary(context.state) {
+                        ChangeStatsSummaryView(summary: changeSummary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     } else {
                         Text(sessionSummary(context.state))
                             .font(.caption2)
@@ -214,6 +221,147 @@ private struct PermissionActionButtons: View {
 
 // MARK: - Helpers
 
+private func primarySymbol(_ state: PiSessionAttributes.ContentState) -> String {
+    if state.primaryPhase == .working,
+       let tool = state.primaryTool,
+       !tool.isEmpty {
+        return toolSymbol(tool)
+    }
+    return phaseIcon(state.primaryPhase)
+}
+
+private func toolSymbol(_ tool: String) -> String {
+    switch tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "bash": return "terminal.fill"
+    case "read": return "doc.text.fill"
+    case "write": return "square.and.pencil"
+    case "edit": return "pencil.and.scribble"
+    default: return "hammer.fill"
+    }
+}
+
+private func compactChangeBadge(_ state: PiSessionAttributes.ContentState) -> String? {
+    let mutatingTools = max(state.primaryMutatingToolCalls ?? 0, 0)
+    guard mutatingTools > 0 else { return nil }
+
+    let added = max(state.primaryAddedLines ?? 0, 0)
+    let removed = max(state.primaryRemovedLines ?? 0, 0)
+    let changedLineTotal = added + removed
+    if changedLineTotal > 0 {
+        return "Δ\(compactCountLabel(changedLineTotal))"
+    }
+
+    let filesChanged = max(state.primaryFilesChanged ?? 0, 0)
+    if filesChanged > 0 {
+        return "F\(compactCountLabel(filesChanged))"
+    }
+
+    return "T\(compactCountLabel(mutatingTools))"
+}
+
+private struct ChangeStatsSnapshot {
+    let mutatingToolCalls: Int
+    let filesChanged: Int
+    let addedLines: Int
+    let removedLines: Int
+}
+
+private struct ChangeStatsSummaryView: View {
+    let summary: ChangeStatsSnapshot
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if summary.filesChanged > 0 {
+                Text(fileCountLabel(summary.filesChanged))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(toolCountLabel(summary.mutatingToolCalls))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if summary.addedLines > 0 {
+                Text("+\(summary.addedLines)")
+                    .font(.caption2.monospacedDigit().bold())
+                    .foregroundStyle(.green)
+            }
+
+            if summary.removedLines > 0 {
+                Text("-\(summary.removedLines)")
+                    .font(.caption2.monospacedDigit().bold())
+                    .foregroundStyle(.red)
+            }
+
+            if summary.addedLines == 0,
+               summary.removedLines == 0,
+               summary.filesChanged > 0 {
+                Text(toolCountLabel(summary.mutatingToolCalls))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .lineLimit(1)
+    }
+}
+
+private func changeStatsSummary(_ state: PiSessionAttributes.ContentState) -> ChangeStatsSnapshot? {
+    let mutatingTools = max(state.primaryMutatingToolCalls ?? 0, 0)
+    guard mutatingTools > 0 else { return nil }
+
+    return ChangeStatsSnapshot(
+        mutatingToolCalls: mutatingTools,
+        filesChanged: max(state.primaryFilesChanged ?? 0, 0),
+        addedLines: max(state.primaryAddedLines ?? 0, 0),
+        removedLines: max(state.primaryRemovedLines ?? 0, 0)
+    )
+}
+
+private func compactChangeAccessibilityLabel(_ state: PiSessionAttributes.ContentState) -> String {
+    let mutatingTools = max(state.primaryMutatingToolCalls ?? 0, 0)
+    let filesChanged = max(state.primaryFilesChanged ?? 0, 0)
+    let added = max(state.primaryAddedLines ?? 0, 0)
+    let removed = max(state.primaryRemovedLines ?? 0, 0)
+
+    var parts = [
+        mutatingTools == 1 ? "1 mutating tool call" : "\(mutatingTools) mutating tool calls"
+    ]
+
+    if filesChanged > 0 {
+        parts.append(filesChanged == 1 ? "1 file changed" : "\(filesChanged) files changed")
+    }
+
+    if added > 0 || removed > 0 {
+        if added > 0 {
+            parts.append("\(added) lines added")
+        }
+        if removed > 0 {
+            parts.append("\(removed) lines removed")
+        }
+    }
+
+    return parts.joined(separator: ", ")
+}
+
+private func compactCountLabel(_ value: Int) -> String {
+    let clamped = max(0, value)
+    if clamped < 1_000 {
+        return "\(clamped)"
+    }
+    if clamped < 1_000_000 {
+        return "\(clamped / 1_000)k"
+    }
+    return "\(clamped / 1_000_000)m"
+}
+
+private func fileCountLabel(_ count: Int) -> String {
+    count == 1 ? "1 file" : "\(count) files"
+}
+
+private func toolCountLabel(_ count: Int) -> String {
+    count == 1 ? "1 tool" : "\(count) tools"
+}
+
 private func phaseLabel(_ phase: SessionPhase) -> String {
     switch phase {
     case .working: return "Working"
@@ -265,15 +413,58 @@ private func shouldPulse(_ phase: SessionPhase) -> Bool {
 
 private func sessionSummary(_ state: PiSessionAttributes.ContentState) -> String {
     if state.totalActiveSessions <= 1 {
-        return phaseLabel(state.primaryPhase)
+        switch state.primaryPhase {
+        case .working:
+            return "1 active"
+        case .awaitingReply:
+            return "Awaiting input"
+        case .needsApproval:
+            let approvals = max(state.pendingApprovalCount, 1)
+            return approvals == 1 ? "1 approval pending" : "\(approvals) approvals pending"
+        case .error:
+            return "Needs attention"
+        case .ended:
+            return "Idle"
+        }
     }
+
     if state.sessionsWorking > 0 {
         return "\(state.sessionsWorking) working · \(state.totalActiveSessions) active"
     }
+
     if state.sessionsAwaitingReply > 0 {
-        return "\(state.sessionsAwaitingReply) awaiting reply"
+        return state.sessionsAwaitingReply == 1
+            ? "1 awaiting reply"
+            : "\(state.sessionsAwaitingReply) awaiting reply"
     }
+
     return "\(state.totalActiveSessions) active"
+}
+
+private func centerActivityText(_ state: PiSessionAttributes.ContentState) -> String? {
+    guard let raw = state.primaryLastActivity?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty else {
+        return nil
+    }
+
+    let normalized = raw.lowercased()
+    if normalized == phaseLabel(state.primaryPhase).lowercased() {
+        return nil
+    }
+    if normalized == sessionSummary(state).lowercased() {
+        return nil
+    }
+
+    let generic = Set([
+        "working",
+        "your turn",
+        "approval required",
+        "attention needed",
+        "session ended",
+        "idle"
+    ])
+
+    return generic.contains(normalized) ? nil : raw
 }
 
 /// VoiceOver summary combining session name, phase, and key details.

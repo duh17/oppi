@@ -283,6 +283,21 @@ struct ServerCredentialsTests {
         #expect(url?.absoluteString == "ws://192.168.1.10:7749/stream")
     }
 
+    @Test func httpsSchemeProducesHttpsAndWssURLs() {
+        let creds = ServerCredentials(
+            host: "tls.local",
+            port: 7749,
+            token: "sk_test",
+            name: "TLS",
+            scheme: .https,
+            tlsCertFingerprint: "sha256:testleaf"
+        )
+
+        #expect(creds.baseURL?.absoluteString == "https://tls.local:7749")
+        #expect(creds.streamURL?.absoluteString == "wss://tls.local:7749/stream")
+        #expect(creds.normalizedTLSCertFingerprint == "sha256:testleaf")
+    }
+
     @Test func credentialsCodableRoundTrip() throws {
         let json = """
         {"host":"10.0.0.1","port":8080,"token":"sk_abc","name":"Dev"}
@@ -319,9 +334,11 @@ private struct InvitePayloadV3Fixture: Codable {
     var v: Int
     var host: String
     var port: Int
+    var scheme: String?
     var token: String
     var pairingToken: String?
     var name: String
+    var tlsCertFingerprint: String?
     var fingerprint: String?
 }
 
@@ -341,9 +358,11 @@ struct ServerCredentialsInviteSecurityTests {
             v: 3,
             host: "my-server.tail12345.ts.net",
             port: 7749,
+            scheme: "https",
             token: "",
             pairingToken: "pt_test_invite",
             name: "my-server",
+            tlsCertFingerprint: "sha256:test-leaf",
             fingerprint: "sha256:test-fingerprint"
         )
     }
@@ -358,9 +377,22 @@ struct ServerCredentialsInviteSecurityTests {
         #expect(creds != nil)
         #expect(creds?.host == payload.host)
         #expect(creds?.port == payload.port)
+        #expect(creds?.resolvedScheme == .https)
         #expect(creds?.token == payload.token)
         #expect(creds?.pairingToken == payload.pairingToken)
+        #expect(creds?.normalizedTLSCertFingerprint == payload.tlsCertFingerprint)
         #expect(creds?.normalizedServerFingerprint == payload.fingerprint)
+    }
+
+    @Test func decodeInvitePayloadDefaultsSchemeToHttpWhenMissing() throws {
+        var payload = defaultPayloadV3()
+        payload.scheme = nil
+
+        let data = try JSONEncoder().encode(payload)
+        let json = try #require(String(data: data, encoding: .utf8))
+
+        let creds = ServerCredentials.decodeInvitePayload(json)
+        #expect(creds?.resolvedScheme == .http)
     }
 
     @Test func decodeInviteURLAcceptsUnsignedV3DeepLink() throws {

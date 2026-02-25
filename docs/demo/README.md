@@ -1,6 +1,10 @@
 # Demo Screenshots
 
-These screenshots show how tool output is rendered in Oppi chat.
+These examples show how tool output is rendered in Oppi chat.
+
+## Demo video
+
+https://github.com/user-attachments/assets/<uuid>
 
 ## Streaming diffs with syntax highlighting
 

@@ -263,13 +263,17 @@ enum InviteBootstrapService {
         existingCredentials: ServerCredentials?,
         confirmTrust: @MainActor (String) async -> Bool
     ) async throws -> InviteBootstrapResult {
-        guard let baseURL = URL(string: "http://\(credentials.host):\(credentials.port)") else {
+        guard let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message(
                 "Invalid server address: \(credentials.host):\(credentials.port)"
             )
         }
 
-        let bootstrapAPI = APIClient(baseURL: baseURL, token: credentials.token)
+        let bootstrapAPI = APIClient(
+            baseURL: baseURL,
+            token: credentials.token,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
 
         let effectiveToken: String
         if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
@@ -283,7 +287,11 @@ enum InviteBootstrapService {
             effectiveToken = credentials.token
         }
 
-        let api = APIClient(baseURL: baseURL, token: effectiveToken)
+        let api = APIClient(
+            baseURL: baseURL,
+            token: effectiveToken,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+        )
 
         let healthy = try await api.health()
         guard healthy else {

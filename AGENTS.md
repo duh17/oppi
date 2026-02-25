@@ -31,8 +31,8 @@ cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,n
 cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
-# Auto-discovers first connected paired iPhone. Pass -d <name|udid> to override.
-cd ios && bash scripts/build-install.sh --launch
+# Default target: Chen's iPhone UDID (override only when explicitly requested)
+cd ios && bash scripts/install.sh -d 00008140-00161DAC26E3001C --launch
 ```
 
 After code changes: run `npm run check` (server) or `xcodebuild build` + `test` (iOS). Get full output. Fix all errors, warnings, and infos before committing.
@@ -57,7 +57,7 @@ The Xcode project file is generated — never edit `Oppi.xcodeproj` directly. Ch
 - `git stash` — stashes ALL changes
 - `git push --force`
 - `xcrun devicectl device uninstall` — never uninstall the iOS app
-- Raw `devicectl device install` — use `ios/scripts/build-install.sh` instead
+- Raw `devicectl device install` — use `ios/scripts/install.sh -d 00008140-00161DAC26E3001C` instead
 
 ### GitHub Issues
 ```bash

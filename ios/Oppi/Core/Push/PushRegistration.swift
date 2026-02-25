@@ -110,7 +110,11 @@ final class PushRegistration {
                 let serverId = server.id
 
                 group.addTask {
-                    let api = APIClient(baseURL: baseURL, token: serverToken)
+                    let api = APIClient(
+                        baseURL: baseURL,
+                        token: serverToken,
+                        tlsCertFingerprint: server.tlsCertFingerprint
+                    )
                     do {
                         try await api.registerDeviceToken(token, tokenType: "apns")
                         logger.info("Push token registered with server \(serverId.prefix(16), privacy: .public)")

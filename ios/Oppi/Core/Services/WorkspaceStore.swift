@@ -351,7 +351,11 @@ final class WorkspaceStore {
 
         for server in servers {
             guard let baseURL = server.baseURL else { continue }
-            let api = APIClient(baseURL: baseURL, token: server.token)
+            let api = APIClient(
+                baseURL: baseURL,
+                token: server.token,
+                tlsCertFingerprint: server.tlsCertFingerprint
+            )
             await loadServer(serverId: server.id, api: api)
         }
     }

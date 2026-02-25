@@ -136,6 +136,12 @@ final class ChatScrollController: NSObject {
 
     /// CollectionView backend updates nearBottom from scroll position math.
     func updateNearBottom(_ isNearBottom: Bool) {
+        if !isNearBottom, anchor.isFollowLocked {
+            // Preserve follow after an explicit user send/jump-to-latest.
+            // Only explicit user upward scroll may detach while locked.
+            return
+        }
+
         guard anchor.isNearBottom != isNearBottom else { return }
         anchor.isNearBottom = isNearBottom
     }
@@ -155,6 +161,7 @@ final class ChatScrollController: NSObject {
     /// so streaming auto-follow cannot pull the viewport back down mid-gesture.
     func detachFromBottomForUserScroll() {
         anchor.isNearBottom = false
+        anchor.isFollowLocked = false
         scrollTask?.cancel()
         scrollTask = nil
     }
@@ -264,9 +271,11 @@ final class ChatScrollController: NSObject {
     // MARK: - Imperative Scroll
 
     /// Request scroll to bottom (e.g. after sending a message).
-    /// Re-attaches to bottom so auto-follow resumes for the response.
+    /// Re-attaches and temporarily locks follow so passive layout/content
+    /// shifts cannot detach until the user explicitly scrolls up.
     func requestScrollToBottom() {
         anchor.isNearBottom = true
+        anchor.isFollowLocked = true
         isJumpToBottomHintVisible = false
         isDetachedStreamingHintVisible = false
         scrollToBottomNonce &+= 1
@@ -280,6 +289,7 @@ final class ChatScrollController: NSObject {
         lastAutoScrollAt = nil
         keyboardTransitionUntil = nil
         anchor.isUserInteracting = false
+        anchor.isFollowLocked = false
         isDetachedStreamingHintVisible = false
         isJumpToBottomHintVisible = false
     }
@@ -295,5 +305,6 @@ final class ChatScrollController: NSObject {
 private final class ScrollAnchorState {
     var isNearBottom = true
     var isUserInteracting = false
+    var isFollowLocked = false
     var topVisibleItemId: String?
 }

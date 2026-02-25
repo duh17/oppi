@@ -69,8 +69,12 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
     var host: String
     /// Server port.
     var port: Int
+    /// Transport scheme (`http` or `https`).
+    var scheme: ServerScheme?
     /// Auth token.
     var token: String
+    /// Optional leaf-cert pin for self-signed HTTPS.
+    var tlsCertFingerprint: String?
     /// Server Ed25519 fingerprint (same as `id`).
     var fingerprint: String
 
@@ -96,6 +100,10 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         badgeColor ?? .defaultValue
     }
 
+    var resolvedScheme: ServerScheme {
+        scheme ?? .http
+    }
+
     /// Derive `ServerCredentials` for connection and API calls.
     var credentials: ServerCredentials {
         ServerCredentials(
@@ -103,13 +111,15 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
             port: port,
             token: token,
             name: name,
-            serverFingerprint: fingerprint
+            scheme: resolvedScheme,
+            serverFingerprint: fingerprint,
+            tlsCertFingerprint: tlsCertFingerprint
         )
     }
 
     /// Base URL for REST calls.
     var baseURL: URL? {
-        URL(string: "http://\(host):\(port)")
+        URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
     }
 
     // MARK: - Init from ServerCredentials
@@ -127,7 +137,9 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.name = credentials.name
         self.host = credentials.host
         self.port = credentials.port
+        self.scheme = credentials.scheme
         self.token = credentials.token
+        self.tlsCertFingerprint = credentials.tlsCertFingerprint
         self.fingerprint = fp
         self.addedAt = Date()
         self.sortOrder = sortOrder
@@ -141,6 +153,8 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         self.name = credentials.name
         self.host = credentials.host
         self.port = credentials.port
+        self.scheme = credentials.scheme
         self.token = credentials.token
+        self.tlsCertFingerprint = credentials.tlsCertFingerprint
     }
 }

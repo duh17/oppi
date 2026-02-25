@@ -50,6 +50,7 @@ final class WebSocketClient {
 
     let credentials: ServerCredentials
     private let urlSession: URLSession
+    private let trustDelegate: PinnedServerTrustDelegate
 
     private let maxReconnectAttempts = 10
     private let pingInterval: Duration = .seconds(30)
@@ -67,10 +68,17 @@ final class WebSocketClient {
         self.waitForConnectionTimeout = waitForConnectionTimeout
         self.waitPollInterval = waitPollInterval
         self.sendTimeout = sendTimeout
+        self.trustDelegate = PinnedServerTrustDelegate(
+            pinnedLeafFingerprint: credentials.normalizedTLSCertFingerprint
+        )
         let config = URLSessionConfiguration.default
         // No timeout for WebSocket — we handle keepalive ourselves
         config.timeoutIntervalForRequest = 60
-        self.urlSession = URLSession(configuration: config)
+        self.urlSession = URLSession(
+            configuration: config,
+            delegate: trustDelegate,
+            delegateQueue: nil
+        )
     }
 
     // MARK: - Connect

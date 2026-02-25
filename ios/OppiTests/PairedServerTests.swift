@@ -16,7 +16,9 @@ struct PairedServerTests {
             port: 7749,
             token: "sk_test123",
             name: "my-server",
-            serverFingerprint: "sha256:testfp123"
+            scheme: .https,
+            serverFingerprint: "sha256:testfp123",
+            tlsCertFingerprint: "sha256:leafpin"
         )
 
         let server = PairedServer(from: creds)
@@ -25,7 +27,9 @@ struct PairedServerTests {
         #expect(server?.name == "my-server")
         #expect(server?.host == "my-server.ts.net")
         #expect(server?.port == 7749)
+        #expect(server?.resolvedScheme == .https)
         #expect(server?.token == "sk_test123")
+        #expect(server?.tlsCertFingerprint == "sha256:leafpin")
         #expect(server?.fingerprint == "sha256:testfp123")
         #expect(server?.sortOrder == 0)
     }
@@ -64,7 +68,9 @@ struct PairedServerTests {
             port: 8080,
             token: "sk_abc",
             name: "mac-mini",
-            serverFingerprint: "sha256:minifp"
+            scheme: .https,
+            serverFingerprint: "sha256:minifp",
+            tlsCertFingerprint: "sha256:minileaf"
         )
 
         let server = PairedServer(from: creds)!
@@ -72,9 +78,11 @@ struct PairedServerTests {
 
         #expect(derived.host == "mac-mini.local")
         #expect(derived.port == 8080)
+        #expect(derived.resolvedScheme == .https)
         #expect(derived.token == "sk_abc")
         #expect(derived.name == "mac-mini")
         #expect(derived.serverFingerprint == "sha256:minifp")
+        #expect(derived.tlsCertFingerprint == "sha256:minileaf")
     }
 
     @Test("Update credentials preserves identity and metadata")
@@ -95,7 +103,9 @@ struct PairedServerTests {
             port: 9999,
             token: "sk_new",
             name: "renamed-studio",
-            serverFingerprint: "sha256:fp1"
+            scheme: .https,
+            serverFingerprint: "sha256:fp1",
+            tlsCertFingerprint: "sha256:newleaf"
         )
 
         server.updateCredentials(from: newCreds)
@@ -103,7 +113,9 @@ struct PairedServerTests {
         // Updated fields
         #expect(server.host == "new-host.ts.net")
         #expect(server.port == 9999)
+        #expect(server.resolvedScheme == .https)
         #expect(server.token == "sk_new")
+        #expect(server.tlsCertFingerprint == "sha256:newleaf")
         #expect(server.name == "renamed-studio")
 
         // Preserved fields
@@ -197,5 +209,21 @@ struct PairedServerTests {
         )
         let server = PairedServer(from: creds)!
         #expect(server.baseURL?.absoluteString == "http://192.168.1.50:7749")
+    }
+
+    @Test("HTTPS BaseURL derived correctly")
+    func httpsBaseURL() {
+        let creds = ServerCredentials(
+            host: "192.168.1.50",
+            port: 7749,
+            token: "sk_t",
+            name: "LAN",
+            scheme: .https,
+            serverFingerprint: "sha256:lan",
+            tlsCertFingerprint: "sha256:leaf"
+        )
+        let server = PairedServer(from: creds)!
+        #expect(server.baseURL?.absoluteString == "https://192.168.1.50:7749")
+        #expect(server.credentials.streamURL?.absoluteString == "wss://192.168.1.50:7749/stream")
     }
 }

@@ -107,7 +107,8 @@ Environment:
   REQUIRE_EXPORT_COMPLIANCE      Fail script if compliance update fails (default: 0)
   ASC_COMPLIANCE_WAIT_SECONDS    Wait for uploaded build to appear in ASC (default: 300)
   ASC_COMPLIANCE_POLL_SECONDS    Poll interval while waiting (default: 5)
-  DISABLE_SENTRY_FOR_TESTFLIGHT  Force Sentry DSN empty for public builds (default: 1)
+  DISABLE_SENTRY_FOR_TESTFLIGHT     Force Sentry DSN empty for public builds (default: 1)
+  DISABLE_METRICKIT_FOR_TESTFLIGHT  Force OPPI_DISABLE_METRICKIT_UPLOAD=1 (default: 1)
 
 Local config file (optional, gitignored):
   ios/.env.testflight.local
@@ -140,6 +141,12 @@ done
 if [[ "${DISABLE_SENTRY_FOR_TESTFLIGHT:-1}" == "1" ]]; then
   export SENTRY_DSN=""
   echo "── Sentry DSN: disabled for TestFlight build"
+fi
+
+# Public/TestFlight builds should disable MetricKit upload by default.
+if [[ "${DISABLE_METRICKIT_FOR_TESTFLIGHT:-1}" == "1" ]]; then
+  export OPPI_DISABLE_METRICKIT_UPLOAD="1"
+  echo "── MetricKit upload: disabled for TestFlight build (OPPI_DISABLE_METRICKIT_UPLOAD=1)"
 fi
 
 # ─── Tag + Changelog ────────────────────────────────────────────
@@ -679,6 +686,8 @@ xcodebuild archive \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   SENTRY_DSN="${SENTRY_DSN:-}" \
+  OPPI_TELEMETRY_MODE="${OPPI_TELEMETRY_MODE:-public}" \
+  OPPI_DISABLE_METRICKIT_UPLOAD="${OPPI_DISABLE_METRICKIT_UPLOAD:-0}" \
   "${AUTH_FLAGS[@]}" \
   2>&1 | tee "$ARCHIVE_LOG" | tail -5
 

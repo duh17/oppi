@@ -343,4 +343,22 @@ struct ChatScrollControllerTests {
         #expect(!controller.isJumpToBottomHintVisible)
         #expect(controller.scrollToBottomNonce == nonceBefore &+ 1)
     }
+
+    @MainActor
+    @Test func requestScrollToBottomLocksFollowUntilUserScrollsUp() {
+        let controller = ChatScrollController()
+
+        controller.requestScrollToBottom()
+        controller.updateNearBottom(false)
+        #expect(controller.isCurrentlyNearBottom,
+                "passive near-bottom updates should not detach after explicit follow request")
+
+        controller.detachFromBottomForUserScroll()
+        #expect(!controller.isCurrentlyNearBottom)
+
+        controller.updateNearBottom(true)
+        controller.updateNearBottom(false)
+        #expect(!controller.isCurrentlyNearBottom,
+                "after explicit user detach, passive updates may keep controller detached")
+    }
 }
