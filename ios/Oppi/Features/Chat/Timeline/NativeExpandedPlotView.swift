@@ -136,92 +136,187 @@ private struct PlotChartContainerView: View {
         }
     }
 
+    // MARK: - Mark rendering
+
     @ChartContentBuilder
     private func markContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
         switch mark.type {
-        case .line:
+        case .line: lineMarkContent(mark)
+        case .area: areaMarkContent(mark)
+        case .bar: barMarkContent(mark)
+        case .point: pointMarkContent(mark)
+        case .rectangle: rectangleMarkContent(mark)
+        case .rule: ruleMarkContent(mark)
+        case .sector: sectorMarkContent(mark)
+        }
+    }
+
+    // MARK: Line
+
+    @ChartContentBuilder
+    private func lineMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        let interp = mark.interpolation?.toSwiftCharts ?? .linear
+        if !spec.columnIsNumeric(mark.x) {
+            ForEach(spec.rows) { row in
+                if let x = row.seriesLabel(for: mark.x),
+                   let y = row.number(for: mark.y) {
+                    LineMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .interpolationMethod(interp)
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else if !spec.columnIsNumeric(mark.y) {
+            ForEach(spec.rows) { row in
+                if let x = row.number(for: mark.x),
+                   let y = row.seriesLabel(for: mark.y) {
+                    LineMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .interpolationMethod(interp)
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else {
             ForEach(spec.rows) { row in
                 if let x = row.number(for: mark.x),
                    let y = row.number(for: mark.y) {
-                    LineMark(
-                        x: .value(mark.x ?? "x", x),
-                        y: .value(mark.y ?? "y", y)
-                    )
-                    .interpolationMethod(mark.interpolation?.toSwiftCharts ?? .linear)
-                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                    LineMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .interpolationMethod(interp)
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
                 }
             }
+        }
+    }
 
-        case .area:
+    // MARK: Area
+
+    @ChartContentBuilder
+    private func areaMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        if !spec.columnIsNumeric(mark.x) {
+            ForEach(spec.rows) { row in
+                if let x = row.seriesLabel(for: mark.x),
+                   let y = row.number(for: mark.y) {
+                    AreaMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else if !spec.columnIsNumeric(mark.y) {
+            ForEach(spec.rows) { row in
+                if let x = row.number(for: mark.x),
+                   let y = row.seriesLabel(for: mark.y) {
+                    AreaMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else {
             ForEach(spec.rows) { row in
                 if let x = row.number(for: mark.x),
                    let y = row.number(for: mark.y) {
-                    AreaMark(
-                        x: .value(mark.x ?? "x", x),
-                        y: .value(mark.y ?? "y", y)
-                    )
-                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                    AreaMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
                 }
             }
+        }
+    }
 
-        case .bar:
+    // MARK: Bar
+
+    @ChartContentBuilder
+    private func barMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        if !spec.columnIsNumeric(mark.x) {
+            ForEach(spec.rows) { row in
+                if let x = row.seriesLabel(for: mark.x),
+                   let y = row.number(for: mark.y) {
+                    BarMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else if !spec.columnIsNumeric(mark.y) {
+            ForEach(spec.rows) { row in
+                if let x = row.number(for: mark.x),
+                   let y = row.seriesLabel(for: mark.y) {
+                    BarMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else {
             ForEach(spec.rows) { row in
                 if let x = row.number(for: mark.x),
                    let y = row.number(for: mark.y) {
-                    BarMark(
-                        x: .value(mark.x ?? "x", x),
-                        y: .value(mark.y ?? "y", y)
-                    )
-                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                    BarMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
                 }
             }
+        }
+    }
 
-        case .point:
+    // MARK: Point
+
+    @ChartContentBuilder
+    private func pointMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        if !spec.columnIsNumeric(mark.x) {
+            ForEach(spec.rows) { row in
+                if let x = row.seriesLabel(for: mark.x),
+                   let y = row.number(for: mark.y) {
+                    PointMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else if !spec.columnIsNumeric(mark.y) {
+            ForEach(spec.rows) { row in
+                if let x = row.number(for: mark.x),
+                   let y = row.seriesLabel(for: mark.y) {
+                    PointMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                }
+            }
+        } else {
             ForEach(spec.rows) { row in
                 if let x = row.number(for: mark.x),
                    let y = row.number(for: mark.y) {
-                    PointMark(
-                        x: .value(mark.x ?? "x", x),
-                        y: .value(mark.y ?? "y", y)
-                    )
-                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+                    PointMark(x: .value(mark.x ?? "x", x), y: .value(mark.y ?? "y", y))
+                        .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
                 }
             }
+        }
+    }
 
-        case .rectangle:
-            ForEach(spec.rows) { row in
-                if let xStart = row.number(for: mark.xStart),
-                   let xEnd = row.number(for: mark.xEnd),
-                   let yStart = row.number(for: mark.yStart),
-                   let yEnd = row.number(for: mark.yEnd) {
-                    RectangleMark(
-                        xStart: .value(mark.xStart ?? "xStart", xStart),
-                        xEnd: .value(mark.xEnd ?? "xEnd", xEnd),
-                        yStart: .value(mark.yStart ?? "yStart", yStart),
-                        yEnd: .value(mark.yEnd ?? "yEnd", yEnd)
-                    )
+    // MARK: Rectangle / Rule / Sector (always numeric)
+
+    @ChartContentBuilder
+    private func rectangleMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        ForEach(spec.rows) { row in
+            if let xStart = row.number(for: mark.xStart),
+               let xEnd = row.number(for: mark.xEnd),
+               let yStart = row.number(for: mark.yStart),
+               let yEnd = row.number(for: mark.yEnd) {
+                RectangleMark(
+                    xStart: .value(mark.xStart ?? "xStart", xStart),
+                    xEnd: .value(mark.xEnd ?? "xEnd", xEnd),
+                    yStart: .value(mark.yStart ?? "yStart", yStart),
+                    yEnd: .value(mark.yEnd ?? "yEnd", yEnd)
+                )
+                .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
+            }
+        }
+    }
+
+    @ChartContentBuilder
+    private func ruleMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        if let xValue = mark.xValue {
+            RuleMark(x: .value(mark.label ?? "rule", xValue))
+                .foregroundStyle(.themeYellow)
+        }
+        if let yValue = mark.yValue {
+            RuleMark(y: .value(mark.label ?? "rule", yValue))
+                .foregroundStyle(.themeYellow)
+        }
+    }
+
+    @ChartContentBuilder
+    private func sectorMarkContent(_ mark: PlotChartSpec.Mark) -> some ChartContent {
+        ForEach(spec.rows) { row in
+            if let angle = row.number(for: mark.angle) {
+                SectorMark(angle: .value(mark.angle ?? "angle", angle))
                     .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
-                }
-            }
-
-        case .rule:
-            if let xValue = mark.xValue {
-                RuleMark(x: .value(mark.label ?? "rule", xValue))
-                    .foregroundStyle(.themeYellow)
-            }
-            if let yValue = mark.yValue {
-                RuleMark(y: .value(mark.label ?? "rule", yValue))
-                    .foregroundStyle(.themeYellow)
-            }
-
-        case .sector:
-            ForEach(spec.rows) { row in
-                if let angle = row.number(for: mark.angle) {
-                    SectorMark(
-                        angle: .value(mark.angle ?? "angle", angle)
-                    )
-                    .foregroundStyle(by: .value("series", seriesLabel(mark: mark, row: row)))
-                }
             }
         }
     }

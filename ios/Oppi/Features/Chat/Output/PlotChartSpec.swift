@@ -105,6 +105,26 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
         !rows.isEmpty && !marks.isEmpty
     }
 
+    /// Whether all values in a column can be interpreted as numbers.
+    /// Returns `true` when every row's value for `key` is `.number` or a
+    /// numeric string. If no row contains `key`, defaults to `true`.
+    func columnIsNumeric(_ key: String?) -> Bool {
+        guard let key else { return true }
+        var foundAny = false
+        for row in rows {
+            guard let value = row.values[key] else { continue }
+            foundAny = true
+            switch value {
+            case .number: continue
+            case .string(let s):
+                if Double(s) == nil { return false }
+            case .bool: return false
+            }
+        }
+        // No rows with this key → default to numeric (renders nothing either way).
+        return true
+    }
+
     static func fromPlotArgs(_ args: [String: JSONValue]?) -> Self? {
         guard let args else { return nil }
 
