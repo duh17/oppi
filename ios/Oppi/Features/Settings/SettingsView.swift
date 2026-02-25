@@ -106,6 +106,19 @@ struct SettingsView: View {
                 )
             }
 
+            if ReleaseFeatures.liveActivitiesEnabled {
+                Section {
+                    Toggle("Enable Live Activities", isOn: liveActivityToggle)
+                } header: {
+                    Text("Live Activity")
+                } footer: {
+                    Text(
+                        "Off by default. Turn on to show session state in Dynamic Island and Lock Screen. "
+                            + "You must also allow Live Activities in iOS Settings for Oppi."
+                    )
+                }
+            }
+
             biometricSection
 
             if ReleaseFeatures.composerDictationEnabled {
@@ -172,6 +185,20 @@ struct SettingsView: View {
         } message: {
             Text(removeDialogMessage)
         }
+    }
+
+    private var liveActivityToggle: Binding<Bool> {
+        Binding(
+            get: { LiveActivityPreferences.isEnabled },
+            set: { newValue in
+                guard newValue != LiveActivityPreferences.isEnabled else { return }
+                LiveActivityPreferences.setEnabled(newValue)
+                if newValue {
+                    _ = KeychainService.migrateLegacyServersToSharedGroup()
+                }
+                LiveActivityManager.shared.recoverIfNeeded()
+            }
+        )
     }
 
     // MARK: - Biometric Section

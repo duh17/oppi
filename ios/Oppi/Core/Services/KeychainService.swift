@@ -9,9 +9,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Keyc
 /// Items are stored in the shared App Group keychain access group so
 /// the widget extension can read them for Live Activity intent actions.
 ///
-/// On first launch after the access-group migration, `loadServers()`
-/// automatically detects items in the app's default group and re-saves
-/// them to the shared group. No separate migration step needed.
+/// Legacy items in the app's default keychain group remain readable.
+/// They are only migrated into the shared group when Live Activities are
+/// explicitly enabled (opt-in rollout).
 enum KeychainService {
     private static let service = SharedConstants.keychainService
     private static let accessGroup = SharedConstants.keychainAccessGroup
@@ -57,11 +57,13 @@ enum KeychainService {
 
     /// Load all paired servers from Keychain.
     ///
-    /// 1. Tries shared group (fast path for post-migration installs).
-    /// 2. Falls back to any-group scan (finds legacy items).
-    /// 3. Re-saves any legacy items to the shared group for extension access.
+    /// 1. Uses stored server IDs when available (fast path).
+    /// 2. Discovery scans both shared-group and any-group keychain entries.
+    /// 3. Legacy entries are migrated to the shared group only when Live
+    ///    Activities are enabled.
     static func loadServers() -> [PairedServer] {
         syncUserDefaultsIndex()
+        let shouldMigrateLegacyItems = LiveActivityPreferences.isEnabled
 
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
@@ -79,17 +81,32 @@ enum KeychainService {
             // IDs exist but no keychain items found — fall through to discovery.
         }
 
-        // Discovery: scan shared group first, then any-group fallback.
-        var discovered = discoverServers(inAccessGroup: accessGroup)
-        if discovered.isEmpty {
-            discovered = discoverServersAnyGroup()
-            if !discovered.isEmpty {
-                logger.error("Found \(discovered.count) server(s) in legacy keychain group, re-saving to shared group")
-                for server in discovered {
-                    try? saveServer(server)
-                }
+        // Discovery: scan both shared-group and any-group so mixed states
+        // (some migrated, some legacy) still discover and heal correctly.
+        let sharedDiscovered = discoverServers(inAccessGroup: accessGroup)
+        let anyGroupDiscovered = discoverServersAnyGroup()
+
+        var discoveredById: [String: PairedServer] = [:]
+        for server in sharedDiscovered {
+            discoveredById[server.id] = server
+        }
+
+        var migratedCount = 0
+        for server in anyGroupDiscovered {
+            if discoveredById[server.id] == nil {
+                discoveredById[server.id] = server
+            }
+
+            if shouldMigrateLegacyItems, migrateToSharedGroupIfNeeded(server) {
+                migratedCount += 1
             }
         }
+
+        if shouldMigrateLegacyItems, migratedCount > 0 {
+            logger.error("Found \(migratedCount) server(s) in legacy keychain group, re-saving to shared group")
+        }
+
+        let discovered = discoveredById.values.sorted { $0.sortOrder < $1.sortOrder }
 
         if !discovered.isEmpty {
             let ids = discovered.map(\.id)
@@ -97,6 +114,24 @@ enum KeychainService {
             UserDefaults.standard.set(ids, forKey: SharedConstants.pairedServerIdsKey)
         }
         return discovered
+    }
+
+    /// Explicitly migrate legacy keychain entries into the shared group.
+    /// Call this when the user enables Live Activities.
+    @discardableResult
+    static func migrateLegacyServersToSharedGroup() -> Int {
+        var migratedCount = 0
+        for server in discoverServersAnyGroup() {
+            if migrateToSharedGroupIfNeeded(server) {
+                migratedCount += 1
+            }
+        }
+
+        if migratedCount > 0 {
+            logger.error("Found \(migratedCount) server(s) in legacy keychain group, re-saving to shared group")
+        }
+
+        return migratedCount
     }
 
     /// Load a single server by fingerprint ID.
@@ -111,8 +146,10 @@ enum KeychainService {
 
         // Any-group fallback (legacy items)
         if let server = loadServerFromGroup(account: account, accessGroup: nil) {
-            logger.error("Found server \(id.prefix(8), privacy: .public) in legacy group, re-saving to shared")
-            try? saveServer(server)
+            if LiveActivityPreferences.isEnabled,
+               migrateToSharedGroupIfNeeded(server) {
+                logger.error("Found server \(id.prefix(8), privacy: .public) in legacy group, re-saving to shared")
+            }
             return server
         }
 
@@ -140,6 +177,24 @@ enum KeychainService {
         }
 
         return try? JSONDecoder().decode(PairedServer.self, from: data)
+    }
+
+    @discardableResult
+    private static func migrateToSharedGroupIfNeeded(_ server: PairedServer) -> Bool {
+        let account = serverAccount(for: server.id)
+        guard loadServerFromGroup(account: account, accessGroup: accessGroup) == nil else {
+            return false
+        }
+
+        do {
+            try saveServer(server)
+            return true
+        } catch {
+            logger.error(
+                "Failed to migrate server \(server.id.prefix(8), privacy: .public) to shared keychain: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
     }
 
     private static func discoverServers(inAccessGroup group: String) -> [PairedServer] {

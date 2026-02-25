@@ -12,6 +12,30 @@ enum AppIdentifiers {
     static let subsystem: String = Bundle.main.bundleIdentifier ?? "dev.chenda.Oppi"
 }
 
+/// User-facing preference for Live Activities.
+///
+/// Default is OFF in app builds to reduce rollout risk. Tests default ON so
+/// existing LiveActivityManager coverage remains stable without per-test setup.
+enum LiveActivityPreferences {
+    private static let enabledDefaultsKey = "\(AppIdentifiers.subsystem).liveActivities.enabled"
+
+    private static var defaultEnabled: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+
+    static var isEnabled: Bool {
+        if let stored = UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool {
+            return stored
+        }
+        return defaultEnabled
+    }
+
+    static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+    }
+}
+
 /// Shipping toggles for first release hardening.
 ///
 /// Keep these centralized so we can re-enable features intentionally
@@ -20,7 +44,8 @@ enum ReleaseFeatures {
     /// Remote/local notification flow for permission prompts.
     static let pushNotificationsEnabled = false
 
-    /// Dynamic Island / Lock Screen session activity surface.
+    /// Live Activity codepath availability (runtime opt-in handled by
+    /// `LiveActivityPreferences`).
     static let liveActivitiesEnabled = true
 
     /// Composer microphone button + custom speech-to-text flow.

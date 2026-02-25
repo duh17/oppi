@@ -22,6 +22,7 @@ final class LiveActivityManager {
         var activeTool: String?
         var lastActivity: String?
         var startDate: Date?
+        var changeStats: SessionChangeStats?
         var updatedAt: Date
         /// When the session entered `.ready` status. Used for awaitingReply
         /// expiry so that `sync()` refreshing `updatedAt` doesn't keep the
@@ -41,6 +42,7 @@ final class LiveActivityManager {
         let activeTool: String?
         let lastActivity: String?
         let startDate: Date?
+        let changeStats: SessionChangeStats?
         let updatedAt: Date
     }
 
@@ -53,6 +55,10 @@ final class LiveActivityManager {
         totalActiveSessions: 0,
         sessionsAwaitingReply: 0,
         sessionsWorking: 0,
+        primaryMutatingToolCalls: nil,
+        primaryFilesChanged: nil,
+        primaryAddedLines: nil,
+        primaryRemovedLines: nil,
         topPermissionId: nil,
         topPermissionTool: nil,
         topPermissionSummary: nil,
@@ -133,14 +139,17 @@ final class LiveActivityManager {
                 phaseHint: baselinePhase(for: session.status),
                 activeTool: nil,
                 lastActivity: nil,
-                startDate: session.createdAt,
+                startDate: nil,
+                changeStats: session.changeStats,
                 updatedAt: session.lastActivity,
                 readySince: session.status == .ready ? session.lastActivity : nil
             )
 
+            let previousStatus = entry.status
+
             entry.name = session.displayTitle
             entry.status = session.status
-            entry.startDate = session.createdAt
+            entry.changeStats = session.changeStats
             if session.lastActivity > entry.updatedAt {
                 entry.updatedAt = session.lastActivity
             }
@@ -149,6 +158,11 @@ final class LiveActivityManager {
             case .starting, .busy, .stopping:
                 entry.phaseHint = .working
                 entry.readySince = nil
+                if !isWorkingStatus(previousStatus) || entry.startDate == nil {
+                    // Fallback when we don't observe an explicit agentStart
+                    // (e.g. app relaunch while session is already busy).
+                    entry.startDate = session.lastActivity
+                }
             case .ready:
                 // Record when session first entered .ready so the awaitingReply
                 // expiry window is anchored to the transition, not refreshed by
@@ -160,15 +174,18 @@ final class LiveActivityManager {
                     entry.phaseHint = .awaitingReply
                 }
                 entry.activeTool = nil
+                entry.startDate = nil
             case .error:
                 entry.phaseHint = .error
                 entry.activeTool = nil
+                entry.startDate = nil
                 if entry.lastActivity == nil {
                     entry.lastActivity = "Attention needed"
                 }
             case .stopped:
                 entry.phaseHint = .ended
                 entry.activeTool = nil
+                entry.startDate = nil
                 entry.lastActivity = "Session ended"
             }
 
@@ -207,6 +224,7 @@ final class LiveActivityManager {
                 activeTool: nil,
                 lastActivity: nil,
                 startDate: nil,
+                changeStats: nil,
                 updatedAt: Date(),
                 readySince: Date()
             )
@@ -215,30 +233,38 @@ final class LiveActivityManager {
         switch event {
         case .agentStart(let sessionId):
             var entry = upsertSession(sessionId)
+            let now = Date()
             entry.status = .busy
             entry.phaseHint = .working
             entry.readySince = nil
+            entry.startDate = now
             entry.lastActivity = "Working"
-            entry.updatedAt = Date()
+            entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
         case .agentEnd(let sessionId):
             var entry = upsertSession(sessionId)
+            let now = Date()
             entry.status = .ready
             entry.phaseHint = .awaitingReply
-            entry.readySince = Date()
+            entry.readySince = now
             entry.activeTool = nil
+            entry.startDate = nil
             entry.lastActivity = "Your turn"
-            entry.updatedAt = Date()
+            entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
         case .toolStart(let sessionId, _, let tool, _, _):
             var entry = upsertSession(sessionId)
+            let now = Date()
             entry.status = .busy
             entry.phaseHint = .working
+            if entry.startDate == nil {
+                entry.startDate = now
+            }
             entry.activeTool = displayToolName(tool)
             entry.lastActivity = "Running \(displayToolName(tool))"
-            entry.updatedAt = Date()
+            entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
         case .toolEnd(let sessionId, _, _, _, _):
@@ -250,6 +276,7 @@ final class LiveActivityManager {
         case .permissionRequest(let request):
             var entry = upsertSession(request.sessionId)
             entry.phaseHint = .needsApproval
+            entry.startDate = nil
             entry.lastActivity = "Approval required"
             entry.updatedAt = Date()
             snapshot.sessionsById[request.sessionId] = entry
@@ -259,6 +286,7 @@ final class LiveActivityManager {
             entry.status = .stopped
             entry.phaseHint = .ended
             entry.activeTool = nil
+            entry.startDate = nil
             entry.lastActivity = "Session ended"
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
@@ -270,6 +298,7 @@ final class LiveActivityManager {
             var entry = upsertSession(sessionId)
             entry.status = .error
             entry.phaseHint = .error
+            entry.startDate = nil
             entry.lastActivity = "Attention needed"
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
@@ -316,28 +345,12 @@ final class LiveActivityManager {
         logger.error("Live Activity ended (dismissal=\(dismissalLabel, privacy: .public))")
     }
 
-    /// Check for orphaned activities on app launch / foreground.
+    /// Reconcile ActivityKit state after app launch / foreground.
     ///
-    /// If the system ended the activity (8-hour limit, user removal) while
-    /// the app was suspended, `activeActivity` is stale. Detect and recover.
+    /// Handles app lifecycle gaps where ActivityKit keeps a live activity
+    /// but this singleton lost its in-memory `activeActivity` reference.
     func recoverIfNeeded() {
-        // Clean up any activities the system ended while we were suspended.
-        let allActivities = Activity<PiSessionAttributes>.activities
-        for activity in allActivities {
-            if activity.activityState == .ended || activity.activityState == .dismissed {
-                if activity.id == activeActivity?.id {
-                    logger.error("Recovered stale activeActivity reference (state=\(String(describing: activity.activityState), privacy: .public))")
-                    cleanupTimers()
-                    activeActivity = nil
-                    currentState = Self.emptyState
-                }
-            }
-        }
-
-        // If we have tracked sessions but no live activity, restart.
-        if activeActivity == nil && shouldShowLiveActivity(state: aggregateState()) {
-            refreshLifecycle()
-        }
+        refreshLifecycle()
     }
 
     private func cleanupTimers() {
@@ -357,8 +370,65 @@ final class LiveActivityManager {
 
     // MARK: - Lifecycle
 
+    /// Reattach an existing ActivityKit activity if this process lost its
+    /// in-memory `activeActivity` reference (app relaunch / suspension).
+    private func recoverTrackedActivityReferenceIfNeeded() {
+        if let existing = activeActivity,
+           existing.activityState == .ended || existing.activityState == .dismissed {
+            logger.error("Recovered stale activeActivity reference (state=\(String(describing: existing.activityState), privacy: .public))")
+            cleanupTimers()
+            activeActivity = nil
+            currentState = Self.emptyState
+        }
+
+        guard activeActivity == nil else { return }
+
+        guard let recovered = Activity<PiSessionAttributes>.activities.first(where: {
+            $0.activityState == .active || $0.activityState == .stale
+        }) else { return }
+
+        activeActivity = recovered
+        observeActivityLifecycle(recovered)
+        logger.error("Recovered orphaned Live Activity reference (id=\(recovered.id, privacy: .public), state=\(String(describing: recovered.activityState), privacy: .public))")
+    }
+
+    private func endActivitiesIfPreferenceDisabled() {
+        cleanupTimers()
+        activeActivity = nil
+
+        let activitiesToEnd = Activity<PiSessionAttributes>.activities.filter {
+            $0.activityState == .active || $0.activityState == .stale
+        }
+        guard !activitiesToEnd.isEmpty else { return }
+
+        let finalState = Self.emptyState
+        for activity in activitiesToEnd {
+            Task {
+                await activity.end(
+                    .init(state: finalState, staleDate: nil),
+                    dismissalPolicy: .immediate
+                )
+            }
+        }
+
+        logger.error(
+            "Live Activities disabled by preference; ended \(activitiesToEnd.count, privacy: .public) activity(ies)"
+        )
+    }
+
     private func refreshLifecycle() {
+        let liveActivitiesEnabled = LiveActivityPreferences.isEnabled
+
+        if liveActivitiesEnabled {
+            recoverTrackedActivityReferenceIfNeeded()
+        } else {
+            endActivitiesIfPreferenceDisabled()
+        }
+
         currentState = aggregateState()
+
+        guard liveActivitiesEnabled else { return }
+
         scheduleAwaitingReplyExpiryIfNeeded()
 
         let shouldShow = shouldShowLiveActivity(state: currentState)
@@ -450,6 +520,8 @@ final class LiveActivityManager {
     }
 
     private func ensureActivityStartedIfNeeded() {
+        guard LiveActivityPreferences.isEnabled else { return }
+
         // Check if our tracked activity was ended by the system (8-hour limit,
         // user removal). activityState is synchronously available.
         if let existing = activeActivity,
@@ -535,6 +607,7 @@ final class LiveActivityManager {
     /// Throttled push: coalesces rapid state changes into at most one
     /// ActivityKit update per `pushThrottleInterval`.
     private func pushUpdate() {
+        guard LiveActivityPreferences.isEnabled else { return }
         guard activeActivity != nil else { return }
 
         hasPendingPush = true
@@ -556,6 +629,7 @@ final class LiveActivityManager {
     }
 
     private func executePush() {
+        guard LiveActivityPreferences.isEnabled else { return }
         guard let activity = activeActivity else { return }
 
         hasPendingPush = false
@@ -611,6 +685,7 @@ final class LiveActivityManager {
                 activeTool: session.activeTool,
                 lastActivity: session.lastActivity,
                 startDate: session.startDate,
+                changeStats: session.changeStats,
                 updatedAt: session.updatedAt
             )
         }
@@ -641,12 +716,16 @@ final class LiveActivityManager {
                 totalActiveSessions: totalActiveSessions,
                 sessionsAwaitingReply: sessionsAwaitingReply,
                 sessionsWorking: sessionsWorking,
+                primaryMutatingToolCalls: primary.changeStats?.mutatingToolCalls,
+                primaryFilesChanged: primary.changeStats?.filesChanged,
+                primaryAddedLines: primary.changeStats?.addedLines,
+                primaryRemovedLines: primary.changeStats?.removedLines,
                 topPermissionId: topPermission?.id,
                 topPermissionTool: topPermission?.tool,
                 topPermissionSummary: topPermission.map(permissionSummaryForLiveActivity),
                 topPermissionSession: topPermissionSession,
                 pendingApprovalCount: allPermissions.count,
-                sessionStartDate: primary.startDate
+                sessionStartDate: primary.phase == .working ? primary.startDate : nil
             )
         }
 
@@ -660,6 +739,10 @@ final class LiveActivityManager {
                 totalActiveSessions: 0,
                 sessionsAwaitingReply: 0,
                 sessionsWorking: 0,
+                primaryMutatingToolCalls: nil,
+                primaryFilesChanged: nil,
+                primaryAddedLines: nil,
+                primaryRemovedLines: nil,
                 topPermissionId: topPermission.id,
                 topPermissionTool: topPermission.tool,
                 topPermissionSummary: permissionSummaryForLiveActivity(topPermission),
@@ -695,6 +778,15 @@ final class LiveActivityManager {
                 return .awaitingReply
             }
             return .ended
+        }
+    }
+
+    private func isWorkingStatus(_ status: SessionStatus) -> Bool {
+        switch status {
+        case .starting, .busy, .stopping:
+            return true
+        case .ready, .error, .stopped:
+            return false
         }
     }
 
