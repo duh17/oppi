@@ -49,6 +49,20 @@ struct ChatInputBar<ActionRow: View>: View {
     private let expandVisualDiameter: CGFloat = 28
     private let composerHorizontalPadding: CGFloat = 12
 
+    private var composerInputFont: UIFont {
+        isBashMode
+            ? .monospacedSystemFont(ofSize: 17, weight: .regular)
+            : .preferredFont(forTextStyle: .body)
+    }
+
+    private var composerPlaceholderFont: Font {
+        isBashMode ? .system(.body, design: .monospaced) : .body
+    }
+
+    private var composerAutocorrectionEnabled: Bool {
+        !isBashMode
+    }
+
     /// Whether the current input is a bash command (starts with "$ ").
     private var isBashMode: Bool {
         text.hasPrefix("$ ")
@@ -227,7 +241,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 ZStack(alignment: .leading) {
                     if text.isEmpty {
                         Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
-                            .font(.system(.body, design: .monospaced))
+                            .font(composerPlaceholderFont)
                             .foregroundStyle(.themeComment)
                             .padding(.vertical, 4)
                             .allowsHitTesting(false)
@@ -236,10 +250,11 @@ struct ChatInputBar<ActionRow: View>: View {
                     PastableTextView(
                         text: textFieldBinding,
                         placeholder: "",
-                        font: .monospacedSystemFont(ofSize: 17, weight: .regular),
+                        font: composerInputFont,
                         textColor: UIColor(Color.themeFg),
                         tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
                         maxLines: effectiveMaxLines,
+                        autocorrectionEnabled: composerAutocorrectionEnabled,
                         onPasteImages: handlePastedImages,
                         onCommandEnter: handleSend,
                         onOverflowChange: nil,
@@ -486,11 +501,9 @@ struct ChatInputBar<ActionRow: View>: View {
             guard !cmd.isEmpty else { return }
             onBash(cmd)
         } else {
-            // Keyboard stays open during send. Stability input traits
-            // (autocorrect/candidates disabled) prevent UITextInput from
-            // generating layout-interfering updates. Dismissing keyboard
-            // here caused a SafeArea resize -> LazyVStack full placement
-            // cascade (2s+ hang). Let .scrollDismissesKeyboard handle it.
+            // Keyboard stays open during send. Dismissing keyboard here
+            // caused a SafeArea resize -> LazyVStack full placement cascade
+            // (2s+ hang). Let .scrollDismissesKeyboard handle it.
             onSend()
         }
     }
