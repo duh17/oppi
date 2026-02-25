@@ -38,6 +38,10 @@ final class ConnectionCoordinator {
     /// Prevents crashes from nil environment injection.
     private let disconnectedSentinel = ServerConnection()
 
+    /// Single-flight task for `refreshAllServers()` — prevents concurrent
+    /// refresh races between WorkspaceHomeView `.task` and `reconnectOnLaunch`.
+    private var refreshAllTask: Task<Void, Never>?
+
     // Convenience: `connection` forwards to `activeConnection`.
     var connection: ServerConnection { activeConnection }
 
@@ -162,7 +166,32 @@ final class ConnectionCoordinator {
     // MARK: - Multi-Server Refresh
 
     /// Refresh workspace + session data from ALL paired servers.
+    ///
+    /// Uses single-flight coalescing: concurrent callers share one refresh
+    /// cycle. Prevents the double-refresh race between `OppiApp.reconnectOnLaunch`
+    /// and `WorkspaceHomeView.task` from overwriting freshness state.
     func refreshAllServers() async {
+        if let inFlight = refreshAllTask {
+            await inFlight.value
+            return
+        }
+
+        let task = Task { @MainActor in
+            await _refreshAllServersImpl()
+        }
+        refreshAllTask = task
+        await task.value
+        refreshAllTask = nil
+    }
+
+    private func _refreshAllServersImpl() async {
+        // Ensure connections exist for all paired servers before iterating.
+        // Handles the race where this runs before connectAllStreams() during
+        // startup (WorkspaceHomeView .task vs OppiApp .task).
+        for server in serverStore.servers {
+            ensureConnection(for: server)
+        }
+
         for (serverId, conn) in connections {
             guard let api = conn.apiClient else { continue }
 
@@ -177,10 +206,6 @@ final class ConnectionCoordinator {
                 await refreshServerSessions(serverId: serverId, conn: conn, api: api)
             }
         }
-
-        // Also load workspace catalogs from any servers not yet connected
-        let servers = serverStore.servers
-        await activeConnection.workspaceStore.loadAll(servers: servers)
     }
 
     /// Refresh non-focused servers (called on foreground recovery).

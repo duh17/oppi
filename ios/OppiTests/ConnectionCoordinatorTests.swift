@@ -248,6 +248,45 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.connections["sha256:pool-b"] != nil)
     }
 
+    // MARK: - refreshAllServers ensures connections
+
+    @Test func refreshAllServersCreatesConnectionsBeforeIterating() async {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:refresh-a", name: "A")
+        let serverB = makeServer(id: "sha256:refresh-b", name: "B")
+
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.serverStore.addOrUpdate(serverB)
+
+        // No connections exist yet (we skip switchToServer/connectAllStreams)
+        #expect(coordinator.connections.isEmpty)
+
+        // refreshAllServers should create connections via ensureConnection
+        await coordinator.refreshAllServers()
+
+        #expect(coordinator.connections.count == 2)
+        #expect(coordinator.connections["sha256:refresh-a"] != nil)
+        #expect(coordinator.connections["sha256:refresh-b"] != nil)
+    }
+
+    @Test func refreshAllServersCoalescesConcurrentCalls() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:coalesce", name: "Studio")
+
+        coordinator.serverStore.addOrUpdate(server)
+        coordinator.ensureConnection(for: server)
+
+        // Launch two concurrent refreshes
+        async let refresh1: Void = coordinator.refreshAllServers()
+        async let refresh2: Void = coordinator.refreshAllServers()
+
+        // Both should complete without crash or deadlock
+        _ = await (refresh1, refresh2)
+
+        // Connection should still exist and be valid
+        #expect(coordinator.connections["sha256:coalesce"] != nil)
+    }
+
     // MARK: - Workspace Store Order
 
     @Test func workspaceServerOrderMatchesServerStore() {
