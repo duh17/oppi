@@ -158,6 +158,15 @@ export interface PolicyConfig {
   heuristics?: PolicyHeuristics;
 }
 
+export type TlsMode = "auto" | "tailscale" | "cloudflare" | "self-signed" | "manual" | "disabled";
+
+export interface TlsConfig {
+  mode: TlsMode;
+  certPath?: string;
+  keyPath?: string;
+  caPath?: string;
+}
+
 export interface ServerConfig {
   configVersion?: number;
   port: number;
@@ -177,6 +186,9 @@ export interface ServerConfig {
   runtimePathEntries?: string[];
   /** Additional runtime environment variables. */
   runtimeEnv?: Record<string, string>;
+
+  /** Transport security (HTTPS/WSS). */
+  tls?: TlsConfig;
 
   /** Declarative global policy config (guardrails + permissions). */
   policy?: PolicyConfig;
@@ -557,12 +569,16 @@ export interface PairDeviceRequest {
   deviceName?: string;
 }
 
+export type InviteScheme = "http" | "https";
+
 export interface InviteData {
   host: string;
   port: number;
+  scheme?: InviteScheme;
   token: string;
   pairingToken?: string;
   name: string;
+  tlsCertFingerprint?: string;
 }
 
 export interface InvitePayloadV3 extends InviteData {

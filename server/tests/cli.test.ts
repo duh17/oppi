@@ -6,12 +6,19 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const CLI = resolve(__dirname, "../dist/cli.js");
 let dataDir: string;
+
+let hasOpenSSL = true;
+try {
+  execSync("openssl version", { stdio: "ignore" });
+} catch {
+  hasOpenSSL = false;
+}
 
 function run(args: string[], env?: Record<string, string>): { stdout: string; exitCode: number } {
   try {
@@ -177,5 +184,144 @@ describe("oppi pair", () => {
     expect(exitCode).toBe(0);
     // Should contain QR blocks or URL
     expect(stdout.length).toBeGreaterThan(50);
+  });
+});
+
+describe.skipIf(!hasOpenSSL)("oppi pair (tls self-signed)", () => {
+  it("embeds https scheme + cert fingerprint in invite payload", () => {
+    const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tls-"));
+
+    try {
+      const setResult = run(["config", "set", "tls", '{"mode":"self-signed"}'], {
+        OPPI_DATA_DIR: tlsDataDir,
+      });
+      expect(setResult.exitCode).toBe(0);
+
+      const { stdout, exitCode } = run(["pair", "--host", "127.0.0.1"], {
+        OPPI_DATA_DIR: tlsDataDir,
+      });
+      expect(exitCode).toBe(0);
+
+      const stripped = stdout.replace(/\x1b\[[0-9;]*m/g, "");
+      const link = stripped.match(/oppi:\/\/connect\?[^\s]+/);
+      expect(link).not.toBeNull();
+
+      const url = new URL(link![0]);
+      const invite = url.searchParams.get("invite");
+      expect(invite).toBeTruthy();
+
+      const payload = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+        scheme?: string;
+        tlsCertFingerprint?: string;
+      };
+
+      expect(payload.scheme).toBe("https");
+      expect(payload.tlsCertFingerprint?.startsWith("sha256:")).toBe(true);
+    } finally {
+      rmSync(tlsDataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("oppi pair (tls tailscale)", () => {
+  it("embeds https scheme + tailscale hostname without cert pin", () => {
+    const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tailscale-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-cli-fake-tailscale-"));
+    const fakeTailscalePath = join(fakeBinDir, "tailscale");
+
+    writeFileSync(
+      fakeTailscalePath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+cmd="\${1:-}"
+if [[ -z "\$cmd" ]]; then
+  exit 1
+fi
+shift || true
+
+case "\$cmd" in
+  status)
+    if [[ "\${1:-}" == "--json" ]]; then
+      echo '{"Self":{"DNSName":"mac-studio.taila3ebc.ts.net."}}'
+      exit 0
+    fi
+    ;;
+  cert)
+    cert_file=""
+    key_file=""
+    host=""
+
+    while [[ \$# -gt 0 ]]; do
+      case "\$1" in
+        --cert-file)
+          cert_file="\$2"
+          shift 2
+          ;;
+        --key-file)
+          key_file="\$2"
+          shift 2
+          ;;
+        --min-validity)
+          shift 2
+          ;;
+        *)
+          host="\$1"
+          shift
+          ;;
+      esac
+    done
+
+    if [[ -z "\$cert_file" || -z "\$key_file" || -z "\$host" ]]; then
+      echo "missing cert args" >&2
+      exit 1
+    fi
+
+    mkdir -p "\$(dirname "\$cert_file")" "\$(dirname "\$key_file")"
+    printf 'dummy cert for %s\n' "\$host" > "\$cert_file"
+    printf 'dummy key for %s\n' "\$host" > "\$key_file"
+    exit 0
+    ;;
+esac
+
+echo "unsupported args: \$cmd \$*" >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    chmodSync(fakeTailscalePath, 0o755);
+
+    const env = {
+      OPPI_DATA_DIR: tlsDataDir,
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+    };
+
+    try {
+      const setResult = run(["config", "set", "tls", '{"mode":"tailscale"}'], env);
+      expect(setResult.exitCode).toBe(0);
+
+      const { stdout, exitCode } = run(["pair"], env);
+      expect(exitCode).toBe(0);
+
+      const stripped = stdout.replace(/\x1b\[[0-9;]*m/g, "");
+      const link = stripped.match(/oppi:\/\/connect\?[^\s]+/);
+      expect(link).not.toBeNull();
+
+      const url = new URL(link![0]);
+      const invite = url.searchParams.get("invite");
+      expect(invite).toBeTruthy();
+
+      const payload = JSON.parse(Buffer.from(invite!, "base64url").toString("utf-8")) as {
+        host?: string;
+        scheme?: string;
+        tlsCertFingerprint?: string;
+      };
+
+      expect(payload.host).toBe("mac-studio.taila3ebc.ts.net");
+      expect(payload.scheme).toBe("https");
+      expect(payload.tlsCertFingerprint).toBeUndefined();
+    } finally {
+      rmSync(tlsDataDir, { recursive: true, force: true });
+      rmSync(fakeBinDir, { recursive: true, force: true });
+    }
   });
 });

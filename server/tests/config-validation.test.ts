@@ -60,6 +60,50 @@ describe("Storage config validation", () => {
     expect(result.errors.some((e) => e.includes("config.approvalTimeoutMs: expected >= 0"))).toBe(true);
   });
 
+  it("accepts tls self-signed config", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      tls: {
+        mode: "self-signed",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.tls?.mode).toBe("self-signed");
+  });
+
+  it("accepts tls tailscale config without explicit paths", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      tls: {
+        mode: "tailscale",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.tls?.mode).toBe("tailscale");
+  });
+
+  it("requires certPath/keyPath for tls manual mode", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      tls: {
+        mode: "manual",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("config.tls.certPath: required when mode=manual"))).toBe(
+      true,
+    );
+    expect(result.errors.some((e) => e.includes("config.tls.keyPath: required when mode=manual"))).toBe(
+      true,
+    );
+  });
+
   it("backfills defaults for minimal config in non-strict normalization", () => {
     const minimalConfig = {
       port: 7749,

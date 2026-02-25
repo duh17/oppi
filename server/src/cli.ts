@@ -24,6 +24,14 @@ import { Server } from "./server.js";
 import { applyHostEnv, resolveExecutableOnPath, resolveHostEnv } from "./host-env.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import type { APNsConfig } from "./push.js";
+import {
+  isTailscaleHostname,
+  prepareTlsForServer,
+  readCertificateExpiryMs,
+  readCertificateFingerprint,
+  resolveTlsConfig,
+  tlsSchemeForConfig,
+} from "./tls.js";
 import type { InviteData, InvitePayloadV3, ServerConfig } from "./types.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
@@ -117,8 +125,13 @@ function getLocalIp(): string | null {
   return null;
 }
 
-function resolveInviteHost(hostOverride?: string): string | null {
+function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
+
+  if (config.tls?.mode === "tailscale") {
+    return getTailscaleHostname();
+  }
+
   // Prefer local network; fall back to Tailscale if no LAN host found.
   return getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
 }
@@ -198,17 +211,19 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   await server.start();
 
   console.log("");
+  const scheme = server.scheme;
+  const displayPort = server.port;
   if (localHostname) {
-    console.log(`  Local:     ${c.cyan(localHostname)}:${config.port}`);
+    console.log(`  Local:     ${c.cyan(`${scheme}://${localHostname}:${displayPort}`)}`);
   }
   if (localIp) {
-    console.log(`  LAN IP:    ${c.dim(localIp)}:${config.port}`);
+    console.log(`  LAN IP:    ${c.dim(`${scheme}://${localIp}:${displayPort}`)}`);
   }
   if (tailscaleHostname) {
-    console.log(`  Tailscale: ${c.dim(tailscaleHostname)}:${config.port}`);
+    console.log(`  Tailscale: ${c.dim(`${scheme}://${tailscaleHostname}:${displayPort}`)}`);
   }
   if (tailscaleIp) {
-    console.log(`  Tail IP:   ${c.dim(tailscaleIp)}:${config.port}`);
+    console.log(`  Tail IP:   ${c.dim(`${scheme}://${tailscaleIp}:${displayPort}`)}`);
   }
   console.log(`  Data:      ${c.dim(storage.getDataDir())}`);
   console.log("");
@@ -242,11 +257,22 @@ function showPairingQR(
   const config = storage.getConfig();
   storage.ensurePaired();
   const pairingToken = storage.issuePairingToken(90_000);
-  const inviteHost = resolveInviteHost(hostOverride);
+  const inviteHost = resolveInviteHost(config, hostOverride);
 
   if (!inviteHost) {
+    const hint =
+      config.tls?.mode === "tailscale"
+        ? "  Pass --host <machine>.<tailnet>.ts.net and ensure Tailscale is connected"
+        : "  Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
     console.log(c.red("  Error: Could not determine pairing host"));
-    console.log(c.dim("  Pass --host <hostname-or-ip>, e.g. --host my-mac.local"));
+    console.log(c.dim(hint));
+    console.log("");
+    return false;
+  }
+
+  if (config.tls?.mode === "tailscale" && !isTailscaleHostname(inviteHost)) {
+    console.log(c.red("  Error: tailscale TLS mode requires a *.ts.net pairing host"));
+    console.log(c.dim("  Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale"));
     console.log("");
     return false;
   }
@@ -257,13 +283,35 @@ function showPairingQR(
     console.log(c.dim(`  (auto-detected host: ${inviteHost})`));
   }
 
+  let inviteScheme: "http" | "https" = "http";
+  let tlsCertFingerprint: string | undefined;
+
+  try {
+    const tls = prepareTlsForServer(config, storage.getDataDir(), {
+      additionalHosts: [inviteHost, config.host],
+      ensureSelfSigned: true,
+    });
+
+    inviteScheme = tls.enabled ? "https" : "http";
+    if (tls.enabled && tls.mode === "self-signed" && tls.certPath) {
+      tlsCertFingerprint = readCertificateFingerprint(tls.certPath);
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(c.red(`  Error: TLS setup failed — ${message}`));
+    console.log("");
+    return false;
+  }
+
   // Build unsigned v3 pairing payload.
   const inviteData: InviteData = {
     host: inviteHost,
     port: config.port,
+    scheme: inviteScheme,
     token: "",
     pairingToken,
     name: requestedName?.trim() || shortHostLabel(inviteHost),
+    tlsCertFingerprint,
   };
 
   const identity = ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
@@ -272,9 +320,11 @@ function showPairingQR(
     v: 3,
     host: inviteData.host,
     port: inviteData.port,
+    scheme: inviteData.scheme,
     token: inviteData.token,
     pairingToken: inviteData.pairingToken,
     name: inviteData.name,
+    tlsCertFingerprint: inviteData.tlsCertFingerprint,
     fingerprint: identity.fingerprint,
   };
 
@@ -285,6 +335,10 @@ function showPairingQR(
   }).toString()}`;
 
   console.log(`  📱 Pair with ${c.bold(shortHostLabel(inviteHost))}`);
+  console.log(c.dim(`  Transport: ${inviteScheme.toUpperCase()} (${inviteHost}:${config.port})`));
+  if (tlsCertFingerprint) {
+    console.log(c.dim(`  Cert pin:  ${tlsCertFingerprint}`));
+  }
   console.log("");
   console.log("  Scan this QR code in Oppi:");
   console.log("");
@@ -336,7 +390,11 @@ function cmdStatus(storage: Storage): void {
 
   console.log("  " + c.bold("Server Configuration"));
   console.log("");
+  const tlsMode = config.tls?.mode ?? "disabled";
+  const transportScheme = tlsSchemeForConfig(config);
+
   console.log(`  Port:       ${config.port}`);
+  console.log(`  Transport:  ${transportScheme.toUpperCase()} (${tlsMode})`);
   console.log(`  Data:       ${c.dim(storage.getDataDir())}`);
   console.log("");
 
@@ -445,6 +503,96 @@ function cmdDoctor(storage: Storage): void {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });
   } else {
     checks.push({ level: "warn", message: "pi executable not found in runtime PATH" });
+  }
+
+  const tls = resolveTlsConfig(config, storage.getDataDir());
+  if (!tls.enabled) {
+    checks.push({
+      level: loopback ? "pass" : "warn",
+      message: loopback
+        ? "TLS disabled (loopback-only bind)"
+        : `TLS disabled while binding to ${config.host}`,
+    });
+  } else {
+    checks.push({ level: "pass", message: `TLS mode configured (${tls.mode})` });
+
+    if (tls.mode === "tailscale") {
+      const tailscaleHostname = getTailscaleHostname();
+      if (tailscaleHostname) {
+        checks.push({
+          level: "pass",
+          message: `Tailscale hostname detected (${tailscaleHostname})`,
+        });
+      } else {
+        checks.push({
+          level: "fail",
+          message: "Tailscale hostname not detected (tailscale status --json)",
+        });
+      }
+    }
+
+    if (!tls.certPath) {
+      checks.push({ level: "fail", message: "tls.certPath is not configured" });
+    } else if (!existsSync(tls.certPath)) {
+      checks.push({ level: "fail", message: `TLS cert missing: ${tls.certPath}` });
+    } else {
+      checks.push({ level: "pass", message: `TLS cert found (${tls.certPath})` });
+
+      try {
+        const expiresAt = readCertificateExpiryMs(tls.certPath);
+        const msRemaining = expiresAt - Date.now();
+        const daysRemaining = Math.floor(msRemaining / (24 * 60 * 60 * 1000));
+
+        if (msRemaining <= 0) {
+          checks.push({ level: "fail", message: "TLS certificate is expired" });
+        } else if (daysRemaining <= 14) {
+          checks.push({
+            level: "warn",
+            message: `TLS certificate expires in ${daysRemaining} day(s)`,
+          });
+        } else {
+          checks.push({
+            level: "pass",
+            message: `TLS certificate valid for ${daysRemaining} more day(s)`,
+          });
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        checks.push({
+          level: "warn",
+          message: `could not read TLS certificate expiry (${message})`,
+        });
+      }
+
+      try {
+        const fingerprint = readCertificateFingerprint(tls.certPath);
+        checks.push({ level: "pass", message: `TLS cert fingerprint ${fingerprint}` });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        checks.push({ level: "warn", message: `could not read TLS cert fingerprint (${message})` });
+      }
+    }
+
+    if (!tls.keyPath) {
+      checks.push({ level: "fail", message: "tls.keyPath is not configured" });
+    } else if (!existsSync(tls.keyPath)) {
+      checks.push({ level: "fail", message: `TLS key missing: ${tls.keyPath}` });
+    } else {
+      checks.push({ level: "pass", message: `TLS key found (${tls.keyPath})` });
+    }
+
+    if (tls.mode === "self-signed") {
+      if (!tls.caPath) {
+        checks.push({
+          level: "fail",
+          message: "tls.caPath is not configured for self-signed mode",
+        });
+      } else if (!existsSync(tls.caPath)) {
+        checks.push({ level: "fail", message: `TLS CA missing: ${tls.caPath}` });
+      } else {
+        checks.push({ level: "pass", message: `TLS CA found (${tls.caPath})` });
+      }
+    }
   }
 
   let criticalFailures = 0;
@@ -618,6 +766,7 @@ const SETTABLE_KEYS: Record<
   approvalTimeoutMs: { type: "number", desc: "Permission approval timeout (ms)" },
   runtimePathEntries: { type: "json", desc: "Runtime PATH entries JSON array" },
   runtimeEnv: { type: "json", desc: "Runtime env JSON object" },
+  tls: { type: "json", desc: "TLS config JSON (mode/certPath/keyPath/caPath)" },
 };
 
 function coerceValue(raw: string, type: "number" | "string" | "boolean" | "json"): unknown {
@@ -806,6 +955,7 @@ function cmdHelp(): void {
   console.log(`    ${c.dim("oppi serve")}`);
   console.log(`    ${c.dim('oppi config set defaultModel "openai-codex/gpt-5.3-codex"')}`);
   console.log(`    ${c.dim("oppi config set port 8080")}`);
+  console.log(`    ${c.dim('oppi config set tls \'{"mode":"self-signed"}\'')}`);
   console.log("");
 }
 

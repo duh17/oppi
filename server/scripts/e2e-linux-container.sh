@@ -3,6 +3,7 @@ set -euo pipefail
 
 RUNTIME="${CONTAINER_RUNTIME:-docker}"
 MODE="${E2E_MODE:-smoke}" # smoke | full
+E2E_TLS="${E2E_TLS:-0}"   # 0 | 1
 PORT="${PORT:-17749}"
 TOKEN="${TOKEN:-oppi-e2e-token}"
 
@@ -42,6 +43,11 @@ if [[ "$MODE" != "smoke" && "$MODE" != "full" ]]; then
   exit 1
 fi
 
+if [[ "$E2E_TLS" != "0" && "$E2E_TLS" != "1" ]]; then
+  echo "[e2e] Invalid E2E_TLS '$E2E_TLS' (expected 0 or 1)"
+  exit 1
+fi
+
 if ! command -v "$RUNTIME" >/dev/null 2>&1; then
   echo "[e2e] Container runtime '$RUNTIME' not found"
   exit 1
@@ -49,6 +55,19 @@ fi
 
 mkdir -p "$DATA_DIR"
 
+if [[ "$E2E_TLS" == "1" ]]; then
+cat > "$DATA_DIR/config.json" <<JSON
+{
+  "host": "0.0.0.0",
+  "port": $PORT,
+  "token": "$TOKEN",
+  "defaultModel": "openai-codex/gpt-5.3-codex",
+  "tls": {
+    "mode": "self-signed"
+  }
+}
+JSON
+else
 cat > "$DATA_DIR/config.json" <<JSON
 {
   "host": "0.0.0.0",
@@ -57,6 +76,7 @@ cat > "$DATA_DIR/config.json" <<JSON
   "defaultModel": "openai-codex/gpt-5.3-codex"
 }
 JSON
+fi
 
 cat > "$FAKE_PI" <<'SH'
 #!/usr/bin/env bash
@@ -152,24 +172,135 @@ fi
 
 DOCKER_ARGS+=( node:22-bookworm bash -lc /e2e/container-entry.sh )
 
-echo "[e2e] Starting linux containerized server on port $PORT (mode=$MODE)"
+echo "[e2e] Starting linux containerized server on port $PORT (mode=$MODE tls=$E2E_TLS)"
 CONTAINER_ID="$($RUNTIME "${DOCKER_ARGS[@]}")"
 
-echo "[e2e] Waiting for /health"
+SCHEME="http"
+CURL_TLS_ARGS=()
+CA_CERT_PATH=""
+if [[ "$E2E_TLS" == "1" ]]; then
+  SCHEME="https"
+  CA_CERT_PATH="$DATA_DIR/tls/self-signed/ca.crt"
+  echo "[e2e] Waiting for self-signed CA at $CA_CERT_PATH"
+  for _ in {1..90}; do
+    if [[ -f "$CA_CERT_PATH" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ ! -f "$CA_CERT_PATH" ]]; then
+    echo "[e2e] Self-signed CA was not generated in time"
+    exit 1
+  fi
+
+  CURL_TLS_ARGS=(--cacert "$CA_CERT_PATH")
+fi
+
+HEALTH_URL="$SCHEME://127.0.0.1:$PORT/health"
+
+echo "[e2e] Waiting for /health via $SCHEME"
 for _ in {1..90}; do
-  if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+  if curl -fsS "${CURL_TLS_ARGS[@]}" "$HEALTH_URL" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-if ! curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+if ! curl -fsS "${CURL_TLS_ARGS[@]}" "$HEALTH_URL" >/dev/null 2>&1; then
   echo "[e2e] Server did not become healthy in time"
   exit 1
 fi
 
+if [[ "$E2E_TLS" == "1" ]]; then
+  echo "[e2e] Verifying WSS upgrade over TLS"
+  PORT="$PORT" AUTH_TOKEN="$TOKEN" CA_CERT_PATH="$CA_CERT_PATH" node <<'NODE'
+const fs = require("node:fs");
+const tls = require("node:tls");
+
+const port = Number(process.env.PORT);
+const token = process.env.AUTH_TOKEN;
+const caPath = process.env.CA_CERT_PATH;
+
+if (!Number.isFinite(port) || !token || !caPath) {
+  throw new Error("missing PORT/AUTH_TOKEN/CA_CERT_PATH for WSS check");
+}
+
+const ca = fs.readFileSync(caPath, "utf-8");
+
+const request = [
+  "GET /stream HTTP/1.1",
+  `Host: 127.0.0.1:${port}`,
+  "Upgrade: websocket",
+  "Connection: Upgrade",
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+  "Sec-WebSocket-Version: 13",
+  `Authorization: Bearer ${token}`,
+  "",
+  "",
+].join("\r\n");
+
+async function verifyWssUpgrade() {
+  await new Promise((resolve, reject) => {
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port,
+      ca,
+      servername: "localhost",
+    });
+
+    socket.setEncoding("utf8");
+
+    let response = "";
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("timed out waiting for WSS upgrade response"));
+    }, 7000);
+
+    socket.on("secureConnect", () => {
+      socket.write(request);
+    });
+
+    socket.on("data", (chunk) => {
+      response += chunk;
+      if (!response.includes("\r\n\r\n")) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      const statusLine = response.split("\r\n", 1)[0] || "";
+      if (!statusLine.includes("101")) {
+        reject(new Error(`expected 101 Switching Protocols, got: ${statusLine}`));
+      } else {
+        resolve();
+      }
+      socket.destroy();
+    });
+
+    socket.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+verifyWssUpgrade()
+  .then(() => {
+    console.log("[e2e] WSS upgrade check passed");
+  })
+  .catch((err) => {
+    console.error("[e2e] WSS upgrade check failed:", err.message);
+    process.exit(1);
+  });
+NODE
+fi
+
 echo "[e2e] Running API smoke checks"
-BASE_URL="http://127.0.0.1:$PORT" AUTH_TOKEN="$TOKEN" node <<'NODE'
+if [[ "$E2E_TLS" == "1" ]]; then
+  export NODE_EXTRA_CA_CERTS="$CA_CERT_PATH"
+fi
+
+BASE_URL="$SCHEME://127.0.0.1:$PORT" AUTH_TOKEN="$TOKEN" node <<'NODE'
 const base = process.env.BASE_URL;
 const token = process.env.AUTH_TOKEN;
 
@@ -234,5 +365,9 @@ function assert(condition, message) {
   process.exit(1);
 });
 NODE
+
+if [[ "$E2E_TLS" == "1" ]]; then
+  unset NODE_EXTRA_CA_CERTS
+fi
 
 echo "[e2e] Done"

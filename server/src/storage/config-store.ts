@@ -49,6 +49,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
+    tls: { mode: "disabled" },
     policy: defaultPolicy(),
   };
 }
@@ -88,6 +89,7 @@ function normalizeConfig(
     "permissionGate",
     "runtimePathEntries",
     "runtimeEnv",
+    "tls",
     "policy",
 
     "token",
@@ -242,6 +244,84 @@ function normalizeConfig(
     config.runtimeEnv = runtimeEnv;
   } else {
     errors.push("config.runtimeEnv: expected object with string values");
+    changed = true;
+  }
+
+  const parseTlsConfig = (
+    value: unknown,
+    path: string,
+  ): NonNullable<ServerConfig["tls"]> | null => {
+    if (!isRecord(value)) {
+      errors.push(`${path}: expected object`);
+      changed = true;
+      return null;
+    }
+
+    const allowed = new Set(["mode", "certPath", "keyPath", "caPath"]);
+    if (strictUnknown) {
+      for (const key of Object.keys(value)) {
+        if (!allowed.has(key)) {
+          errors.push(`${path}.${key}: unknown key`);
+        }
+      }
+    }
+
+    const validModes = new Set([
+      "auto",
+      "tailscale",
+      "cloudflare",
+      "self-signed",
+      "manual",
+      "disabled",
+    ]);
+
+    if (typeof value.mode !== "string" || !validModes.has(value.mode)) {
+      errors.push(
+        `${path}.mode: expected one of auto|tailscale|cloudflare|self-signed|manual|disabled`,
+      );
+      changed = true;
+      return null;
+    }
+
+    const tls: NonNullable<ServerConfig["tls"]> = {
+      mode: value.mode as NonNullable<ServerConfig["tls"]>["mode"],
+    };
+
+    const readOptionalString = (key: "certPath" | "keyPath" | "caPath"): void => {
+      if (!(key in value)) return;
+      const rawValue = value[key];
+      if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+        errors.push(`${path}.${key}: expected non-empty string`);
+        changed = true;
+        return;
+      }
+      tls[key] = rawValue;
+    };
+
+    readOptionalString("certPath");
+    readOptionalString("keyPath");
+    readOptionalString("caPath");
+
+    if (tls.mode === "manual") {
+      if (!tls.certPath) {
+        errors.push(`${path}.certPath: required when mode=manual`);
+        changed = true;
+      }
+      if (!tls.keyPath) {
+        errors.push(`${path}.keyPath: required when mode=manual`);
+        changed = true;
+      }
+    }
+
+    return tls;
+  };
+
+  if ("tls" in obj) {
+    const parsed = parseTlsConfig(obj.tls, "config.tls");
+    if (parsed) {
+      config.tls = parsed;
+    }
+  } else {
     changed = true;
   }
 
