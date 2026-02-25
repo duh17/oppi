@@ -186,6 +186,140 @@ struct ToolTimelineRowModeDispatchTests {
         _ = fittedSize(for: view, width: 360)
     }
 
+    // Regression: cell reuse from markdown mode to diff mode left stale
+    // markdown content competing with the diff label for the shared
+    // contentLayoutGuide height, causing Auto Layout to zero out the label.
+    //
+    // The invariant: when switching to label-based modes (diff, code, text),
+    // the markdown view must have its content cleared so it no longer
+    // contributes conflicting intrinsic size to the shared content guide.
+    @Test func cellReuseFromMarkdownToDiffClearsStaleMarkdownContent() throws {
+        // Phase 1: configure as expanded markdown (read .md tool)
+        let markdownConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Big Header\n\nLots of **markdown** content.\n\n- Item A\n- Item B\n- Item C"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: markdownConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        // Verify markdown view has content after phase 1
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(
+            markdownStack.arrangedSubviews.count > 0,
+            "Markdown view should have content after markdown config"
+        )
+
+        // Phase 2: reconfigure same view as expanded diff (edit tool — simulates cell reuse)
+        let diffConfig = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .context, text: "import Foundation"),
+                DiffLine(kind: .removed, text: "let old = false"),
+                DiffLine(kind: .removed, text: "let stale = true"),
+                DiffLine(kind: .added, text: "let new = true"),
+                DiffLine(kind: .context, text: "// end"),
+            ], path: "Core/Model.swift"),
+            isExpanded: true
+        )
+
+        view.configuration = diffConfig
+        _ = fittedSize(for: view, width: 360)
+
+        // The diff label must have attributed text
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let attributedText = try #require(expandedLabel.attributedText)
+        #expect(attributedText.length > 0)
+        #expect(attributedText.string.contains("let new = true"))
+
+        // CRITICAL: stale markdown content must be cleared to prevent
+        // constraint conflicts with the diff label in the shared
+        // contentLayoutGuide. Both views pin to all four edges at
+        // required priority — if they report different intrinsic heights,
+        // Auto Layout breaks one constraint, potentially zeroing the label.
+        #expect(
+            markdownStack.arrangedSubviews.isEmpty,
+            "Stale markdown content must be cleared when switching to diff mode"
+        )
+    }
+
+    // Same invariant for markdown → code mode (read .md → read .swift reuse)
+    @Test func cellReuseFromMarkdownToCodeClearsStaleMarkdownContent() throws {
+        let markdownConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Title\n\nBody paragraph."),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: markdownConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(markdownStack.arrangedSubviews.count > 0)
+
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: "struct App {\n    var name: String\n}",
+                language: .swift,
+                startLine: 1,
+                filePath: "App.swift"
+            ),
+            isExpanded: true
+        )
+
+        view.configuration = codeConfig
+        _ = fittedSize(for: view, width: 360)
+
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let attributedText = try #require(expandedLabel.attributedText)
+        #expect(attributedText.string.contains("struct App"))
+
+        #expect(
+            markdownStack.arrangedSubviews.isEmpty,
+            "Stale markdown content must be cleared when switching to code mode"
+        )
+    }
+
+    // Verify the hosted view path (todo, plot) also clears stale markdown
+    @Test func cellReuseFromMarkdownToHostedViewClearsStaleMarkdownContent() throws {
+        let markdownConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: "# Docs\n\nExplanation here."),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: markdownConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let markdownView = try #require(
+            privateView(named: "expandedMarkdownView", in: view) as? AssistantMarkdownContentView
+        )
+        let markdownStack = try #require(markdownStackView(in: markdownView))
+        #expect(markdownStack.arrangedSubviews.count > 0)
+
+        let todoConfig = makeToolConfiguration(
+            toolNamePrefix: "todo",
+            expandedContent: .todoCard(output: "{\"id\":\"TODO-1\",\"title\":\"Test\",\"status\":\"open\"}"),
+            isExpanded: true
+        )
+
+        view.configuration = todoConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(
+            markdownStack.arrangedSubviews.isEmpty,
+            "Stale markdown content must be cleared when switching to hosted view mode"
+        )
+    }
+
     @Test func expandedDiffInitialSizingBeforeLayoutPassStaysCompact() {
         let config = makeToolConfiguration(
             toolNamePrefix: "edit",
@@ -222,6 +356,208 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(firstPassSize.height.isFinite)
         #expect(firstPassSize.height > 0)
         #expect(firstPassSize.height < 300, "Initial code sizing should stay compact; got \(firstPassSize.height)")
+    }
+
+    // MARK: - Cell Reuse: remember / recall constraint bugs
+
+    @Test func cellReuseFromCodeToRememberMarkdownResetsLabelWidthPriority() throws {
+        // Bug: cell previously in code mode has expandedLabelWidthConstraint at
+        // .required priority. Reusing for remember (markdown) hides the label
+        // but leaves the constraint at .required, forcing contentLayoutGuide
+        // wider than intended and causing scroll/layout problems.
+        let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: longCodeLine,
+                language: .swift,
+                startLine: 1,
+                filePath: "LongFile.swift"
+            ),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+        #expect(widthConstraint.priority == .required, "Code mode should set required width")
+        #expect(widthConstraint.constant > 1, "Code mode should have positive width delta")
+
+        // Now reuse the cell for remember (markdown content)
+        let rememberConfig = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "# Discovery\n\nSome important text"),
+            isExpanded: true
+        )
+        view.configuration = rememberConfig
+        _ = fittedSize(for: view, width: 360)
+
+        // After reuse, the label is hidden in markdown mode. Its width
+        // constraint must drop below .required to prevent it from
+        // dominating contentLayoutGuide width.
+        #expect(
+            widthConstraint.priority < .required,
+            "After reuse to markdown, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
+        )
+    }
+
+    @Test func cellReuseFromDiffToRecallTextResetsLabelWidthPriority() throws {
+        // Similar to above but diff → recall (text mode)
+        let longDiffLine = String(repeating: "abcdefghijklmnopqrstuvwxyz", count: 20)
+        let diffConfig = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: longDiffLine),
+                DiffLine(kind: .added, text: longDiffLine + "-updated"),
+            ], path: "File.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: diffConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+        #expect(widthConstraint.priority == .required, "Diff mode should set required width")
+
+        // Reuse for recall (text mode)
+        let recallConfig = makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: .text(text: "5 matches found\n\nResult 1: architecture doc", language: nil),
+            isExpanded: true
+        )
+        view.configuration = recallConfig
+        _ = fittedSize(for: view, width: 360)
+
+        // Text mode uses .defaultHigh priority for wrapped layout
+        #expect(
+            widthConstraint.priority < .required,
+            "After reuse to text, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
+        )
+    }
+
+    @Test func cellReuseFromCodeToRememberMarkdownExpandedContainerIsVisible() throws {
+        // Ensure the expanded container is actually visible after reuse
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
+        #expect(!expandedContainer.isHidden)
+
+        // Reuse for remember (markdown)
+        let rememberConfig = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "Important discovery"),
+            isExpanded: true
+        )
+        view.configuration = rememberConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(!expandedContainer.isHidden, "Expanded container should remain visible for remember")
+
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
+        #expect(!markdownView.isHidden, "Markdown view should be visible for remember")
+
+        let label = try #require(privateView(named: "expandedLabel", in: view))
+        #expect(label.isHidden, "Label should be hidden in markdown mode")
+    }
+
+    @Test func cellReuseFromCodeToHostedTodoResetsLabelWidthPriority() throws {
+        // Code → todo (hosted view) also needs label width reset
+        let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: longCodeLine, language: .swift, startLine: 1, filePath: "L.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+        #expect(widthConstraint.priority == .required)
+
+        // Reuse for todo (hosted view)
+        let todoConfig = makeToolConfiguration(
+            toolNamePrefix: "todo",
+            expandedContent: .todoCard(output: "{\"id\":\"TODO-1\",\"title\":\"Test\"}"),
+            isExpanded: true
+        )
+        view.configuration = todoConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(
+            widthConstraint.priority < .required,
+            "After reuse to hosted view, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
+        )
+    }
+
+    @Test func expandedMarkdownDoesNotEnableHorizontalScroll() throws {
+        // When expanded in markdown mode, the scroll view should NOT allow
+        // horizontal scrolling. A stale .required width constraint on the
+        // hidden label can force content wider and enable horizontal scroll.
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: String(repeating: "x", count: 500),
+                language: .swift, startLine: 1, filePath: "F.swift"
+            ),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let scrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        #expect(scrollView.alwaysBounceHorizontal)
+
+        // Reuse for remember markdown
+        let mdConfig = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "Short note"),
+            isExpanded: true
+        )
+        view.configuration = mdConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(!scrollView.alwaysBounceHorizontal, "Markdown mode should not bounce horizontally")
+        #expect(!scrollView.showsHorizontalScrollIndicator, "Markdown mode should not show horizontal indicator")
+    }
+
+    @Test func cellReuseMarkdownGestureInterceptionDisabledForTextSelection() throws {
+        // remember expanded in markdown mode should disable gesture interception
+        // so users can select text via standard UITextView interactions.
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        // Code mode should have gesture interception enabled
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+
+        // Reuse for remember (markdown — needs text selection)
+        let mdConfig = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "# Note\n\nSome text to select"),
+            isExpanded: true
+        )
+        view.configuration = mdConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(
+            !view.expandedTapCopyGestureEnabledForTesting,
+            "Markdown mode should disable tap-copy gesture for text selection"
+        )
     }
 
     @Test func expandedCodeApplySetsUnwrappedWidthImmediately() throws {
@@ -375,6 +711,14 @@ private func fittedSize(for view: UIView, width: CGFloat) -> CGSize {
         withHorizontalFittingPriority: .required,
         verticalFittingPriority: .fittingSizeLevel
     )
+}
+
+/// Extract the internal stackView from AssistantMarkdownContentView via Mirror.
+/// Non-empty arrangedSubviews means the markdown view has content that
+/// contributes intrinsic size to the shared contentLayoutGuide.
+@MainActor
+private func markdownStackView(in markdownView: AssistantMarkdownContentView) -> UIStackView? {
+    Mirror(reflecting: markdownView).children.first { $0.label == "stackView" }?.value as? UIStackView
 }
 
 @MainActor

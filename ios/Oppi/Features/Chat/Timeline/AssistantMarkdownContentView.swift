@@ -82,6 +82,30 @@ final class AssistantMarkdownContentView: UIView {
         ])
     }
 
+    // MARK: - Clear
+
+    /// Remove all rendered content and reset internal state.
+    ///
+    /// Unlike `apply(configuration:)` with empty content, this bypasses the
+    /// equality guard and cache/parse pipeline to guarantee all arranged
+    /// subviews are removed immediately. Used when the markdown view is being
+    /// hidden during cell reuse so its stale intrinsic size doesn't conflict
+    /// with sibling views in the shared contentLayoutGuide.
+    func clearContent() {
+        for task in highlightTasks.values { task.cancel() }
+        highlightTasks.removeAll()
+
+        for view in stackView.arrangedSubviews {
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        textViews.removeAll()
+        codeBlockViews.removeAll()
+        tableViews.removeAll()
+        renderedSegmentSignatures = []
+        currentConfig = nil
+    }
+
     // MARK: - Apply
 
     func apply(configuration config: Configuration) {

@@ -547,6 +547,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContentView = nil
     }
 
+    /// Reset the markdown view so it no longer contributes intrinsic size.
+    ///
+    /// Called when switching away from markdown mode. The markdown view's
+    /// constraints still bind to the scroll view's content layout guide,
+    /// so stale content would conflict with the active view's constraints.
+    /// Uses `clearContent()` instead of `apply(configuration:)` to bypass
+    /// the equality guard and cache pipeline for guaranteed cleanup.
+    private func clearExpandedMarkdownContent() {
+        expandedMarkdownView.clearContent()
+    }
+
     // MARK: - Expanded Content Helpers
 
     /// Prepare for label-based expanded content (diff, code, plain text).
@@ -557,6 +568,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
+        // Clear stale markdown content to prevent constraint conflicts.
+        // All three expanded subviews pin to the same contentLayoutGuide
+        // edges at required priority. If the markdown view retains content
+        // from a previous cell reuse cycle, its intrinsic height conflicts
+        // with the label's, and Auto Layout may zero out the label frame.
+        clearExpandedMarkdownContent()
     }
 
     /// Prepare for markdown expanded content.
@@ -569,6 +586,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = true
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
+        // Reset the label width constraint from code/diff mode (required priority,
+        // large constant) to the default wrapped-text state. The hidden label's
+        // constraints still participate in layout and can force the shared
+        // contentLayoutGuide wider than the markdown view expects, enabling
+        // unintended horizontal scrolling and scroll-gesture conflicts.
+        expandedLabelWidthConstraint?.priority = .defaultHigh
+        expandedLabelWidthConstraint?.constant = -12
     }
 
     /// Prepare for embedded expanded content (UIKit-first, optional SwiftUI fallback).
@@ -580,7 +604,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContainer.isHidden = false
         expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = true
-        updateExpandedLabelWidthIfNeeded()
+        clearExpandedMarkdownContent()
+        // Reset the label width constraint from code/diff mode to prevent
+        // the hidden label from dominating contentLayoutGuide width.
+        expandedLabelWidthConstraint?.priority = .defaultHigh
+        expandedLabelWidthConstraint?.constant = -12
         updateExpandedReadMediaWidthIfNeeded()
         setExpandedContainerGestureInterceptionEnabled(false)
     }
