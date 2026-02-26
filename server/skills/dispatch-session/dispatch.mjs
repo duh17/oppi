@@ -71,7 +71,15 @@ try {
 const token = config.token;
 const port = config.port || 7749;
 const host = "127.0.0.1";
-const baseUrl = `http://${host}:${port}`;
+const tlsMode = config.tls?.mode ?? "disabled";
+const scheme = tlsMode === "disabled" ? "http" : "https";
+const baseUrl = `${scheme}://${host}:${port}`;
+
+// When TLS is enabled, we connect to localhost but the cert is for a different
+// hostname (e.g., *.ts.net). Disable TLS verification for local dispatch.
+if (scheme === "https") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
 
 if (!token) {
   console.error("No token found in oppi config");
@@ -390,8 +398,10 @@ if (!WebSocket) {
 }
 
 await new Promise((resolve, reject) => {
-  const ws = new WebSocket(`ws://${host}:${port}/stream`, {
+  const wsScheme = scheme === "https" ? "wss" : "ws";
+  const ws = new WebSocket(`${wsScheme}://${host}:${port}/stream`, {
     headers: { Authorization: `Bearer ${token}` },
+    rejectUnauthorized: false,
   });
 
   const timeout = setTimeout(() => {
