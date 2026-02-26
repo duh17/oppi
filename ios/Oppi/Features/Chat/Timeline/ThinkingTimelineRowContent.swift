@@ -123,7 +123,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         bubbleView.clipsToBounds = true
 
         brainIcon.translatesAutoresizingMaskIntoConstraints = false
-        brainIcon.image = UIImage(systemName: "brain")
+        brainIcon.image = UIImage(systemName: "sparkle")
         brainIcon.contentMode = .scaleAspectFit
 
         textLabel.translatesAutoresizingMaskIntoConstraints = false
