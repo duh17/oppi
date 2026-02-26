@@ -52,12 +52,7 @@ struct WorkspaceContextBar: View {
                     .frame(maxHeight: 300)
                 }
             }
-            .background(Color.themeBgHighlight.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.themeComment.opacity(0.15), lineWidth: 0.5)
-            )
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
             .padding(.top, 4)
             .padding(.bottom, 2)
