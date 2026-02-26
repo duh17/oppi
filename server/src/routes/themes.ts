@@ -1,57 +1,102 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { convertPiTheme } from "./theme-convert.js";
 
 export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function themesDir(): string {
     return join(ctx.storage.getDataDir(), "themes");
   }
 
-  /** Bundled theme files shipped with the server. */
   function bundledThemesDir(): string {
     return join(import.meta.dirname, "..", "themes");
   }
 
-  /** Scan a directory for theme JSON files. */
-  function scanThemeDir(
-    dir: string,
-  ): Array<{ name: string; filename: string; colorScheme: string }> {
+  function piThemesDir(): string {
+    return join(homedir(), ".pi", "agent", "themes");
+  }
+
+  type ThemeSource = "bundled" | "user" | "pi";
+  type ThemeSummary = {
+    name: string;
+    filename: string;
+    colorScheme: string;
+    source: ThemeSource;
+  };
+
+  /** Scan a directory for Oppi-format theme JSON files. */
+  function scanThemeDir(dir: string, source: "bundled" | "user"): ThemeSummary[] {
     if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => {
-        try {
-          const content = readFileSync(join(dir, f), "utf8");
-          const parsed = JSON.parse(content);
-          return {
-            name: (parsed.name as string) ?? f.replace(/\.json$/, ""),
-            filename: f.replace(/\.json$/, ""),
-            colorScheme: (parsed.colorScheme as string) ?? "dark",
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter((t): t is { name: string; filename: string; colorScheme: string } => t !== null);
+    const results: ThemeSummary[] = [];
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const content = readFileSync(join(dir, f), "utf8");
+        const parsed = JSON.parse(content);
+        results.push({
+          name: (parsed.name as string) ?? f.replace(/\.json$/, ""),
+          filename: f.replace(/\.json$/, ""),
+          colorScheme: (parsed.colorScheme as string) ?? "dark",
+          source,
+        });
+      } catch {
+        // Skip malformed theme files
+      }
+    }
+    return results;
+  }
+
+  /** Scan pi TUI themes directory and convert to Oppi format for listing. */
+  function scanPiThemes(): ThemeSummary[] {
+    const dir = piThemesDir();
+    if (!existsSync(dir)) return [];
+    const results: ThemeSummary[] = [];
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const content = readFileSync(join(dir, f), "utf8");
+        const parsed = JSON.parse(content);
+        const converted = convertPiTheme(parsed);
+        if (!converted) continue;
+        results.push({
+          name: converted.name,
+          filename: f.replace(/\.json$/, ""),
+          colorScheme: converted.colorScheme,
+          source: "pi",
+        });
+      } catch {
+        // Skip malformed pi themes
+      }
+    }
+    return results;
   }
 
   function handleListThemes(res: ServerResponse): void {
-    // Merge bundled + user themes. User themes override bundled by filename.
-    const bundled = scanThemeDir(bundledThemesDir());
-    const user = scanThemeDir(themesDir());
-    const byFilename = new Map<string, { name: string; filename: string; colorScheme: string }>();
+    // Priority: bundled (lowest) → pi-auto → user (highest).
+    const bundled = scanThemeDir(bundledThemesDir(), "bundled");
+    const piAuto = scanPiThemes();
+    const user = scanThemeDir(themesDir(), "user");
+    const byFilename = new Map<string, ThemeSummary>();
     for (const t of bundled) byFilename.set(t.filename, t);
+    for (const t of piAuto) byFilename.set(t.filename, t);
     for (const t of user) byFilename.set(t.filename, t);
     helpers.json(res, { themes: [...byFilename.values()] });
   }
 
   function handleGetTheme(name: string, res: ServerResponse): void {
-    // User themes override bundled; fall back to bundled dir.
+    // Priority: user > pi-auto > bundled.
     let filePath = join(themesDir(), `${name}.json`);
+    let isPiTheme = false;
+    if (!existsSync(filePath)) {
+      filePath = join(piThemesDir(), `${name}.json`);
+      isPiTheme = existsSync(filePath);
+    }
     if (!existsSync(filePath)) {
       filePath = join(bundledThemesDir(), `${name}.json`);
+      isPiTheme = false;
     }
     if (!existsSync(filePath)) {
       helpers.error(res, 404, `Theme "${name}" not found`);
@@ -59,8 +104,17 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
     try {
       const content = readFileSync(filePath, "utf8");
-      const theme = JSON.parse(content);
-      helpers.json(res, { theme });
+      const parsed = JSON.parse(content);
+      if (isPiTheme) {
+        const converted = convertPiTheme(parsed);
+        if (!converted) {
+          helpers.error(res, 500, "Failed to convert pi theme");
+          return;
+        }
+        helpers.json(res, { theme: converted });
+      } else {
+        helpers.json(res, { theme: parsed });
+      }
     } catch {
       helpers.error(res, 500, "Failed to read theme");
     }
@@ -77,14 +131,8 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       helpers.error(res, 400, "Missing theme object in body");
       return;
     }
-    // Validate required color fields — all 51 pi theme tokens
     const colors = theme.colors as Record<string, string> | undefined;
-    // 49 tokens — maps 1:1 with iOS ThemePalette. Stripped from pi's 51-token
-    // TUI schema: border/borderAccent/borderMuted (TUI box borders),
-    // customMessageBg/customMessageText/customMessageLabel (TUI hook.message,
-    // not in RPC events), selectedBg (no view wired), bashMode (TUI editor).
     const requiredKeys = [
-      // Base palette (13)
       "bg",
       "bgDark",
       "bgHighlight",
@@ -99,16 +147,13 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       "red",
       "yellow",
       "thinkingText",
-      // User message (2)
       "userMessageBg",
       "userMessageText",
-      // Tool state (5)
       "toolPendingBg",
       "toolSuccessBg",
       "toolErrorBg",
       "toolTitle",
       "toolOutput",
-      // Markdown (10)
       "mdHeading",
       "mdLink",
       "mdLinkUrl",
@@ -119,11 +164,9 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       "mdQuoteBorder",
       "mdHr",
       "mdListBullet",
-      // Diffs (3)
       "toolDiffAdded",
       "toolDiffRemoved",
       "toolDiffContext",
-      // Syntax (9)
       "syntaxComment",
       "syntaxKeyword",
       "syntaxFunction",
@@ -133,7 +176,6 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       "syntaxType",
       "syntaxOperator",
       "syntaxPunctuation",
-      // Thinking levels (6)
       "thinkingOff",
       "thinkingMinimal",
       "thinkingLow",
@@ -150,7 +192,6 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       helpers.error(res, 400, `Missing color keys: ${missing.join(", ")}`);
       return;
     }
-    // Validate hex format (empty string "" allowed = "use default")
     for (const [key, value] of Object.entries(colors)) {
       if (typeof value !== "string") {
         helpers.error(res, 400, `Invalid color value for "${key}": expected string`);
