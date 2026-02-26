@@ -11,9 +11,20 @@ struct SessionToolbar: View {
     let onThinkingSelect: (ThinkingLevel) -> Void
     let onCompact: () -> Void
 
+    @Environment(\.theme) private var theme
+
     private var modelDisplay: String {
         guard let model = session?.model else { return "no model" }
         return shortModelName(model)
+    }
+
+    private var modelProvider: String {
+        guard let model = session?.model else { return "" }
+        return providerFromModel(model) ?? ""
+    }
+
+    private var thinkingTint: Color {
+        theme.thinking.color(for: thinkingLevel)
     }
 
     private var contextDisplay: String? {
@@ -82,7 +93,9 @@ struct SessionToolbar: View {
         Spacer(minLength: 0)
 
         Button(action: onModelTap) {
-            PillLabel(icon: "cpu", text: modelDisplay, showChevron: true)
+            PillLabel(text: modelDisplay, showChevron: true) {
+                ProviderIcon(provider: modelProvider)
+            }
         }
         .buttonStyle(.plain)
 
@@ -100,11 +113,14 @@ struct SessionToolbar: View {
                 }
             }
         } label: {
-            PillLabel(icon: "brain", text: thinkingLabel, showChevron: true)
+            PillLabel(text: thinkingLabel, tint: thinkingTint, showChevron: true) {
+                Image(systemName: "sparkle")
+                    .font(.caption2.weight(.semibold))
+            }
         }
 
         if let contextDisplay {
-            PillLabel(icon: nil, text: contextDisplay, tint: contextTint, showChevron: false)
+            PillLabel(text: contextDisplay, tint: contextTint, showChevron: false) { }
                 .contentShape(Capsule())
                 .onLongPressGesture {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -114,18 +130,27 @@ struct SessionToolbar: View {
     }
 }
 
-private struct PillLabel: View {
-    let icon: String?
+private struct PillLabel<LeadingIcon: View>: View {
     let text: String
-    var tint: Color = .themeFg
+    var tint: Color
     let showChevron: Bool
+    let leadingIcon: LeadingIcon
+
+    init(
+        text: String,
+        tint: Color = .themeFg,
+        showChevron: Bool,
+        @ViewBuilder leadingIcon: () -> LeadingIcon
+    ) {
+        self.text = text
+        self.tint = tint
+        self.showChevron = showChevron
+        self.leadingIcon = leadingIcon()
+    }
 
     var body: some View {
         HStack(spacing: 4) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.caption2.weight(.semibold))
-            }
+            leadingIcon
 
             Text(text)
                 .font(.caption2.monospacedDigit().weight(.medium))
@@ -202,6 +227,13 @@ func inferContextWindow(from model: String) -> Int? {
     }
 
     return nil
+}
+
+/// Extract provider prefix from "provider/model-id" string.
+func providerFromModel(_ model: String) -> String? {
+    guard let slashIndex = model.firstIndex(of: "/") else { return nil }
+    let provider = String(model[model.startIndex..<slashIndex])
+    return provider.isEmpty ? nil : provider
 }
 
 /// Extract short display name from full "provider/model-id" string.
