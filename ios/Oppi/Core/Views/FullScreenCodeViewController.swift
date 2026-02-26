@@ -69,7 +69,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         switch content {
         case .markdown:
-            let toggle = UIBarButtonItem(title: "Source", style: .plain, target: self, action: #selector(toggleSource))
+            let toggle = UIBarButtonItem(title: String(localized: "Source"), style: .plain, target: self, action: #selector(toggleSource))
             toggle.tintColor = UIColor(palette.blue)
             sourceToggleButton = toggle
             rightItems.append(toggle)
@@ -133,7 +133,7 @@ final class FullScreenCodeViewController: UIViewController {
                 stack.addArrangedSubview(pathLabel)
             }
             let typeLabel = UILabel()
-            typeLabel.text = "Diff"
+            typeLabel.text = String(localized: "Diff")
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
@@ -148,21 +148,21 @@ final class FullScreenCodeViewController: UIViewController {
                 stack.addArrangedSubview(pathLabel)
             }
             let typeLabel = UILabel()
-            typeLabel.text = "Markdown"
+            typeLabel.text = String(localized: "Markdown")
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
 
         case .thinking:
             let typeLabel = UILabel()
-            typeLabel.text = "Thinking"
+            typeLabel.text = String(localized: "Thinking")
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
 
         case .terminal(_, let command):
             let typeLabel = UILabel()
-            typeLabel.text = command == nil ? "Terminal" : "Terminal output"
+            typeLabel.text = command == nil ? String(localized: "Terminal") : String(localized: "Terminal output")
             typeLabel.font = .systemFont(ofSize: 11)
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
@@ -219,7 +219,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         showSource.toggle()
         let palette = ThemeRuntimeState.currentThemeID().palette
-        sourceToggleButton?.title = showSource ? "Reader" : "Source"
+        sourceToggleButton?.title = showSource ? String(localized: "Reader") : String(localized: "Source")
 
         // Remove old content
         vc.view.subviews.filter { $0 is NativeFullScreenMarkdownBody || $0 is NativeFullScreenSourceBody }.forEach { $0.removeFromSuperview() }

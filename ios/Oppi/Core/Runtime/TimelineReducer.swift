@@ -626,14 +626,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         // Compaction
         case .compactionStart(_, let reason):
-            let label = reason == "overflow" ? "Context overflow — compacting..." : "Compacting context..."
+            let label = reason == "overflow" ? String(localized: "Context overflow — compacting...") : String(localized: "Compacting context...")
             items.append(.systemEvent(id: UUID().uuidString, message: label))
 
         case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore):
             if aborted {
-                items.append(.systemEvent(id: UUID().uuidString, message: "Compaction cancelled"))
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Compaction cancelled")))
             } else if willRetry {
-                items.append(.systemEvent(id: UUID().uuidString, message: "Context compacted — retrying..."))
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Context compacted — retrying...")))
             } else {
                 let tokenBadge: String
                 if let tokensBefore, tokensBefore > 0 {
@@ -669,9 +669,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             if !success, let err = error {
                 items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(err)"))
             } else if command == "set_model" || command == "cycle_model" {
-                items.append(.systemEvent(id: UUID().uuidString, message: "Model changed"))
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Model changed")))
             } else if command == "set_thinking_level" || command == "cycle_thinking_level" {
-                items.append(.systemEvent(id: UUID().uuidString, message: "Thinking level changed"))
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Thinking level changed")))
             }
         }
     }

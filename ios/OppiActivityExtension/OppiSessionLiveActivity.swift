@@ -364,21 +364,21 @@ private func toolCountLabel(_ count: Int) -> String {
 
 private func phaseLabel(_ phase: SessionPhase) -> String {
     switch phase {
-    case .working: return "Working"
-    case .awaitingReply: return "Your turn"
-    case .needsApproval: return "Approval"
-    case .error: return "Attention"
-    case .ended: return "Idle"
+    case .working: return String(localized: "Working")
+    case .awaitingReply: return String(localized: "Your turn")
+    case .needsApproval: return String(localized: "Approval")
+    case .error: return String(localized: "Attention")
+    case .ended: return String(localized: "Idle")
     }
 }
 
 private func phaseShortLabel(_ phase: SessionPhase) -> String {
     switch phase {
-    case .working: return "Run"
-    case .awaitingReply: return "Reply"
-    case .needsApproval: return "Ask"
-    case .error: return "Err"
-    case .ended: return "Idle"
+    case .working: return String(localized: "Run")
+    case .awaitingReply: return String(localized: "Reply")
+    case .needsApproval: return String(localized: "Ask")
+    case .error: return String(localized: "Err")
+    case .ended: return String(localized: "Idle")
     }
 }
 

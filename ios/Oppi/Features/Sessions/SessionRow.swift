@@ -129,7 +129,7 @@ struct SessionRow: View {
     }
 
     private func filesTouchedSummary(_ filesChanged: Int) -> String {
-        filesChanged == 1 ? "1 file touched" : "\(filesChanged) files touched"
+        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
     }
 
     private func changeSummaryColor(_ stats: SessionChangeStats) -> Color {

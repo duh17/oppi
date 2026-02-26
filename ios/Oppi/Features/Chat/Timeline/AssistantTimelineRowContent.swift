@@ -171,13 +171,13 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         if hasCopyText {
             actions.append(
-                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
                     self?.copyToPasteboard(text)
                 }
             )
 
             actions.append(
-                UIAction(title: "Copy as Markdown", image: UIImage(systemName: "text.document")) { [weak self] _ in
+                UIAction(title: String(localized: "Copy as Markdown"), image: UIImage(systemName: "text.document")) { [weak self] _ in
                     self?.copyToPasteboard(text)
                 }
             )
@@ -185,7 +185,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
 
         if hasForkAction, let onFork = currentConfiguration.onFork {
             actions.append(
-                UIAction(title: "Fork from here", image: UIImage(systemName: "arrow.triangle.branch")) { _ in
+                UIAction(title: String(localized: "Fork from here"), image: UIImage(systemName: "arrow.triangle.branch")) { _ in
                     onFork()
                 }
             )
