@@ -120,7 +120,7 @@ struct LiveActivityStateTests {
     @Test("sync busy session produces working phase")
     @MainActor func syncBusyWorking() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         #expect(mgr.currentState.primaryPhase == .working)
@@ -131,7 +131,7 @@ struct LiveActivityStateTests {
     @Test("sync stopped session produces ended phase")
     @MainActor func syncStoppedEnded() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .stopped)
+        let session = makeTestSession(id: "s1", status: .stopped)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         #expect(mgr.currentState.primaryPhase == .ended)
@@ -141,7 +141,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent agentStart sets working")
     @MainActor func agentStartWorking() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .agentStart(sessionId: "s1"))
@@ -151,7 +151,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent agentEnd sets awaitingReply within visibility window")
     @MainActor func agentEndAwaitingReply() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
@@ -161,7 +161,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent toolStart shows tool name")
     @MainActor func toolStartShowsTool() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .toolStart(
@@ -174,7 +174,7 @@ struct LiveActivityStateTests {
     @Test("sync carries primary change stats into content state")
     @MainActor func syncCarriesChangeStats() {
         let mgr = LiveActivityManager()
-        var session = makeSession(id: "s1", status: .busy)
+        var session = makeTestSession(id: "s1", status: .busy)
         session.changeStats = SessionChangeStats(
             mutatingToolCalls: 3,
             filesChanged: 2,
@@ -195,7 +195,7 @@ struct LiveActivityStateTests {
     @Test("sync with permission sets needsApproval")
     @MainActor func syncPermissionNeedsApproval() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         let perm = makePermission(id: "p1", sessionId: "s1", tool: "bash")
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [perm])
 
@@ -207,8 +207,8 @@ struct LiveActivityStateTests {
     @Test("needsApproval outranks working across sessions")
     @MainActor func needsApprovalOutranksWorking() {
         let mgr = LiveActivityManager()
-        let working = makeSession(id: "s1", status: .busy)
-        let ready = makeSession(id: "s2", status: .ready)
+        let working = makeTestSession(id: "s1", status: .busy)
+        let ready = makeTestSession(id: "s2", status: .ready)
         let perm = makePermission(id: "p1", sessionId: "s2", tool: "edit")
 
         mgr.sync(connectionId: "c1", sessions: [working, ready], pendingPermissions: [perm])
@@ -219,7 +219,7 @@ struct LiveActivityStateTests {
     @Test("removeConnection clears state")
     @MainActor func removeConnectionClears() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
         #expect(mgr.currentState.primaryPhase == .working)
 
@@ -231,7 +231,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent error sets error phase")
     @MainActor func errorSetsErrorPhase() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Something broke"))
@@ -241,7 +241,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent retrying error does not set error phase")
     @MainActor func retryingErrorIgnored() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Retrying (attempt 2/3)"))
@@ -251,7 +251,7 @@ struct LiveActivityStateTests {
     @Test("recordEvent sessionEnded sets ended phase")
     @MainActor func sessionEndedSetsEnded() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         mgr.recordEvent(connectionId: "c1", event: .sessionEnded(sessionId: "s1", reason: "done"))
@@ -267,7 +267,7 @@ struct LiveActivityAlertIntegrationTests {
     @Test("working → awaitingReply → working cycle never alerts")
     @MainActor func rapidCycleNoAlerts() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         var lastPhase: SessionPhase = mgr.lastPushedPrimaryPhase
@@ -293,7 +293,7 @@ struct LiveActivityAlertIntegrationTests {
     @Test("permission request after working correctly alerts once")
     @MainActor func permissionAfterWorkingAlerts() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
         mgr.lastPushedPrimaryPhase = .working
         mgr.lastPushedApprovalCount = 0
@@ -319,7 +319,7 @@ struct LiveActivityLifecycleTests {
         await endAllLiveActivitiesImmediately()
 
         let source = LiveActivityManager()
-        let session = makeSession(id: "s-orphan", status: .busy)
+        let session = makeTestSession(id: "s-orphan", status: .busy)
         source.sync(connectionId: "c-source", sessions: [session], pendingPermissions: [])
         #expect(source.activeActivity != nil)
 
@@ -340,7 +340,7 @@ struct LiveActivityLifecycleTests {
     @Test("recoverIfNeeded with active sessions and no activity triggers refresh")
     @MainActor func recoverWithActiveSessions() {
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
 
         #expect(mgr.currentState.primaryPhase == .working)
@@ -373,7 +373,7 @@ struct LiveActivityIdleDismissTests {
         // the behavior: after all sessions end, the manager should schedule a
         // short dismiss rather than keeping the activity alive for a full minute.
         let mgr = LiveActivityManager()
-        let session = makeSession(id: "s1", status: .busy)
+        let session = makeTestSession(id: "s1", status: .busy)
         mgr.sync(connectionId: "c1", sessions: [session], pendingPermissions: [])
         #expect(mgr.currentState.primaryPhase == .working)
 
@@ -467,26 +467,6 @@ private func makeState(phase: SessionPhase, approvals: Int) -> PiSessionAttribut
         topPermissionSession: nil,
         pendingApprovalCount: approvals,
         sessionStartDate: nil
-    )
-}
-
-private func makeSession(
-    id: String,
-    status: SessionStatus,
-    workspaceId: String = "ws1"
-) -> Session {
-    Session(
-        id: id,
-        workspaceId: workspaceId,
-        workspaceName: "default",
-        name: "Test Session",
-        status: status,
-        createdAt: Date().addingTimeInterval(-60),
-        lastActivity: Date(),
-        model: "claude-sonnet-4-20250514",
-        messageCount: 0,
-        tokens: TokenUsage(input: 0, output: 0),
-        cost: 0
     )
 }
 

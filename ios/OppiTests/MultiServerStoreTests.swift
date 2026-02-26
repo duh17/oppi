@@ -44,14 +44,14 @@ struct MultiServerStoreTests {
     @MainActor
     @Test func upsertWorkspaceForServer() {
         let store = WorkspaceStore()
-        let ws = makeWorkspace(id: "w1", name: "Alpha")
+        let ws = makeTestWorkspace(id: "w1", name: "Alpha")
 
         store.upsert(ws, serverId: "server-a")
         #expect(store.workspacesByServer["server-a"]?.count == 1)
         #expect(store.workspacesByServer["server-a"]?.first?.name == "Alpha")
 
         // Update existing
-        let ws2 = makeWorkspace(id: "w1", name: "Alpha Updated")
+        let ws2 = makeTestWorkspace(id: "w1", name: "Alpha Updated")
         store.upsert(ws2, serverId: "server-a")
         #expect(store.workspacesByServer["server-a"]?.count == 1)
         #expect(store.workspacesByServer["server-a"]?.first?.name == "Alpha Updated")
@@ -64,9 +64,9 @@ struct MultiServerStoreTests {
     @MainActor
     @Test func removeWorkspaceForServer() {
         let store = WorkspaceStore()
-        store.upsert(makeWorkspace(id: "w1", name: "A"), serverId: "s1")
-        store.upsert(makeWorkspace(id: "w2", name: "B"), serverId: "s1")
-        store.upsert(makeWorkspace(id: "w1", name: "A"), serverId: "s2")
+        store.upsert(makeTestWorkspace(id: "w1", name: "A"), serverId: "s1")
+        store.upsert(makeTestWorkspace(id: "w2", name: "B"), serverId: "s1")
+        store.upsert(makeTestWorkspace(id: "w1", name: "A"), serverId: "s2")
 
         store.remove(id: "w1", serverId: "s1")
         #expect(store.workspacesByServer["s1"]?.count == 1)
@@ -76,7 +76,7 @@ struct MultiServerStoreTests {
     @MainActor
     @Test func removeServer() {
         let store = WorkspaceStore()
-        store.workspacesByServer["s1"] = [makeWorkspace(id: "w1", name: "A")]
+        store.workspacesByServer["s1"] = [makeTestWorkspace(id: "w1", name: "A")]
         store.skillsByServer["s1"] = [makeSkill(name: "sk1")]
         store.serverFreshness["s1"] = ServerSyncState()
         store.serverOrder = ["s1", "s2"]
@@ -94,8 +94,8 @@ struct MultiServerStoreTests {
     @Test func allWorkspacesRespectsServerOrder() {
         let store = WorkspaceStore()
         store.serverOrder = ["s2", "s1"]
-        store.workspacesByServer["s1"] = [makeWorkspace(id: "w1", name: "From S1")]
-        store.workspacesByServer["s2"] = [makeWorkspace(id: "w2", name: "From S2")]
+        store.workspacesByServer["s1"] = [makeTestWorkspace(id: "w1", name: "From S1")]
+        store.workspacesByServer["s2"] = [makeTestWorkspace(id: "w2", name: "From S2")]
 
         let all = store.allWorkspaces
         #expect(all.count == 2)
@@ -174,8 +174,8 @@ struct MultiServerStoreTests {
 
         let cache = TimelineCache(rootURL: root)
 
-        let ws1 = makeWorkspace(id: "w1", name: "From Studio")
-        let ws2 = makeWorkspace(id: "w2", name: "From Mini")
+        let ws1 = makeTestWorkspace(id: "w1", name: "From Studio")
+        let ws2 = makeTestWorkspace(id: "w2", name: "From Mini")
         let sk1 = makeSkill(name: "fetch")
         let sk2 = makeSkill(name: "search")
 
@@ -233,7 +233,7 @@ struct MultiServerStoreTests {
     @MainActor
     @Test func loadAllHandlesPartialFailure() async {
         let store = WorkspaceStore()
-        let ws1 = makeWorkspace(id: "w1", name: "Survives")
+        let ws1 = makeTestWorkspace(id: "w1", name: "Survives")
 
         store.serverOrder = ["s1", "s2"]
         store.workspacesByServer["s1"] = [ws1]
@@ -258,8 +258,8 @@ struct MultiServerStoreTests {
 
         let cache = TimelineCache(rootURL: root)
 
-        let ws1 = [makeWorkspace(id: "w1", name: "Server A")]
-        let ws2 = [makeWorkspace(id: "w2", name: "Server B")]
+        let ws1 = [makeTestWorkspace(id: "w1", name: "Server A")]
+        let ws2 = [makeTestWorkspace(id: "w2", name: "Server B")]
         let sk1 = [makeSkill(name: "fetch")]
         let sk2 = [makeSkill(name: "search")]
 
@@ -294,8 +294,8 @@ struct MultiServerStoreTests {
 
         let cache = TimelineCache(rootURL: root)
 
-        let globalWs = [makeWorkspace(id: "w-global", name: "Global")]
-        let serverWs = [makeWorkspace(id: "w-server", name: "Namespaced")]
+        let globalWs = [makeTestWorkspace(id: "w-global", name: "Global")]
+        let serverWs = [makeTestWorkspace(id: "w-server", name: "Namespaced")]
 
         await cache.saveWorkspaces(globalWs)
         await cache.saveWorkspaces(serverWs, serverId: "sha256:xxx")
@@ -308,25 +308,6 @@ struct MultiServerStoreTests {
     }
 
     // MARK: - Helpers
-
-    private func makeWorkspace(id: String, name: String) -> Workspace {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Workspace(
-            id: id,
-            name: name,
-            description: nil,
-            icon: nil,
-            skills: [],
-            systemPrompt: nil,
-            hostMount: nil,
-            memoryEnabled: nil,
-            memoryNamespace: nil,
-            extensions: nil,
-            defaultModel: nil,
-            createdAt: now,
-            updatedAt: now
-        )
-    }
 
     private func makeSkill(name: String) -> SkillInfo {
         SkillInfo(

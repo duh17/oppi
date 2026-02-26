@@ -5,47 +5,16 @@ import Foundation
 @Suite("SessionStore Partitioning")
 struct SessionStorePartitioningTests {
 
-    // MARK: - Helpers
-
-    private func makeSession(
-        id: String,
-        workspaceId: String = "w1",
-        status: SessionStatus = .ready,
-        lastActivity: Date = Date(),
-        createdAt: Date = Date()
-    ) -> Session {
-        let tsMs = lastActivity.timeIntervalSince1970 * 1000
-        let createdMs = createdAt.timeIntervalSince1970 * 1000
-        let json = """
-        {
-            "id": "\(id)",
-            "workspaceId": "\(workspaceId)",
-            "status": "\(status.rawValue)",
-            "createdAt": \(createdMs),
-            "lastActivity": \(tsMs),
-            "messageCount": 0,
-            "tokens": {"input": 0, "output": 0},
-            "cost": 0
-        }
-        """
-        let data = Data(json.utf8)
-        do {
-            return try JSONDecoder().decode(Session.self, from: data)
-        } catch {
-            fatalError("Failed to decode test session \(id): \(error)")
-        }
-    }
-
     // MARK: - Server partitioning
 
     @MainActor
     @Test func sessionsPartitionedByServer() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
 
         store.switchServer(to: "srv2")
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s2"))
 
         #expect(store.sessions.count == 1)
         #expect(store.sessions[0].id == "s2")
@@ -59,9 +28,9 @@ struct SessionStorePartitioningTests {
     @Test func sessionsForSpecificServer() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.switchServer(to: "srv2")
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s2"))
 
         #expect(store.sessions(forServer: "srv1").count == 1)
         #expect(store.sessions(forServer: "srv1")[0].id == "s1")
@@ -72,9 +41,9 @@ struct SessionStorePartitioningTests {
     @Test func allSessionsSpansServers() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1", lastActivity: Date(timeIntervalSince1970: 100)))
+        store.upsert(makeTestSession(id: "s1", lastActivity: Date(timeIntervalSince1970: 100)))
         store.switchServer(to: "srv2")
-        store.upsert(makeSession(id: "s2", lastActivity: Date(timeIntervalSince1970: 200)))
+        store.upsert(makeTestSession(id: "s2", lastActivity: Date(timeIntervalSince1970: 200)))
 
         let all = store.allSessions
         #expect(all.count == 2)
@@ -85,9 +54,9 @@ struct SessionStorePartitioningTests {
     @Test func findSessionAcrossServers() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.switchServer(to: "srv2")
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s2"))
 
         let found = store.findSession(id: "s1")
         #expect(found?.session.id == "s1")
@@ -101,7 +70,7 @@ struct SessionStorePartitioningTests {
     @Test func upsertReturnsFalseWhenUnchanged() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        let s = makeSession(id: "s1")
+        let s = makeTestSession(id: "s1")
         store.upsert(s)
         #expect(store.upsert(s) == false)
     }
@@ -112,7 +81,7 @@ struct SessionStorePartitioningTests {
     @Test func removeClearsActiveSessionId() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.activeSessionId = "s1"
 
         store.remove(id: "s1")
@@ -126,7 +95,7 @@ struct SessionStorePartitioningTests {
     @Test func removeServerClearsPartition() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.switchServer(to: "srv2")
 
         store.removeServer("srv1")
@@ -148,15 +117,15 @@ struct SessionStorePartitioningTests {
         let store = SessionStore()
         store.switchServer(to: "srv1")
         // "old" is stopped and old enough to be dropped by the merge window
-        store.upsert(makeSession(
+        store.upsert(makeTestSession(
             id: "old",
             status: .stopped,
             createdAt: Date(timeIntervalSinceNow: -600)
         ))
 
         let snapshot = [
-            makeSession(id: "new1", lastActivity: Date(timeIntervalSince1970: 200)),
-            makeSession(id: "new2", lastActivity: Date(timeIntervalSince1970: 100)),
+            makeTestSession(id: "new1", lastActivity: Date(timeIntervalSince1970: 200)),
+            makeTestSession(id: "new2", lastActivity: Date(timeIntervalSince1970: 100)),
         ]
         store.applyServerSnapshot(snapshot)
 
@@ -168,9 +137,9 @@ struct SessionStorePartitioningTests {
     @Test func snapshotPreservesActiveSessions() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "local-active", status: .busy))
+        store.upsert(makeTestSession(id: "local-active", status: .busy))
 
-        store.applyServerSnapshot([makeSession(id: "server-only")])
+        store.applyServerSnapshot([makeTestSession(id: "server-only")])
 
         let ids = Set(store.sessions.map(\.id))
         #expect(ids.contains("server-only"))
@@ -181,9 +150,9 @@ struct SessionStorePartitioningTests {
     @Test func snapshotPreservesRecentStopped() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "recent", status: .stopped, createdAt: Date()))
+        store.upsert(makeTestSession(id: "recent", status: .stopped, createdAt: Date()))
 
-        store.applyServerSnapshot([makeSession(id: "server-only")])
+        store.applyServerSnapshot([makeTestSession(id: "server-only")])
 
         let ids = Set(store.sessions.map(\.id))
         #expect(ids.contains("recent"))
@@ -193,13 +162,13 @@ struct SessionStorePartitioningTests {
     @Test func snapshotDropsOldStopped() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(
+        store.upsert(makeTestSession(
             id: "old",
             status: .stopped,
             createdAt: Date(timeIntervalSinceNow: -600)
         ))
 
-        store.applyServerSnapshot([makeSession(id: "server-only")])
+        store.applyServerSnapshot([makeTestSession(id: "server-only")])
 
         let ids = Set(store.sessions.map(\.id))
         #expect(!ids.contains("old"))
@@ -250,7 +219,7 @@ struct SessionStorePartitioningTests {
     @Test func activeSessionLookup() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.activeSessionId = "s1"
         #expect(store.activeSession?.id == "s1")
     }
@@ -259,7 +228,7 @@ struct SessionStorePartitioningTests {
     @Test func workspaceIdForSession() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "s1", workspaceId: "w42"))
+        store.upsert(makeTestSession(id: "s1", workspaceId: "w42"))
         #expect(store.workspaceId(for: "s1") == "w42")
         #expect(store.workspaceId(for: "missing") == nil)
     }
@@ -268,8 +237,8 @@ struct SessionStorePartitioningTests {
     @Test func sortByLastActivity() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
-        store.upsert(makeSession(id: "older", lastActivity: Date(timeIntervalSince1970: 100)))
-        store.upsert(makeSession(id: "newer", lastActivity: Date(timeIntervalSince1970: 200)))
+        store.upsert(makeTestSession(id: "older", lastActivity: Date(timeIntervalSince1970: 100)))
+        store.upsert(makeTestSession(id: "newer", lastActivity: Date(timeIntervalSince1970: 200)))
         store.sort()
         #expect(store.sessions[0].id == "newer")
     }

@@ -51,28 +51,6 @@ struct TimelineCacheTests {
         #expect(drop == nil)
     }
 
-    private func makeSession(id: String, name: String) -> Session {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Session(
-            id: id,
-            workspaceId: nil,
-            workspaceName: nil,
-            name: name,
-            status: .ready,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: nil
-        )
-    }
-
     private func makeTraceEvent(id: String) -> TraceEvent {
         TraceEvent(
             id: id,

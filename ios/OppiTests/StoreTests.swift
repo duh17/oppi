@@ -7,39 +7,10 @@ import Foundation
 @Suite("SessionStore")
 struct SessionStoreTests {
 
-    private func makeSession(
-        id: String,
-        status: SessionStatus = .ready,
-        lastActivity: Date = Date()
-    ) -> Session {
-        let tsMs = lastActivity.timeIntervalSince1970 * 1000
-        let json = """
-        {
-            "id": "\(id)",
-            "status": "\(status.rawValue)",
-            "createdAt": \(tsMs),
-            "lastActivity": \(tsMs),
-            "messageCount": 0,
-            "tokens": {"input": 0, "output": 0},
-            "cost": 0
-        }
-        """
-
-        guard let data = json.data(using: .utf8) else {
-            preconditionFailure("Failed to encode session JSON for test")
-        }
-
-        do {
-            return try JSONDecoder().decode(Session.self, from: data)
-        } catch {
-            preconditionFailure("Failed to decode Session in test: \(error)")
-        }
-    }
-
     @MainActor
     @Test func upsertInsertsNew() {
         let store = SessionStore()
-        let session = makeSession(id: "s1")
+        let session = makeTestSession(id: "s1")
 
         store.upsert(session)
 
@@ -50,10 +21,10 @@ struct SessionStoreTests {
     @MainActor
     @Test func upsertUpdatesExisting() {
         let store = SessionStore()
-        let session1 = makeSession(id: "s1", status: .ready)
+        let session1 = makeTestSession(id: "s1", status: .ready)
         store.upsert(session1)
 
-        let session2 = makeSession(id: "s1", status: .busy)
+        let session2 = makeTestSession(id: "s1", status: .busy)
         let didMutate = store.upsert(session2)
 
         #expect(didMutate)
@@ -64,7 +35,7 @@ struct SessionStoreTests {
     @MainActor
     @Test func upsertIdenticalSessionIsNoOp() {
         let store = SessionStore()
-        let session = makeSession(id: "s1", status: .ready)
+        let session = makeTestSession(id: "s1", status: .ready)
 
         #expect(store.upsert(session))
         let didMutate = store.upsert(session)
@@ -77,8 +48,8 @@ struct SessionStoreTests {
     @MainActor
     @Test func upsertInsertsAtFront() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s2"))
 
         // Most recent insert at index 0
         #expect(store.sessions[0].id == "s2")
@@ -88,8 +59,8 @@ struct SessionStoreTests {
     @MainActor
     @Test func removeById() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s2"))
 
         store.remove(id: "s1")
 
@@ -100,7 +71,7 @@ struct SessionStoreTests {
     @MainActor
     @Test func removeClearsActiveSessionId() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
         store.activeSessionId = "s1"
 
         store.remove(id: "s1")
@@ -111,8 +82,8 @@ struct SessionStoreTests {
     @MainActor
     @Test func removeNonActiveDoesNotClearActive() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s2"))
         store.activeSessionId = "s1"
 
         store.remove(id: "s2")
@@ -123,8 +94,8 @@ struct SessionStoreTests {
     @MainActor
     @Test func activeSession() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
-        store.upsert(makeSession(id: "s2"))
+        store.upsert(makeTestSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s2"))
 
         #expect(store.activeSession == nil)
 
@@ -139,9 +110,9 @@ struct SessionStoreTests {
     @Test func sortByLastActivity() {
         let store = SessionStore()
         let now = Date()
-        store.upsert(makeSession(id: "old", lastActivity: now.addingTimeInterval(-3600)))
-        store.upsert(makeSession(id: "recent", lastActivity: now))
-        store.upsert(makeSession(id: "mid", lastActivity: now.addingTimeInterval(-60)))
+        store.upsert(makeTestSession(id: "old", lastActivity: now.addingTimeInterval(-3600)))
+        store.upsert(makeTestSession(id: "recent", lastActivity: now))
+        store.upsert(makeTestSession(id: "mid", lastActivity: now.addingTimeInterval(-60)))
 
         store.sort()
 
@@ -151,7 +122,7 @@ struct SessionStoreTests {
     @MainActor
     @Test func removeNonexistentIdIsNoOp() {
         let store = SessionStore()
-        store.upsert(makeSession(id: "s1"))
+        store.upsert(makeTestSession(id: "s1"))
 
         store.remove(id: "nonexistent")
 
@@ -275,34 +246,11 @@ struct PermissionStoreTests {
 @Suite("WorkspaceStore")
 struct WorkspaceStoreTests {
 
-    private func makeWorkspace(id: String, name: String = "Test") -> Workspace {
-        let now = Date().timeIntervalSince1970 * 1000
-        let json = """
-        {
-            "id": "\(id)",
-            "name": "\(name)",
-            "skills": [],
-            "createdAt": \(now),
-            "updatedAt": \(now)
-        }
-        """
-
-        guard let data = json.data(using: .utf8) else {
-            preconditionFailure("Failed to encode workspace JSON for test")
-        }
-
-        do {
-            return try JSONDecoder().decode(Workspace.self, from: data)
-        } catch {
-            preconditionFailure("Failed to decode Workspace in test: \(error)")
-        }
-    }
-
     @MainActor
     @Test func upsertInsertsNew() {
         let store = WorkspaceStore()
 
-        store.upsert(makeWorkspace(id: "w1"))
+        store.upsert(makeTestWorkspace(id: "w1"))
 
         #expect(store.workspaces.count == 1)
         #expect(store.workspaces[0].id == "w1")
@@ -311,9 +259,9 @@ struct WorkspaceStoreTests {
     @MainActor
     @Test func upsertUpdatesExisting() {
         let store = WorkspaceStore()
-        store.upsert(makeWorkspace(id: "w1", name: "Original"))
+        store.upsert(makeTestWorkspace(id: "w1", name: "Original"))
 
-        store.upsert(makeWorkspace(id: "w1", name: "Updated"))
+        store.upsert(makeTestWorkspace(id: "w1", name: "Updated"))
 
         #expect(store.workspaces.count == 1)
         #expect(store.workspaces[0].name == "Updated")
@@ -322,8 +270,8 @@ struct WorkspaceStoreTests {
     @MainActor
     @Test func removeById() {
         let store = WorkspaceStore()
-        store.upsert(makeWorkspace(id: "w1"))
-        store.upsert(makeWorkspace(id: "w2"))
+        store.upsert(makeTestWorkspace(id: "w1"))
+        store.upsert(makeTestWorkspace(id: "w2"))
 
         store.remove(id: "w1")
 
@@ -334,7 +282,7 @@ struct WorkspaceStoreTests {
     @MainActor
     @Test func removeNonexistentIsNoOp() {
         let store = WorkspaceStore()
-        store.upsert(makeWorkspace(id: "w1"))
+        store.upsert(makeTestWorkspace(id: "w1"))
 
         store.remove(id: "nonexistent")
 

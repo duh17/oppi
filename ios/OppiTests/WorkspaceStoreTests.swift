@@ -16,7 +16,7 @@ struct WorkspaceStoreOfflineTests {
         defer { try? fileManager.removeItem(at: base) }
 
         let cache = TimelineCache(rootURL: root)
-        let cachedWorkspaces = [makeWorkspace(id: "w-cached", name: "Cached Workspace")]
+        let cachedWorkspaces = [makeTestWorkspace(id: "w-cached", name: "Cached Workspace")]
         let cachedSkills = [makeSkill(name: "cached-skill")]
         await cache.saveWorkspaces(cachedWorkspaces)
         await cache.saveSkills(cachedSkills)
@@ -45,7 +45,7 @@ struct WorkspaceStoreOfflineTests {
         }
 
         let store = WorkspaceStore()
-        let existingWorkspaces = [makeWorkspace(id: "w-existing", name: "Existing Workspace")]
+        let existingWorkspaces = [makeTestWorkspace(id: "w-existing", name: "Existing Workspace")]
         let existingSkills = [makeSkill(name: "existing-skill")]
 
         store.workspaces = existingWorkspaces
@@ -67,25 +67,6 @@ struct WorkspaceStoreOfflineTests {
             baseURL: URL(string: "http://localhost:7749")!,
             token: "sk_test",
             configuration: config
-        )
-    }
-
-    private func makeWorkspace(id: String, name: String) -> Workspace {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Workspace(
-            id: id,
-            name: name,
-            description: nil,
-            icon: nil,
-            skills: [],
-            systemPrompt: nil,
-            hostMount: nil,
-            memoryEnabled: nil,
-            memoryNamespace: nil,
-            extensions: nil,
-            defaultModel: nil,
-            createdAt: now,
-            updatedAt: now
         )
     }
 

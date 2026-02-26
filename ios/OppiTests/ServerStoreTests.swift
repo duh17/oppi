@@ -16,7 +16,7 @@ struct ServerStoreTests {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
 
-        let server = store.addOrUpdate(from: makeCredentials(fp: "sha256:add-test"))
+        let server = store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:add-test"))
         #expect(server != nil)
         #expect(store.servers.count == 1)
         #expect(store.servers[0].name == "test-host")
@@ -36,8 +36,8 @@ struct ServerStoreTests {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
 
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:first"))
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:second"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:first"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:second"))
         #expect(store.servers[0].sortOrder == 0)
         #expect(store.servers[1].sortOrder == 1)
     }
@@ -74,8 +74,8 @@ struct ServerStoreTests {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
 
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:remove-a"))
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:remove-b"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:remove-a"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:remove-b"))
         #expect(store.servers.count == 2)
 
         store.remove(id: "sha256:remove-a")
@@ -95,7 +95,7 @@ struct ServerStoreTests {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
 
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:rename-test"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:rename-test"))
         store.rename(id: "sha256:rename-test", to: "New Name")
         #expect(store.servers[0].name == "New Name")
     }
@@ -112,7 +112,7 @@ struct ServerStoreTests {
         let store = makeCleanStore()
         defer { cleanupKeychain(store) }
 
-        store.addOrUpdate(from: makeCredentials(fp: "sha256:lookup-test"))
+        store.addOrUpdate(from: makeTestCredentials(host: "test-host", name: "test-host", fingerprint: "sha256:lookup-test"))
         #expect(store.server(for: "sha256:lookup-test") != nil)
         #expect(store.server(for: "sha256:nope") == nil)
     }
@@ -141,13 +141,6 @@ struct ServerStoreTests {
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
         return ServerStore()
-    }
-
-    private func makeCredentials(fp: String) -> ServerCredentials {
-        ServerCredentials(
-            host: "test-host", port: 7749, token: "sk_test",
-            name: "test-host", serverFingerprint: fp
-        )
     }
 
     private func cleanupKeychain(_ store: ServerStore) {
