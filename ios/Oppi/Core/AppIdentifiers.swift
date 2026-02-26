@@ -60,6 +60,27 @@ enum NativePlotPreferences {
     }
 }
 
+/// Persisted keyboard language for voice input locale detection.
+///
+/// `UITextView.textInputMode` only reports the active keyboard when the text
+/// view is first responder. Before the user taps the composer, we fall back
+/// to the last-known language stored here. Updated every time the keyboard
+/// language changes while the composer is focused.
+enum KeyboardLanguageStore {
+    private static let key = "\(AppIdentifiers.subsystem).keyboardLanguage"
+
+    /// The last-known keyboard language (BCP 47), or nil if never recorded.
+    static var lastLanguage: String? {
+        UserDefaults.standard.string(forKey: key)
+    }
+
+    /// Persist a new keyboard language. No-ops on nil or unchanged values.
+    static func save(_ language: String?) {
+        guard let language, language != lastLanguage else { return }
+        UserDefaults.standard.set(language, forKey: key)
+    }
+}
+
 /// Shipping toggles for first release hardening.
 ///
 /// Keep these centralized so we can re-enable features intentionally

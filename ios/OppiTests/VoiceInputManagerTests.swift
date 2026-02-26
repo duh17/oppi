@@ -297,4 +297,135 @@ final class VoiceInputManagerTests: XCTestCase {
         XCTAssertNotEqual(VoiceInputManager.State.error("a"), .error("b"))
         XCTAssertNotEqual(VoiceInputManager.State.idle, .recording)
     }
+
+    // MARK: - Locale Resolution
+
+    func testResolvedLocaleWithChineseKeyboard() {
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "zh-Hans")
+        XCTAssertEqual(locale.language.languageCode?.identifier, "zh")
+    }
+
+    func testResolvedLocaleWithEnglishKeyboard() {
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
+        XCTAssertEqual(locale.language.languageCode?.identifier, "en")
+    }
+
+    func testResolvedLocaleWithJapaneseKeyboard() {
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "ja-JP")
+        XCTAssertEqual(locale.language.languageCode?.identifier, "ja")
+    }
+
+    func testResolvedLocaleWithNilUsesPersistedLanguage() {
+        // Save a persisted language, then resolve with nil keyboard
+        KeyboardLanguageStore.save("zh-Hans")
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
+        XCTAssertEqual(locale.language.languageCode?.identifier, "zh",
+                       "Should fall back to persisted keyboard language")
+
+        // Clean up
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
+    }
+
+    func testResolvedLocaleActiveKeyboardTakesPriorityOverPersisted() {
+        // Persisted is Chinese, but active keyboard is English
+        KeyboardLanguageStore.save("zh-Hans")
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
+        XCTAssertEqual(locale.language.languageCode?.identifier, "en",
+                       "Active keyboard should take priority over persisted")
+
+        // Clean up
+        UserDefaults.standard.removeObject(
+            forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
+    }
+
+    func testResolvedLocaleWithKoreanKeyboard() {
+        let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "ko-KR")
+        XCTAssertEqual(locale.language.languageCode?.identifier, "ko")
+    }
+
+    // MARK: - Language Label
+
+    func testActiveLanguageLabelNilWhenIdle() {
+        let manager = VoiceInputManager()
+        XCTAssertNil(manager.activeLanguageLabel)
+    }
+
+    func testLanguageLabelForCJKLocales() {
+        // CJK languages get native script characters
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hans")), "中")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hant")), "中")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "ja-JP")), "あ")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "ko-KR")), "한")
+    }
+
+    func testLanguageLabelForLatinLocales() {
+        // Latin languages get 2-letter uppercase code
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "en-US")), "EN")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "fr-FR")), "FR")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "de-DE")), "DE")
+        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "es-ES")), "ES")
+    }
+
+    // MARK: - KeyboardLanguageStore Persistence
+
+    private let testKey = "\(AppIdentifiers.subsystem).keyboardLanguage"
+
+    func testKeyboardLanguageStoreSaveAndRead() {
+        // Clean slate
+        UserDefaults.standard.removeObject(forKey: testKey)
+        XCTAssertNil(KeyboardLanguageStore.lastLanguage)
+
+        KeyboardLanguageStore.save("zh-Hans")
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "zh-Hans")
+
+        KeyboardLanguageStore.save("en-US")
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+
+        // Clean up
+        UserDefaults.standard.removeObject(forKey: testKey)
+    }
+
+    func testKeyboardLanguageStoreIgnoresNil() {
+        UserDefaults.standard.removeObject(forKey: testKey)
+        KeyboardLanguageStore.save("zh-Hans")
+        KeyboardLanguageStore.save(nil)
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "zh-Hans",
+                       "Saving nil should not clear persisted value")
+
+        UserDefaults.standard.removeObject(forKey: testKey)
+    }
+
+    func testKeyboardLanguageStoreIgnoresDuplicate() {
+        UserDefaults.standard.removeObject(forKey: testKey)
+        KeyboardLanguageStore.save("en-US")
+        // Saving same value again is a no-op (tested via coverage, not assertion)
+        KeyboardLanguageStore.save("en-US")
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+
+        UserDefaults.standard.removeObject(forKey: testKey)
+    }
+
+    // MARK: - Full Fallback Chain
+
+    func testLocaleResolutionFallbackChain() {
+        UserDefaults.standard.removeObject(forKey: testKey)
+
+        // 1. Active keyboard wins
+        KeyboardLanguageStore.save("zh-Hans")
+        let locale1 = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
+        XCTAssertEqual(locale1.language.languageCode?.identifier, "en",
+                       "Active keyboard should beat persisted")
+
+        // 2. No active keyboard → persisted wins
+        let locale2 = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
+        XCTAssertEqual(locale2.language.languageCode?.identifier, "zh",
+                       "Persisted should be used when no active keyboard")
+
+        // 3. No active keyboard, no persisted → device locale
+        UserDefaults.standard.removeObject(forKey: testKey)
+        let locale3 = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
+        XCTAssertEqual(locale3, Locale.current,
+                       "Should fall back to device locale")
+    }
 }

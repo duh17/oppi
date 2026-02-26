@@ -55,6 +55,11 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Used during voice recording to show cursor without keyboard.
     @State private var suppressKeyboard = false
 
+    /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
+    /// Updated by PastableTextView when the keyboard input mode changes.
+    /// Read at mic-tap time to select the correct speech model.
+    @State private var keyboardLanguage: String?
+
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
@@ -249,7 +254,8 @@ struct ChatInputBar<ActionRow: View>: View {
                         dictationRequestID: 0,
                         suppressKeyboard: suppressKeyboard,
                         onKeyboardRestoreRequest: handleKeyboardRestore,
-                        accessibilityIdentifier: "chat.input"
+                        accessibilityIdentifier: "chat.input",
+                        keyboardLanguage: $keyboardLanguage
                     )
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -393,7 +399,8 @@ struct ChatInputBar<ActionRow: View>: View {
                 if isRecording {
                     await manager.stopRecording()
                     textBeforeRecording = nil
-                    suppressKeyboard = false
+                    // Keep keyboard suppressed — user tapping the text field
+                    // will restore it via handleKeyboardRestore()
                 } else if manager.state == .idle {
                     // Capture text prefix — add space if there's existing content
                     let current = text
@@ -406,7 +413,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     suppressKeyboard = true
                     focusRequestID += 1
                     do {
-                        try await manager.startRecording()
+                        try await manager.startRecording(keyboardLanguage: keyboardLanguage)
                     } catch {
                         textBeforeRecording = nil
                         suppressKeyboard = false
@@ -414,25 +421,14 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
             }
         } label: {
-            ZStack {
-                Circle().fill(isRecording ? accentColor.opacity(0.15) : Color.themeBgHighlight)
-                Circle().stroke(
-                    isRecording ? accentColor.opacity(0.5) : Color.themeComment.opacity(0.35),
-                    lineWidth: 1
-                )
-
-                if isProcessing {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else if isRecording {
-                    MicWaveformView(audioLevel: manager.audioLevel, color: accentColor)
-                } else {
-                    Image(systemName: "mic")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.themeComment)
-                }
-            }
-            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
+            MicButtonLabel(
+                isRecording: isRecording,
+                isProcessing: isProcessing,
+                audioLevel: manager.audioLevel,
+                languageLabel: manager.activeLanguageLabel,
+                accentColor: accentColor,
+                diameter: actionVisualDiameter
+            )
         }
         .buttonStyle(.plain)
         .disabled(isProcessing)
