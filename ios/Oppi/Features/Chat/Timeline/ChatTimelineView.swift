@@ -19,6 +19,8 @@ struct ChatTimelineView: View {
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let onFork: (String) -> Void
+    let topOverlap: CGFloat
+    let bottomOverlap: CGFloat
 
     @Environment(TimelineReducer.self) private var reducer
     @Environment(ServerConnection.self) private var connection
@@ -74,7 +76,9 @@ struct ChatTimelineView: View {
                 connection: connection,
                 audioPlayer: audioPlayer,
                 theme: theme,
-                themeID: ThemeRuntimeState.currentThemeID()
+                themeID: ThemeRuntimeState.currentThemeID(),
+                topOverlap: topOverlap,
+                bottomOverlap: bottomOverlap
             )
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -92,7 +96,7 @@ struct ChatTimelineView: View {
                     jumpToLatest()
                 }
                 .padding(.trailing, 27)
-                .padding(.bottom, 10)
+                .padding(.bottom, bottomOverlap + 10)
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
             }
         }
