@@ -102,7 +102,7 @@ enum ToolTimelineRowViewStyler {
         outputContainer.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
 
         outputScrollView.translatesAutoresizingMaskIntoConstraints = false
-        outputScrollView.alwaysBounceVertical = true
+        outputScrollView.alwaysBounceVertical = false
         outputScrollView.alwaysBounceHorizontal = false
         outputScrollView.showsVerticalScrollIndicator = true
         outputScrollView.showsHorizontalScrollIndicator = false
@@ -128,7 +128,7 @@ enum ToolTimelineRowViewStyler {
         expandedContainer.backgroundColor = UIColor(Color.themeBgDark.opacity(0.9))
 
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
-        expandedScrollView.alwaysBounceVertical = true
+        expandedScrollView.alwaysBounceVertical = false
         expandedScrollView.alwaysBounceHorizontal = false
         expandedScrollView.showsVerticalScrollIndicator = true
         expandedScrollView.showsHorizontalScrollIndicator = false
