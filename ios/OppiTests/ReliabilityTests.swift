@@ -53,7 +53,7 @@ struct ReliabilityTests {
     @MainActor
     @Test func sendWhileConnectingHonorsConfiguredWaitTimeout() async {
         let client = WebSocketClient(
-            credentials: makeCredentials(),
+            credentials: makeTestCredentials(),
             waitForConnectionTimeout: .milliseconds(150),
             waitPollInterval: .milliseconds(25),
             sendTimeout: .milliseconds(150)
@@ -82,7 +82,7 @@ struct ReliabilityTests {
     @MainActor
     @Test func sendWhileReconnectingHonorsConfiguredWaitTimeout() async {
         let client = WebSocketClient(
-            credentials: makeCredentials(),
+            credentials: makeTestCredentials(),
             waitForConnectionTimeout: .milliseconds(150),
             waitPollInterval: .milliseconds(25),
             sendTimeout: .milliseconds(150)
@@ -112,7 +112,7 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogSetOnRequest() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input",
@@ -124,7 +124,7 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogReplacedByNewRequest() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         let req1 = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "First", timeout: 30
@@ -143,7 +143,7 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogClearedOnDisconnect() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "confirm", title: "Confirm?"
@@ -159,7 +159,7 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogClearedOnSessionSwitch() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "Test"
@@ -177,7 +177,7 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func extensionDialogSurvivedWhenStreamAlive() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         let request = ExtensionUIRequest(
             id: "ext1", sessionId: "s1", method: "input", title: "Test"
@@ -195,8 +195,8 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func stopConfirmedWithoutAgentEndFinalizesThinking() {
-        let conn = makeConnection()
-        conn.handleServerMessage(.connected(session: makeSession(status: .busy)), sessionId: "s1")
+        let conn = makeTestConnection()
+        conn.handleServerMessage(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
@@ -223,12 +223,12 @@ struct ReliabilityTests {
 
     @MainActor
     @Test func stateReadyWithoutAgentEndFinalizesThinking() {
-        let conn = makeConnection()
-        conn.handleServerMessage(.connected(session: makeSession(status: .busy)), sessionId: "s1")
+        let conn = makeTestConnection()
+        conn.handleServerMessage(.connected(session: makeTestSession(status: .busy)), sessionId: "s1")
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
-        conn.handleServerMessage(.state(session: makeSession(status: .ready)), sessionId: "s1")
+        conn.handleServerMessage(.state(session: makeTestSession(status: .ready)), sessionId: "s1")
 
         conn.coalescer.flushNow()
 
@@ -322,46 +322,6 @@ struct ReliabilityTests {
     }
 
     // MARK: - Helpers
-
-    private func makeCredentials() -> ServerCredentials {
-        .init(host: "localhost", port: 7749, token: "sk_test", name: "Test")
-    }
-
-    private func makeSession(
-        id: String = "s1",
-        status: SessionStatus = .ready,
-        thinkingLevel: String? = nil
-    ) -> Session {
-        let now = Date()
-        return Session(
-            id: id,
-            workspaceId: nil,
-            workspaceName: nil,
-            name: nil,
-            status: status,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: 0,
-            tokens: .init(input: 0, output: 0),
-            cost: 0,
-            changeStats: nil,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: thinkingLevel
-        )
-    }
-
-    @MainActor
-    private func makeConnection(sessionId: String = "s1") -> ServerConnection {
-        let conn = ServerConnection()
-        conn.configure(credentials: makeCredentials())
-        // Avoid real WS dial in unit tests.
-        conn._setActiveSessionIdForTesting(sessionId)
-        return conn
-    }
 
     private func makeTraceEvent(id: String, text: String) -> TraceEvent {
         let json = """
