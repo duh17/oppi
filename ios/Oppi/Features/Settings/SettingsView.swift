@@ -126,20 +126,6 @@ struct SettingsView: View {
 
             biometricSection
 
-            if ReleaseFeatures.voiceInputEnabled {
-                Section {
-                    NavigationLink {
-                        VoiceInputSettingsView()
-                    } label: {
-                        Label("Voice Input", systemImage: "mic")
-                    }
-                } header: {
-                    Text("Voice Input")
-                } footer: {
-                    Text("On-device speech-to-text for voice prompts in the composer.")
-                }
-            }
-
             Section("Cache") {
                 Button("Clear Local Cache") {
                     Task.detached { await TimelineCache.shared.clear() }
