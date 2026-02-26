@@ -142,9 +142,9 @@ Start from a bundled example in `server/themes/`. The bundled themes are:
 Write the theme JSON file to the server's theme directory:
 
 ```bash
-mkdir -p ~/.config/oppi/data/themes
+mkdir -p ~/.config/oppi/themes
 # Write your theme file here — filename becomes the theme ID
-cp my-theme.json ~/.config/oppi/data/themes/my-theme.json
+cp my-theme.json ~/.config/oppi/themes/my-theme.json
 ```
 
 The server picks it up automatically. Then in the iOS app: **Settings > Import Theme > select server > select your theme**.
