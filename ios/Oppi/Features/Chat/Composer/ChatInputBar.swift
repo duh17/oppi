@@ -393,6 +393,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 if isRecording {
                     await manager.stopRecording()
                     textBeforeRecording = nil
+                    suppressKeyboard = false
                 } else if manager.state == .idle {
                     // Capture text prefix — add space if there's existing content
                     let current = text
@@ -503,13 +504,14 @@ struct ChatInputBar<ActionRow: View>: View {
         onSend()
     }
 
-    /// User tapped the text field while voice was recording — stop recording
-    /// and let the keyboard appear so they can type.
+    /// User tapped the text field while keyboard was suppressed — stop any
+    /// active recording and restore the keyboard so they can type.
     private func handleKeyboardRestore() {
-        guard let manager = voiceInputManager, manager.isRecording else { return }
         suppressKeyboard = false
         textBeforeRecording = nil
-        Task { await manager.stopRecording() }
+        if let manager = voiceInputManager, manager.isRecording {
+            Task { await manager.stopRecording() }
+        }
     }
 
     private func insertSlashCommand(_ command: SlashCommand) {

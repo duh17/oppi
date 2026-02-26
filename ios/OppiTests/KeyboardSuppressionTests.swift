@@ -77,15 +77,15 @@ struct KeyboardSuppressionTests {
         let textView = PastableUITextView()
         textView.installKeyboardRestoreGesture()
 
-        let tap = textView.gestureRecognizers?.first { $0 is UITapGestureRecognizer }
-        #expect(tap != nil, "Tap gesture should be installed")
-        #expect(tap?.isEnabled == false, "Gesture disabled when keyboard not suppressed")
+        let tap = textView.keyboardRestoreTap
+        #expect(textView.gestureRecognizers?.contains(tap) == true, "Tap gesture should be installed")
+        #expect(tap.isEnabled == false, "Gesture disabled when keyboard not suppressed")
 
         textView.setKeyboardSuppressed(true)
-        #expect(tap?.isEnabled == true, "Gesture enabled during keyboard suppression")
+        #expect(tap.isEnabled == true, "Gesture enabled during keyboard suppression")
 
         textView.setKeyboardSuppressed(false)
-        #expect(tap?.isEnabled == false, "Gesture disabled after suppression ends")
+        #expect(tap.isEnabled == false, "Gesture disabled after suppression ends")
     }
 
     @Test("Restore callback fires when tap occurs during suppression")
@@ -111,11 +111,11 @@ struct KeyboardSuppressionTests {
         textView.installKeyboardRestoreGesture()
         textView.setKeyboardSuppressed(true)
 
-        let tap = textView.gestureRecognizers?.first { $0 is UITapGestureRecognizer }
-        #expect(tap?.isEnabled == true)
+        let tap = textView.keyboardRestoreTap
+        #expect(tap.isEnabled == true)
 
         textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
-        #expect(tap?.isEnabled == false, "Gesture should disable itself after restoring keyboard")
+        #expect(tap.isEnabled == false, "Gesture should disable itself after restoring keyboard")
     }
 
     @Test("Tap handler is no-op when keyboard is not suppressed")
@@ -133,6 +133,73 @@ struct KeyboardSuppressionTests {
         #expect(textView.inputView == nil, "inputView should remain nil")
     }
 
+    // MARK: - SwiftUI/UIKit State Sync (Regression)
+
+    @Test("Regression: UIKit restore followed by stale SwiftUI re-suppress")
+    func regressionStaleSuppressAfterRestore() {
+        // Bug: User taps mic (suppressKeyboard=true), taps mic again to stop,
+        // but suppressKeyboard stays true. User taps text field, UIKit restores
+        // keyboard, but SwiftUI's updateUIView sees the mismatch and re-suppresses.
+        let textView = PastableUITextView()
+        textView.installKeyboardRestoreGesture()
+
+        // 1. Voice recording starts — suppress keyboard
+        textView.setKeyboardSuppressed(true)
+        #expect(textView.isKeyboardSuppressed)
+
+        // 2. Voice recording stops — but simulate stale SwiftUI state
+        //    (suppressKeyboard was not reset to false — the bug)
+
+        // 3. User taps text field — UIKit restores correctly
+        textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
+        #expect(!textView.isKeyboardSuppressed, "UIKit restored keyboard")
+        #expect(textView.inputView == nil, "inputView cleared")
+
+        // 4. THE BUG: SwiftUI updateUIView runs with stale suppressKeyboard=true
+        //    and re-suppresses. This simulates what updateUIView does:
+        let staleSuppressKeyboard = true
+        if textView.isKeyboardSuppressed != staleSuppressKeyboard {
+            textView.setKeyboardSuppressed(staleSuppressKeyboard)
+        }
+        // Keyboard is suppressed again — user can't type
+        #expect(textView.isKeyboardSuppressed, "Stale state causes re-suppression")
+        #expect(textView.inputView != nil, "Keyboard hidden again by stale state")
+
+        // 5. THE FIX: When SwiftUI resets suppressKeyboard=false (as it should),
+        //    the sync is clean:
+        let fixedSuppressKeyboard = false
+        if textView.isKeyboardSuppressed != fixedSuppressKeyboard {
+            textView.setKeyboardSuppressed(fixedSuppressKeyboard)
+        }
+        #expect(!textView.isKeyboardSuppressed, "Fixed state keeps keyboard visible")
+        #expect(textView.inputView == nil, "inputView stays nil with correct state")
+    }
+
+    @Test("Restore callback fires regardless of external recording state")
+    func restoreCallbackAlwaysFires() {
+        // Regression: handleKeyboardRestore in ChatInputBar guarded on
+        // isRecording — after mic-stop the guard bailed and suppressKeyboard
+        // was never reset. The UIKit callback must fire unconditionally so
+        // the SwiftUI handler can always clean up.
+        let textView = PastableUITextView()
+        textView.installKeyboardRestoreGesture()
+        textView.setKeyboardSuppressed(true)
+
+        var callbackCount = 0
+        textView.onKeyboardRestoreRequest = { callbackCount += 1 }
+
+        // First restore — simulates tap during recording
+        textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
+        #expect(callbackCount == 1)
+        #expect(!textView.isKeyboardSuppressed)
+
+        // Re-suppress and restore again — simulates tap after recording stopped
+        textView.setKeyboardSuppressed(true)
+        textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
+        #expect(callbackCount == 2, "Callback must fire every time, not just during recording")
+        #expect(!textView.isKeyboardSuppressed)
+    }
+
     // MARK: - Simultaneous Gesture Recognition
 
     @Test("Restore gesture allows simultaneous recognition to not block text selection")
@@ -140,16 +207,16 @@ struct KeyboardSuppressionTests {
         let textView = PastableUITextView()
         textView.installKeyboardRestoreGesture()
 
-        let tap = textView.gestureRecognizers?.first { $0 is UITapGestureRecognizer }
+        let tap = textView.keyboardRestoreTap
         let otherGesture = UITapGestureRecognizer()
 
         // The delegate should allow simultaneous recognition for our tap gesture
         // so it doesn't interfere with UITextView's built-in selection gestures.
-        let allowSimultaneous = textView.gestureRecognizer(tap!, shouldRecognizeSimultaneouslyWith: otherGesture)
+        let allowSimultaneous = textView.gestureRecognizer(tap, shouldRecognizeSimultaneouslyWith: otherGesture)
         #expect(allowSimultaneous == true, "Must allow simultaneous recognition to avoid blocking text selection")
 
         // But not for random other gestures
-        let otherResult = textView.gestureRecognizer(otherGesture, shouldRecognizeSimultaneouslyWith: tap!)
+        let otherResult = textView.gestureRecognizer(otherGesture, shouldRecognizeSimultaneouslyWith: tap)
         #expect(otherResult == false, "Should only return true for the keyboard restore gesture")
     }
 }
