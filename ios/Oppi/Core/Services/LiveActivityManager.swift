@@ -180,13 +180,13 @@ final class LiveActivityManager {
                 entry.activeTool = nil
                 entry.startDate = nil
                 if entry.lastActivity == nil {
-                    entry.lastActivity = "Attention needed"
+                    entry.lastActivity = String(localized: "Attention needed")
                 }
             case .stopped:
                 entry.phaseHint = .ended
                 entry.activeTool = nil
                 entry.startDate = nil
-                entry.lastActivity = "Session ended"
+                entry.lastActivity = String(localized: "Session ended")
             }
 
             if entry.lastActivity == nil {
@@ -238,7 +238,7 @@ final class LiveActivityManager {
             entry.phaseHint = .working
             entry.readySince = nil
             entry.startDate = now
-            entry.lastActivity = "Working"
+            entry.lastActivity = String(localized: "Working")
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
@@ -250,7 +250,7 @@ final class LiveActivityManager {
             entry.readySince = now
             entry.activeTool = nil
             entry.startDate = nil
-            entry.lastActivity = "Your turn"
+            entry.lastActivity = String(localized: "Your turn")
             entry.updatedAt = now
             snapshot.sessionsById[sessionId] = entry
 
@@ -277,7 +277,7 @@ final class LiveActivityManager {
             var entry = upsertSession(request.sessionId)
             entry.phaseHint = .needsApproval
             entry.startDate = nil
-            entry.lastActivity = "Approval required"
+            entry.lastActivity = String(localized: "Approval required")
             entry.updatedAt = Date()
             snapshot.sessionsById[request.sessionId] = entry
 
@@ -287,7 +287,7 @@ final class LiveActivityManager {
             entry.phaseHint = .ended
             entry.activeTool = nil
             entry.startDate = nil
-            entry.lastActivity = "Session ended"
+            entry.lastActivity = String(localized: "Session ended")
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
 
@@ -299,7 +299,7 @@ final class LiveActivityManager {
             entry.status = .error
             entry.phaseHint = .error
             entry.startDate = nil
-            entry.lastActivity = "Attention needed"
+            entry.lastActivity = String(localized: "Attention needed")
             entry.updatedAt = Date()
             snapshot.sessionsById[sessionId] = entry
 
@@ -842,11 +842,11 @@ final class LiveActivityManager {
 
     private func defaultLastActivity(for phase: SessionPhase) -> String {
         switch phase {
-        case .working: return "Working"
-        case .awaitingReply: return "Your turn"
-        case .needsApproval: return "Approval required"
-        case .error: return "Attention needed"
-        case .ended: return "Session ended"
+        case .working: return String(localized: "Working")
+        case .awaitingReply: return String(localized: "Your turn")
+        case .needsApproval: return String(localized: "Approval required")
+        case .error: return String(localized: "Attention needed")
+        case .ended: return String(localized: "Session ended")
         }
     }
 

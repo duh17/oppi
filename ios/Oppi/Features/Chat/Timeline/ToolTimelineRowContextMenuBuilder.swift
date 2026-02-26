@@ -23,7 +23,7 @@ enum ToolTimelineRowContextMenuBuilder {
         case .command:
             if hasCommand {
                 actions.append(
-                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
+                    UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
                         onCopyCommand(.command)
                     }
                 )
@@ -31,7 +31,7 @@ enum ToolTimelineRowContextMenuBuilder {
 
             if hasOutput {
                 actions.append(
-                    UIAction(title: "Copy Output", image: UIImage(systemName: "doc.on.doc")) { _ in
+                    UIAction(title: String(localized: "Copy Output"), image: UIImage(systemName: "doc.on.doc")) { _ in
                         onCopyOutput(.command)
                     }
                 )
@@ -46,7 +46,7 @@ enum ToolTimelineRowContextMenuBuilder {
                canShowFullScreenContent {
                 actions.append(
                     UIAction(
-                        title: "Open Full Screen",
+                        title: String(localized: "Open Full Screen"),
                         image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
                     ) { _ in
                         onOpenFullScreenContent()
@@ -55,14 +55,14 @@ enum ToolTimelineRowContextMenuBuilder {
             }
 
             actions.append(
-                UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
+                UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
                     onCopyOutput(target)
                 }
             )
 
             if hasCommand {
                 actions.append(
-                    UIAction(title: "Copy Command", image: UIImage(systemName: "terminal")) { _ in
+                    UIAction(title: String(localized: "Copy Command"), image: UIImage(systemName: "terminal")) { _ in
                         onCopyCommand(target)
                     }
                 )
@@ -73,7 +73,7 @@ enum ToolTimelineRowContextMenuBuilder {
 
             actions.append(
                 UIAction(
-                    title: "View Full Screen",
+                    title: String(localized: "View Full Screen"),
                     image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
                 ) { _ in
                     onViewFullScreenImage()
@@ -81,13 +81,13 @@ enum ToolTimelineRowContextMenuBuilder {
             )
 
             actions.append(
-                UIAction(title: "Copy Image", image: UIImage(systemName: "doc.on.doc")) { _ in
+                UIAction(title: String(localized: "Copy Image"), image: UIImage(systemName: "doc.on.doc")) { _ in
                     onCopyImage()
                 }
             )
 
             actions.append(
-                UIAction(title: "Save to Photos", image: UIImage(systemName: "square.and.arrow.down")) { _ in
+                UIAction(title: String(localized: "Save to Photos"), image: UIImage(systemName: "square.and.arrow.down")) { _ in
                     onSaveImage()
                 }
             )

@@ -43,27 +43,26 @@ struct WhatsNewView: View {
         WhatsNewFeature(
             icon: "lock.shield",
             iconColor: .themeGreen,
-            title: "TLS",
-            description: "Connections are pinned to your server's TLS certificate."
+            title: String(localized: "TLS"),
+            description: String(localized: "Connections are pinned to your server's TLS certificate.")
         ),
         WhatsNewFeature(
             icon: "cube.transparent",
             iconColor: .themePurple,
-            title: "Glass Chat Interface",
-            description: "Chat scrolls behind translucent bars with soft edge effects."
+            title: String(localized: "Glass Chat Interface"),
+            description: String(localized: "Chat scrolls behind translucent bars with soft edge effects.")
         ),
         WhatsNewFeature(
             icon: "sparkle",
             iconColor: .themeOrange,
-            title: "Thinking Trace",
-            description: "Scrollable live preview while the model thinks. "
-                + "Tap to read the full trace."
+            title: String(localized: "Thinking Trace"),
+            description: String(localized: "Scrollable live preview while the model thinks. Tap to read the full trace.")
         ),
         WhatsNewFeature(
             icon: "mic.badge.waveform",
             iconColor: .themeCyan,
-            title: "Voice Input",
-            description: "On-device speech-to-text. Tap the mic to dictate prompts."
+            title: String(localized: "Voice Input"),
+            description: String(localized: "On-device speech-to-text. Tap the mic to dictate prompts.")
         ),
     ]
 

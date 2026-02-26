@@ -16,6 +16,7 @@ options:
     macOS: "15.0"
   xcodeVersion: "26.2"
   generateEmptyDirectories: true
+  defaultLocalization: en
 settings:
   base:
     SWIFT_VERSION: "6.0"

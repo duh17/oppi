@@ -121,21 +121,21 @@ enum PermissionApprovalPolicy {
         return [
             PermissionApprovalOption(
                 id: "allow-session",
-                title: "Allow this session",
+                title: String(localized: "Allow this session"),
                 systemImage: "clock",
                 isDestructive: false,
                 choice: PermissionResponseChoice(action: .allow, scope: .session)
             ),
             PermissionApprovalOption(
                 id: "allow-global",
-                title: "Allow always",
+                title: String(localized: "Allow always"),
                 systemImage: "checkmark.circle",
                 isDestructive: false,
                 choice: PermissionResponseChoice(action: .allow, scope: .global)
             ),
             PermissionApprovalOption(
                 id: "deny-global",
-                title: "Deny always",
+                title: String(localized: "Deny always"),
                 systemImage: "xmark.circle",
                 isDestructive: true,
                 choice: PermissionResponseChoice(action: .deny, scope: .global)

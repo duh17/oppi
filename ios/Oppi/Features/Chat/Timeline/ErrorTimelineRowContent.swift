@@ -127,7 +127,7 @@ final class ErrorTimelineRowContentView: UIView, UIContentView {
         }
 
         return UIMenu(title: "", children: [
-            UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+            UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
                 TimelineCopyFeedback.copy(message, feedbackView: self?.containerView)
             },
         ])

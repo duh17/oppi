@@ -50,12 +50,12 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
 
         let allow = UNNotificationAction(
             identifier: Self.allowActionId,
-            title: "Allow",
+            title: String(localized: "Allow"),
             options: []
         )
         let deny = UNNotificationAction(
             identifier: Self.denyActionId,
-            title: "Deny",
+            title: String(localized: "Deny"),
             options: [.destructive]
         )
         let standardCategory = UNNotificationCategory(
@@ -102,7 +102,7 @@ final class PermissionNotificationService: NSObject, UNUserNotificationCenterDel
         let needsBiometric = BiometricService.shared.requiresBiometric
 
         let content = UNMutableNotificationContent()
-        content.title = needsBiometric ? "⚠ Permission Required" : "Permission Required"
+        content.title = needsBiometric ? String(localized: "⚠ Permission Required") : String(localized: "Permission Required")
         content.subtitle = request.tool
         content.body = needsBiometric
             ? "Open app to approve with \(BiometricService.shared.biometricName)"
