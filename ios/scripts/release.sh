@@ -686,6 +686,114 @@ SUBMIT_NODE
   echo "$submit_output"
 }
 
+# ─── Add build to internal beta group ────────────────────────────
+#
+# Always adds the uploaded build to the "Internal Testers" group so
+# internal testers see new builds immediately in TestFlight.
+
+add_to_internal_group() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "warning: node not found; cannot add to internal group" >&2
+    return 0
+  fi
+
+  local bundle_id
+  bundle_id=$(grep 'PRODUCT_BUNDLE_IDENTIFIER:' project.yml | head -1 | awk '{print $2}')
+  if [[ -z "$bundle_id" ]]; then
+    echo "warning: failed to resolve bundle id; skipping internal group" >&2
+    return 0
+  fi
+
+  echo "── Adding build $BUILD_NUMBER to internal testers..."
+
+  local group_output
+  if ! group_output=$(ASC_KEY_ID="$ASC_KEY_ID" \
+      ASC_ISSUER_ID="$ASC_ISSUER_ID" \
+      ASC_KEY_PATH="$ASC_KEY_PATH" \
+      ASC_BUNDLE_ID="$bundle_id" \
+      ASC_BUILD_NUMBER="$BUILD_NUMBER" \
+      node <<'INTERNAL_GROUP_NODE'
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+
+const keyId = process.env.ASC_KEY_ID;
+const issuer = process.env.ASC_ISSUER_ID;
+const keyPath = process.env.ASC_KEY_PATH;
+const bundleId = process.env.ASC_BUNDLE_ID;
+const buildNumber = process.env.ASC_BUILD_NUMBER;
+
+const b64url = (input) =>
+  Buffer.from(input).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+
+function token() {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: "ES256", kid: keyId, typ: "JWT" }));
+  const payload = b64url(JSON.stringify({ iss: issuer, exp: now + 600, aud: "appstoreconnect-v1" }));
+  const unsigned = `${header}.${payload}`;
+  const sign = crypto.createSign("sha256");
+  sign.update(unsigned); sign.end();
+  const sig = sign.sign({ key: fs.readFileSync(keyPath, "utf8"), dsaEncoding: "ieee-p1363" });
+  return `${unsigned}.${b64url(sig)}`;
+}
+
+async function asc(method, path, query, body) {
+  const url = new URL(`https://api.appstoreconnect.apple.com${path}`);
+  if (query) for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v));
+  const res = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch {}
+  if (!res.ok && res.status !== 409) {
+    const detail = json?.errors?.[0]?.detail || text.slice(0, 400);
+    throw new Error(`${method} ${url.pathname} (${res.status}): ${detail}`);
+  }
+  return { ok: res.ok, status: res.status, data: json };
+}
+
+(async () => {
+  // 1. Find app
+  const appResp = await asc("GET", "/v1/apps", { "filter[bundleId]": bundleId, limit: 1 });
+  const appId = appResp.data?.data?.[0]?.id;
+  if (!appId) throw new Error(`app not found: ${bundleId}`);
+
+  // 2. Find build
+  const buildResp = await asc("GET", "/v1/builds", {
+    "filter[app]": appId, "filter[version]": buildNumber, limit: 1,
+  });
+  const build = buildResp.data?.data?.[0];
+  if (!build) throw new Error(`build ${buildNumber} not found`);
+
+  // 3. Find internal beta group
+  const groupsResp = await asc("GET", `/v1/apps/${appId}/betaGroups`);
+  const internalGroup = groupsResp.data?.data?.find(
+    (g) => g.attributes?.isInternalGroup === true
+  );
+  if (!internalGroup) throw new Error("no internal beta group found");
+
+  // 4. Add build to group
+  const addResp = await asc(
+    "POST",
+    `/v1/betaGroups/${internalGroup.id}/relationships/builds`,
+    undefined,
+    { data: [{ type: "builds", id: build.id }] }
+  );
+  if (addResp.ok || addResp.status === 409) {
+    console.log(`   added to "${internalGroup.attributes.name}" (${internalGroup.id})`);
+  }
+})();
+INTERNAL_GROUP_NODE
+  ); then
+    echo "warning: failed to add build to internal group" >&2
+    echo "$group_output" >&2
+    return 0
+  fi
+
+  echo "$group_output"
+}
+
 # ─── What to Test (TestFlight notes) ────────────────────────────
 
 set_what_to_test() {
@@ -975,6 +1083,7 @@ xcodebuild -exportArchive \
 if grep -q "EXPORT SUCCEEDED" "$EXPORT_LOG"; then
   if grep -q "Upload succeeded" "$EXPORT_LOG"; then
     apply_export_compliance
+    add_to_internal_group
     set_what_to_test
     submit_external_beta
     tag_release
@@ -1013,6 +1122,7 @@ xcrun altool --upload-package "$IPA_PATH" \
   2>&1
 
 apply_export_compliance
+add_to_internal_group
 set_what_to_test
 submit_external_beta
 tag_release
