@@ -105,6 +105,11 @@ struct ContentView: View {
         } message: {
             Text(connection.extensionToast ?? "")
         }
+        .fullScreenCover(isPresented: $nav.showWhatsNew) {
+            WhatsNewView {
+                navigation.showWhatsNew = false
+            }
+        }
     }
 
     private func sessionLabel(for sessionId: String) -> String {

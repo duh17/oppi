@@ -25,7 +25,7 @@ struct JumpToBottomHintButton: View {
                 .font(.caption.weight(.bold))
                 .foregroundStyle(isStreaming ? .themeBlue : .themeFg)
                 .frame(width: 34, height: 34)
-                .glassEffect(.regular, in: Circle())
+                .background(.ultraThinMaterial, in: Circle())
                 .overlay(alignment: .topTrailing) {
                     if isStreaming {
                         Circle()
@@ -38,7 +38,9 @@ struct JumpToBottomHintButton: View {
                 }
         }
         .buttonStyle(.plain)
+        .contentShape(Circle())
         .accessibilityLabel(isStreaming ? "Jump to latest streaming message" : "Jump to latest message")
+        .accessibilityIdentifier("chat.jumpToBottom")
         .onAppear {
             guard isStreaming else { return }
             withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
