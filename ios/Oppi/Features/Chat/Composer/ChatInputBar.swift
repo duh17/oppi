@@ -38,6 +38,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var inlineVisualLineCount = 1
 
@@ -271,11 +272,9 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var attachButton: some View {
         Menu {
-            PhotosPicker(
-                selection: $photoSelection,
-                maxSelectionCount: 5,
-                matching: .images
-            ) {
+            Button {
+                showPhotoPicker = true
+            } label: {
                 Label("Photo Library", systemImage: "photo.on.rectangle")
             }
 
@@ -292,6 +291,12 @@ struct ChatInputBar<ActionRow: View>: View {
                 .padding(.vertical, 6)
                 .glassEffect(.regular, in: Capsule())
         }
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoSelection,
+            maxSelectionCount: 5,
+            matching: .images
+        )
     }
 
     private var imageStrip: some View {

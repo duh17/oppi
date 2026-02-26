@@ -32,7 +32,6 @@ struct ExpandedComposerView: View {
     let session: Session?
     let thinkingLevel: ThinkingLevel
     let onSend: () -> Void
-    let onBash: (String) -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
     let onCompact: () -> Void
@@ -40,44 +39,21 @@ struct ExpandedComposerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var showPhotoPicker = false
     @State private var showCamera = false
-
-    private var isBashMode: Bool {
-        text.hasPrefix("$ ")
-    }
-
-    private var bashCommand: String {
-        String(text.dropFirst(2))
-    }
 
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
-        if isBashMode {
-            if isBusy { return false }
-            return !bashCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages
     }
 
-    private var accentColor: Color {
-        isBashMode ? .themeGreen : .themeBlue
-    }
-
-    private var composerInputFont: UIFont {
-        isBashMode
-            ? .monospacedSystemFont(ofSize: 17, weight: .regular)
-            : .preferredFont(forTextStyle: .body)
-    }
-
-    private var composerAutocorrectionEnabled: Bool {
-        !isBashMode
-    }
+    private var accentColor: Color { .themeBlue }
+    private var composerInputFont: UIFont { .preferredFont(forTextStyle: .body) }
+    private var composerAutocorrectionEnabled: Bool { true }
 
     private var autocompleteContext: ComposerAutocompleteContext {
-        guard !isBusy, !isBashMode else {
-            return .none
-        }
+        guard !isBusy else { return .none }
         return ComposerAutocomplete.context(for: text)
     }
 
@@ -108,26 +84,18 @@ struct ExpandedComposerView: View {
     }
 
     private var wordCount: Int {
-        let content = isBashMode ? bashCommand : text
-        return content.split(whereSeparator: \.isWhitespace).count
+        text.split(whereSeparator: \.isWhitespace).count
     }
 
-    private var charCount: Int {
-        let content = isBashMode ? bashCommand : text
-        return content.count
-    }
+    private var charCount: Int { text.count }
 
     private var lineCount: Int {
-        let content = isBashMode ? bashCommand : text
-        return max(1, content.components(separatedBy: "\n").count)
+        max(1, text.components(separatedBy: "\n").count)
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if isBashMode {
-                    bashBanner
-                }
 
                 FullSizeTextView(
                     text: textFieldBinding,
@@ -166,7 +134,7 @@ struct ExpandedComposerView: View {
                     Button {
                         handleSend()
                     } label: {
-                        Text(isBashMode ? "Run" : "Send")
+                        Text("Send")
                             .fontWeight(.semibold)
                     }
                     .disabled(!canSend)
@@ -193,20 +161,6 @@ struct ExpandedComposerView: View {
     }
 
     // MARK: - Subviews
-
-    private var bashBanner: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "terminal.fill")
-                .font(.caption)
-            Text("Shell command mode")
-                .font(.caption)
-        }
-        .foregroundStyle(.themeGreen)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeGreen.opacity(0.08))
-    }
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
@@ -282,11 +236,9 @@ struct ExpandedComposerView: View {
 
     private var attachMenu: some View {
         Menu {
-            PhotosPicker(
-                selection: $photoSelection,
-                maxSelectionCount: 5,
-                matching: .images
-            ) {
+            Button {
+                showPhotoPicker = true
+            } label: {
                 Label("Photo Library", systemImage: "photo.on.rectangle")
             }
 
@@ -298,22 +250,21 @@ struct ExpandedComposerView: View {
         } label: {
             Image(systemName: "plus.circle.fill")
                 .font(.title3)
-                .foregroundStyle(isBashMode ? .themeComment : .themeBlue)
+                .foregroundStyle(.themeBlue)
                 .symbolRenderingMode(.hierarchical)
         }
-        .disabled(isBashMode)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoSelection,
+            maxSelectionCount: 5,
+            matching: .images
+        )
     }
 
     // MARK: - Actions
 
     private func handleSend() {
-        if isBashMode {
-            let cmd = bashCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cmd.isEmpty else { return }
-            onBash(cmd)
-        } else {
-            onSend()
-        }
+        onSend()
         dismiss()
     }
 
