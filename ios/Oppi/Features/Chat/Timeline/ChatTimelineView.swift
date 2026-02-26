@@ -81,8 +81,9 @@ struct ChatTimelineView: View {
                 bottomOverlap: bottomOverlap
             )
         )
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .overlay(alignment: .bottom) {
             PermissionOverlay(sessionId: sessionId)
+                .padding(.bottom, bottomOverlap)
         }
         .background(Color.themeBg)
         .overlay {

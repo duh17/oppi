@@ -21,18 +21,11 @@ struct JumpToBottomHintButton: View {
 
     var body: some View {
         Button(action: onTap) {
-            Circle()
-                .fill(Color.themeBgHighlight.opacity(0.95))
+            Image(systemName: "arrow.down")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(isStreaming ? .themeBlue : .themeFg)
                 .frame(width: 34, height: 34)
-                .overlay(
-                    Circle()
-                        .stroke((isStreaming ? Color.themeBlue : Color.themeComment).opacity(0.34), lineWidth: 1)
-                )
-                .overlay {
-                    Image(systemName: "arrow.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(isStreaming ? .themeBlue : .themeFg)
-                }
+                .glassEffect(.regular, in: Circle())
                 .overlay(alignment: .topTrailing) {
                     if isStreaming {
                         Circle()
@@ -45,7 +38,6 @@ struct JumpToBottomHintButton: View {
                 }
         }
         .buttonStyle(.plain)
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
         .accessibilityLabel(isStreaming ? "Jump to latest streaming message" : "Jump to latest message")
         .onAppear {
             guard isStreaming else { return }
