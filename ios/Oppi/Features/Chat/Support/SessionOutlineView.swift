@@ -485,7 +485,7 @@ private struct OutlineRow: View {
         case .userMessage: return "person.fill"
         case .assistantMessage: return "cpu"
         case .audioClip: return "waveform"
-        case .thinking: return "brain"
+        case .thinking: return "sparkle"
         case .toolCall(_, let tool, _, _, _, _, _):
             switch tool {
             case "bash", "Bash": return "terminal"
