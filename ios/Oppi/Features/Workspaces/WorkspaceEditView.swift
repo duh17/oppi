@@ -38,6 +38,14 @@ struct WorkspaceEditView: View {
         return []
     }
 
+    private var enabledSkills: [SkillInfo] {
+        skills.filter { selectedSkills.contains($0.name) }
+    }
+
+    private var disabledSkills: [SkillInfo] {
+        skills.filter { !selectedSkills.contains($0.name) }
+    }
+
     private var workspaceForEditing: Workspace {
         if let activeServerId,
            let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
@@ -59,26 +67,31 @@ struct WorkspaceEditView: View {
                     .textInputAutocapitalization(.never)
             }
 
-            Section("Skills") {
-                if skills.isEmpty {
+            if skills.isEmpty {
+                Section("Skills") {
                     Text("Loading skills…")
                         .foregroundStyle(.themeComment)
-                } else {
-                    ForEach(skills) { skill in
-                        SkillToggleRow(
-                            skill: skill,
-                            isSelected: selectedSkills.contains(skill.name),
-                            onToggle: { selected in
-                                if selected {
-                                    selectedSkills.insert(skill.name)
-                                } else {
-                                    selectedSkills.remove(skill.name)
-                                }
-                            },
-                            onShowDetail: {
-                                selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
-                            }
-                        )
+                }
+            } else {
+                Section("Enabled Skills") {
+                    if enabledSkills.isEmpty {
+                        Text("No skills enabled")
+                            .foregroundStyle(.themeComment)
+                    } else {
+                        ForEach(enabledSkills) { skill in
+                            skillRow(skill)
+                        }
+                    }
+                }
+
+                Section("Disabled Skills") {
+                    if disabledSkills.isEmpty {
+                        Text("All skills enabled")
+                            .foregroundStyle(.themeComment)
+                    } else {
+                        ForEach(disabledSkills) { skill in
+                            skillRow(skill)
+                        }
                     }
                 }
             }
@@ -245,6 +258,24 @@ struct WorkspaceEditView: View {
             await loadModels()
             await loadExtensions()
         }
+    }
+
+    @ViewBuilder
+    private func skillRow(_ skill: SkillInfo) -> some View {
+        SkillToggleRow(
+            skill: skill,
+            isSelected: selectedSkills.contains(skill.name),
+            onToggle: { selected in
+                if selected {
+                    selectedSkills.insert(skill.name)
+                } else {
+                    selectedSkills.remove(skill.name)
+                }
+            },
+            onShowDetail: {
+                selectedSkillDetail = SkillDetailDestination(skillName: skill.name)
+            }
+        )
     }
 
     private func parseExtensionNames(_ raw: String) -> [String] {
