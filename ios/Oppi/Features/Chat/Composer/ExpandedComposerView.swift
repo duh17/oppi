@@ -31,6 +31,7 @@ struct ExpandedComposerView: View {
     let slashCommands: [SlashCommand]
     let session: Session?
     let thinkingLevel: ThinkingLevel
+    var voiceInputManager: VoiceInputManager?
     let onSend: () -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
@@ -41,6 +42,9 @@ struct ExpandedComposerView: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
+
+    /// Text in the field before voice recording started.
+    @State private var textBeforeRecording: String?
 
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
@@ -146,6 +150,10 @@ struct ExpandedComposerView: View {
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
         }
+        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
+            guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
+            text = prefix + transcript
+        }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(
                 onCapture: { image in
@@ -170,6 +178,10 @@ struct ExpandedComposerView: View {
 
             HStack(spacing: 6) {
                 attachMenu
+
+                if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+                    micButton(manager: manager)
+                }
 
                 Spacer(minLength: 0)
 
@@ -248,10 +260,15 @@ struct ExpandedComposerView: View {
                 Label("Camera", systemImage: "camera")
             }
         } label: {
-            Image(systemName: "plus.circle.fill")
-                .font(.title3)
-                .foregroundStyle(.themeBlue)
-                .symbolRenderingMode(.hierarchical)
+            ZStack {
+                Circle().fill(Color.themeBgHighlight)
+                Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
+
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.themeComment)
+            }
+            .frame(width: 32, height: 32)
         }
         .photosPicker(
             isPresented: $showPhotoPicker,
@@ -261,9 +278,66 @@ struct ExpandedComposerView: View {
         )
     }
 
+    // MARK: - Mic Button
+
+    private func micButton(manager: VoiceInputManager) -> some View {
+        let isRecording = manager.isRecording
+        let isProcessing = manager.isProcessing || manager.isPreparing
+
+        return Button {
+            Task {
+                if isRecording {
+                    await manager.stopRecording()
+                    textBeforeRecording = nil
+                } else if manager.state == .idle {
+                    let current = text
+                    if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
+                        textBeforeRecording = current
+                    } else {
+                        textBeforeRecording = current + " "
+                    }
+                    do {
+                        try await manager.startRecording()
+                    } catch {
+                        textBeforeRecording = nil
+                    }
+                }
+            }
+        } label: {
+            ZStack {
+                Circle().fill(isRecording ? accentColor.opacity(0.15) : Color.themeBgHighlight)
+                Circle().stroke(
+                    isRecording ? accentColor.opacity(0.5) : Color.themeComment.opacity(0.35),
+                    lineWidth: 1
+                )
+
+                if isProcessing {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if isRecording {
+                    MicWaveformView(audioLevel: manager.audioLevel, color: accentColor)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .frame(width: 32, height: 32)
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessing)
+        .accessibilityIdentifier("expanded.voiceInput")
+        .accessibilityLabel(isRecording ? "Stop recording" : "Start voice input")
+    }
+
     // MARK: - Actions
 
     private func handleSend() {
+        // Stop voice recording before sending
+        if let manager = voiceInputManager, manager.isRecording {
+            textBeforeRecording = nil
+            Task { await manager.stopRecording() }
+        }
         onSend()
         dismiss()
     }

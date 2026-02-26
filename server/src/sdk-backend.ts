@@ -23,7 +23,7 @@ import {
   SettingsManager,
   getAgentDir,
 } from "@mariozechner/pi-coding-agent";
-import { getModel, type KnownProvider, type ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@mariozechner/pi-ai";
 
 import type { GateServer } from "./gate.js";
 import { ts } from "./log-utils.js";
@@ -40,6 +40,18 @@ function parseModelId(modelId: string): { provider: string; model: string } | nu
   const slash = modelId.indexOf("/");
   if (slash <= 0) return null;
   return { provider: modelId.substring(0, slash), model: modelId.substring(slash + 1) };
+}
+
+function resolveRegistryModel(
+  modelRegistry: Pick<ModelRegistry, "find">,
+  modelId: string,
+): ReturnType<ModelRegistry["find"]> {
+  const parsed = parseModelId(modelId);
+  if (!parsed) {
+    return undefined;
+  }
+
+  return modelRegistry.find(parsed.provider, parsed.model);
 }
 
 /**
@@ -106,6 +118,7 @@ export class SdkBackend {
   private piSession: AgentSession;
   private unsub: () => void;
   private readonly emitEvent: (event: SessionBackendEvent) => void;
+  private readonly modelRegistry: ModelRegistry;
   private readonly pendingExtensionResponses = new Map<string, PendingExtensionUIResponse>();
   private disposed = false;
 
@@ -113,10 +126,12 @@ export class SdkBackend {
     piSession: AgentSession,
     unsub: () => void,
     emitEvent: (event: SessionBackendEvent) => void,
+    modelRegistry: ModelRegistry,
   ) {
     this.piSession = piSession;
     this.unsub = unsub;
     this.emitEvent = emitEvent;
+    this.modelRegistry = modelRegistry;
   }
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
@@ -127,15 +142,11 @@ export class SdkBackend {
     const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
     const settingsManager = SettingsManager.create(cwd, agentDir);
 
-    // Resolve the model from the session's model ID
-    let model: ReturnType<typeof getModel> | undefined;
-    const parsed = session.model ? parseModelId(session.model) : null;
-    if (parsed) {
-      try {
-        model = getModel(parsed.provider as KnownProvider, parsed.model as never);
-      } catch {
-        console.warn(`${ts()} [sdk] Failed to resolve model ${session.model}, using default`);
-      }
+    // Resolve the model from the session's model ID.
+    // Use ModelRegistry so custom providers/models (e.g. LM Studio) work.
+    const model = session.model ? resolveRegistryModel(modelRegistry, session.model) : undefined;
+    if (session.model && !model) {
+      console.warn(`${ts()} [sdk] Failed to resolve model ${session.model}, using default`);
     }
 
     // Use file-based session manager for persistence
@@ -198,7 +209,7 @@ export class SdkBackend {
       onEvent(event);
     });
 
-    const backend = new SdkBackend(piSession, unsub, onEvent);
+    const backend = new SdkBackend(piSession, unsub, onEvent, modelRegistry);
 
     await piSession.bindExtensions({
       uiContext: backend.createExtensionUIContext(),
@@ -476,8 +487,12 @@ export class SdkBackend {
       return { success: false, error: `Invalid model ID: ${modelId}` };
     }
 
+    const model = this.modelRegistry.find(parsed.provider, parsed.model);
+    if (!model) {
+      return { success: false, error: `Unknown model: ${modelId}` };
+    }
+
     try {
-      const model = getModel(parsed.provider as KnownProvider, parsed.model as never);
       await this.piSession.setModel(model);
 
       const activeModel = this.piSession.model;

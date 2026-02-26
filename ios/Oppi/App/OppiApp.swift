@@ -586,6 +586,11 @@ struct OppiApp: App {
         // Even if security profile check fails (server offline), show cached workspace.
         navigation.showOnboarding = false
 
+        // Show What's New once per marketing version after onboarding.
+        if WhatsNewManager.shouldShow {
+            navigation.showWhatsNew = true
+        }
+
         // Security profile is server-config managed and no longer required for launch.
 
         // 2. Restore UI state (tab, active session, draft, scroll position)

@@ -91,17 +91,8 @@ struct ChatTimelineView: View {
                 ChatEmptyState()
             }
         }
-        .overlay(alignment: .bottomTrailing) {
-            if scrollController.isJumpToBottomHintVisible {
-                JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
-                    jumpToLatest()
-                }
-                .padding(.trailing, 27)
-                .padding(.bottom, bottomOverlap + 10)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
-            }
-        }
-        .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
+        // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
+        // the footer's z-order blocking taps on this overlay.
         .onChange(of: reducer.renderVersion) { _, _ in
             scrollController.itemCount = visibleItems.count
             let hasNewItems = scrollController.consumeHasNewItems()
@@ -155,10 +146,6 @@ struct ChatTimelineView: View {
         .sheet(item: $fileToOpen) { file in
             RemoteFileView(workspaceId: file.workspaceId, sessionId: file.sessionId, path: file.path)
         }
-    }
-
-    private func jumpToLatest() {
-        scrollController.requestScrollToBottom()
     }
 
     private func issueScrollCommand(id: String, anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {

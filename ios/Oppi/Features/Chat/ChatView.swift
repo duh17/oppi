@@ -599,6 +599,7 @@ struct ChatView: View {
             slashCommands: connection.slashCommands,
             session: session,
             thinkingLevel: connection.thinkingLevel,
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
             onSend: sendPrompt,
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in

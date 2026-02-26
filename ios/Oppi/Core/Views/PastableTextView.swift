@@ -131,6 +131,8 @@ struct PastableTextView: UIViewRepresentable {
     let focusRequestID: Int
     let blurRequestID: Int
     let dictationRequestID: Int
+    let suppressKeyboard: Bool
+    let onKeyboardRestoreRequest: (() -> Void)?
     let accessibilityIdentifier: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
@@ -166,11 +168,18 @@ struct PastableTextView: UIViewRepresentable {
         textView.isAccessibilityElement = true
         textView.accessibilityIdentifier = accessibilityIdentifier
 
+        textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        textView.installKeyboardRestoreGesture()
+        if suppressKeyboard {
+            textView.setKeyboardSuppressed(true)
+        }
+
         return textView
     }
 
     func updateUIView(_ textView: PastableUITextView, context: Context) {
-        if textView.text != text {
+        let textChanged = textView.text != text
+        if textChanged {
             textView.text = text
         }
         textView.onPasteImages = onPasteImages
@@ -190,6 +199,13 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         textView.accessibilityIdentifier = accessibilityIdentifier
+
+        // Manage keyboard suppression — must apply before focus request so
+        // inputView is set before becomeFirstResponder fires.
+        textView.onKeyboardRestoreRequest = onKeyboardRestoreRequest
+        if textView.isKeyboardSuppressed != suppressKeyboard {
+            textView.setKeyboardSuppressed(suppressKeyboard)
+        }
 
         if focusRequestID != context.coordinator.lastFocusRequestID {
             context.coordinator.lastFocusRequestID = focusRequestID
@@ -218,8 +234,15 @@ struct PastableTextView: UIViewRepresentable {
             }
         }
 
-        // Keep update path side-effect light: no intrinsic invalidation,
-        // no dynamic scroll toggling, no text-container mutation.
+        // Refresh line count for programmatic text changes (e.g. voice transcription)
+        // so the expand button tracks streamed content.
+        if textChanged {
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView else { return }
+                coordinator.notifyLineCountIfNeeded(textView)
+            }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: PastableUITextView, context: Context) -> CGSize? {
@@ -350,7 +373,7 @@ struct PastableTextView: UIViewRepresentable {
             notifyDictationStateIfNeeded(textView)
         }
 
-        private func notifyLineCountIfNeeded(_ textView: UITextView) {
+        func notifyLineCountIfNeeded(_ textView: UITextView) {
             let lineHeight = max(textView.font?.lineHeight ?? 17, 1)
             let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
             let textHeight = max(textView.contentSize.height - verticalInsets, lineHeight)
@@ -469,9 +492,22 @@ struct FullSizeTextView: UIViewRepresentable {
 final class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
     var onCommandEnter: (() -> Void)?
+    var onKeyboardRestoreRequest: (() -> Void)?
+
+    /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
+    private(set) var isKeyboardSuppressed = false
 
     private var cachedPasteboardChangeCount: Int = -1
     private var cachedPasteboardHasImages = false
+
+    /// Tap gesture that restores the keyboard when the user taps the text view
+    /// while keyboard is suppressed (e.g. during voice recording).
+    private lazy var keyboardRestoreTap: UITapGestureRecognizer = {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleKeyboardRestoreTap))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        return tap
+    }()
 
     override var intrinsicContentSize: CGSize {
         // Return noIntrinsicMetric — sizeThatFits is the authoritative source
@@ -534,5 +570,46 @@ final class PastableUITextView: UITextView {
 
         // Normal text paste
         super.paste(sender)
+    }
+
+    // MARK: - Keyboard Suppression
+
+    /// Install the tap gesture that restores the keyboard when the user taps
+    /// the text view while keyboard is suppressed.
+    func installKeyboardRestoreGesture() {
+        keyboardRestoreTap.isEnabled = false
+        addGestureRecognizer(keyboardRestoreTap)
+    }
+
+    /// Toggle keyboard suppression. When suppressed, the cursor remains visible
+    /// but the system keyboard is hidden via an empty `inputView`.
+    func setKeyboardSuppressed(_ suppressed: Bool) {
+        isKeyboardSuppressed = suppressed
+        inputView = suppressed ? UIView() : nil
+        keyboardRestoreTap.isEnabled = suppressed
+        if window != nil {
+            reloadInputViews()
+        }
+    }
+
+    @objc private func handleKeyboardRestoreTap() {
+        guard isKeyboardSuppressed else { return }
+        // Immediately restore keyboard for responsiveness
+        isKeyboardSuppressed = false
+        inputView = nil
+        keyboardRestoreTap.isEnabled = false
+        reloadInputViews()
+        onKeyboardRestoreRequest?()
+    }
+}
+
+// MARK: - PastableUITextView + UIGestureRecognizerDelegate
+
+extension PastableUITextView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === keyboardRestoreTap
     }
 }

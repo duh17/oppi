@@ -48,6 +48,13 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Bumped to trigger haptic when voice recording starts.
     @State private var voiceHapticTrigger = 0
 
+    /// Bumped to programmatically focus the text field.
+    @State private var focusRequestID = 0
+
+    /// When true, the keyboard is hidden while the cursor remains visible.
+    /// Used during voice recording to show cursor without keyboard.
+    @State private var suppressKeyboard = false
+
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
@@ -237,9 +244,11 @@ struct ChatInputBar<ActionRow: View>: View {
                         onLineCountChange: handleInlineLineCountChange,
                         onFocusChange: nil,
                         onDictationStateChange: nil,
-                        focusRequestID: 0,
+                        focusRequestID: focusRequestID,
                         blurRequestID: 0,
                         dictationRequestID: 0,
+                        suppressKeyboard: suppressKeyboard,
+                        onKeyboardRestoreRequest: handleKeyboardRestore,
                         accessibilityIdentifier: "chat.input"
                     )
                 }
@@ -392,10 +401,14 @@ struct ChatInputBar<ActionRow: View>: View {
                     } else {
                         textBeforeRecording = current + " "
                     }
+                    // Show cursor without keyboard — keyboard appears on text field tap
+                    suppressKeyboard = true
+                    focusRequestID += 1
                     do {
                         try await manager.startRecording()
                     } catch {
                         textBeforeRecording = nil
+                        suppressKeyboard = false
                     }
                 }
             }
@@ -483,10 +496,20 @@ struct ChatInputBar<ActionRow: View>: View {
         // doesn't repopulate the text field after it's cleared.
         if let manager = voiceInputManager, manager.isRecording {
             textBeforeRecording = nil
+            suppressKeyboard = false
             Task { await manager.stopRecording() }
         }
 
         onSend()
+    }
+
+    /// User tapped the text field while voice was recording — stop recording
+    /// and let the keyboard appear so they can type.
+    private func handleKeyboardRestore() {
+        guard let manager = voiceInputManager, manager.isRecording else { return }
+        suppressKeyboard = false
+        textBeforeRecording = nil
+        Task { await manager.stopRecording() }
     }
 
     private func insertSlashCommand(_ command: SlashCommand) {
