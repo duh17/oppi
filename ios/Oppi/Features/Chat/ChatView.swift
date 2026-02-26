@@ -15,7 +15,7 @@ struct ChatView: View {
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
     @State private var actionHandler = ChatActionHandler()
-    @State private var dictationService = DictationService()
+    @State private var voiceInputManager = VoiceInputManager()
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
@@ -35,6 +35,8 @@ struct ChatView: View {
     @State private var showCompactConfirmation = false
     @State private var showSkillPanel = false
     @State private var isKeyboardVisible = false
+    @State private var footerHeight: CGFloat = 0
+    @State private var headerHeight: CGFloat = 0
     init(sessionId: String) {
         self.sessionId = sessionId
         _sessionManager = State(initialValue: ChatSessionManager(sessionId: sessionId))
@@ -119,22 +121,27 @@ struct ChatView: View {
     }
 
     private var chatContent: some View {
-        VStack(spacing: 0) {
+        ChatTimelineView(
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId,
+            isBusy: isBusy,
+            scrollController: scrollController,
+            sessionManager: sessionManager,
+            onFork: forkFromMessage,
+            topOverlap: headerHeight,
+            bottomOverlap: footerHeight
+        )
+        .ignoresSafeArea(.container, edges: .top)
+        .overlay(alignment: .top) {
             WorkspaceContextBar(
                 gitStatus: connection.gitStatusStore.gitStatus,
                 isLoading: connection.gitStatusStore.isLoading
             )
-
-            ChatTimelineView(
-                sessionId: sessionId,
-                workspaceId: session?.workspaceId,
-                isBusy: isBusy,
-                scrollController: scrollController,
-                sessionManager: sessionManager,
-                onFork: forkFromMessage
-            )
-
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+        }
+        .overlay(alignment: .bottom) {
             footerArea
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
         .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
@@ -183,6 +190,12 @@ struct ChatView: View {
                 reducer: reducer,
                 sessionStore: sessionStore
             )
+        }
+        .task {
+            // Pre-warm voice input pipeline in background (model check + transcriber creation)
+            if ReleaseFeatures.voiceInputEnabled {
+                await voiceInputManager.prewarm()
+            }
         }
         .onAppear {
             sessionManager.markAppeared()
@@ -263,12 +276,11 @@ struct ChatView: View {
                     isSending: actionHandler.isSending,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
-                    dictationService: ReleaseFeatures.composerDictationEnabled ? dictationService : nil,
+                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     slashCommands: connection.slashCommands,
                     onSend: sendPrompt,
-                    onBash: sendBashCommand,
                     onStop: {
                         actionHandler.stop(
                             connection: connection, reducer: reducer,
@@ -410,17 +422,6 @@ struct ChatView: View {
         if !restored.isEmpty {
             inputText = restored
         }
-    }
-
-    private func sendBashCommand(_ command: String) {
-        inputText = ""
-        scrollController.requestScrollToBottom()
-        actionHandler.sendBash(
-            command,
-            connection: connection,
-            reducer: reducer,
-            sessionId: sessionId
-        )
     }
 
     private func handleModelSelection(_ model: ModelInfo) {
@@ -589,7 +590,6 @@ struct ChatView: View {
             session: session,
             thinkingLevel: connection.thinkingLevel,
             onSend: sendPrompt,
-            onBash: sendBashCommand,
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in
                 actionHandler.setThinking(

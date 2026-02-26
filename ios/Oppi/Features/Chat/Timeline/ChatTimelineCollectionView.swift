@@ -96,6 +96,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let audioPlayer: AudioPlayerService
         let theme: AppTheme
         let themeID: ThemeID
+        let topOverlap: CGFloat
+        let bottomOverlap: CGFloat
 
         init(
             items: [ChatItem],
@@ -118,7 +120,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             connection: ServerConnection,
             audioPlayer: AudioPlayerService,
             theme: AppTheme,
-            themeID: ThemeID
+            themeID: ThemeID,
+            topOverlap: CGFloat = 0,
+            bottomOverlap: CGFloat = 0
         ) {
             self.items = items
             self.hiddenCount = hiddenCount
@@ -141,6 +145,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.audioPlayer = audioPlayer
             self.theme = theme
             self.themeID = themeID
+            self.topOverlap = topOverlap
+            self.bottomOverlap = bottomOverlap
         }
     }
 
@@ -151,7 +157,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.backgroundColor = UIColor(Color.themeBg)
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
-        collectionView.contentInset.bottom = 12
+        collectionView.topEdgeEffect.style = .soft
+        collectionView.bottomEdgeEffect.style = .soft
         collectionView.delegate = context.coordinator
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Controller.handleTimelineTap(_:)))
@@ -159,6 +166,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         tapGesture.delegate = context.coordinator
         collectionView.addGestureRecognizer(tapGesture)
 
+        collectionView.contentInset.top = configuration.topOverlap
+        collectionView.contentInset.bottom = configuration.bottomOverlap
         context.coordinator.configureDataSource(collectionView: collectionView)
         return collectionView
     }
@@ -219,6 +228,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// streaming text grows the tail between throttled auto-scroll pulses.
         private let nearBottomEnterThreshold: CGFloat = 120
         private let nearBottomExitThreshold: CGFloat = 200
+        private let detachedProgrammaticArmMinDelta: CGFloat = 120
+        private let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
         private var currentIDs: [String] = []
         private var currentItemByID: [String: ChatItem] = [:]
@@ -228,6 +239,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         private var lastObservedContentOffsetY: CGFloat?
+        private var detachedProgrammaticTargetOffsetY: CGFloat?
+        private var isApplyingDetachedProgrammaticCorrection = false
         private var lastDistanceFromBottom: CGFloat = 0
         private let toolOutputLoader = ExpandedToolOutputLoader()
 
@@ -291,6 +304,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         func configureDataSource(collectionView: UICollectionView) {
             self.collectionView = collectionView
+            collectionView.delegate = self
 
             let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
                 self?.configureNativeCell(
@@ -821,6 +835,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
                 cancelAllToolOutputLoadTasks()
                 lastObservedContentOffsetY = nil
+                detachedProgrammaticTargetOffsetY = nil
+                isApplyingDetachedProgrammaticCorrection = false
                 configuration.scrollController.setUserInteracting(false)
                 configuration.scrollController.setDetachedStreamingHintVisible(false)
                 configuration.scrollController.setJumpToBottomHintVisible(false)
@@ -844,6 +860,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentThemeID = configuration.themeID
 
             collectionView.backgroundColor = UIColor(Color.themeBg)
+
+            if collectionView.contentInset.top != configuration.topOverlap {
+                collectionView.contentInset.top = configuration.topOverlap
+            }
+            if collectionView.contentInset.bottom != configuration.bottomOverlap {
+                collectionView.contentInset.bottom = configuration.bottomOverlap
+            }
 
             var nextItemByID: [String: ChatItem] = [:]
             nextItemByID.reserveCapacity(configuration.items.count)
@@ -983,19 +1006,55 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             let isUserDriven = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
+            let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
+            let deltaY = scrollView.contentOffset.y - previousOffset
+
+            if isApplyingDetachedProgrammaticCorrection {
+                lastObservedContentOffsetY = scrollView.contentOffset.y
+                return
+            }
 
             if isUserDriven {
-                let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
-                let deltaY = scrollView.contentOffset.y - previousOffset
                 if deltaY < -0.5 {
                     // User is scrolling up: detach and skip position-based
                     // re-evaluation so updateScrollState cannot immediately
                     // re-attach within the same callback.
                     scrollController?.detachFromBottomForUserScroll()
+                    detachedProgrammaticTargetOffsetY = nil
                     lastObservedContentOffsetY = scrollView.contentOffset.y
                     updateDetachedStreamingHintVisibility()
                     return
                 }
+
+                detachedProgrammaticTargetOffsetY = nil
+            } else if !alreadyAttached,
+                      !(collectionView is AnchoredCollectionView) {
+                // Detached + programmatic offset changes can trigger a second
+                // UIKit correction pass (estimated -> actual heights). Keep the
+                // large jump target and ignore a single small follow-up snap.
+                //
+                // Limit this to plain UICollectionView hosts. AnchoredCollectionView
+                // has its own anchoring behavior and should not be double-corrected.
+                if let targetOffsetY = detachedProgrammaticTargetOffsetY,
+                   abs(deltaY) > 0.5,
+                   abs(deltaY) < detachedProgrammaticCorrectionMaxDelta {
+                    isApplyingDetachedProgrammaticCorrection = true
+                    scrollView.contentOffset.y = targetOffsetY
+                    isApplyingDetachedProgrammaticCorrection = false
+                    detachedProgrammaticTargetOffsetY = nil
+                    lastObservedContentOffsetY = targetOffsetY
+                    updateDetachedStreamingHintVisibility()
+                    return
+                }
+
+                if abs(deltaY) >= detachedProgrammaticArmMinDelta {
+                    detachedProgrammaticTargetOffsetY = scrollView.contentOffset.y
+                } else if abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
+                    detachedProgrammaticTargetOffsetY = nil
+                }
+            } else {
+                detachedProgrammaticTargetOffsetY = nil
             }
 
             lastObservedContentOffsetY = scrollView.contentOffset.y
@@ -1007,7 +1066,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // snapshot apply), only update when already attached. This prevents
             // a detached user from being re-attached by a layout-triggered
             // contentOffset adjustment.
-            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
             if isUserDriven || alreadyAttached {
                 updateScrollState(collectionView)
             }

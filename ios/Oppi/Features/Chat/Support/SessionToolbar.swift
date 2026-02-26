@@ -140,11 +140,7 @@ private struct PillLabel: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background {
-            Capsule()
-                .fill(Color.themeComment.opacity(0.18))
-                .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
-        }
+        .glassEffect(.regular, in: Capsule())
         .contentShape(Capsule())
     }
 }

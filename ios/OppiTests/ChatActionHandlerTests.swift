@@ -895,29 +895,6 @@ struct ChatActionHandlerTests {
         #expect(hasRenameError)
     }
 
-    // MARK: - Bash
-
-    @MainActor
-    @Test func sendBashCreatesSystemEvent() {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-
-        handler.sendBash(
-            "ls -la",
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
-        )
-
-        #expect(reducer.items.count == 1)
-        guard case .systemEvent(_, let msg) = reducer.items[0] else {
-            Issue.record("Expected systemEvent for bash")
-            return
-        }
-        #expect(msg == "$ ls -la")
-    }
-
     // MARK: - Helpers
 
     @MainActor

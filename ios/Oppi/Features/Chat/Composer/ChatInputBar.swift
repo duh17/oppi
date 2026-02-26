@@ -25,12 +25,11 @@ struct ChatInputBar<ActionRow: View>: View {
     let isSending: Bool
     let sendProgressText: String?
     let isStopping: Bool
-    var dictationService: DictationService?
+    var voiceInputManager: VoiceInputManager?
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     let slashCommands: [SlashCommand]
     let onSend: () -> Void
-    let onBash: (String) -> Void
     let onStop: () -> Void
     let onForceStop: () -> Void
     let onExpand: () -> Void
@@ -42,6 +41,10 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var showCamera = false
     @State private var inlineVisualLineCount = 1
 
+    /// Text in the field before voice recording started.
+    /// Used to prepend existing text when streaming transcription.
+    @State private var textBeforeRecording: String?
+
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
@@ -50,46 +53,22 @@ struct ChatInputBar<ActionRow: View>: View {
     private let composerHorizontalPadding: CGFloat = 12
 
     private var composerInputFont: UIFont {
-        isBashMode
-            ? .monospacedSystemFont(ofSize: 17, weight: .regular)
-            : .preferredFont(forTextStyle: .body)
+        .preferredFont(forTextStyle: .body)
     }
 
-    private var composerPlaceholderFont: Font {
-        isBashMode ? .system(.body, design: .monospaced) : .body
-    }
-
-    private var composerAutocorrectionEnabled: Bool {
-        !isBashMode
-    }
-
-    /// Whether the current input is a bash command (starts with "$ ").
-    private var isBashMode: Bool {
-        text.hasPrefix("$ ")
-    }
-
-    /// The command text without the "$ " prefix.
-    private var bashCommand: String {
-        String(text.dropFirst(2))
-    }
+    private var composerPlaceholderFont: Font { .body }
+    private var composerAutocorrectionEnabled: Bool { true }
 
     private var canSend: Bool {
         let hasImages = !pendingImages.isEmpty
-        if isBashMode {
-            if isBusy { return false }
-            return !bashCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
         let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return hasText || hasImages
     }
 
-    private var accentColor: Color {
-        isBashMode ? .themeGreen : .themeBlue
-    }
+    private var accentColor: Color { .themeBlue }
 
     private var borderColor: Color {
-        if isBashMode { return .themeGreen.opacity(0.5) }
-        return thinkingBorderColor.opacity(0.5)
+        thinkingBorderColor.opacity(0.5)
     }
 
     private var sendActionFillColor: Color {
@@ -111,7 +90,7 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var autocompleteContext: ComposerAutocompleteContext {
-        guard !isBusy, !isBashMode else {
+        guard !isBusy else {
             return .none
         }
         return ComposerAutocomplete.context(for: text)
@@ -186,11 +165,6 @@ struct ChatInputBar<ActionRow: View>: View {
             // Action row: attach (fixed) + pills/controls (trailing)
             HStack(spacing: 6) {
                 attachButton
-                if ReleaseFeatures.composerDictationEnabled,
-                   let dictationService,
-                   isDictationEnabled {
-                    dictationButton(service: dictationService)
-                }
                 actionRow()
             }
         }
@@ -203,6 +177,10 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
+        }
+        .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
+            guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
+            text = prefix + transcript
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(
@@ -230,17 +208,16 @@ struct ChatInputBar<ActionRow: View>: View {
                     .padding(.bottom, 4)
             }
 
-            // Text row with send/stop button
-            HStack(alignment: .bottom, spacing: 8) {
-                if isBashMode {
-                    Text("$")
-                        .font(.system(.body, design: .monospaced).bold())
-                        .foregroundStyle(.themeGreen)
+            // Text row with mic + text + send/stop
+            HStack(alignment: .bottom, spacing: 6) {
+                if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+                    inlineMicButton(manager: manager)
+                        .fixedSize()
                 }
 
                 ZStack(alignment: .leading) {
                     if text.isEmpty {
-                        Text(isBusy ? "Steer agent…" : (isBashMode ? "command…" : "Message…"))
+                        Text(isBusy ? "Steer agent…" : "Message…")
                             .font(composerPlaceholderFont)
                             .foregroundStyle(.themeComment)
                             .padding(.vertical, 4)
@@ -278,8 +255,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .frame(minHeight: 38)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
@@ -311,63 +287,11 @@ struct ChatInputBar<ActionRow: View>: View {
         } label: {
             Image(systemName: "plus")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(isBashMode ? .themeComment : .themeFg)
+                .foregroundStyle(.themeFg)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background {
-                    Capsule()
-                        .fill(Color.themeComment.opacity(0.18))
-                        .overlay(Capsule().stroke(Color.themeComment.opacity(0.25), lineWidth: 0.5))
-                }
+                .glassEffect(.regular, in: Capsule())
         }
-        .disabled(isBashMode)
-    }
-
-    private var isDictationEnabled: Bool {
-        DictationConfig.load().enabled
-    }
-
-    private func dictationButton(service: DictationService) -> some View {
-        let isRecording = service.state == .recording
-        let isProcessing = service.state == .processing
-
-        return Button {
-            if isRecording {
-                service.stop()
-            } else if service.state == .idle || service.isErrorState {
-                let config = DictationConfig.load()
-                service.onTranscription = { fullText in
-                    text = fullText
-                }
-                service.start(config: config)
-            }
-        } label: {
-            Group {
-                if isProcessing {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else {
-                    Image(systemName: isRecording ? "mic.fill" : "mic")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isRecording ? .themeRed : .themeFg)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background {
-                Capsule()
-                    .fill(isRecording ? Color.themeRed.opacity(0.18) : Color.themeComment.opacity(0.18))
-                    .overlay(
-                        Capsule().stroke(
-                            isRecording ? Color.themeRed.opacity(0.4) : Color.themeComment.opacity(0.25),
-                            lineWidth: 0.5
-                        )
-                    )
-            }
-        }
-        .disabled(isProcessing || isBusy)
-        .accessibilityIdentifier("chat.dictation")
-        .accessibilityLabel(isRecording ? "Stop dictation" : "Start dictation")
     }
 
     private var imageStrip: some View {
@@ -434,15 +358,70 @@ struct ChatInputBar<ActionRow: View>: View {
                         .controlSize(.mini)
                         .tint(.white)
                 } else {
-                    Image(systemName: isBashMode ? "terminal.fill" : "arrow.up")
+                    Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(sendActionForegroundColor)
                 }
             }
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
+        .buttonStyle(.plain)
         .disabled(!canSend || isSending)
         .accessibilityIdentifier("chat.send")
+    }
+
+    /// Compact mic toggle inside the capsule, left of the text field.
+    /// Tap to start recording, tap again to stop. Works in any state
+    /// (idle or busy) so you can mix typing and dictation freely.
+    private func inlineMicButton(manager: VoiceInputManager) -> some View {
+        let isRecording = manager.isRecording
+        let isProcessing = manager.isProcessing || manager.isPreparing
+
+        return Button {
+            Task {
+                if isRecording {
+                    await manager.stopRecording()
+                    textBeforeRecording = nil
+                } else if manager.state == .idle {
+                    // Capture text prefix — add space if there's existing content
+                    let current = text
+                    if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
+                        textBeforeRecording = current
+                    } else {
+                        textBeforeRecording = current + " "
+                    }
+                    do {
+                        try await manager.startRecording()
+                    } catch {
+                        textBeforeRecording = nil
+                    }
+                }
+            }
+        } label: {
+            ZStack {
+                Circle().fill(isRecording ? accentColor.opacity(0.15) : Color.themeBgHighlight)
+                Circle().stroke(
+                    isRecording ? accentColor.opacity(0.5) : Color.themeComment.opacity(0.35),
+                    lineWidth: 1
+                )
+
+                if isProcessing {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if isRecording {
+                    MicWaveformView(audioLevel: manager.audioLevel, color: accentColor)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessing)
+        .accessibilityIdentifier("chat.voiceInput")
+        .accessibilityLabel(isRecording ? "Stop recording" : "Start voice input")
     }
 
     private var stopActionButton: some View {
@@ -463,6 +442,7 @@ struct ChatInputBar<ActionRow: View>: View {
             }
             .frame(width: actionVisualDiameter + 2, height: actionVisualDiameter + 2)
         }
+        .buttonStyle(.plain)
         .disabled(isStopping)
         .accessibilityIdentifier("chat.stop")
     }
@@ -496,16 +476,14 @@ struct ChatInputBar<ActionRow: View>: View {
     private func handleSend() {
         guard !isSending else { return }
 
-        if isBashMode {
-            let cmd = bashCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cmd.isEmpty else { return }
-            onBash(cmd)
-        } else {
-            // Keyboard stays open during send. Dismissing keyboard here
-            // caused a SafeArea resize -> LazyVStack full placement cascade
-            // (2s+ hang). Let .scrollDismissesKeyboard handle it.
-            onSend()
+        // Stop voice recording before sending so the transcript onChange
+        // doesn't repopulate the text field after it's cleared.
+        if let manager = voiceInputManager, manager.isRecording {
+            textBeforeRecording = nil
+            Task { await manager.stopRecording() }
         }
+
+        onSend()
     }
 
     private func insertSlashCommand(_ command: SlashCommand) {

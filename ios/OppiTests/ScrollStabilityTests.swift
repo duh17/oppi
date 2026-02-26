@@ -16,7 +16,6 @@ struct ScrollStabilityTests {
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
-        collectionView.contentInset.bottom = 12
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
@@ -252,7 +251,6 @@ struct ScrollStabilityTests {
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
-        collectionView.contentInset.bottom = 12
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
         collectionView.layoutIfNeeded()
