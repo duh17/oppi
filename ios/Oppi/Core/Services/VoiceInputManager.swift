@@ -16,6 +16,11 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Voic
 /// The manager accumulates finalized text and replaces the volatile
 /// portion on each update, exposing a combined `currentTranscript`.
 ///
+/// **Key design: transcribers are never reused.** A `SpeechTranscriber`
+/// becomes invalid after its analyzer is finalized. We create a fresh
+/// transcriber + analyzer pair for each recording session. Pre-warming
+/// only checks model availability and caches the audio format.
+///
 /// Audio engine setup is extracted to a `nonisolated` helper to avoid
 /// MainActor isolation violations in the audio tap callback.
 @MainActor @Observable
@@ -49,16 +54,25 @@ final class VoiceInputManager {
 
     // MARK: - Private
 
+    /// Per-session resources — created fresh, torn down after each session.
     private var transcriber: SpeechTranscriber?
     private var analyzer: SpeechAnalyzer?
-    private var analyzerFormat: AVAudioFormat?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
     private var audioEngine: AVAudioEngine?
     private var resultsTask: Task<Void, Never>?
 
-    /// Whether the transcriber pipeline has been pre-warmed (model checked,
-    /// transcriber + analyzer created). Avoids repeating on every mic tap.
-    private var isPrewarmed = false
+    /// Cached across sessions — model availability and preferred audio format.
+    /// Set during prewarm or first recording. Never invalidated.
+    private var modelReady = false
+    private var cachedFormat: AVAudioFormat?
+
+    /// In-flight prewarm task. startRecording awaits this instead of racing.
+    private var prewarmTask: Task<AVAudioFormat?, Error>?
+
+    /// Operation lock — prevents overlapping async operations.
+    /// Guards against edge cases where state changes haven't propagated
+    /// to the UI yet (SwiftUI re-render lag) and a second tap sneaks through.
+    private var operationInFlight = false
 
     // MARK: - Init
 
@@ -66,19 +80,28 @@ final class VoiceInputManager {
 
     // MARK: - Pre-warm
 
-    /// Pre-create the transcriber and analyzer so the first mic tap is fast.
-    /// Call from ChatView's .task {} to warm up in the background.
+    /// Check model availability and cache audio format in the background.
+    /// Call from ChatView's .task {} so the first mic tap is fast.
+    /// Does NOT create or retain a SpeechTranscriber (they can't be reused).
     /// Safe to call multiple times — no-ops after first success.
     func prewarm() async {
-        guard !isPrewarmed, state == .idle else { return }
+        guard !modelReady, prewarmTask == nil, state == .idle else { return }
+
+        let task = Task {
+            try await Self.warmModel()
+        }
+        prewarmTask = task
+
         do {
-            try await setupTranscriber()
-            isPrewarmed = true
-            logger.info("Pre-warmed voice input pipeline")
+            let format = try await task.value
+            cachedFormat = format
+            modelReady = true
+            logger.info("Pre-warmed voice model (format: \(String(describing: format)))")
         } catch {
             // Non-fatal — will retry on first mic tap
             logger.warning("Pre-warm failed: \(error.localizedDescription)")
         }
+        prewarmTask = nil
     }
 
     // MARK: - Availability
@@ -147,12 +170,18 @@ final class VoiceInputManager {
     // MARK: - Recording
 
     /// Start recording and streaming transcription.
-    /// Uses the device locale. The model handles mixed languages natively.
+    /// Creates a fresh SpeechTranscriber + SpeechAnalyzer pair each time.
     func startRecording() async throws {
         guard state == .idle else {
             logger.warning("Cannot start: state is \(String(describing: self.state))")
             return
         }
+        guard !operationInFlight else {
+            logger.warning("Cannot start: operation already in flight")
+            return
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
 
         finalizedTranscript = ""
         volatileTranscript = ""
@@ -170,25 +199,66 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
 
         do {
-            // Phase 1: transcriber + model (skipped if pre-warmed)
-            if !isPrewarmed {
-                try await setupTranscriber()
-                isPrewarmed = true
-                let setupMs = Int((ContinuousClock.now - startTime).components.seconds * 1000
-                    + (ContinuousClock.now - startTime).components.attoseconds / 1_000_000_000_000_000)
-                logger.error("Voice setup: transcriber in \(setupMs)ms")
+            // Phase 1: ensure model is ready (join prewarm or do cold check)
+            if let inflight = prewarmTask {
+                logger.info("Voice setup: awaiting in-flight prewarm")
+                let format = try await inflight.value
+                cachedFormat = format
+                modelReady = true
+                prewarmTask = nil
+                let ms = elapsedMs(since: startTime)
+                logger.error("Voice setup: joined prewarm in \(ms)ms")
+            } else if !modelReady {
+                let format = try await Self.warmModel()
+                cachedFormat = format
+                modelReady = true
+                let ms = elapsedMs(since: startTime)
+                logger.error("Voice setup: cold model check in \(ms)ms")
             } else {
-                logger.error("Voice setup: pre-warmed (0ms)")
+                logger.error("Voice setup: model ready (0ms)")
             }
-            // Phase 2: analyzer session (fresh each recording)
-            try await startAnalyzerSession()
+
+            // Phase 2: fresh transcriber + analyzer for this session
+            let locale = Locale.current
+            let newTranscriber = SpeechTranscriber(
+                locale: locale,
+                preset: .progressiveTranscription
+            )
+            transcriber = newTranscriber
+            logger.info("Voice setup: created fresh transcriber")
+
+            // Use cached format, or compute if missing
+            let format: AVAudioFormat?
+            if let cached = cachedFormat {
+                format = cached
+            } else {
+                format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                    compatibleWith: [newTranscriber]
+                )
+                cachedFormat = format
+            }
+
+            // Phase 3: start analyzer session
+            let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber])
+            analyzer = newAnalyzer
+
+            let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
+            inputBuilder = builder
+
+            try await newAnalyzer.start(inputSequence: sequence)
+            startResultsHandler(transcriber: newTranscriber)
+            logger.info("Voice setup: analyzer session started")
+
+            // Phase 4: audio engine
             try setupAudioSession()
-            try await startAudioEngine()
-            let totalMs = Int((ContinuousClock.now - startTime).components.seconds * 1000
-                + (ContinuousClock.now - startTime).components.attoseconds / 1_000_000_000_000_000)
+            try await startAudioEngine(format: format)
+
+            let totalMs = elapsedMs(since: startTime)
             logger.error("Voice setup: recording started in \(totalMs)ms total")
             state = .recording
         } catch {
+            logger.error("Voice setup failed: \(error.localizedDescription)")
+            teardownSession()
             state = .error(error.localizedDescription)
             scheduleErrorReset()
             throw error
@@ -197,11 +267,21 @@ final class VoiceInputManager {
 
     /// Stop recording. Finalizes transcription and waits for last results.
     func stopRecording() async {
-        guard state == .recording else { return }
+        guard state == .recording else {
+            logger.warning("Cannot stop: state is \(String(describing: self.state))")
+            return
+        }
+        guard !operationInFlight else {
+            logger.warning("Cannot stop: operation already in flight")
+            return
+        }
+        operationInFlight = true
+        defer { operationInFlight = false }
+
         state = .processing
         logger.info("Stopping recording")
 
-        // Stop audio input
+        // Stop audio input first
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
@@ -214,18 +294,23 @@ final class VoiceInputManager {
             logger.error("Error finalizing: \(error.localizedDescription)")
         }
 
-        // Wait for the results stream to drain (it terminates when analyzer finishes)
+        // Wait for the results stream to drain (terminates when analyzer finishes)
         await resultsTask?.value
         resultsTask = nil
 
         deactivateAudioSession()
-        cleanup()
+        teardownSession()
         state = .idle
         logger.info("Stopped. Transcript: \(self.currentTranscript.prefix(80))...")
     }
 
     /// Cancel recording without finalizing. Discards all text.
     func cancelRecording() async {
+        guard state == .recording || state == .preparingModel else {
+            logger.warning("Cannot cancel: state is \(String(describing: self.state))")
+            return
+        }
+        // Don't check operationInFlight — cancel must always work
         logger.info("Cancelling recording")
 
         audioEngine?.stop()
@@ -239,68 +324,47 @@ final class VoiceInputManager {
         await analyzer?.cancelAndFinishNow()
 
         deactivateAudioSession()
-        cleanup()
+        teardownSession()
 
         finalizedTranscript = ""
         volatileTranscript = ""
+        operationInFlight = false
         state = .idle
     }
 
     // MARK: - Setup
 
-    /// Phase 1: Create transcriber, check model, get format. Can be pre-warmed.
-    private func setupTranscriber() async throws {
-        // Use device locale — the model handles mixed languages natively
+    /// Check model availability and get preferred audio format.
+    /// Creates a temporary transcriber to probe — does not retain it.
+    nonisolated private static func warmModel() async throws -> AVAudioFormat? {
         let locale = Locale.current
 
-        // Use Apple's optimized preset for real-time streaming with volatile results.
-        // This likely enables internal latency optimizations vs manual options.
-        let newTranscriber = SpeechTranscriber(
+        // Probe transcriber — used only for model check + format query, then discarded
+        let probe = SpeechTranscriber(
             locale: locale,
             preset: .progressiveTranscription
         )
-        transcriber = newTranscriber
 
         // Ensure model is downloaded
-        try await ensureModel(transcriber: newTranscriber, locale: locale)
-
-        // Get preferred audio format for conversion.
-        analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [newTranscriber]
-        )
-        logger.info("Analyzer format: \(String(describing: self.analyzerFormat))")
-    }
-
-    /// Phase 2: Create analyzer + input stream, start session. Called each recording.
-    private func startAnalyzerSession() async throws {
-        guard let currentTranscriber = transcriber else {
-            throw VoiceInputError.internalError("Transcriber not initialized")
-        }
-
-        let newAnalyzer = SpeechAnalyzer(modules: [currentTranscriber])
-        analyzer = newAnalyzer
-
-        let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
-        inputBuilder = builder
-
-        try await newAnalyzer.start(inputSequence: sequence)
-        startResultsHandler(transcriber: currentTranscriber)
-    }
-
-    private func ensureModel(transcriber: SpeechTranscriber, locale: Locale) async throws {
         let installed = await SpeechTranscriber.installedLocales
-        if installed.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
+        if !installed.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
+            logger.info("Downloading speech model for \(locale.identifier)")
+            if let request = try await AssetInventory.assetInstallationRequest(
+                supporting: [probe]
+            ) {
+                try await request.downloadAndInstall()
+                logger.info("Model download complete")
+            }
+        } else {
             logger.info("Model already installed for \(locale.identifier)")
-            return
         }
 
-        logger.info("Downloading speech model for \(locale.identifier)")
-        if let request = try await AssetInventory.assetInstallationRequest(
-            supporting: [transcriber]
-        ) {
-            try await request.downloadAndInstall()
-            logger.info("Model download complete")
-        }
+        // Get preferred audio format
+        let format = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: [probe]
+        )
+        logger.info("Analyzer format: \(String(describing: format))")
+        return format
     }
 
     private func setupAudioSession() throws {
@@ -324,17 +388,15 @@ final class VoiceInputManager {
         #endif
     }
 
-    private func startAudioEngine() async throws {
+    private func startAudioEngine(format: AVAudioFormat?) async throws {
         guard let inputBuilder else {
             throw VoiceInputError.internalError("Input builder not initialized")
         }
 
-        let targetFormat = analyzerFormat
-
         // Start engine using nonisolated helper (audio tap runs off MainActor)
         let (engine, levelStream) = try AudioEngineHelper.startEngine(
             inputBuilder: inputBuilder,
-            targetFormat: targetFormat
+            targetFormat: format
         )
         audioEngine = engine
 
@@ -389,11 +451,13 @@ final class VoiceInputManager {
 
     // MARK: - Cleanup
 
-    private func cleanup() {
-        // Keep transcriber + analyzerFormat for reuse (pre-warmed).
-        // Only tear down per-session resources.
+    /// Tear down all per-session resources. Transcriber is never reused —
+    /// it becomes invalid after the analyzer is finalized.
+    private func teardownSession() {
+        transcriber = nil
         analyzer = nil
         inputBuilder = nil
+        audioLevel = 0
     }
 
     private func scheduleErrorReset() {
@@ -404,7 +468,39 @@ final class VoiceInputManager {
             }
         }
     }
+
+    // MARK: - Helpers
+
+    private func elapsedMs(since start: ContinuousClock.Instant) -> Int {
+        let elapsed = ContinuousClock.now - start
+        return Int(elapsed.components.seconds * 1000
+            + elapsed.components.attoseconds / 1_000_000_000_000_000)
+    }
 }
+
+// MARK: - Testing Support
+
+#if DEBUG
+extension VoiceInputManager {
+    /// Expose state for testing state machine guards.
+    var _testState: State {
+        get { state }
+        set { state = newValue }
+    }
+
+    /// Expose operation lock for testing.
+    var _testOperationInFlight: Bool {
+        get { operationInFlight }
+        set { operationInFlight = newValue }
+    }
+
+    /// Expose model readiness for testing.
+    var _testModelReady: Bool {
+        get { modelReady }
+        set { modelReady = newValue }
+    }
+}
+#endif
 
 // MARK: - Errors
 
