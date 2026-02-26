@@ -50,7 +50,7 @@ struct ChatActionHandlerTests {
         let sessionStore = SessionStore()
         let sessionManager = ChatSessionManager(sessionId: "s1")
 
-        var session = makeSession(id: "s1", name: nil, messageCount: 0)
+        var session = makeTestSession(id: "s1", name: nil, messageCount: 0)
         session.status = .busy
         sessionStore.upsert(session)
         connection._setActiveSessionIdForTesting("s1")
@@ -73,7 +73,7 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        await waitForCondition(timeoutMs: 400) { sentStop > 0 }
+        _ = await waitForTestCondition(timeoutMs: 400) { await MainActor.run { sentStop > 0 } }
 
         #expect(sentStop == 1)
         #expect(sentStopSession == 0)
@@ -88,7 +88,7 @@ struct ChatActionHandlerTests {
         let sessionStore = SessionStore()
         let sessionManager = ChatSessionManager(sessionId: "s1")
 
-        var session = makeSession(id: "s1", name: nil, messageCount: 0)
+        var session = makeTestSession(id: "s1", name: nil, messageCount: 0)
         session.status = .busy
         sessionStore.upsert(session)
         connection._setActiveSessionIdForTesting("s1")
@@ -147,7 +147,7 @@ struct ChatActionHandlerTests {
         )
         #expect(result.isEmpty, "Should return empty on success (input cleared)")
 
-        await waitForCondition { !reducer.items.isEmpty }
+        _ = await waitForTestCondition { await MainActor.run { !reducer.items.isEmpty } }
         #expect(reducer.items.count == 1)
 
         guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
@@ -224,7 +224,7 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        await waitForCondition { handler.isSending }
+        _ = await waitForTestCondition { await MainActor.run { handler.isSending } }
 
         let blocked = handler.sendPrompt(
             text: "second",
@@ -237,7 +237,7 @@ struct ChatActionHandlerTests {
 
         #expect(blocked == "second")
 
-        await waitForCondition(timeoutMs: 1_000) { !handler.isSending }
+        _ = await waitForTestCondition(timeoutMs: 1_000) { await MainActor.run { !handler.isSending } }
 
         let userCount = reducer.items.filter {
             if case .userMessage = $0 { return true }
@@ -307,12 +307,12 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .accepted }
-        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .dispatched }
-        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == .started }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .accepted } }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .dispatched } }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .started } }
         #expect(handler.sendProgressText == "Started…")
 
-        await waitForCondition(timeoutMs: 600) { handler.sendAckStage == nil }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == nil } }
         #expect(handler.sendProgressText == nil)
     }
 
@@ -352,7 +352,7 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        await waitForCondition(timeoutMs: 600) { !handler.isSending }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { !handler.isSending } }
         #expect(handler.sendAckStage == nil)
         #expect(handler.sendProgressText == nil)
     }
@@ -375,7 +375,7 @@ struct ChatActionHandlerTests {
         )
         #expect(result.isEmpty)
 
-        await waitForCondition { !reducer.items.isEmpty }
+        _ = await waitForTestCondition { await MainActor.run { !reducer.items.isEmpty } }
         #expect(reducer.items.count == 1)
 
         guard case .systemEvent(_, let msg) = reducer.items[0] else {
@@ -410,7 +410,7 @@ struct ChatActionHandlerTests {
         )
 
         #expect(returned.isEmpty)
-        await waitForCondition { restoredText != nil }
+        _ = await waitForTestCondition { await MainActor.run { restoredText != nil } }
 
         #expect(restoredText == "hello")
         #expect(restoredImageCount == 1)
@@ -449,7 +449,7 @@ struct ChatActionHandlerTests {
             }
         )
 
-        await waitForCondition { reconnectCalls > 0 }
+        _ = await waitForTestCondition { await MainActor.run { reconnectCalls > 0 } }
         #expect(reconnectCalls == 1)
     }
 
@@ -463,7 +463,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
         handler._generateSessionTitleForTesting = { _ in
             "Title: Fix websocket reconnect bug."
@@ -502,8 +502,8 @@ struct ChatActionHandlerTests {
             sessionStore: sessionStore
         )
 
-        await waitForCondition(timeoutMs: 800) {
-            setSessionNameValue != nil
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setSessionNameValue != nil }
         }
 
         #expect(setSessionNameValue == "Fix websocket reconnect bug")
@@ -520,7 +520,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
         handler._generateSessionTitleForTesting = { _ in
             "Title: Investigate websocket reconnect state drift after background foreground transitions now"
@@ -559,8 +559,8 @@ struct ChatActionHandlerTests {
             sessionStore: sessionStore
         )
 
-        await waitForCondition(timeoutMs: 800) {
-            setSessionNameValue != nil
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setSessionNameValue != nil }
         }
 
         // "Title:" prefix stripped, capped at 48 chars at word boundary
@@ -577,7 +577,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: "Manual name", messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: "Manual name", messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
 
         var titleGenerationCalls = 0
@@ -619,7 +619,7 @@ struct ChatActionHandlerTests {
             sessionStore: sessionStore
         )
 
-        await waitForCondition(timeoutMs: 800) { !handler.isSending }
+        _ = await waitForTestCondition(timeoutMs: 800) { await MainActor.run { !handler.isSending } }
         #expect(titleGenerationCalls == 0)
         #expect(setSessionNameCalls == 0)
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Manual name")
@@ -635,7 +635,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
 
         var titleGenerationCalls = 0
@@ -677,7 +677,7 @@ struct ChatActionHandlerTests {
             sessionStore: sessionStore
         )
 
-        await waitForCondition(timeoutMs: 800) { !handler.isSending }
+        _ = await waitForTestCondition(timeoutMs: 800) { await MainActor.run { !handler.isSending } }
         #expect(titleGenerationCalls == 0)
         #expect(setSessionNameCalls == 0)
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == nil)
@@ -697,7 +697,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: nil, messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: nil, messageCount: 0))
         connection._setActiveSessionIdForTesting("s1")
 
         // Simulate the title generator being slow (the real on-device LLM takes ~1-2s)
@@ -747,8 +747,8 @@ struct ChatActionHandlerTests {
             sessionStore.upsert(s)
         }
 
-        await waitForCondition(timeoutMs: 800) {
-            setSessionNameValue != nil
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { setSessionNameValue != nil }
         }
 
         #expect(setSessionNameValue == "Local process bridge")
@@ -764,7 +764,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: "Old name", messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: "Old name", messageCount: 0))
 
         var sentName: String?
 
@@ -784,8 +784,8 @@ struct ChatActionHandlerTests {
 
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Better session name")
 
-        await waitForCondition(timeoutMs: 800) {
-            sentName != nil
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { sentName != nil }
         }
 
         #expect(sentName == "Better session name")
@@ -798,7 +798,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: "Old", messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: "Old", messageCount: 0))
 
         var sentName: String?
         connection._sendMessageForTesting = { message in
@@ -816,8 +816,8 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        await waitForCondition(timeoutMs: 800) {
-            sentName != nil
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { sentName != nil }
         }
 
         guard let sentName else {
@@ -837,7 +837,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: "Existing", messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: "Existing", messageCount: 0))
 
         var sendCalls = 0
         connection._sendMessageForTesting = { _ in
@@ -864,7 +864,7 @@ struct ChatActionHandlerTests {
         let connection = ServerConnection()
         let sessionStore = SessionStore()
 
-        sessionStore.upsert(makeSession(id: "s1", name: "Original", messageCount: 0))
+        sessionStore.upsert(makeTestSession(id: "s1", name: "Original", messageCount: 0))
 
         connection._sendMessageForTesting = { message in
             if case .setSessionName = message {
@@ -882,8 +882,8 @@ struct ChatActionHandlerTests {
 
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Renamed")
 
-        await waitForCondition(timeoutMs: 800) {
-            sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Original"
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Original" }
         }
 
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Original")
@@ -919,42 +919,6 @@ struct ChatActionHandlerTests {
     }
 
     // MARK: - Helpers
-
-    @MainActor
-    private func makeSession(id: String, name: String?, messageCount: Int) -> Session {
-        let now = Date()
-        return Session(
-            id: id,
-            workspaceId: nil,
-            workspaceName: nil,
-            name: name,
-            status: .ready,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: messageCount,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: nil
-        )
-    }
-
-    @MainActor
-    private func waitForCondition(
-        timeoutMs: Int = 1_000,
-        intervalMs: Int = 20,
-        _ condition: @escaping () -> Bool
-    ) async {
-        let attempts = max(1, timeoutMs / intervalMs)
-        for _ in 0..<attempts {
-            if condition() { return }
-            try? await Task.sleep(for: .milliseconds(intervalMs))
-        }
-    }
 
     @MainActor
     private func makePendingImage() -> PendingImage {

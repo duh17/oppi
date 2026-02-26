@@ -60,7 +60,7 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
@@ -70,11 +70,11 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
         streams.finish(index: 0)
         await connectTask.value
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run { manager.connectionGeneration == 1 }
         })
 
@@ -88,7 +88,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
@@ -124,11 +124,11 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
-        sessionStore.upsert(makeSession(id: sessionId, status: .stopped))
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
         let connectTask = Task { @MainActor in
             await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
@@ -154,7 +154,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
@@ -203,7 +203,7 @@ struct ChatSessionManagerTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
@@ -258,7 +258,7 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         #expect(await tracker.waitForCalls(1))
 
-        let session = makeSession(id: sessionId)
+        let session = makeTestSession(id: sessionId)
         streams.yield(index: 0, message: .connected(session: session))
         streams.yield(index: 0, message: .connected(session: session))
 
@@ -305,11 +305,11 @@ struct ChatSessionManagerTests {
             catchUpCalls += 1
             return APIClient.SessionEventsResponse(
                 events: [
-                    .init(seq: 1, message: .state(session: makeSession(id: sessionId, status: .busy))),
-                    .init(seq: 2, message: .state(session: makeSession(id: sessionId, status: .ready))),
+                    .init(seq: 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
+                    .init(seq: 2, message: .state(session: makeTestSession(id: sessionId, status: .ready))),
                 ],
                 currentSeq: 2,
-                session: makeSession(id: sessionId, status: .ready),
+                session: makeTestSession(id: sessionId, status: .ready),
                 catchUpComplete: true
             )
         }
@@ -325,7 +325,7 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         #expect(await tracker.waitForCalls(1))
 
-        let session = makeSession(id: sessionId)
+        let session = makeTestSession(id: sessionId)
         streams.yield(index: 0, message: .connected(session: session))
         streams.yield(index: 0, message: .connected(session: session))
         try? await Task.sleep(for: .milliseconds(80))
@@ -374,7 +374,7 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         #expect(await tracker.waitForCalls(1))
 
-        let session = makeSession(id: sessionId)
+        let session = makeTestSession(id: sessionId)
         streams.yield(index: 0, message: .connected(session: session))
         streams.yield(index: 0, message: .connected(session: session))
         try? await Task.sleep(for: .milliseconds(20))
@@ -418,12 +418,12 @@ struct ChatSessionManagerTests {
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await counter.count() == 0)
 
-        let session = makeSession(id: sessionId)
+        let session = makeTestSession(id: sessionId)
         streams.yield(index: 0, message: .connected(session: session))
-        #expect(await waitForCondition(timeoutMs: 500) { await counter.count() == 1 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 1 })
 
         streams.yield(index: 0, message: .connected(session: session))
-        #expect(await waitForCondition(timeoutMs: 500) { await counter.count() == 2 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 2 })
 
         streams.finish(index: 0)
         await connectTask.value
@@ -440,7 +440,7 @@ struct ChatSessionManagerTests {
         manager._fetchSessionTraceForTesting = { _, _ in
             try await Task.sleep(for: .milliseconds(120))
             return (
-                makeSession(id: sessionId, status: .busy, workspaceId: workspaceId),
+                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
                 [
                     TraceEvent(
                         id: "trace-assistant",
@@ -460,11 +460,11 @@ struct ChatSessionManagerTests {
         }
 
         let connection = ServerConnection()
-        _ = connection.configure(credentials: makeCredentials())
+        _ = connection.configure(credentials: makeTestCredentials())
 
         let reducer = connection.reducer
         let sessionStore = SessionStore()
-        sessionStore.upsert(makeSession(id: sessionId, status: .busy, workspaceId: workspaceId))
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         let connectTask = Task { @MainActor in
             await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
@@ -472,12 +472,12 @@ struct ChatSessionManagerTests {
 
         #expect(await streams.waitForCreated(1))
 
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy, workspaceId: workspaceId)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)))
         streams.yield(index: 0, message: .agentStart)
         streams.yield(index: 0, message: .thinkingDelta(delta: "live thinking"))
         streams.yield(index: 0, message: .toolStart(tool: "read", args: [:], toolCallId: "tc-live", callSegments: nil))
 
-        #expect(await waitForCondition(timeoutMs: 500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
                 reducer.items.contains { item in
                     if case .toolCall(let id, _, _, _, _, _, _) = item {
@@ -535,7 +535,7 @@ struct ChatSessionManagerTests {
                     .init(seq: 2, message: .stopConfirmed(source: .user, reason: nil)),
                 ],
                 currentSeq: 2,
-                session: makeSession(id: sessionId, status: .ready),
+                session: makeTestSession(id: sessionId, status: .ready),
                 catchUpComplete: true
             )
         }
@@ -543,16 +543,16 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
-        sessionStore.upsert(makeSession(id: sessionId, status: .busy))
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
 
         let connectTask = Task { @MainActor in
             await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .ready)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
 
-        #expect(await waitForCondition(timeoutMs: 500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
                 sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .ready
             }
@@ -591,7 +591,7 @@ struct ChatSessionManagerTests {
                     .init(seq: 2, message: .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms")),
                 ],
                 currentSeq: 2,
-                session: makeSession(id: sessionId, status: .busy),
+                session: makeTestSession(id: sessionId, status: .busy),
                 catchUpComplete: true
             )
         }
@@ -599,16 +599,16 @@ struct ChatSessionManagerTests {
         let connection = ServerConnection()
         let reducer = TimelineReducer()
         let sessionStore = SessionStore()
-        sessionStore.upsert(makeSession(id: sessionId, status: .stopping))
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .stopping))
 
         let connectTask = Task { @MainActor in
             await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
         }
 
         #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
 
-        #expect(await waitForCondition(timeoutMs: 500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
                 sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy
             }
@@ -650,7 +650,7 @@ struct ChatSessionManagerTests {
             APIClient.SessionEventsResponse(
                 events: [],
                 currentSeq: 5,
-                session: makeSession(id: sessionId, status: .busy),
+                session: makeTestSession(id: sessionId, status: .busy),
                 catchUpComplete: false
             )
         }
@@ -666,7 +666,7 @@ struct ChatSessionManagerTests {
         #expect(await streams.waitForCreated(1))
         #expect(await tracker.waitForCalls(1))
 
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .busy)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
 
         #expect(await tracker.waitForCalls(2))
         let snapshot = await tracker.snapshot()
@@ -707,16 +707,16 @@ struct ChatSessionManagerTests {
         }
 
         #expect(await streams.waitForCreated(1))
-        streams.yield(index: 0, message: .connected(session: makeSession(id: sessionId, status: .ready)))
-        streams.yield(index: 0, message: .state(session: makeSession(id: sessionId, status: .busy)))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
+        streams.yield(index: 0, message: .state(session: makeTestSession(id: sessionId, status: .busy)))
 
-        #expect(await waitForCondition(timeoutMs: 500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
                 connection.sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy
             }
         })
 
-        streams.yield(index: 0, message: .state(session: makeSession(id: sessionId, status: .ready)))
+        streams.yield(index: 0, message: .state(session: makeTestSession(id: sessionId, status: .ready)))
         try? await Task.sleep(for: .milliseconds(50))
 
         #expect(connection.sessionStore.sessions.first(where: { $0.id == sessionId })?.status == .busy)
@@ -828,32 +828,6 @@ struct ChatSessionManagerTests {
 
     // MARK: - Helpers
 
-    private func makeCredentials() -> ServerCredentials {
-        .init(host: "localhost", port: 7749, token: "sk_test", name: "Test")
-    }
-
-    private func makeSession(id: String, status: SessionStatus = .ready, workspaceId: String? = nil) -> Session {
-        let now = Date()
-        return Session(
-            id: id,
-            workspaceId: workspaceId,
-            workspaceName: nil,
-            name: "Session",
-            status: status,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: nil
-        )
-    }
-
     private func makeTraceEvent(id: String) -> TraceEvent {
         TraceEvent(
             id: id,
@@ -928,19 +902,4 @@ private actor StateSyncCounter {
     func count() -> Int {
         value
     }
-}
-
-private func waitForCondition(
-    timeoutMs: Int = 1_000,
-    pollMs: Int = 20,
-    _ predicate: @Sendable () async -> Bool
-) async -> Bool {
-    let attempts = max(1, timeoutMs / max(1, pollMs))
-    for _ in 0..<attempts {
-        if await predicate() {
-            return true
-        }
-        try? await Task.sleep(for: .milliseconds(pollMs))
-    }
-    return await predicate()
 }

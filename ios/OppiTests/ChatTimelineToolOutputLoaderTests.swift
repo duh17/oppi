@@ -76,7 +76,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run {
                 appliedOutput == "full output"
                     && reconfigureCount == 1
@@ -102,7 +102,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run { loader.taskCountForTesting == 0 }
         })
 
@@ -145,7 +145,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 3_500) {
+        #expect(await waitForTestCondition(timeoutMs: 3_500) {
             await MainActor.run { appliedOutput == "retry output" }
         })
 
@@ -179,7 +179,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run { loader.taskCountForTesting == 0 }
         })
 
@@ -206,7 +206,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             await MainActor.run {
                 loader.taskCountForTesting == 0
                     && !loader.isLoading("tool-1")
@@ -254,7 +254,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.loadIfNeeded(request)
 
-        #expect(await waitForCondition(timeoutMs: 600) {
+        #expect(await waitForTestCondition(timeoutMs: 600) {
             await MainActor.run {
                 loader.isLoading("tool-cancel")
                     && loader.taskCountForTesting == 1
@@ -263,7 +263,7 @@ struct ExpandedToolOutputLoaderTests {
 
         loader.cancelLoadTasks(for: ["tool-cancel"])
 
-        #expect(await waitForCondition(timeoutMs: 1_000) {
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
             let counts = await probe.snapshot()
             let done = await MainActor.run {
                 loader.taskCountForTesting == 0
@@ -303,19 +303,4 @@ private func makeRequest(
         applyOutput: applyOutput,
         reconfigureItem: reconfigureItem
     )
-}
-
-private func waitForCondition(
-    timeoutMs: Int = 1_000,
-    pollMs: Int = 20,
-    _ predicate: @Sendable () async -> Bool
-) async -> Bool {
-    let attempts = max(1, timeoutMs / max(1, pollMs))
-    for _ in 0..<attempts {
-        if await predicate() {
-            return true
-        }
-        try? await Task.sleep(for: .milliseconds(pollMs))
-    }
-    return await predicate()
 }
