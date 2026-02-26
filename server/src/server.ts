@@ -10,7 +10,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { execFileSync } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
@@ -225,7 +226,10 @@ export class Server {
     this.gate = new GateServer(this.policy, ruleStore, auditLog, {
       approvalTimeoutMs: config.approvalTimeoutMs,
     });
-    this.skillRegistry = new SkillRegistry();
+    // Scan both host skills (~/.pi/agent/skills/) and bundled skills (server/skills/).
+    const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const bundledSkillsDir = join(serverRoot, "skills");
+    this.skillRegistry = new SkillRegistry(existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []);
     this.userSkillStore = new UserSkillStore();
     this.userSkillStore.init();
 
