@@ -5,6 +5,7 @@ import SwiftUI
 final class AppNavigation {
     var selectedTab: AppTab = .workspaces
     var showOnboarding: Bool = true
+    var showWhatsNew: Bool = false
 }
 
 enum AppTab: Hashable {
