@@ -12,38 +12,12 @@ import Foundation
 @Suite("Bug Bash")
 struct BugBashTests {
 
-    // MARK: - Helpers
-
-    private func makePerm(
-        id: String = "p1",
-        sessionId: String = "s1",
-        timeoutOffset: TimeInterval = 120
-    ) -> PermissionRequest {
-        PermissionRequest(
-            id: id, sessionId: sessionId, tool: "bash",
-            input: [:], displaySummary: "bash: test",
-            reason: "Test",
-            timeoutAt: Date().addingTimeInterval(timeoutOffset)
-        )
-    }
-
-    @MainActor
-    private func makeConnection(sessionId: String = "s1") -> ServerConnection {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test", name: "Test"
-        ))
-        // Avoid opening a real WebSocket in unit tests.
-        conn._setActiveSessionIdForTesting(sessionId)
-        return conn
-    }
-
     // MARK: - Bug 3: permissionCancelled
 
     @MainActor
     @Test func permissionCancelledResolvesInTimeline() {
-        let conn = makeConnection()
-        let perm = makePerm()
+        let conn = makeTestConnection()
+        let perm = makeTestPermission()
 
         // Route permission request — goes to store, NOT timeline
         conn.handleServerMessage(.permissionRequest(perm), sessionId: "s1")
@@ -81,8 +55,8 @@ struct BugBashTests {
 
     @MainActor
     @Test func permissionCancelledClearsFromStore() {
-        let conn = makeConnection()
-        let perm = makePerm()
+        let conn = makeTestConnection()
+        let perm = makeTestPermission()
 
         conn.handleServerMessage(.permissionRequest(perm), sessionId: "s1")
         #expect(conn.permissionStore.count == 1)
@@ -93,7 +67,7 @@ struct BugBashTests {
 
     @MainActor
     @Test func permissionCancelledForUnknownIdIsNoOp() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Cancel a permission that was never added
         conn.handleServerMessage(.permissionCancelled(id: "nonexistent"), sessionId: "s1")
@@ -107,7 +81,7 @@ struct BugBashTests {
     @MainActor
     @Test func sweepExpiredRemovesStalePermissions() {
         let store = PermissionStore()
-        let expired = makePerm(id: "p1", timeoutOffset: -60) // 1 min ago
+        let expired = makeTestPermission(id: "p1", timeoutOffset: -60) // 1 min ago
         store.add(expired)
         #expect(store.count == 1)
 
@@ -121,7 +95,7 @@ struct BugBashTests {
     @MainActor
     @Test func sweepExpiredKeepsFreshPermissions() {
         let store = PermissionStore()
-        let fresh = makePerm(id: "p1", timeoutOffset: 120) // 2 min from now
+        let fresh = makeTestPermission(id: "p1", timeoutOffset: 120) // 2 min from now
         store.add(fresh)
 
         let expiredRequests = store.sweepExpired()
@@ -133,8 +107,8 @@ struct BugBashTests {
     @MainActor
     @Test func sweepExpiredMixedBatch() {
         let store = PermissionStore()
-        store.add(makePerm(id: "old", timeoutOffset: -60))
-        store.add(makePerm(id: "fresh", timeoutOffset: 120))
+        store.add(makeTestPermission(id: "old", timeoutOffset: -60))
+        store.add(makeTestPermission(id: "fresh", timeoutOffset: 120))
 
         let expiredRequests = store.sweepExpired()
 
@@ -153,8 +127,8 @@ struct BugBashTests {
 
     @MainActor
     @Test func sweepExpiredResolvesInTimeline() {
-        let conn = makeConnection()
-        let expiredPerm = makePerm(id: "p1", timeoutOffset: -30) // Already expired
+        let conn = makeTestConnection()
+        let expiredPerm = makeTestPermission(id: "p1", timeoutOffset: -30) // Already expired
 
         // Add permission to store (not timeline in new flow)
         conn.handleServerMessage(.permissionRequest(expiredPerm), sessionId: "s1")
@@ -289,7 +263,7 @@ struct BugBashTests {
     @MainActor
     @Test func takeReturnsAndRemovesRequest() {
         let store = PermissionStore()
-        let perm = makePerm(id: "p1")
+        let perm = makeTestPermission(id: "p1")
         store.add(perm)
         #expect(store.count == 1)
 
@@ -309,8 +283,8 @@ struct BugBashTests {
     @MainActor
     @Test func takeDoesNotAffectOtherRequests() {
         let store = PermissionStore()
-        store.add(makePerm(id: "p1"))
-        store.add(makePerm(id: "p2"))
+        store.add(makeTestPermission(id: "p1"))
+        store.add(makeTestPermission(id: "p2"))
         #expect(store.count == 2)
 
         let taken = store.take(id: "p1")
