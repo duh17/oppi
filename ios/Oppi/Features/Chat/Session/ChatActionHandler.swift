@@ -180,24 +180,6 @@ final class ChatActionHandler {
 
     // MARK: - Bash
 
-    func sendBash(
-        _ command: String,
-        connection: ServerConnection,
-        reducer: TimelineReducer,
-        sessionId: String
-    ) {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        reducer.appendSystemEvent("$ \(command)")
-
-        Task { @MainActor in
-            do {
-                try await connection.runBash(command)
-            } catch {
-                reducer.process(.error(sessionId: sessionId, message: "Bash failed: \(error.localizedDescription)"))
-            }
-        }
-    }
-
     // MARK: - Resume
 
     private(set) var isResuming = false

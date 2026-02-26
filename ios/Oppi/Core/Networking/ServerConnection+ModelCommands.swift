@@ -83,10 +83,6 @@ extension ServerConnection {
         try await send(.compact(customInstructions: instructions))
     }
 
-    func runBash(_ command: String) async throws {
-        try await send(.bash(command: command))
-    }
-
     // MARK: - Internal Helpers
 
     func slashCommandCacheKey(for session: Session) -> String {
