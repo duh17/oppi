@@ -134,6 +134,10 @@ struct PastableTextView: UIViewRepresentable {
     let suppressKeyboard: Bool
     let onKeyboardRestoreRequest: (() -> Void)?
     let accessibilityIdentifier: String?
+    /// BCP 47 language code of the text view's active keyboard (e.g. "zh-Hans", "en-US").
+    /// Updated when the keyboard input mode changes. Used by voice input to
+    /// select the correct speech model.
+    @Binding var keyboardLanguage: String?
 
     func makeUIView(context: Context) -> PastableUITextView {
         let textView = PastableUITextView()
@@ -298,6 +302,7 @@ struct PastableTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             text: $text,
+            keyboardLanguage: $keyboardLanguage,
             maxLines: maxLines,
             onOverflowChange: onOverflowChange,
             onLineCountChange: onLineCountChange,
@@ -308,6 +313,7 @@ struct PastableTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding var text: String
+        @Binding var keyboardLanguage: String?
         let maxLines: Int
         let onOverflowChange: ((Bool) -> Void)?
         let onLineCountChange: ((Int) -> Void)?
@@ -321,9 +327,11 @@ struct PastableTextView: UIViewRepresentable {
         private var lastOverflowState = false
         private var lastDictationState = false
         private var lastReportedLineCount = 1
+        nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
 
         init(
             text: Binding<String>,
+            keyboardLanguage: Binding<String?>,
             maxLines: Int,
             onOverflowChange: ((Bool) -> Void)?,
             onLineCountChange: ((Int) -> Void)?,
@@ -331,15 +339,62 @@ struct PastableTextView: UIViewRepresentable {
             onDictationStateChange: ((Bool) -> Void)?
         ) {
             _text = text
+            _keyboardLanguage = keyboardLanguage
             self.maxLines = maxLines
             self.onOverflowChange = onOverflowChange
             self.onLineCountChange = onLineCountChange
             self.onFocusChange = onFocusChange
             self.onDictationStateChange = onDictationStateChange
+            super.init()
+
+            // Track keyboard language changes via notification.
+            // The textView's textInputMode.primaryLanguage gives the actual
+            // active keyboard for THIS text view — not a global list.
+            inputModeObserver = NotificationCenter.default.addObserver(
+                forName: UITextInputMode.currentInputModeDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.updateKeyboardLanguage()
+            }
+        }
+
+        deinit {
+            if let observer = inputModeObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        /// Read the keyboard language from the actual text view via responder chain.
+        func updateKeyboardLanguage() {
+            // Walk responder chain to find our text view
+            guard let textView = findFirstResponderTextView() else { return }
+            let lang = textView.textInputMode?.primaryLanguage
+            keyboardLanguage = lang
+            KeyboardLanguageStore.save(lang)
+        }
+
+        private func findFirstResponderTextView() -> UITextView? {
+            // The notification fires globally — find the active text view
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = scene.windows.first(where: { $0.isKeyWindow })
+            else { return nil }
+            return findFirstResponder(in: window) as? UITextView
+        }
+
+        private func findFirstResponder(in view: UIView) -> UIView? {
+            if view.isFirstResponder { return view }
+            for sub in view.subviews {
+                if let found = findFirstResponder(in: sub) { return found }
+            }
+            return nil
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             onFocusChange?(true)
+            let lang = textView.textInputMode?.primaryLanguage
+            keyboardLanguage = lang
+            KeyboardLanguageStore.save(lang)
             notifyLineCountIfNeeded(textView)
             notifyDictationStateIfNeeded(textView)
         }

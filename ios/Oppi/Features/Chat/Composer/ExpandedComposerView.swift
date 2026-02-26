@@ -304,25 +304,14 @@ struct ExpandedComposerView: View {
                 }
             }
         } label: {
-            ZStack {
-                Circle().fill(isRecording ? accentColor.opacity(0.15) : Color.themeBgHighlight)
-                Circle().stroke(
-                    isRecording ? accentColor.opacity(0.5) : Color.themeComment.opacity(0.35),
-                    lineWidth: 1
-                )
-
-                if isProcessing {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else if isRecording {
-                    MicWaveformView(audioLevel: manager.audioLevel, color: accentColor)
-                } else {
-                    Image(systemName: "mic")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.themeComment)
-                }
-            }
-            .frame(width: 32, height: 32)
+            MicButtonLabel(
+                isRecording: isRecording,
+                isProcessing: isProcessing,
+                audioLevel: manager.audioLevel,
+                languageLabel: manager.activeLanguageLabel,
+                accentColor: accentColor,
+                diameter: 32
+            )
         }
         .buttonStyle(.plain)
         .disabled(isProcessing)
