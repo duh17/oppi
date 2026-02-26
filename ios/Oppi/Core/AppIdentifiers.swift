@@ -76,6 +76,6 @@ enum ReleaseFeatures {
     /// by `NativePlotPreferences`).
     static let nativePlotRenderingEnabled = true
 
-    /// Composer microphone button + custom speech-to-text flow.
-    static let composerDictationEnabled = false
+    /// Composer microphone button + on-device speech-to-text via SpeechAnalyzer.
+    static let voiceInputEnabled = true
 }

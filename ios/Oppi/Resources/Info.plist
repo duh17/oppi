@@ -58,17 +58,19 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Oppi needs local network access to connect to your Mac server.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Oppi uses the microphone for voice dictation in the chat composer.</string>
+	<string>Oppi uses the microphone to transcribe your voice into text prompts.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Oppi saves images from agent conversations to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Oppi accesses your photo library to attach images to agent conversations.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Oppi uses on-device speech recognition to convert your voice into text.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
-	<key>OPPITelemetryMode</key>
-	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>OPPIDisableMetricKitUpload</key>
 	<string>$(OPPI_DISABLE_METRICKIT_UPLOAD)</string>
+	<key>OPPITelemetryMode</key>
+	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>SentryDSN</key>
 	<string>$(SENTRY_DSN)</string>
 	<key>UIBackgroundModes</key>
