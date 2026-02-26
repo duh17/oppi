@@ -3,8 +3,9 @@ import UIKit
 
 /// Native UIKit thinking row — simple and reliable.
 ///
-/// Done state: brain icon + text in a rounded bubble, capped at 200pt.
-/// Tap opens full-screen reader. No internal scrolling.
+/// Done state: brain icon + text in a rounded bubble, capped at ~200pt.
+/// Height snaps to line boundaries so the last visible line is never clipped.
+/// When truncated, a bottom fade mask hints at more content; tap opens full-screen.
 ///
 /// Streaming state: spinner + "Thinking…" header + optional live preview.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
@@ -31,6 +32,8 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
 final class ThinkingTimelineRowContentView: UIView, UIContentView {
     static let maxBubbleHeight: CGFloat = 200
     private static let bubblePadding: CGFloat = 10
+    /// Fraction of the bubble height where the fade begins (bottom 30%).
+    private static let fadeStartFraction: Float = 0.7
 
     // Header (streaming state)
     private let headerStack = UIStackView()
@@ -41,14 +44,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private let bubbleView = UIView()
     private let brainIcon = UIImageView()
     private let textLabel = UILabel()
-    private let moreIndicator = UIView()
-    private let moreChevron = UIImageView()
+    private let fadeMask = CAGradientLayer()
     private var bubbleHeightConstraint: NSLayoutConstraint?
     private var textTopConstraint: NSLayoutConstraint?
     private var textBottomConstraint: NSLayoutConstraint?
 
-    /// True when the text exceeds `maxBubbleHeight` and is clipped.
+    /// True when the text exceeds the bubble cap and is clipped.
     private(set) var contentIsTruncated = false
+    /// Whether the fade mask is currently applied.
+    private var fadeApplied = false
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
 
@@ -91,6 +95,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     override func layoutSubviews() {
         super.layoutSubviews()
         updateBubbleHeight(forWidth: bounds.width)
+        syncFadeMaskFrame()
     }
 
     // MARK: - Setup
@@ -132,19 +137,15 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         textLabel.lineBreakMode = .byWordWrapping
         textLabel.adjustsFontForContentSizeCategory = true
 
-        // "More" indicator — small pill with chevron at bottom-center when clipped.
-        moreIndicator.translatesAutoresizingMaskIntoConstraints = false
-        moreIndicator.layer.cornerRadius = 8
-        moreIndicator.isHidden = true
-
-        moreChevron.translatesAutoresizingMaskIntoConstraints = false
-        moreChevron.image = UIImage(systemName: "chevron.compact.down")
-        moreChevron.contentMode = .scaleAspectFit
-        moreIndicator.addSubview(moreChevron)
+        // Fade mask — applied to bubbleView.layer.mask when truncated.
+        // Fades from opaque → transparent at the bottom.
+        fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
+        fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
+        fadeMask.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
+        fadeMask.locations = [0, NSNumber(value: Self.fadeStartFraction), 1]
 
         bubbleView.addSubview(brainIcon)
         bubbleView.addSubview(textLabel)
-        bubbleView.addSubview(moreIndicator)
 
         // --- Container ---
         let stack = UIStackView(arrangedSubviews: [headerStack, bubbleView])
@@ -171,16 +172,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             textLabel.leadingAnchor.constraint(equalTo: brainIcon.trailingAnchor, constant: 6),
             textLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -Self.bubblePadding),
 
-            moreIndicator.centerXAnchor.constraint(equalTo: bubbleView.centerXAnchor),
-            moreIndicator.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -4),
-            moreIndicator.widthAnchor.constraint(equalToConstant: 36),
-            moreIndicator.heightAnchor.constraint(equalToConstant: 16),
-
-            moreChevron.centerXAnchor.constraint(equalTo: moreIndicator.centerXAnchor),
-            moreChevron.centerYAnchor.constraint(equalTo: moreIndicator.centerYAnchor),
-            moreChevron.widthAnchor.constraint(equalToConstant: 16),
-            moreChevron.heightAnchor.constraint(equalToConstant: 10),
-
             bubbleHeight,
         ])
 
@@ -201,8 +192,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         let palette = configuration.themeID.palette
         brainIcon.tintColor = UIColor(palette.purple).withAlphaComponent(0.7)
-        moreIndicator.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.15)
-        moreChevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.6)
         statusSpinner.color = UIColor(palette.purple)
         titleLabel.textColor = UIColor(palette.comment)
 
@@ -216,6 +205,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             if text.isEmpty {
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
+                removeFadeMask()
                 return
             }
 
@@ -234,6 +224,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             if text.isEmpty {
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
+                removeFadeMask()
             } else {
                 bubbleView.isHidden = false
                 bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.06)
@@ -250,7 +241,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         guard !bubbleView.isHidden, width > 0 else {
             bubbleHeightConstraint?.constant = 0
             contentIsTruncated = false
-            moreIndicator.isHidden = true
+            removeFadeMask()
             return
         }
 
@@ -258,16 +249,61 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let textWidth = max(1, width - 14 - 6 - Self.bubblePadding * 2)
         let textSize = textLabel.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         let intrinsic = ceil(textSize.height) + Self.bubblePadding * 2
-        contentIsTruncated = intrinsic > Self.maxBubbleHeight
-        bubbleHeightConstraint?.constant = min(Self.maxBubbleHeight, intrinsic)
 
-        // Show subtle "more" chevron only when done and clipped.
-        moreIndicator.isHidden = !(currentConfiguration.isDone && contentIsTruncated)
+        if intrinsic <= Self.maxBubbleHeight {
+            // Fits — show everything, no truncation.
+            contentIsTruncated = false
+            bubbleHeightConstraint?.constant = intrinsic
+            removeFadeMask()
+        } else {
+            // Overflows — snap to complete lines so the last visible line isn't clipped.
+            contentIsTruncated = true
+            let lineHeight = ceil(textLabel.font.lineHeight)
+            let maxTextHeight = Self.maxBubbleHeight - Self.bubblePadding * 2
+            let visibleLines = floor(maxTextHeight / lineHeight)
+            let snappedHeight = visibleLines * lineHeight + Self.bubblePadding * 2
+            bubbleHeightConstraint?.constant = snappedHeight
+
+            // Apply fade mask for done state (not streaming — streaming tail-follows).
+            if currentConfiguration.isDone {
+                applyFadeMask()
+            } else {
+                removeFadeMask()
+            }
+        }
 
         // Streaming tail-follow: anchor text to bottom so latest text is visible.
         let tailFollow = !currentConfiguration.isDone && contentIsTruncated
         textTopConstraint?.isActive = !tailFollow
         textBottomConstraint?.isActive = tailFollow
+    }
+
+    // MARK: - Fade Mask
+
+    private func applyFadeMask() {
+        guard !fadeApplied else {
+            syncFadeMaskFrame()
+            return
+        }
+        fadeApplied = true
+        bubbleView.layer.mask = fadeMask
+        syncFadeMaskFrame()
+    }
+
+    private func removeFadeMask() {
+        guard fadeApplied else { return }
+        fadeApplied = false
+        bubbleView.layer.mask = nil
+    }
+
+    private func syncFadeMaskFrame() {
+        guard fadeApplied else { return }
+        let h = bubbleHeightConstraint?.constant ?? bubbleView.bounds.height
+        let w = max(1, bubbleView.bounds.width > 0 ? bubbleView.bounds.width : bounds.width)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeMask.frame = CGRect(x: 0, y: 0, width: w, height: h)
+        CATransaction.commit()
     }
 
     // MARK: - Full Screen
