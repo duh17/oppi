@@ -47,7 +47,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
         PRODUCT_NAME: Oppi
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 11
+        CURRENT_PROJECT_VERSION: 12
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
@@ -81,7 +81,8 @@ targets:
         NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
         NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach images to agent conversations."
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your Mac server."
-        NSMicrophoneUsageDescription: "Oppi uses the microphone for voice dictation in the chat composer."
+        NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
+        NSSpeechRecognitionUsageDescription: "Oppi uses on-device speech recognition to convert your voice into text."
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -131,7 +132,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.ActivityExtension
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: 11
+        CURRENT_PROJECT_VERSION: 12
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         GENERATE_INFOPLIST_FILE: true

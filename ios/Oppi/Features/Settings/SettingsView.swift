@@ -126,17 +126,17 @@ struct SettingsView: View {
 
             biometricSection
 
-            if ReleaseFeatures.composerDictationEnabled {
+            if ReleaseFeatures.voiceInputEnabled {
                 Section {
                     NavigationLink {
-                        DictationSettingsView()
+                        VoiceInputSettingsView()
                     } label: {
-                        Label("Dictation", systemImage: "mic")
+                        Label("Voice Input", systemImage: "mic")
                     }
                 } header: {
                     Text("Voice Input")
                 } footer: {
-                    Text("Configure speech-to-text for voice dictation in the composer.")
+                    Text("On-device speech-to-text for voice prompts in the composer.")
                 }
             }
 
