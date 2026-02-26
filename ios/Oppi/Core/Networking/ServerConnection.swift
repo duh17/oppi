@@ -1096,4 +1096,11 @@ final class ServerConnection {
     /// Shared in-flight tasks to coalesce overlapping refresh requests.
     var sessionListRefreshTask: Task<Void, Never>?
     var workspaceCatalogRefreshTask: Task<Void, Never>?
+
+#if DEBUG
+    /// Set the server ID for screenshot preview harness (no real credentials needed).
+    func setPreviewServerId(_ id: String) {
+        currentServerId = id
+    }
+#endif
 }
