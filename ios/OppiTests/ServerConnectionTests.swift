@@ -1279,18 +1279,6 @@ private actor AckStageRecorder {
     }
 }
 
-private actor MessageCounter {
-    private var value = 0
-
-    func increment() {
-        value += 1
-    }
-
-    func count() -> Int {
-        value
-    }
-}
-
 // MARK: - Foreground Recovery
 
 @Suite("Foreground Recovery")
