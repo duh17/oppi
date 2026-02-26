@@ -71,14 +71,14 @@ struct ConnectionCoordinatorTests {
 
         // Add sessions to server A
         coordinator.switchToServer(serverA)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "Session A"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Session A"))
 
         // Switch to server B — should see empty sessions
         coordinator.switchToServer(serverB)
         #expect(coordinator.activeConnection.sessionStore.sessions.isEmpty)
 
         // Add sessions to server B
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s2", name: "Session B"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s2", name: "Session B"))
         #expect(coordinator.activeConnection.sessionStore.sessions.count == 1)
         #expect(coordinator.activeConnection.sessionStore.sessions[0].name == "Session B")
 
@@ -119,7 +119,7 @@ struct ConnectionCoordinatorTests {
 
         coordinator.serverStore.addOrUpdate(server)
         coordinator.switchToServer(server)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "Doomed"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "Doomed"))
         coordinator.activeConnection.permissionStore.add(makePermission(id: "p1"))
 
         coordinator.removeServer(id: "sha256:remove-test")
@@ -171,10 +171,10 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         coordinator.switchToServer(serverA)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s1", name: "A1"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s1", name: "A1"))
 
         coordinator.switchToServer(serverB)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s2", name: "B1"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s2", name: "B1"))
 
         let allSessions = coordinator.allSessions
         #expect(allSessions.count == 2)
@@ -189,7 +189,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(serverB)
 
         coordinator.switchToServer(serverA)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s-on-a", name: "On A"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s-on-a", name: "On A"))
 
         coordinator.switchToServer(serverB)
         // Currently on B, find session that lives on A
@@ -211,7 +211,7 @@ struct ConnectionCoordinatorTests {
 
         // Session lives on server A
         coordinator.switchToServer(serverA)
-        coordinator.activeConnection.sessionStore.upsert(makeSession(id: "s-push-target", name: "Target"))
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "s-push-target", name: "Target"))
 
         // Switch to server B (simulate user looking at different server)
         coordinator.switchToServer(serverB)
@@ -326,20 +326,6 @@ struct ConnectionCoordinatorTests {
         }
 
         return server
-    }
-
-    private func makeSession(id: String, name: String) -> Session {
-        Session(
-            id: id,
-            workspaceId: "w1",
-            name: name,
-            status: .ready,
-            createdAt: Date(),
-            lastActivity: Date(),
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0
-        )
     }
 
     private func makePermission(id: String) -> PermissionRequest {

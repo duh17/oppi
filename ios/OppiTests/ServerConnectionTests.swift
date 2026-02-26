@@ -7,45 +7,6 @@ import Foundation
 @Suite("ServerConnection")
 struct ServerConnectionTests {
 
-    // MARK: - Helpers
-
-    @MainActor
-    private func makeConnection(sessionId: String = "s1") -> ServerConnection {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test", name: "Test"
-        ))
-        // Avoid opening a real WebSocket in unit tests.
-        conn._setActiveSessionIdForTesting(sessionId)
-        return conn
-    }
-
-    private func makeSession(
-        id: String = "s1",
-        status: SessionStatus = .ready,
-        thinkingLevel: String? = nil
-    ) -> Session {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Session(
-            id: id,
-            workspaceId: nil,
-            workspaceName: nil,
-            name: "Session",
-            status: status,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: thinkingLevel
-        )
-    }
-
     // MARK: - configure
 
     @MainActor
@@ -64,8 +25,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeConnected() {
-        let conn = makeConnection()
-        let session = makeSession(status: .ready)
+        let conn = makeTestConnection()
+        let session = makeTestSession(status: .ready)
 
         conn.handleServerMessage(.connected(session: session), sessionId: "s1")
 
@@ -75,8 +36,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeState() {
-        let conn = makeConnection()
-        let session = makeSession(status: .busy)
+        let conn = makeTestConnection()
+        let session = makeTestSession(status: .busy)
 
         conn.handleServerMessage(.state(session: session), sessionId: "s1")
 
@@ -86,8 +47,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeStopRequestedMarksStopping() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .busy))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         conn.handleServerMessage(
             .stopRequested(source: .user, reason: "Stopping current turn"),
@@ -106,8 +67,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeStopFailedRestoresBusyAndEmitsError() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .stopping))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
         conn.handleServerMessage(
             .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms"),
@@ -126,8 +87,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeStopConfirmedRestoresReady() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .stopping))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .stopping))
 
         conn.handleServerMessage(
             .stopConfirmed(source: .user, reason: nil),
@@ -140,17 +101,17 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeStateSyncsThinkingLevelOnlyWhenChanged() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         #expect(conn.thinkingLevel == .medium)
 
         conn.handleServerMessage(
-            .connected(session: makeSession(status: .ready, thinkingLevel: "medium")),
+            .connected(session: makeTestSession(status: .ready, thinkingLevel: "medium")),
             sessionId: "s1"
         )
         #expect(conn.thinkingLevel == .medium)
 
         conn.handleServerMessage(
-            .state(session: makeSession(status: .ready, thinkingLevel: "high")),
+            .state(session: makeTestSession(status: .ready, thinkingLevel: "high")),
             sessionId: "s1"
         )
         #expect(conn.thinkingLevel == .high)
@@ -158,31 +119,31 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeConnectedRequestsSlashCommands() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
             await counter.record(message: message)
         }
 
-        conn.handleServerMessage(.connected(session: makeSession(status: .ready)), sessionId: "s1")
+        conn.handleServerMessage(.connected(session: makeTestSession(status: .ready)), sessionId: "s1")
 
-        #expect(await waitForCondition(timeoutMs: 500) { await counter.count() == 1 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 1 })
     }
 
     @MainActor
     @Test func routeStateWorkspaceChangeRequestsSlashCommands() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let counter = GetCommandsCounter()
 
         conn._sendMessageForTesting = { message in
             await counter.record(message: message)
         }
 
-        var initial = makeSession(status: .ready)
+        var initial = makeTestSession(status: .ready)
         initial.workspaceId = "w1"
         conn.handleServerMessage(.connected(session: initial), sessionId: "s1")
-        #expect(await waitForCondition(timeoutMs: 500) { await counter.count() == 1 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 1 })
 
         // Same workspace should not re-fetch.
         conn.handleServerMessage(.state(session: initial), sessionId: "s1")
@@ -193,13 +154,13 @@ struct ServerConnectionTests {
         var switched = initial
         switched.workspaceId = "w2"
         conn.handleServerMessage(.state(session: switched), sessionId: "s1")
-        #expect(await waitForCondition(timeoutMs: 500) { await counter.count() == 2 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await counter.count() == 2 })
     }
 
     @MainActor
     @Test func routeGetCommandsResultUpdatesSlashCommandCache() {
-        let conn = makeConnection()
-        let session = makeSession(status: .ready)
+        let conn = makeTestConnection()
+        let session = makeTestSession(status: .ready)
         conn.handleServerMessage(.connected(session: session), sessionId: "s1")
 
         conn.handleServerMessage(
@@ -222,7 +183,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routePermissionRequest() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: ["command": .string("rm -rf /")],
@@ -239,7 +200,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routePermissionRequestUsesActiveSessionForNotificationDecision() {
-        let conn = makeConnection(sessionId: "stream-s1")
+        let conn = makeTestConnection(sessionId: "stream-s1")
         conn.sessionStore.activeSessionId = "active-s1"
 
         let notificationService = PermissionNotificationService.shared
@@ -288,7 +249,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routePermissionExpired() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
@@ -304,7 +265,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routePermissionCancelled() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let perm = PermissionRequest(
             id: "p1", sessionId: "s1", tool: "bash",
             input: [:], displaySummary: "bash: test",
@@ -320,7 +281,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeAgentStartAndTextAndEnd() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.flushAndSuspend()
@@ -342,8 +303,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeAgentStartSetsSessionBusyWithoutStateMessage() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .ready))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .ready))
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
 
@@ -352,8 +313,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeAgentEndSetsSessionReadyWithoutStateMessage() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .busy))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         conn.handleServerMessage(.agentEnd, sessionId: "s1")
 
@@ -362,7 +323,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeThinkingDelta() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
@@ -378,7 +339,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeToolStartOutputEnd() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
@@ -405,8 +366,8 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeSessionEnded() {
-        let conn = makeConnection()
-        conn.sessionStore.upsert(makeSession(status: .busy))
+        let conn = makeTestConnection()
+        conn.sessionStore.upsert(makeTestSession(status: .busy))
 
         conn.handleServerMessage(.sessionEnded(reason: "stopped"), sessionId: "s1")
         conn.flushAndSuspend()
@@ -422,7 +383,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeError() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(.error(message: "Something failed", code: nil, fatal: false), sessionId: "s1")
         conn.flushAndSuspend()
@@ -436,7 +397,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeMissingFullSubscriptionErrorTriggersAutoRecover() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let subscribeCounter = MessageCounter()
 
         conn._sendMessageForTesting = { message in
@@ -465,7 +426,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(await waitForCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
+        #expect(await waitForTestCondition(timeoutMs: 500) { await subscribeCounter.count() == 1 })
 
         conn.flushAndSuspend()
         let errors = conn.reducer.items.filter {
@@ -477,7 +438,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeExtensionUIRequest() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let request = ExtensionUIRequest(
             id: "ext1",
             sessionId: "s1",
@@ -493,7 +454,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeExtensionUINotification() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(
             .extensionUINotification(method: "notify", message: "Task complete", notifyType: "info", statusKey: nil, statusText: nil),
@@ -505,7 +466,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func routeUnknownIsNoOp() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         let preCount = conn.reducer.items.count
 
         conn.handleServerMessage(.unknown(type: "future_type"), sessionId: "s1")
@@ -517,10 +478,10 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func staleSessionMessageIgnored() {
-        let conn = makeConnection(sessionId: "s1")
+        let conn = makeTestConnection(sessionId: "s1")
 
         // Send message for a different session
-        let session = makeSession(id: "s2", status: .busy)
+        let session = makeTestSession(id: "s2", status: .busy)
         conn.handleServerMessage(.connected(session: session), sessionId: "s2")
 
         // Session store should NOT have s2 (message was for wrong active session)
@@ -531,12 +492,12 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func disconnectSessionClearsActiveId() {
-        let conn = makeConnection(sessionId: "s1")
+        let conn = makeTestConnection(sessionId: "s1")
 
         conn.disconnectSession()
 
         // After disconnect, messages should be ignored (no active session)
-        let session = makeSession(status: .busy)
+        let session = makeTestSession(status: .busy)
         conn.handleServerMessage(.connected(session: session), sessionId: "s1")
         #expect(conn.sessionStore.sessions.isEmpty)
     }
@@ -545,7 +506,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func flushAndSuspendDelivers() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         conn.handleServerMessage(.agentStart, sessionId: "s1")
         conn.handleServerMessage(.textDelta(delta: "buffered"), sessionId: "s1")
@@ -688,7 +649,7 @@ struct ServerConnectionTests {
             Task { await stageRecorder.record(stage) }
         })
 
-        #expect(await waitForCondition(timeoutMs: 500) {
+        #expect(await waitForTestCondition(timeoutMs: 500) {
             await stageRecorder.snapshot() == [.accepted, .dispatched, .started]
         })
     }
@@ -910,7 +871,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func forkFromTimelineEntryUsesGetForkMessagesThenFork() async throws {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -963,7 +924,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func forkFromTimelineEntryParsesForkMessageIdField() async throws {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -1016,7 +977,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func forkFromTimelineEntryNormalizesTraceSyntheticIDs() async throws {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         var sentTypes: [String] = []
         var forkEntryId: String?
 
@@ -1069,7 +1030,7 @@ struct ServerConnectionTests {
 
     @MainActor
     @Test func forkFromTimelineEntryRejectsNonForkableEntry() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         var sentTypes: [String] = []
 
         conn._sendMessageForTesting = { message in
@@ -1283,47 +1244,6 @@ private actor AckStageRecorder {
 
 @Suite("Foreground Recovery")
 struct ForegroundRecoveryTests {
-    private func makeSession(id: String = "s1", workspaceId: String? = "w1") -> Session {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Session(
-            id: id,
-            workspaceId: workspaceId,
-            workspaceName: nil,
-            name: "Session",
-            status: .ready,
-            createdAt: now,
-            lastActivity: now,
-            model: nil,
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            contextTokens: nil,
-            contextWindow: nil,
-            firstMessage: nil,
-            lastMessage: nil,
-            thinkingLevel: nil
-        )
-    }
-
-    private func makeWorkspace(id: String = "w1") -> Workspace {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        return Workspace(
-            id: id,
-            name: "Workspace",
-            description: nil,
-            icon: nil,
-            skills: [],
-            systemPrompt: nil,
-            hostMount: nil,
-            memoryEnabled: nil,
-            memoryNamespace: nil,
-            extensions: nil,
-            defaultModel: nil,
-            createdAt: now,
-            updatedAt: now
-        )
-    }
-
     @MainActor
     @Test func reconnectIfNeededWithoutApiClientIsNoOp() async {
         let conn = ServerConnection()
@@ -1390,7 +1310,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let now = Date()
-        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
         conn.sessionStore.markSyncSucceeded(at: now)
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
@@ -1411,7 +1331,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let stale = Date().addingTimeInterval(-600)
-        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
         conn.sessionStore.markSyncSucceeded(at: stale)
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: stale)
@@ -1431,7 +1351,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let now = Date()
-        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
         conn.sessionStore.markSyncSucceeded(at: now)
 
         await conn.refreshSessionList(force: false)
@@ -1447,7 +1367,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let now = Date()
-        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
         conn.sessionStore.markSyncSucceeded(at: now)
 
         var skipMetadata: [String: String] = [:]
@@ -1472,7 +1392,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let now = Date()
-        conn.sessionStore.applyServerSnapshot([makeSession()])
+        conn.sessionStore.applyServerSnapshot([makeTestSession(workspaceId: "w1")])
         conn.sessionStore.markSyncSucceeded(at: now)
 
         await conn.refreshSessionList(force: true)
@@ -1488,7 +1408,7 @@ struct ForegroundRecoveryTests {
         ))
 
         let now = Date()
-        conn.workspaceStore.workspaces = [makeWorkspace()]
+        conn.workspaceStore.workspaces = [makeTestWorkspace()]
         conn.workspaceStore.isLoaded = true
         conn.workspaceStore.markSyncSucceeded(at: now)
 
@@ -1545,20 +1465,11 @@ struct ForegroundRecoveryTests {
 @Suite("Stream Lifecycle")
 struct StreamLifecycleTests {
 
-    @MainActor
-    private func makeConnection() -> ServerConnection {
-        let conn = ServerConnection()
-        conn.configure(credentials: ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test", name: "Test"
-        ))
-        return conn
-    }
-
     // MARK: - connectStream idempotency
 
     @MainActor
     @Test func connectStreamIsIdempotentWhileActive() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Simulate an active consumption task by setting it directly
         let sentinel = Task<Void, Never> { }
@@ -1574,7 +1485,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Simulate a zombie consumption task (completed but non-nil)
         // with a disconnected WS
@@ -1590,7 +1501,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func connectStreamCreatesTaskWhenNil() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         #expect(conn.streamConsumptionTask == nil)
 
@@ -1604,7 +1515,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func consumptionTaskNilsItselfWhenStreamEnds() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Create a stream that immediately ends
         let (stream, continuation) = AsyncStream<StreamMessage>.makeStream()
@@ -1620,7 +1531,7 @@ struct StreamLifecycleTests {
         }
 
         // Wait for the task to complete and nil itself out
-        let cleaned = await waitForCondition(timeoutMs: 500) {
+        let cleaned = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { conn.streamConsumptionTask == nil }
         }
 
@@ -1631,7 +1542,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func disconnectStreamCleansUpEverything() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn.streamConsumptionTask = Task { }
 
         // Add a session continuation
@@ -1650,7 +1561,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func streamConnectedMessageTriggersResubscribe() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         // Track that routeStreamMessage correctly identifies stream_connected
@@ -1685,7 +1596,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func routeStreamMessageYieldsToSessionContinuation() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         var receivedMessages: [ServerMessage] = []
@@ -1716,7 +1627,7 @@ struct StreamLifecycleTests {
         )
         conn.routeStreamMessage(streamMsg)
 
-        let received = await waitForCondition(timeoutMs: 500) {
+        let received = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { !receivedMessages.isEmpty }
         }
 
@@ -1727,7 +1638,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func routeStreamMessageHandlesCrossSessionPermission() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         // Route a permission from a DIFFERENT session (cross-session)
@@ -1754,7 +1665,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func respondToCrossSessionPermissionDoesNotPolluteActiveTimeline() async throws {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }  // stub WS send
 
@@ -1785,7 +1696,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func respondToSameSessionPermissionInjectsMarker() async throws {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
@@ -1813,7 +1724,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func reconnectIfNeededRestartsDeadStream() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Simulate a dead WS (disconnected, no consumption task)
         conn.wsClient?._setStatusForTesting(.disconnected)
@@ -1831,7 +1742,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func reconnectIfNeededSkipsAliveStream() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
 
         // Simulate an active WS
         conn.wsClient?._setStatusForTesting(.connected)
@@ -1849,7 +1760,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func routeStreamMessageResolvesSubscribeWaiterBeforePerSessionRouting() async {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         // Simulates the subscribe await in streamSession — the waiter is
@@ -1881,7 +1792,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func routeStreamMessageDoesNotEagerlyResolveNonSubscribeCommands() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
         // Non-subscribe commands resolve through the normal consumer path
@@ -1913,7 +1824,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func pendingUnsubscribeCancelledWhenReenteringSameSession() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
@@ -1935,7 +1846,7 @@ struct StreamLifecycleTests {
 
     @MainActor
     @Test func disconnectStreamCancelsPendingUnsubscribes() {
-        let conn = makeConnection()
+        let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
         conn._sendMessageForTesting = { _ in }
 
@@ -1946,19 +1857,4 @@ struct StreamLifecycleTests {
         #expect(conn.pendingUnsubscribeTasks.isEmpty,
                 "disconnectStream should cancel all pending unsubscribes")
     }
-}
-
-private func waitForCondition(
-    timeoutMs: Int = 1_000,
-    pollMs: Int = 20,
-    _ predicate: @Sendable () async -> Bool
-) async -> Bool {
-    let attempts = max(1, timeoutMs / max(1, pollMs))
-    for _ in 0..<attempts {
-        if await predicate() {
-            return true
-        }
-        try? await Task.sleep(for: .milliseconds(pollMs))
-    }
-    return await predicate()
 }
