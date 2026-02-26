@@ -34,7 +34,6 @@ struct ChatInputBar<ActionRow: View>: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let appliesOuterPadding: Bool
-    var thinkingBorderColor: Color = .themeComment
     @ViewBuilder let actionRow: () -> ActionRow
 
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -45,6 +44,9 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Text in the field before voice recording started.
     /// Used to prepend existing text when streaming transcription.
     @State private var textBeforeRecording: String?
+
+    /// Bumped to trigger haptic when voice recording starts.
+    @State private var voiceHapticTrigger = 0
 
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
@@ -67,10 +69,6 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var accentColor: Color { .themeBlue }
-
-    private var borderColor: Color {
-        thinkingBorderColor.opacity(0.5)
-    }
 
     private var sendActionFillColor: Color {
         if isSending {
@@ -257,10 +255,6 @@ struct ChatInputBar<ActionRow: View>: View {
         .frame(minHeight: 38)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
         .overlay(alignment: .topTrailing) {
             if showsExpandButton {
                 expandButton
@@ -383,6 +377,9 @@ struct ChatInputBar<ActionRow: View>: View {
         let isProcessing = manager.isProcessing || manager.isPreparing
 
         return Button {
+            if !isRecording, manager.state == .idle {
+                voiceHapticTrigger += 1
+            }
             Task {
                 if isRecording {
                     await manager.stopRecording()
@@ -425,6 +422,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .buttonStyle(.plain)
         .disabled(isProcessing)
+        .sensoryFeedback(.impact(flexibility: .solid, intensity: 0.6), trigger: voiceHapticTrigger)
         .accessibilityIdentifier("chat.voiceInput")
         .accessibilityLabel(isRecording ? "Stop recording" : "Start voice input")
     }

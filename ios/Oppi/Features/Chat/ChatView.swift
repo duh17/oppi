@@ -143,6 +143,17 @@ struct ChatView: View {
             footerArea
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if scrollController.isJumpToBottomHintVisible {
+                JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
+                    scrollController.requestScrollToBottom()
+                }
+                .padding(.trailing, 27)
+                .padding(.bottom, footerHeight + 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
         .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -296,7 +307,6 @@ struct ChatView: View {
                     },
                     onExpand: presentComposer,
                     appliesOuterPadding: true,
-                    thinkingBorderColor: theme.thinking.color(for: connection.thinkingLevel),
                     actionRow: {
                         SessionToolbar(
                             session: session,
