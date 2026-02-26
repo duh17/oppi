@@ -90,6 +90,8 @@ struct OppiApp: App {
 #if DEBUG
             if UIHangHarnessConfig.isEnabled {
                 UIHangHarnessView()
+            } else if ScreenshotPreviewConfig.isEnabled {
+                ScreenshotPreviewView()
             } else {
                 appRootView
             }
