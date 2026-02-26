@@ -414,7 +414,11 @@ function runOpenSsl(args: string[]): void {
   }
 }
 
-function collectSubjectAltNames(additionalHosts: string[]): { dns: string[]; ips: string[] } {
+/** Exported for testing. */
+export function collectSubjectAltNames(additionalHosts: string[]): {
+  dns: string[];
+  ips: string[];
+} {
   const dns = new Set<string>(["localhost"]);
   const ips = new Set<string>(["127.0.0.1", "::1"]);
 
@@ -447,7 +451,8 @@ function collectSubjectAltNames(additionalHosts: string[]): { dns: string[]; ips
   };
 }
 
-function normalizeHostForSan(host: string): string {
+/** Exported for testing. */
+export function normalizeHostForSan(host: string): string {
   const trimmed = host.trim().toLowerCase();
   if (!trimmed) return "";
 
@@ -458,7 +463,8 @@ function normalizeHostForSan(host: string): string {
   return trimmed;
 }
 
-function renderOpenSslConfig(sans: { dns: string[]; ips: string[] }): string {
+/** Exported for testing. */
+export function renderOpenSslConfig(sans: { dns: string[]; ips: string[] }): string {
   const commonName = sans.dns[0] ?? sans.ips[0] ?? "localhost";
 
   const altNames: string[] = [];
