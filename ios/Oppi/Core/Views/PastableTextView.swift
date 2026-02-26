@@ -502,7 +502,8 @@ final class PastableUITextView: UITextView {
 
     /// Tap gesture that restores the keyboard when the user taps the text view
     /// while keyboard is suppressed (e.g. during voice recording).
-    private lazy var keyboardRestoreTap: UITapGestureRecognizer = {
+    /// Exposed as internal for `@testable import` — do not use outside tests.
+    private(set) lazy var keyboardRestoreTap: UITapGestureRecognizer = {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleKeyboardRestoreTap))
         tap.cancelsTouchesInView = false
         tap.delegate = self
