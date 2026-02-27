@@ -245,6 +245,36 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedContextMenuIncludesFullScreenForRememberMarkdown() throws {
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "# Journal\n\nLong-lived note"),
+            copyCommandText: "remember Journal note",
+            copyOutputText: "# Journal\n\nLong-lived note",
+            toolNamePrefix: "remember",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .expanded))
+        #expect(timelineActionTitles(in: menu) == ["Open Full Screen", "Copy", "Copy Command"])
+    }
+
+    @MainActor
+    @Test func expandedContextMenuIncludesFullScreenForRecallText() throws {
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .text(text: "Recall hit #1\nRecall hit #2", language: nil),
+            copyCommandText: "recall architecture",
+            copyOutputText: "Recall hit #1\nRecall hit #2",
+            toolNamePrefix: "recall",
+            isExpanded: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+
+        let menu = try #require(view.contextMenu(for: .expanded))
+        #expect(timelineActionTitles(in: menu) == ["Open Full Screen", "Copy", "Copy Command"])
+    }
+
+    @MainActor
     @Test func shortExpandedReadMarkdownHidesFullScreenFloatingButton() throws {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "# Notes\n\n- item"),

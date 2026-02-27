@@ -215,8 +215,8 @@ enum ToolTimelineRowExpandedRenderer {
         expandedShouldAutoFollow: inout Bool,
         wasExpandedVisible: Bool,
         isUsingMarkdownLayout: Bool,
+        shouldAutoFollowOnFirstRender: Bool,
         showExpandedMarkdown: () -> Void,
-        setExpandedContainerTapCopyGestureEnabled: (Bool) -> Void,
         setModeText: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
         showExpandedViewport: () -> Void,
@@ -227,9 +227,6 @@ enum ToolTimelineRowExpandedRenderer {
             || !isUsingMarkdownLayout
 
         showExpandedMarkdown()
-        // Markdown expanded content should support native UITextView selection
-        // on double-tap across tool surfaces.
-        setExpandedContainerTapCopyGestureEnabled(false)
 
         expandedRenderedText = text
         updateExpandedLabelWidthIfNeeded()
@@ -246,8 +243,10 @@ enum ToolTimelineRowExpandedRenderer {
         expandedScrollView.showsHorizontalScrollIndicator = false
         setModeText()
         showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = true }
-        if shouldRerender { scheduleExpandedAutoScrollToBottomIfNeeded() }
+        if !wasExpandedVisible { expandedShouldAutoFollow = shouldAutoFollowOnFirstRender }
+        if shouldRerender, expandedShouldAutoFollow {
+            scheduleExpandedAutoScrollToBottomIfNeeded()
+        }
 
         return Visibility(
             showExpandedContainer: true,
@@ -399,6 +398,7 @@ enum ToolTimelineRowExpandedRenderer {
         isCurrentModeText: Bool,
         isUsingMarkdownLayout: Bool,
         isUsingReadMediaLayout: Bool,
+        shouldAutoFollowOnFirstRender: Bool,
         showExpandedLabel: () -> Void,
         setModeText: () -> Void,
         updateExpandedLabelWidthIfNeeded: () -> Void,
@@ -447,8 +447,10 @@ enum ToolTimelineRowExpandedRenderer {
         setModeText()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = true }
-        if shouldRerender { scheduleExpandedAutoScrollToBottomIfNeeded() }
+        if !wasExpandedVisible { expandedShouldAutoFollow = shouldAutoFollowOnFirstRender }
+        if shouldRerender, expandedShouldAutoFollow {
+            scheduleExpandedAutoScrollToBottomIfNeeded()
+        }
 
         return Visibility(
             showExpandedContainer: true,
