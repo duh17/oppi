@@ -1462,39 +1462,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             _ command: ChatTimelineScrollCommand,
             in collectionView: UICollectionView
         ) -> Bool {
-            guard let index = currentIDs.firstIndex(of: command.id) else { return false }
-            let indexPath = IndexPath(item: index, section: 0)
-
-            let position: UICollectionView.ScrollPosition
-            switch command.anchor {
-            case .top:
-                position = .top
-            case .bottom:
-                position = .bottom
+            TimelineScrollCoordinator.performScroll(
+                command,
+                in: collectionView,
+                currentIDs: currentIDs
+            ) { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                // `scrollToItem(animated: false)` can update contentOffset on the next
+                // runloop tick without always triggering immediate delegate callbacks.
+                // Re-sample scroll state asynchronously so diagnostics (near-bottom,
+                // top visible id) converge deterministically for harness assertions.
+                collectionView.layoutIfNeeded()
+                self.updateScrollState(collectionView)
+                self.updateDetachedStreamingHintVisibility()
             }
-
-            ChatTimelinePerf.recordScrollCommand(anchor: command.anchor, animated: command.animated)
-
-            if command.animated {
-                collectionView.scrollToItem(at: indexPath, at: position, animated: true)
-            } else {
-                collectionView.scrollToItem(at: indexPath, at: position, animated: false)
-            }
-
-            // `scrollToItem(animated: false)` can update contentOffset on the next
-            // runloop tick without always triggering immediate delegate callbacks.
-            // Re-sample scroll state asynchronously so diagnostics (near-bottom,
-            // top visible id) converge deterministically for harness assertions.
-            if !command.animated {
-                DispatchQueue.main.async { [weak self, weak collectionView] in
-                    guard let self, let collectionView else { return }
-                    collectionView.layoutIfNeeded()
-                    self.updateScrollState(collectionView)
-                    self.updateDetachedStreamingHintVisibility()
-                }
-            }
-
-            return true
         }
 
         /// Minimum distance from bottom before showing the jump-to-bottom
@@ -1502,51 +1483,23 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private let jumpToBottomMinDistance: CGFloat = 500
 
         private func updateDetachedStreamingHintVisibility() {
-            guard let scrollController else { return }
-
-            let isDetached = !scrollController.isCurrentlyNearBottom
-            let isFarFromBottom = isDetached && lastDistanceFromBottom > jumpToBottomMinDistance
-
-            let showsStreamingState = streamingAssistantID != nil && isDetached
-
-            scrollController.setDetachedStreamingHintVisible(showsStreamingState && isFarFromBottom)
-            scrollController.setJumpToBottomHintVisible(isFarFromBottom)
+            TimelineScrollCoordinator.updateDetachedStreamingHintVisibility(
+                scrollController: scrollController,
+                streamingAssistantID: streamingAssistantID,
+                distanceFromBottom: lastDistanceFromBottom,
+                jumpToBottomMinDistance: jumpToBottomMinDistance
+            )
         }
 
         private func updateScrollState(_ collectionView: UICollectionView) {
-            guard let scrollController else { return }
-
-            let insets = collectionView.adjustedContentInset
-            let visibleHeight = collectionView.bounds.height - insets.top - insets.bottom
-            guard visibleHeight > 0 else { return }
-
-            let bottomY = collectionView.contentOffset.y + insets.top + visibleHeight
-            let contentHeight = collectionView.contentSize.height
-            let distanceFromBottom = max(0, contentHeight - bottomY)
-            lastDistanceFromBottom = distanceFromBottom
-            let nearBottomThreshold = scrollController.isCurrentlyNearBottom
-                ? nearBottomExitThreshold
-                : nearBottomEnterThreshold
-            scrollController.updateNearBottom(distanceFromBottom <= nearBottomThreshold)
-
-            let firstVisible = collectionView.indexPathsForVisibleItems
-                .min { lhs, rhs in lhs.item < rhs.item }
-
-            guard let firstVisible else {
-                scrollController.updateTopVisibleItemId(nil)
-                return
-            }
-
-            guard firstVisible.item < currentIDs.count else {
-                scrollController.updateTopVisibleItemId(nil)
-                return
-            }
-
-            let id = currentIDs[firstVisible.item]
-            if id == ChatTimelineCollectionHost.loadMoreID || id == ChatTimelineCollectionHost.workingIndicatorID {
-                scrollController.updateTopVisibleItemId(nil)
-            } else {
-                scrollController.updateTopVisibleItemId(id)
+            if let distanceFromBottom = TimelineScrollCoordinator.updateScrollState(
+                collectionView: collectionView,
+                scrollController: scrollController,
+                currentIDs: currentIDs,
+                nearBottomEnterThreshold: nearBottomEnterThreshold,
+                nearBottomExitThreshold: nearBottomExitThreshold
+            ) {
+                lastDistanceFromBottom = distanceFromBottom
             }
         }
     }
