@@ -6,6 +6,7 @@ import type { GateServer } from "../src/gate.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session } from "../src/types.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
+import { messagesOfType } from "./harness/ws-harness.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -107,23 +108,17 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
 }
 
 function asTurnAcks(events: ServerMessage[]): Array<Extract<ServerMessage, { type: "turn_ack" }>> {
-  return events.filter(
-    (event): event is Extract<ServerMessage, { type: "turn_ack" }> => event.type === "turn_ack",
-  );
+  return messagesOfType(events, "turn_ack");
 }
 
 function asRpcResults(
   events: ServerMessage[],
 ): Array<Extract<ServerMessage, { type: "command_result" }>> {
-  return events.filter(
-    (event): event is Extract<ServerMessage, { type: "command_result" }> => event.type === "command_result",
-  );
+  return messagesOfType(events, "command_result");
 }
 
 function asStateEvents(events: ServerMessage[]): Array<Extract<ServerMessage, { type: "state" }>> {
-  return events.filter(
-    (event): event is Extract<ServerMessage, { type: "state" }> => event.type === "state",
-  );
+  return messagesOfType(events, "state");
 }
 
 describe("turn delivery idempotency", () => {
