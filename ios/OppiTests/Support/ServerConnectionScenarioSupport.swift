@@ -79,7 +79,7 @@ enum ScenarioTimelineItemKind {
     case toolCall
 }
 
-enum AckCommand: CaseIterable {
+private enum AckCommand: CaseIterable {
     case prompt
     case steer
     case followUp
@@ -105,13 +105,13 @@ enum AckCommand: CaseIterable {
     }
 }
 
-struct AckRequest {
+private struct AckRequest {
     let command: String
     let requestId: String?
     let clientTurnId: String?
 }
 
-func extractAckRequest(from message: ClientMessage) -> AckRequest? {
+private func extractAckRequest(from message: ClientMessage) -> AckRequest? {
     switch message {
     case .prompt(_, _, _, let requestId, let clientTurnId):
         return AckRequest(command: "prompt", requestId: requestId, clientTurnId: clientTurnId)
@@ -125,7 +125,7 @@ func extractAckRequest(from message: ClientMessage) -> AckRequest? {
 }
 
 @MainActor
-func makeAckTestConnection(
+private func makeAckTestConnection(
     sessionId: String = "s1",
     timeout: Duration? = nil
 ) -> ServerConnection {
@@ -137,7 +137,7 @@ func makeAckTestConnection(
     return connection
 }
 
-actor AckStageRecorder {
+private actor AckStageRecorder {
     private var stages: [TurnAckStage] = []
 
     func record(_ stage: TurnAckStage) {
