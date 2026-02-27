@@ -222,6 +222,38 @@ extension TimelineTestHarness {
         coordinator.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
     }
+
+    /// Apply the reducer's current state using reducer-owned tool stores.
+    ///
+    /// Use this when tests drive `TimelineReducer.processBatch(...)` and want
+    /// collection rendering to reflect the same authoritative tool args/output.
+    func applyReducerState(
+        hiddenCount: Int = 0,
+        renderWindowStep: Int = 50,
+        isBusy: Bool = false,
+        onShowEarlier: @escaping () -> Void = {},
+        scrollCommand: ChatTimelineScrollCommand? = nil
+    ) {
+        let config = makeTimelineConfiguration(
+            items: reducer.items,
+            hiddenCount: hiddenCount,
+            renderWindowStep: renderWindowStep,
+            isBusy: isBusy,
+            streamingAssistantID: reducer.streamingAssistantID,
+            onShowEarlier: onShowEarlier,
+            scrollCommand: scrollCommand,
+            sessionId: sessionId,
+            reducer: reducer,
+            toolOutputStore: reducer.toolOutputStore,
+            toolArgsStore: reducer.toolArgsStore,
+            toolSegmentStore: reducer.toolSegmentStore,
+            connection: connection,
+            scrollController: scrollController,
+            audioPlayer: audioPlayer
+        )
+        coordinator.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+    }
 }
 
 @MainActor
@@ -255,6 +287,22 @@ struct WindowedTimelineHarness {
             isBusy: isBusy,
             streamingAssistantID: streamingID,
             onShowEarlier: onShowEarlier
+        )
+    }
+
+    func applyReducerState(
+        hiddenCount: Int = 0,
+        renderWindowStep: Int = 50,
+        isBusy: Bool = false,
+        onShowEarlier: @escaping () -> Void = {},
+        scrollCommand: ChatTimelineScrollCommand? = nil
+    ) {
+        harness.applyReducerState(
+            hiddenCount: hiddenCount,
+            renderWindowStep: renderWindowStep,
+            isBusy: isBusy,
+            onShowEarlier: onShowEarlier,
+            scrollCommand: scrollCommand
         )
     }
 }
@@ -416,6 +464,35 @@ func expectTimelineRowsUseConfigurationType<T>(
     for item in items {
         let cell = try configuredTimelineCell(in: collectionView, item: item, section: section)
         #expect(cell.contentConfiguration is T, "Expected \(type) at item \(item)")
+    }
+}
+
+@MainActor
+func settleTimelineLayout(_ collectionView: UICollectionView, passes: Int = 2) {
+    for _ in 0..<max(1, passes) {
+        collectionView.setNeedsLayout()
+        collectionView.layoutIfNeeded()
+    }
+}
+
+func timelineDuplicateIDs(in items: [ChatItem]) -> [String] {
+    var counts: [String: Int] = [:]
+    for id in items.map(\.id) {
+        counts[id, default: 0] += 1
+    }
+    return counts
+        .filter { $0.value > 1 }
+        .map(\.key)
+        .sorted()
+}
+
+func timelineToolRowCount(for itemID: String, in items: [ChatItem]) -> Int {
+    items.reduce(into: 0) { count, item in
+        guard case .toolCall(let id, _, _, _, _, _, _) = item,
+              id == itemID else {
+            return
+        }
+        count += 1
     }
 }
 
