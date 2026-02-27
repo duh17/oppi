@@ -6,7 +6,7 @@ Owner: Oppi maintainers (iOS + server)
 This matrix tracks core product requirements/invariants against current test coverage.
 
 Gate policy for when tests are required on PR vs nightly is defined in:
-- [`docs/testing/pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md)
+- [`docs/testing/README.md`](./README.md)
 
 Status legend:
 - **covered**: invariant has direct tests on at least one side and no known blind spot
