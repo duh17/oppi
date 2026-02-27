@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 import { UserStreamMux, startServerPing, type StreamContext } from "../src/stream.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { messagesOfType, requireMessageOfType } from "./harness/ws-harness.js";
+import { flushMicrotasks } from "./harness/async.js";
 
 function makeSession(id: string): Session {
   const now = Date.now();
@@ -165,7 +166,7 @@ function makeHarness(options?: {
 }
 
 async function flushQueue(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flushMicrotasks(3);
 }
 
 describe("/stream websocket behavior", () => {

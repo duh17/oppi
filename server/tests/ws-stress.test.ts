@@ -25,6 +25,7 @@ import {
   sendClientMessage,
   waitForMessage,
 } from "./harness/ws-harness.js";
+import { waitForClose, waitForReadyState } from "./harness/async.js";
 
 // ─── Test Harness ───
 
@@ -116,8 +117,7 @@ describe("stream connection lifecycle", () => {
       const msg = await waitForMessage(ws);
       expect(msg.type).toBe("stream_connected");
       ws.close();
-      // Brief pause to let server process close
-      await new Promise((r) => setTimeout(r, 50));
+      await waitForClose(ws);
     }
   });
 
@@ -134,10 +134,12 @@ describe("stream connection lifecycle", () => {
     );
     expect(messages.every((msg) => msg.type === "stream_connected")).toBe(true);
 
-    for (const ws of connections) {
-      ws.close();
-    }
-    await new Promise((r) => setTimeout(r, 100));
+    await Promise.all(
+      connections.map(async (ws) => {
+        ws.close();
+        await waitForClose(ws);
+      }),
+    );
   });
 });
 
@@ -254,7 +256,7 @@ describe("reconnect + catch-up sequence", () => {
     });
     const firstMessages = await collectMessages(ws1, 1_500);
     ws1.close();
-    await new Promise((r) => setTimeout(r, 100));
+    await waitForClose(ws1);
 
     // Second connection (simulating reconnect)
     const ws2 = connectStream();
@@ -343,9 +345,12 @@ describe("server-side ping/pong", () => {
     try {
       await waitForMessage(ws); // stream_connected
 
-      // Wait 2 seconds — connection should still be open
-      await new Promise((r) => setTimeout(r, 2_000));
-      expect(ws.readyState).toBe(WebSocket.OPEN);
+      // Ensure connection is not terminated shortly after handshake.
+      await waitForReadyState(ws, WebSocket.OPEN, {
+        timeoutMs: 500,
+        intervalMs: 20,
+        description: "connection to remain open after connect",
+      });
     } finally {
       ws.close();
     }
@@ -357,10 +362,8 @@ describe("close code handling", () => {
     const ws = connectStream();
     await waitForMessage(ws);
 
-    await new Promise<void>((resolve) => {
-      ws.on("close", () => resolve());
-      ws.close(1000, "Normal closure");
-    });
+    ws.close(1000, "Normal closure");
+    await waitForClose(ws);
 
     // Server should not crash — verify by opening another connection
     const ws2 = connectStream();
@@ -373,12 +376,8 @@ describe("close code handling", () => {
     const ws = connectStream();
     await waitForMessage(ws);
 
-    await new Promise<void>((resolve) => {
-      ws.on("close", () => resolve());
-      ws.close(1001, "Going away");
-    });
-
-    await new Promise((r) => setTimeout(r, 100));
+    ws.close(1001, "Going away");
+    await waitForClose(ws);
 
     const ws2 = connectStream();
     const msg = await waitForMessage(ws2);
@@ -392,8 +391,10 @@ describe("close code handling", () => {
 
     // Terminate without close frame — simulates network drop
     ws.terminate();
-
-    await new Promise((r) => setTimeout(r, 200));
+    await waitForReadyState(ws, WebSocket.CLOSED, {
+      timeoutMs: 1_000,
+      description: "terminated socket to close",
+    });
 
     // Server should handle this and accept new connections
     const ws2 = connectStream();
