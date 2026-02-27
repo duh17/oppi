@@ -561,3 +561,95 @@ describe("connection exhaustion resilience", () => {
     ws.close();
   }, 30_000);
 });
+
+// ─── D) State transition interleavings (integration) ───
+
+describe("reconnect bootstrap order (integration)", () => {
+  it("reconnect receives deterministic bootstrap: stream_connected -> connected -> state -> command_result", async () => {
+    const { sessionId } = await createWorkspaceAndSession();
+
+    const ws = connectStream();
+    try {
+      const streamConnected = await waitForMessage(ws);
+      expect(streamConnected.type).toBe("stream_connected");
+
+      sendJson(ws, {
+        type: "subscribe",
+        sessionId,
+        level: "full",
+        requestId: "sub-bootstrap",
+      });
+
+      const messages = await collectMessages(ws, 3_000);
+
+      // Extract the ordering of key message types
+      const keyTypes = messages
+        .filter((msg) =>
+          ["connected", "state", "command_result"].includes(msg.type),
+        )
+        .map((msg) => ({
+          type: msg.type,
+          command:
+            msg.type === "command_result"
+              ? (msg as { command?: string }).command
+              : undefined,
+        }));
+
+      // connected must come before state, state before command_result(subscribe)
+      const connectedIdx = keyTypes.findIndex((t) => t.type === "connected");
+      const stateIdx = keyTypes.findIndex((t) => t.type === "state");
+      const subResultIdx = keyTypes.findIndex(
+        (t) => t.type === "command_result" && t.command === "subscribe",
+      );
+
+      expect(connectedIdx).toBeGreaterThanOrEqual(0);
+      expect(stateIdx).toBeGreaterThanOrEqual(0);
+      expect(subResultIdx).toBeGreaterThanOrEqual(0);
+      expect(connectedIdx).toBeLessThan(stateIdx);
+      expect(stateIdx).toBeLessThan(subResultIdx);
+    } finally {
+      ws.close();
+    }
+  });
+
+  it("rapid subscribe/unsubscribe churn: final state is consistent (integration)", async () => {
+    const { sessionId } = await createWorkspaceAndSession();
+    const ws = connectStream();
+
+    try {
+      await waitForMessage(ws); // stream_connected
+
+      // Rapid churn — all sent without awaiting individual results
+      sendJson(ws, { type: "subscribe", sessionId, level: "full", requestId: "sub-1" });
+      sendJson(ws, { type: "unsubscribe", sessionId, requestId: "unsub-1" });
+      sendJson(ws, { type: "subscribe", sessionId, level: "full", requestId: "sub-2" });
+      sendJson(ws, { type: "unsubscribe", sessionId, requestId: "unsub-2" });
+      sendJson(ws, { type: "subscribe", sessionId, level: "full", requestId: "sub-3" });
+
+      const messages = await collectMessages(ws, 3_000);
+
+      const subResults = messages.filter(
+        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
+          msg.type === "command_result" && msg.command === "subscribe",
+      );
+      const unsubResults = messages.filter(
+        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
+          msg.type === "command_result" && msg.command === "unsubscribe",
+      );
+
+      // Should have 3 subscribe + 2 unsubscribe results
+      expect(subResults).toHaveLength(3);
+      expect(unsubResults).toHaveLength(2);
+
+      // All should succeed
+      expect(subResults.every((r) => r.success)).toBe(true);
+      expect(unsubResults.every((r) => r.success)).toBe(true);
+
+      // Request IDs should correlate correctly
+      expect(subResults.map((r) => r.requestId)).toEqual(["sub-1", "sub-2", "sub-3"]);
+      expect(unsubResults.map((r) => r.requestId)).toEqual(["unsub-1", "unsub-2"]);
+    } finally {
+      ws.close();
+    }
+  });
+});
