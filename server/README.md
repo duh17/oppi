@@ -36,19 +36,73 @@ Create a workspace in the app and start a session.
 - [pi](https://github.com/badlogic/pi-mono) CLI installed (`pi login` for LLM auth)
 - macOS or Linux
 
-## Docker
+## Docker (skills-ready compose setup)
+
+A containerized setup is included in this directory:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `docker/entrypoint.sh`
+
+Quick start:
 
 ```bash
-docker run -d --name oppi -p 7749:7749 node:22-bookworm sleep infinity
-docker cp oppi-server/. oppi:/opt/oppi-server/
-docker exec -w /opt/oppi-server oppi sh -c "npm install"
+cd server
 
-# Copy pi auth into the container
-docker exec oppi mkdir -p /root/.pi/agent
-docker cp ~/.pi/agent/auth.json oppi:/root/.pi/agent/
+# Optional: host/ip or tailnet host encoded into pairing links
+export OPPI_PAIR_HOST=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
+# export OPPI_PAIR_HOST=<machine>.<tailnet>.ts.net
 
-# Start (auto-inits + shows pairing QR)
-docker exec -w /opt/oppi-server oppi npx oppi serve --host <your-hostname>
+# Optional: choose container/server port (default 7750 to avoid host conflicts)
+export OPPI_PORT=7750
+
+# Optional: host-side SearXNG endpoint for search skill
+export SEARXNG_URL=http://host.docker.internal:8888
+
+# Optional: override host paths
+# export PI_AGENT_DIR="$HOME/.pi/agent"
+# export DOTFILES_DIR="$HOME/.config/dotfiles"
+
+docker compose up -d --build
+```
+
+What it does:
+
+- runs `node dist/cli.js serve` as PID 1 in container
+- auto-restarts via `restart: unless-stopped`
+- binds host `${OPPI_PORT:-7750}` to the same in-container port
+- persists server state in Docker volume `oppi-data` (`/data/oppi`)
+- persists runtime PI state in Docker volume `pi-agent-data` (`/data/pi-agent`)
+- seeds PI auth/skills/extensions from host `${PI_AGENT_DIR}` into container (`copy-once` by default)
+- exposes host-side SearXNG via `SEARXNG_URL` (default: `http://host.docker.internal:8888`)
+- mounts Docker socket so in-session wrappers can reach sibling containers (e.g. `web-toolkit`)
+
+Important security note:
+
+- Mounting `/var/run/docker.sock` gives the container root-equivalent host control.
+- Keep this only if you need Docker-backed skill wrappers (`web-nav`, `web-eval`, `web-screenshot`, etc.).
+
+Useful commands:
+
+```bash
+# Logs (watch startup + pairing hints)
+docker compose logs -f oppi-server
+
+# Health
+curl -s "http://127.0.0.1:${OPPI_PORT:-7750}/health"
+
+# Verify SearXNG reachability from inside container
+docker compose exec oppi-server curl -sS "$SEARXNG_URL/healthz"
+
+# Generate pairing QR/deep link explicitly
+docker compose exec oppi-server node dist/cli.js pair --host <your-lan-host-or-ip>
+
+# Force resync PI seed from host on next start
+PI_AGENT_SYNC_MODE=always docker compose up -d
+
+# Stop / start
+docker compose stop
+docker compose start
 ```
 
 ## Commands

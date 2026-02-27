@@ -1,0 +1,66 @@
+# CI: run full test suite on every push to main.
+#
+# Self-hosted runner on Mac Studio.
+# Release to TestFlight is manual via ios/scripts/release.sh.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci
+  cancel-in-progress: true
+
+env:
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+jobs:
+  test:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Server ──────────────────────────────────────────────
+
+      - name: "Server: install"
+        working-directory: server
+        run: npm ci
+
+      - name: "Server: typecheck + lint"
+        working-directory: server
+        run: npm run check
+
+      - name: "Server: tests"
+        working-directory: server
+        run: npm test
+
+      # ── iOS ─────────────────────────────────────────────────
+
+      - name: "iOS: generate project"
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: "iOS: unit tests"
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project Oppi.xcodeproj \
+            -scheme Oppi \
+            -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' \
+            -only-testing:OppiTests \
+            -derivedDataPath build/ci \
+            -quiet
+
+      - name: "iOS: UI tests"
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project Oppi.xcodeproj \
+            -scheme Oppi \
+            -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' \
+            -only-testing:OppiUITests \
+            -derivedDataPath build/ci \
+            -quiet

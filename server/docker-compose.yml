@@ -1,0 +1,39 @@
+services:
+  oppi-server:
+    container_name: oppi-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${OPPI_PORT:-7750}:${OPPI_PORT:-7750}"
+    environment:
+      OPPI_DATA_DIR: /data/oppi
+      PI_CODING_AGENT_DIR: /data/pi-agent
+      PI_AGENT_SEED_DIR: /seed/pi-agent
+      PI_AGENT_SYNC_MODE: ${PI_AGENT_SYNC_MODE:-copy-once}
+      OPPI_PORT: ${OPPI_PORT:-7750}
+      OPPI_PAIR_HOST: ${OPPI_PAIR_HOST:-}
+      # Default to host-side SearXNG (e.g. :8888) for search skill.
+      SEARXNG_URL: ${SEARXNG_URL:-http://host.docker.internal:8888}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Oppi server runtime state
+      - oppi-data:/data/oppi
+      # Pi runtime state used by sessions (separate from host seed)
+      - pi-agent-data:/data/pi-agent
+      # Seed skills/extensions/auth from host pi dir (copy-once by default)
+      - ${PI_AGENT_DIR:-$HOME/.pi/agent}:/seed/pi-agent:ro
+      # Keep host-symlinked skill targets reachable (dotfiles skills)
+      - ${DOTFILES_DIR:-$HOME/.config/dotfiles}:${DOTFILES_DIR:-$HOME/.config/dotfiles}:ro
+      # Shared fetch/browser caches + allowlist used by web skills
+      - ${HOME}/.config/fetch:/root/.config/fetch
+      - ${HOME}/.cache/fetch:/root/.cache/fetch
+      - ${HOME}/.cache/agent-web:/root/.cache/agent-web
+      # Enable docker-based wrappers inside oppi sessions (web-toolkit, etc.)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  oppi-data:
+  pi-agent-data:
