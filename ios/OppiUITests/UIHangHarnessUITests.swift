@@ -263,13 +263,95 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 2)
     }
 
+    func testChatScrollSmoothnessPerfGuardMixedContent() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true, mixedContent: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 7)
+
+        let metricsReset = app.descendants(matching: .any)["harness.metrics.reset"]
+        XCTAssertTrue(metricsReset.waitForExistence(timeout: 4))
+        metricsReset.tap()
+
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        let renderToolSet = app.descendants(matching: .any)["harness.tools.render"]
+        let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
+        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
+        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
+
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        XCTAssertTrue(renderToolSet.waitForExistence(timeout: 4))
+        XCTAssertTrue(pulse.waitForExistence(timeout: 4))
+        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+
+        expandAll.tap()
+        renderToolSet.tap()
+
+        let baselineSamples = waitForDiagnosticAtLeastValue("diag.frameSamples", minimum: 45, timeout: 6)
+        let baselineP95 = pollDiagnostic("diag.frameP95", timeout: 2)
+        let baselineP99 = pollDiagnostic("diag.frameP99", timeout: 2)
+        let baselineOver34Pct = pollDiagnostic("diag.frameOver34Pct", timeout: 2)
+        let baselineOver50Pct = pollDiagnostic("diag.frameOver50Pct", timeout: 2)
+        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 2)
+
+        for cycle in 0..<14 {
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.82),
+                to: CGVector(dx: 0.5, dy: 0.24)
+            )
+            pulse.tap()
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.24),
+                to: CGVector(dx: 0.5, dy: 0.82)
+            )
+            pulse.tap()
+
+            if cycle.isMultiple(of: 3) {
+                topButton.tap()
+                bottomButton.tap()
+            }
+        }
+
+        let stressSamples = waitForDiagnosticAtLeastValue(
+            "diag.frameSamples",
+            minimum: baselineSamples + 150,
+            timeout: 10
+        )
+        XCTAssertGreaterThan(stressSamples, baselineSamples)
+
+        let stressP95 = pollDiagnostic("diag.frameP95", timeout: 3)
+        let stressP99 = pollDiagnostic("diag.frameP99", timeout: 3)
+        let stressOver34Pct = pollDiagnostic("diag.frameOver34Pct", timeout: 3)
+        let stressOver50Pct = pollDiagnostic("diag.frameOver50Pct", timeout: 3)
+        let stressOver50Count = pollDiagnostic("diag.frameOver50", timeout: 3)
+        let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 3)
+
+        XCTAssertLessThanOrEqual(stressOver34Pct, max(45, baselineOver34Pct + 20))
+        XCTAssertLessThanOrEqual(stressOver50Pct, max(18, baselineOver50Pct + 10))
+        XCTAssertLessThanOrEqual(stressP95, max(90, baselineP95 + 35))
+        XCTAssertLessThanOrEqual(stressP99, max(130, baselineP99 + 45))
+        XCTAssertLessThanOrEqual(stressOver50Count, max(30, Int(Double(stressSamples) * 0.16)))
+        XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 3)
+    }
+
     // MARK: - Launch
 
-    private func launchHarness(noStream: Bool, includeVisualFixtures: Bool = false) {
+    private func launchHarness(
+        noStream: Bool,
+        includeVisualFixtures: Bool = false,
+        mixedContent: Bool = false
+    ) {
         app = XCUIApplication()
         app.launchArguments.append("--ui-hang-harness")
         app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
         app.launchEnvironment["PI_UI_HANG_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["PI_UI_HANG_MIXED_CONTENT"] = mixedContent ? "1" : "0"
         if noStream {
             app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "1"
         } else {
@@ -362,6 +444,27 @@ final class UIHangHarnessUITests: XCTestCase {
 
         XCTFail("Diagnostic \(id) did not reach minimum value \(minimum)")
         return -1
+    }
+
+    private func waitForDiagnosticAtLeastValue(_ id: String, minimum: Int, timeout: TimeInterval) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            let value = pollDiagnostic(id, timeout: 0.8)
+            if value >= minimum {
+                return value
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+
+        XCTFail("Diagnostic \(id) did not reach minimum value \(minimum)")
+        return -1
+    }
+
+    private func dragTimeline(_ element: XCUIElement, from: CGVector, to: CGVector) {
+        let start = element.coordinate(withNormalizedOffset: from)
+        let end = element.coordinate(withNormalizedOffset: to)
+        start.press(forDuration: 0.02, thenDragTo: end)
     }
 
     private func waitForDiagnosticAtMostOrNil(_ id: String, maximum: Int, timeout: TimeInterval) -> Int? {

@@ -1,6 +1,7 @@
 #if DEBUG
 import Darwin.Mach
 import SwiftUI
+import UIKit
 
 // MARK: - Harness Configuration
 
@@ -9,11 +10,13 @@ enum UIHangHarnessConfig {
         let isEnabled: Bool
         let streamDisabled: Bool
         let includeVisualFixtures: Bool
+        let mixedContentFixtures: Bool
     }
 
     private struct StickyState {
         let noStream: Bool
         let includeVisualFixtures: Bool
+        let mixedContentFixtures: Bool
     }
 
     // XCTest repeat mode can transiently reinstall/relaunch the app without
@@ -22,6 +25,7 @@ enum UIHangHarnessConfig {
     private static let stickyTimestampKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.timestamp"
     private static let stickyNoStreamKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.noStream"
     private static let stickyVisualFixturesKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.visualFixtures"
+    private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
     private static let stickyTTLSeconds: TimeInterval = 180
 
     private static let launchContext = resolveLaunchContext()
@@ -66,6 +70,14 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    static var mixedContentFixtures: Bool {
+#if DEBUG
+        launchContext.mixedContentFixtures
+#else
+        false
+#endif
+    }
+
 #if DEBUG
 #if targetEnvironment(simulator)
     private static func resolveLaunchContext() -> LaunchContext {
@@ -76,13 +88,19 @@ enum UIHangHarnessConfig {
             || environment["PI_UI_HANG_HARNESS"] == "1"
         let explicitNoStream = environment["PI_UI_HANG_NO_STREAM"] == "1"
         let explicitVisualFixtures = environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
+        let explicitMixedContent = environment["PI_UI_HANG_MIXED_CONTENT"] == "1"
 
         if explicitHarness {
-            persistStickyState(noStream: explicitNoStream, includeVisualFixtures: explicitVisualFixtures)
+            persistStickyState(
+                noStream: explicitNoStream,
+                includeVisualFixtures: explicitVisualFixtures,
+                mixedContentFixtures: explicitMixedContent
+            )
             return LaunchContext(
                 isEnabled: true,
                 streamDisabled: explicitNoStream,
-                includeVisualFixtures: explicitVisualFixtures
+                includeVisualFixtures: explicitVisualFixtures,
+                mixedContentFixtures: explicitMixedContent
             )
         }
 
@@ -91,7 +109,8 @@ enum UIHangHarnessConfig {
             return LaunchContext(
                 isEnabled: true,
                 streamDisabled: stickyState.noStream,
-                includeVisualFixtures: stickyState.includeVisualFixtures
+                includeVisualFixtures: stickyState.includeVisualFixtures,
+                mixedContentFixtures: stickyState.mixedContentFixtures
             )
         }
 
@@ -102,7 +121,8 @@ enum UIHangHarnessConfig {
         return LaunchContext(
             isEnabled: false,
             streamDisabled: explicitNoStream,
-            includeVisualFixtures: explicitVisualFixtures
+            includeVisualFixtures: explicitVisualFixtures,
+            mixedContentFixtures: explicitMixedContent
         )
     }
 
@@ -120,11 +140,16 @@ enum UIHangHarnessConfig {
         return UserDefaults(suiteName: "group.\(bundleID)") ?? .standard
     }
 
-    private static func persistStickyState(noStream: Bool, includeVisualFixtures: Bool) {
+    private static func persistStickyState(
+        noStream: Bool,
+        includeVisualFixtures: Bool,
+        mixedContentFixtures: Bool
+    ) {
         let now = Date().timeIntervalSince1970
         stickyDefaults.set(now, forKey: stickyTimestampKey)
         stickyDefaults.set(noStream, forKey: stickyNoStreamKey)
         stickyDefaults.set(includeVisualFixtures, forKey: stickyVisualFixturesKey)
+        stickyDefaults.set(mixedContentFixtures, forKey: stickyMixedContentKey)
     }
 
     private static func loadStickyState(now: Date = Date()) -> StickyState? {
@@ -140,7 +165,8 @@ enum UIHangHarnessConfig {
 
         return StickyState(
             noStream: defaults.bool(forKey: stickyNoStreamKey),
-            includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey)
+            includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey),
+            mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey)
         )
     }
 
@@ -149,15 +175,26 @@ enum UIHangHarnessConfig {
         defaults.removeObject(forKey: stickyTimestampKey)
         defaults.removeObject(forKey: stickyNoStreamKey)
         defaults.removeObject(forKey: stickyVisualFixturesKey)
+        defaults.removeObject(forKey: stickyMixedContentKey)
     }
 #else
     private static func resolveLaunchContext() -> LaunchContext {
-        LaunchContext(isEnabled: false, streamDisabled: true, includeVisualFixtures: false)
+        LaunchContext(
+            isEnabled: false,
+            streamDisabled: true,
+            includeVisualFixtures: false,
+            mixedContentFixtures: false
+        )
     }
 #endif
 #else
     private static func resolveLaunchContext() -> LaunchContext {
-        LaunchContext(isEnabled: false, streamDisabled: true, includeVisualFixtures: false)
+        LaunchContext(
+            isEnabled: false,
+            streamDisabled: true,
+            includeVisualFixtures: false,
+            mixedContentFixtures: false
+        )
     }
 #endif
 }
@@ -181,10 +218,11 @@ struct UIHangHarnessView: View {
         var result: [HarnessSession: [ChatItem]] = [:]
         let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
 
-        // UI tests need fast launch and quiescence. Use smaller, plain-text
-        // fixtures in XCTest mode to avoid long markdown parse warmups.
+        // UI tests need fast launch and quiescence. Default to smaller fixtures
+        // in XCTest mode, unless explicitly running mixed-content scenarios.
         let turnsPerSession = UIHangHarnessConfig.uiTestMode ? 36 : 120
         let usePlainAssistantText = UIHangHarnessConfig.uiTestMode
+            && !UIHangHarnessConfig.mixedContentFixtures
 
         for (sessionIndex, session) in HarnessSession.allCases.enumerated() {
             var items: [ChatItem] = []
@@ -204,6 +242,30 @@ struct UIHangHarnessView: View {
                 let assistantText: String
                 if usePlainAssistantText {
                     assistantText = "\(session.title) answer \(turn) plain text payload for UI reliability harness."
+                } else if UIHangHarnessConfig.mixedContentFixtures {
+                    switch turn % 3 {
+                    case 0:
+                        assistantText = "\(session.title) answer \(turn) plain payload mixed-content lane."
+                    case 1:
+                        assistantText = """
+                        ### \(session.title) answer \(turn)
+
+                        Mixed markdown segment.
+
+                        - turn: \(turn)
+                        - value: \(turn * 17)
+
+                        `inline-code-token-\(turn)`
+                        """
+                    default:
+                        assistantText = """
+                        ```swift
+                        struct HarnessSample\(turn) {
+                            let value = \(turn)
+                        }
+                        ```
+                        """
+                    }
                 } else {
                     assistantText = """
                     ### \(session.title) answer \(turn)
@@ -404,6 +466,7 @@ struct UIHangHarnessView: View {
     @State private var themeID = ThemeRuntimeState.currentThemeID()
     @State private var originalThemeID = ThemeRuntimeState.currentThemeID()
     @State private var inputText = ""
+    @State private var frameIntervalMonitor = HarnessFrameIntervalMonitor()
 
     private var currentItems: [ChatItem] {
         sessionItems[selectedSession] ?? []
@@ -454,6 +517,10 @@ struct UIHangHarnessView: View {
 
     private var perfSnapshot: ChatTimelinePerf.Snapshot {
         ChatTimelinePerf.snapshot()
+    }
+
+    private var frameMetricsSnapshot: HarnessFrameIntervalSnapshot {
+        frameIntervalMonitor.snapshot()
     }
 
     private var nativeAssistantMode: Int { 1 }
@@ -509,6 +576,7 @@ struct UIHangHarnessView: View {
                     themeID: themeID
                 )
             )
+            .accessibilityIdentifier("harness.timeline")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.themeBg)
 
@@ -523,7 +591,8 @@ struct UIHangHarnessView: View {
         .onAppear {
             originalThemeID = ThemeRuntimeState.currentThemeID()
             ThemeRuntimeState.setThemeID(themeID)
-            ChatTimelinePerf.reset()
+            resetRuntimeMetrics()
+            frameIntervalMonitor.start()
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
             startDiagnosticsLoop()
             restartStreamingLoop()
@@ -537,6 +606,7 @@ struct UIHangHarnessView: View {
             diagnosticsTask = nil
             streamTask?.cancel()
             streamTask = nil
+            frameIntervalMonitor.stop()
             ThemeRuntimeState.setThemeID(originalThemeID)
         }
         .onChange(of: selectedSession) { _, _ in
@@ -610,12 +680,20 @@ struct UIHangHarnessView: View {
                 Button("Theme") { toggleTheme() }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("harness.theme.toggle")
+
+                Button("Reset Metrics") {
+                    resetRuntimeMetrics()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.metrics.reset")
             }
         }
     }
 
     private var diagnosticsBar: some View {
         let perf = perfSnapshot
+        let frame = frameMetricsSnapshot
+
         return HStack(spacing: 10) {
             diagnosticValue(id: "diag.heartbeat", value: heartbeat)
             diagnosticValue(id: "diag.stallCount", value: stallCount)
@@ -638,8 +716,20 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.perfGuardrail", value: perf.hardGuardrailBreachCount)
             diagnosticValue(id: "diag.failsafeRows", value: perf.failsafeConfigureCount)
             diagnosticValue(id: "diag.scrollRate", value: perf.scrollCommandsPerSecond)
+            diagnosticValue(id: "diag.frameSamples", value: frame.sampleCount)
+            diagnosticValue(id: "diag.frameP95", value: frame.p95IntervalMs)
+            diagnosticValue(id: "diag.frameP99", value: frame.p99IntervalMs)
+            diagnosticValue(id: "diag.frameMax", value: frame.maxIntervalMs)
+            diagnosticValue(id: "diag.frameOver34Pct", value: frame.over34MsPercent)
+            diagnosticValue(id: "diag.frameOver50Pct", value: frame.over50MsPercent)
+            diagnosticValue(id: "diag.frameOver50", value: frame.over50MsCount)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func resetRuntimeMetrics() {
+        ChatTimelinePerf.reset()
+        frameIntervalMonitor.reset()
     }
 
     private func startDiagnosticsLoop() {
@@ -824,6 +914,130 @@ struct UIHangHarnessView: View {
             .accessibilityIdentifier(id)
             .accessibilityLabel("\(value)")
             .accessibilityValue("\(value)")
+    }
+}
+
+// MARK: - Frame Interval Metrics
+
+struct HarnessFrameIntervalSnapshot: Sendable {
+    let sampleCount: Int
+    let p95IntervalMs: Int
+    let p99IntervalMs: Int
+    let maxIntervalMs: Int
+    let over34MsCount: Int
+    let over50MsCount: Int
+    let over34MsPercent: Int
+    let over50MsPercent: Int
+}
+
+@MainActor
+final class HarnessFrameIntervalMonitor: NSObject {
+    private let interval34Ms = 34
+    private let interval50Ms = 50
+    private let maxSamples = 1_200
+
+    private var displayLink: CADisplayLink?
+    private var previousTimestamp: CFTimeInterval?
+    private var intervalsMs: [Int] = []
+    private var over34MsCount = 0
+    private var over50MsCount = 0
+
+    func start() {
+        guard displayLink == nil else { return }
+
+        let displayLink = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+        displayLink.preferredFramesPerSecond = 0
+        displayLink.add(to: .main, forMode: .common)
+        self.displayLink = displayLink
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+        previousTimestamp = nil
+    }
+
+    func reset() {
+        previousTimestamp = nil
+        intervalsMs.removeAll(keepingCapacity: false)
+        over34MsCount = 0
+        over50MsCount = 0
+    }
+
+    func snapshot() -> HarnessFrameIntervalSnapshot {
+        guard !intervalsMs.isEmpty else {
+            return HarnessFrameIntervalSnapshot(
+                sampleCount: 0,
+                p95IntervalMs: 0,
+                p99IntervalMs: 0,
+                maxIntervalMs: 0,
+                over34MsCount: 0,
+                over50MsCount: 0,
+                over34MsPercent: 0,
+                over50MsPercent: 0
+            )
+        }
+
+        let sorted = intervalsMs.sorted()
+        let sampleCount = sorted.count
+        let p95 = percentileValue(in: sorted, percentile: 0.95)
+        let p99 = percentileValue(in: sorted, percentile: 0.99)
+        let maxInterval = sorted.last ?? 0
+
+        return HarnessFrameIntervalSnapshot(
+            sampleCount: sampleCount,
+            p95IntervalMs: p95,
+            p99IntervalMs: p99,
+            maxIntervalMs: maxInterval,
+            over34MsCount: over34MsCount,
+            over50MsCount: over50MsCount,
+            over34MsPercent: percent(part: over34MsCount, total: sampleCount),
+            over50MsPercent: percent(part: over50MsCount, total: sampleCount)
+        )
+    }
+
+    @objc
+    private func handleDisplayLink(_ link: CADisplayLink) {
+        let timestamp = link.timestamp
+        guard let previousTimestamp else {
+            self.previousTimestamp = timestamp
+            return
+        }
+
+        let deltaMs = max(0, Int(((timestamp - previousTimestamp) * 1_000).rounded()))
+        self.previousTimestamp = timestamp
+        recordInterval(deltaMs)
+    }
+
+    private func recordInterval(_ value: Int) {
+        intervalsMs.append(value)
+        if value >= interval34Ms {
+            over34MsCount &+= 1
+        }
+        if value >= interval50Ms {
+            over50MsCount &+= 1
+        }
+
+        if intervalsMs.count > maxSamples {
+            let removed = intervalsMs.removeFirst()
+            if removed >= interval34Ms {
+                over34MsCount = max(0, over34MsCount - 1)
+            }
+            if removed >= interval50Ms {
+                over50MsCount = max(0, over50MsCount - 1)
+            }
+        }
+    }
+
+    private func percentileValue(in sorted: [Int], percentile: Double) -> Int {
+        let clamped = min(1.0, max(0.0, percentile))
+        let index = Int((Double(sorted.count - 1) * clamped).rounded(.down))
+        return sorted[max(0, min(sorted.count - 1, index))]
+    }
+
+    private func percent(part: Int, total: Int) -> Int {
+        guard total > 0 else { return 0 }
+        return Int((Double(part) / Double(total) * 100).rounded())
     }
 }
 

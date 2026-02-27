@@ -49,6 +49,7 @@
     "test:e2e:lmstudio:contract": "node ./scripts/e2e-lmstudio-contract.mjs",
     "test:gate:pr-fast": "node ./scripts/testing-gates.mjs pr-fast",
     "test:gate:nightly-deep": "node ./scripts/testing-gates.mjs nightly-deep",
+    "test:ios:ui:full": "cd .. && bash ios/scripts/test-ui.sh --skip-generate --full-suite",
     "test:security:adversarial": "tsx ./scripts/manual/security-adversarial.ts",
     "test:load:ws": "tsx ./scripts/manual/load-ws.ts",
     "tool:gate-client": "tsx ./scripts/manual/gate-client.ts",
