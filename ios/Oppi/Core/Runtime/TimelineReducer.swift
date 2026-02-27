@@ -172,17 +172,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
-        if let appendStart = TimelineHistoryLoadPlanner.incrementalAppendStartIndex(
+        switch TimelineHistoryLoadPlanner.loadMode(
             timelineMatchesTrace: timelineMatchesTrace,
             loadedTraceEventIDs: loadedTraceEventIDs,
             events: events
         ) {
+        case .noOp:
             _lastLoadWasIncrementalForTesting = true
+            return
 
-            // No-op reload: trace unchanged and timeline already canonical.
-            if appendStart == events.count {
-                return
-            }
+        case .incremental(let appendStart):
+            _lastLoadWasIncrementalForTesting = true
 
             clearTurnBuffers()
 
@@ -203,9 +203,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             prewarmMarkdownCache(for: assistantTextsToCache)
             return
-        }
 
-        _lastLoadWasIncrementalForTesting = false
+        case .fullRebuild:
+            _lastLoadWasIncrementalForTesting = false
+        }
 
         items.removeAll()
         itemIndex.clear()
