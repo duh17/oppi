@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "gates": {
+    "pr-fast": [
+      "check",
+      "test"
+    ],
+    "nightly-deep": [
+      "check",
+      "test",
+      "test:e2e:linux",
+      "test:e2e:linux:https",
+      "test:e2e:lmstudio:contract"
+    ]
+  },
+  "ci": {
+    "prWorkflow": {
+      "path": ".github/workflows/pr-fast-gate.yml",
+      "command": "cd server && npm run test:gate:pr-fast"
+    },
+    "nightlyWorkflow": {
+      "path": ".github/workflows/nightly-deep-gate.yml",
+      "command": "cd server && npm run test:gate:nightly-deep"
+    }
+  },
+  "docs": {
+    "canonical": "docs/testing/README.md"
+  }
+}
