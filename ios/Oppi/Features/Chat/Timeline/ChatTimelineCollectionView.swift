@@ -446,87 +446,106 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 )
             }
 
-            dataSource = UICollectionViewDiffableDataSource<Int, String>(
-                collectionView: collectionView
-            ) { [weak self] collectionView, indexPath, itemID in
-                if itemID == ChatTimelineCollectionHost.loadMoreID {
-                    return collectionView.dequeueConfiguredReusableCell(
+            let registrations = TimelineCellFactory.Registrations(
+                assistant: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: assistantRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                user: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: userRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                thinking: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: thinkingRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                tool: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: toolRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                audio: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: audioRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                permission: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: permissionRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                system: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: systemRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                compaction: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: compactionRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                error: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: errorRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                missingItem: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
+                        using: missingItemRegistration,
+                        for: indexPath,
+                        item: itemID
+                    )
+                },
+                loadMore: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
                         using: loadMoreRegistration,
                         for: indexPath,
                         item: itemID
                     )
-                }
-
-                if itemID == ChatTimelineCollectionHost.workingIndicatorID {
-                    return collectionView.dequeueConfiguredReusableCell(
+                },
+                working: { collectionView, indexPath, itemID in
+                    collectionView.dequeueConfiguredReusableCell(
                         using: workingRegistration,
                         for: indexPath,
                         item: itemID
                     )
                 }
+            )
 
-                guard let self,
-                      let item = self.currentItemByID[itemID] else {
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: missingItemRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                }
-
-                switch item {
-                case .assistantMessage:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: assistantRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .userMessage:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: userRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .thinking:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: thinkingRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .toolCall:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: toolRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .audioClip:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: audioRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .permission, .permissionResolved:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: permissionRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .systemEvent(_, let message):
-                    let registration = Self.compactionPresentation(from: message) == nil
-                        ? systemRegistration
-                        : compactionRegistration
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: registration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                case .error:
-                    return collectionView.dequeueConfiguredReusableCell(
-                        using: errorRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                }
+            dataSource = UICollectionViewDiffableDataSource<Int, String>(
+                collectionView: collectionView
+            ) { [weak self] collectionView, indexPath, itemID in
+                TimelineCellFactory.dequeueCell(
+                    collectionView: collectionView,
+                    indexPath: indexPath,
+                    itemID: itemID,
+                    itemByID: self?.currentItemByID ?? [:],
+                    registrations: registrations,
+                    isCompactionMessage: { message in
+                        Self.compactionPresentation(from: message) != nil
+                    }
+                )
             }
 
         }
