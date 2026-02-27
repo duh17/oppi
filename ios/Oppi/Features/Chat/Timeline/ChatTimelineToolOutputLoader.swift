@@ -128,7 +128,10 @@ final class ExpandedToolOutputLoader {
                     #endif
 
                     if disposition == .emptyOutput {
-                        self.scheduleRetryIfNeeded(for: request)
+                        let didScheduleRetry = self.scheduleRetryIfNeeded(for: request)
+                        if !didScheduleRetry {
+                            request.reconfigureItem()
+                        }
                     }
 
                     return
@@ -198,10 +201,10 @@ final class ExpandedToolOutputLoader {
         return .apply
     }
 
-    private func scheduleRetryIfNeeded(for request: LoadRequest) {
-        guard ToolCallFormatting.isReadTool(request.tool) else { return }
-        guard request.attempt < Self.retryMaxAttempts else { return }
-        guard request.isItemExpanded() else { return }
+    private func scheduleRetryIfNeeded(for request: LoadRequest) -> Bool {
+        guard ToolCallFormatting.isReadTool(request.tool) else { return false }
+        guard request.attempt < Self.retryMaxAttempts else { return false }
+        guard request.isItemExpanded() else { return false }
 
         cancelRetryWork(for: request.itemID)
 
@@ -224,6 +227,7 @@ final class ExpandedToolOutputLoader {
 
         pendingRetryWorkByID[request.itemID] = retryWork
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retryWork)
+        return true
     }
 }
 
