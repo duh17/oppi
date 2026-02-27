@@ -57,7 +57,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// O(1) item lookup by ID — avoids linear scans on every 33ms upsert.
     /// Invalidated on insert, remove, and reset.
-    private var itemIndexByID: [String: Int] = [:]
+    private let itemIndex = TimelineItemIndex()
 
     /// Separate store for structured tool args.
     let toolArgsStore = ToolArgsStore()
@@ -105,7 +105,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
 
         items.removeAll()
-        itemIndexByID.removeAll()
+        itemIndex.clear()
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
@@ -204,7 +204,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         _lastLoadWasIncrementalForTesting = false
 
         items.removeAll()
-        itemIndexByID.removeAll()
+        itemIndex.clear()
         clearTurnBuffers()
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
@@ -707,7 +707,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Remove a specific item by ID (e.g., retract optimistic user message on send failure).
     func removeItem(id: String) {
         items.removeAll { $0.id == id }
-        itemIndexByID.removeValue(forKey: id)
+        itemIndex.remove(id: id)
         rebuildIndex()
         bumpRenderVersion()
         timelineMatchesTrace = false
@@ -987,28 +987,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Find an item's index by ID using the O(1) cache.
     /// Falls back to linear scan if cache is stale (should not happen in practice).
     private func indexForID(_ id: String) -> Int? {
-        if let idx = itemIndexByID[id], idx < items.count, items[idx].id == id {
-            return idx
-        }
-        // Cache miss — linear fallback + repair
-        if let idx = items.firstIndex(where: { $0.id == id }) {
-            itemIndexByID[id] = idx
-            return idx
-        }
-        return nil
+        itemIndex.indexForID(id, items: items)
     }
 
     /// Rebuild the full index. Call after bulk mutations (reset, loadSession, trim).
     private func rebuildIndex() {
-        itemIndexByID.removeAll(keepingCapacity: true)
-        for (i, item) in items.enumerated() {
-            itemIndexByID[item.id] = i
-        }
+        itemIndex.rebuildIndex(items)
     }
 
     /// Register a newly appended item in the index.
     private func indexAppend(_ item: ChatItem) {
-        itemIndexByID[item.id] = items.count - 1
+        itemIndex.indexAppend(item, itemCount: items.count)
     }
 
     // MARK: - Image Extraction
