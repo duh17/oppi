@@ -6,6 +6,14 @@ This is the combined testing strategy for the Oppi monorepo (`ios` + `server`).
 
 - iOS detail: [`docs/testing/ios.md`](./ios.md)
 - Server detail: [`docs/testing/server.md`](./server.md)
+- Requirements/invariants matrix: [`docs/testing/requirements-matrix.md`](./requirements-matrix.md)
+
+## Requirements Matrix
+
+Use the requirements matrix as the traceability source for test planning and bug-bash follow-up:
+- Requirement/invariant ID (`RQ-*`) -> current iOS/server test coverage
+- Coverage status (`covered`/`partial`/`gap`) with notes on missing assertions
+- Bug-bash mapping (`Bug ID -> invariant -> repro artifact -> regression test path`)
 
 ---
 
