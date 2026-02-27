@@ -1109,20 +1109,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     )
                 }
                 reconfigureToolRow(itemID: itemID, in: collectionView)
-            case .thinking(_, let preview, _, let isDone):
-                guard isDone else {
-                    return
-                }
-                let displayText = preview.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !displayText.isEmpty else { return }
-
-                // Only expand if text would overflow the 200pt bubble cap.
-                if !Self.thinkingTextOverflows(displayText, availableWidth: collectionView.bounds.width) {
-                    return
-                }
-
-                let content = FullScreenCodeContent.thinking(content: displayText)
-                ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: collectionView)
+            case .thinking:
+                // Thinking rows own their long-form entry points (floating
+                // button, context menu, pinch/double-tap) to match tool rows.
+                return
 
             case .systemEvent:
                 // Compaction rows now use an explicit chevron button affordance
@@ -1175,23 +1165,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 onFork: forkAction,
                 themeID: currentThemeID
             )
-        }
-
-        /// Check if thinking text would overflow the bubble's max height (200pt).
-        /// Measures text at callout font, accounting for brain icon indent.
-        private static func thinkingTextOverflows(_ text: String, availableWidth: CGFloat) -> Bool {
-            let padding: CGFloat = 10
-            let brainIndent: CGFloat = 14 + 6 // icon + spacing
-            let textWidth = max(1, availableWidth - brainIndent - padding * 2)
-            let font = UIFont.preferredFont(forTextStyle: .callout)
-            let size = (text as NSString).boundingRect(
-                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: font],
-                context: nil
-            )
-            let intrinsic = ceil(size.height) + padding * 2
-            return intrinsic > ThinkingTimelineRowContentView.maxBubbleHeight
         }
 
         private func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
