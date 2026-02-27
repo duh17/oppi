@@ -1,74 +1,81 @@
-# Oppi Testing Strategy (Unified)
+# Oppi Testing Policy (Canonical)
 
 Last updated: 2026-02-27
 
-This directory defines the testing strategy for the Oppi monorepo (`ios/` + `server/`).
+This is the single source-of-truth document for testing strategy and gate policy.
 
-## Canonical gate policy
+## Policy as code
 
-Use this as the source of truth for what must run on PRs vs nightly/release-deep runs:
+Canonical policy file:
 
-- **[`docs/testing/pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md)**
+- `server/testing-policy.json`
 
-Do not duplicate or override gate definitions in other docs.
+Canonical gate runner:
 
-## Testing docs map
+- `server/scripts/testing-gates.mjs`
 
-- PR vs nightly/release gates: [`./pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md)
-- Server testing details: [`./server.md`](./server.md)
-- iOS testing details: [`./ios.md`](./ios.md)
-- Requirements/invariant traceability: [`./requirements-matrix.md`](./requirements-matrix.md)
-- Bug-bash workflow and regression capture: [`./bug-bash-playbook.md`](./bug-bash-playbook.md)
+Coherence enforcement:
 
-## Gate layers (mental model)
+- `server/scripts/check-testing-policy.mjs`
+- `cd server && npm run check:testing-policy`
 
-| Layer | Goal | Representative command(s) |
-|---|---|---|
-| L0 Static/build | Compile + lint + format sanity | `cd server && npm run check`; `cd ios && xcodebuild ... build` |
-| L1 Unit/component | Deterministic behavior checks | `cd server && npm test`; `cd ios && xcodebuild ... test` |
-| L2 Cross-protocol | iOS/server message compatibility | `./scripts/check-protocol.sh` |
-| L3 Deterministic integration | WS/session integration without external model variance | `cd server && npm run test:e2e:linux` |
-| L4 Runtime contract | Real-model end-to-end behavior | `cd server && npm run test:e2e:lmstudio:contract` |
-| L5 Reliability/perf/stress | Hang/load/adversarial hardening | `ios/scripts/test-ui.sh`; `cd server && npm run test:load:ws`; `cd server && npm run test:security:adversarial` |
+## Required gate commands
 
-## Standard command packs
-
-### Fast local loop
+PR fast gate:
 
 ```bash
-cd server && npm run check && npm test
-cd ios && xcodebuild -project Oppi.xcodeproj -scheme Oppi \
-  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
-cd ios && xcodebuild -project Oppi.xcodeproj -scheme Oppi \
-  -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
+cd server && npm run test:gate:pr-fast
 ```
 
-### Protocol-touching changes
+Nightly deep gate:
 
 ```bash
-./scripts/check-protocol.sh
+cd server && npm run test:gate:nightly-deep
 ```
 
-### Deep runtime/reliability pack
+## Gate definitions
+
+Current policy (`server/testing-policy.json`):
+
+- `pr-fast`: `check -> test`
+- `nightly-deep`: `check -> test -> test:e2e:linux -> test:e2e:linux:https -> test:e2e:lmstudio:contract`
+
+`testing-gates.mjs` supports:
+
+- `TEST_GATE_ONLY=<step>`
+- `TEST_GATE_FROM=<step>`
+
+## Coherence strategy
+
+Coherence means policy, CI, and docs cannot drift.
+
+Required invariants:
+
+1. `server/testing-policy.json` defines canonical gates and CI command targets.
+2. `server/package.json` gate scripts call `server/scripts/testing-gates.mjs`.
+3. `.github/workflows/pr-fast-gate.yml` runs `cd server && npm run test:gate:pr-fast`.
+4. `.github/workflows/nightly-deep-gate.yml` runs `cd server && npm run test:gate:nightly-deep`.
+5. This README references the same commands and policy path.
+
+These invariants are validated by:
 
 ```bash
-cd server && npm run test:e2e:linux:full
-cd server && npm run test:e2e:lmstudio:contract
-cd server && npm run test:load:ws
-cd server && npm run test:security:adversarial
-ios/scripts/test-ui.sh
+cd server && npm run check:testing-policy
 ```
 
-## CI behavior (single self-hosted Mac runner)
+## CI model (single self-hosted Mac)
 
-GitHub Actions uses two workflows:
+- PR workflow: `.github/workflows/pr-fast-gate.yml`
+- Nightly workflow: `.github/workflows/nightly-deep-gate.yml`
+- Shared single-runner lock: `mac-studio-single-runner`
+- Stale PR cancellation enabled in PR workflow.
 
-- PR Fast Gate: `.github/workflows/pr-fast-gate.yml`
-- Nightly Deep Gate: `.github/workflows/nightly-deep-gate.yml`
+## Supporting references (non-canonical)
 
-Concurrency strategy for one runner:
+- `docs/testing/server.md`
+- `docs/testing/ios.md`
+- `docs/testing/pr-vs-nightly-gates.md`
+- `docs/testing/requirements-matrix.md`
+- `docs/testing/bug-bash-playbook.md`
 
-- **Stale PR cancellation:** workflow concurrency group `pr-fast-${{ github.event.pull_request.number || github.ref }}` with `cancel-in-progress: true`.
-- **Cross-workflow runner lock:** job-level concurrency group `mac-studio-single-runner` with `cancel-in-progress: false` in both workflows.
-
-This gives deterministic single-runner execution while still canceling superseded PR runs.
+These files are supporting context only. If they conflict with this README or policy file, fix them.

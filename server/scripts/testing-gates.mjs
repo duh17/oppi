@@ -1,17 +1,12 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const gates = {
-  "pr-fast": ["check", "test"],
-  "nightly-deep": [
-    "check",
-    "test",
-    "test:e2e:linux",
-    "test:e2e:linux:https",
-    "test:e2e:lmstudio:contract",
-  ],
-};
+const policyPath = new URL("../testing-policy.json", import.meta.url);
+const policy = JSON.parse(readFileSync(policyPath, "utf8"));
+
+const gates = policy.gates;
 
 const gateName = process.argv[2] ?? "pr-fast";
 const fromStep = process.env.TEST_GATE_FROM;
