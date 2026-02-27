@@ -916,49 +916,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentIDs = nextIDs
             currentItemByID = nextItemByID
 
-            ChatTimelinePerf.beginTimelineApplyCycle(itemCount: nextIDs.count, changedCount: 0)
-            ChatTimelinePerf.beginSnapshotBuildPhase()
-
-            var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
-            snapshot.appendSections([0])
-            snapshot.appendItems(nextIDs)
-
-            var changedIDs = changedItemIDs(nextItemByID: nextItemByID)
-
-            if configuration.hiddenCount != previousHiddenCount,
-               nextIDs.contains(ChatTimelineCollectionHost.loadMoreID) {
-                changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
-            }
-
-            if let streamingAssistantID = configuration.streamingAssistantID {
-                changedIDs.append(streamingAssistantID)
-            }
-
-            if let previousStreamingAssistantID,
-               previousStreamingAssistantID != configuration.streamingAssistantID {
-                changedIDs.append(previousStreamingAssistantID)
-            }
-
-            if previousThemeID != configuration.themeID {
-                changedIDs.append(contentsOf: nextIDs)
-            }
-
-            let dedupedChangedIDs = Array(Set(changedIDs)).filter { nextIDs.contains($0) }
-            if !dedupedChangedIDs.isEmpty {
-                snapshot.reconfigureItems(dedupedChangedIDs)
-            }
-            ChatTimelinePerf.endSnapshotBuildPhase()
-            ChatTimelinePerf.updateTimelineApplyCycle(
-                itemCount: nextIDs.count,
-                changedCount: dedupedChangedIDs.count
+            TimelineSnapshotApplier.applySnapshot(
+                dataSource: dataSource,
+                nextIDs: nextIDs,
+                nextItemByID: nextItemByID,
+                previousItemByID: previousItemByID,
+                hiddenCount: configuration.hiddenCount,
+                previousHiddenCount: previousHiddenCount,
+                streamingAssistantID: configuration.streamingAssistantID,
+                previousStreamingAssistantID: previousStreamingAssistantID,
+                themeID: configuration.themeID,
+                previousThemeID: previousThemeID
             )
-
-            let applyToken = ChatTimelinePerf.beginCollectionApply(
-                itemCount: nextIDs.count,
-                changedCount: dedupedChangedIDs.count
-            )
-            dataSource?.apply(snapshot, animatingDifferences: false)
-            ChatTimelinePerf.endCollectionApply(applyToken)
 
             previousItemByID = nextItemByID
             previousStreamingAssistantID = configuration.streamingAssistantID
@@ -1166,20 +1135,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         // MARK: - Row Configuration Builders
-
-        private func changedItemIDs(nextItemByID: [String: ChatItem]) -> [String] {
-            var changed: [String] = []
-            changed.reserveCapacity(nextItemByID.count)
-
-            for (id, nextItem) in nextItemByID {
-                guard let previous = previousItemByID[id] else { continue }
-                if previous != nextItem {
-                    changed.append(id)
-                }
-            }
-
-            return changed
-        }
 
         private func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
             guard case .assistantMessage(_, let text, _) = item else { return nil }
@@ -1499,24 +1454,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         private func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
-            guard let dataSource else { return }
-
-            var snapshot = dataSource.snapshot()
-            let existing = itemIDs.filter { snapshot.indexOfItem($0) != nil }
-            guard !existing.isEmpty else { return }
-
-            snapshot.reconfigureItems(existing)
-
-            let applyToken = ChatTimelinePerf.beginCollectionApply(
-                itemCount: currentIDs.count,
-                changedCount: existing.count
+            TimelineSnapshotApplier.reconfigureItems(
+                itemIDs,
+                dataSource: dataSource,
+                collectionView: collectionView,
+                currentIDs: currentIDs
             )
-            dataSource.apply(snapshot, animatingDifferences: false)
-            ChatTimelinePerf.endCollectionApply(applyToken)
-
-            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: currentIDs.count)
-            collectionView.layoutIfNeeded()
-            ChatTimelinePerf.endLayoutPass(layoutToken)
         }
 
         private func performScroll(
