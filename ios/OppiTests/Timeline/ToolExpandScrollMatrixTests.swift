@@ -16,7 +16,7 @@ struct ToolExpandScrollMatrixTests {
         let offsetBeforeExpand = fixture.offsetY
 
         fixture.expandTarget()
-        fixture.assertExpandedInnerScrollViewsDoNotBounceVertically()
+        fixture.assertExpandedInnerScrollViewsDoNotCompeteForVerticalScroll()
 
         let offsetAfterExpand = fixture.offsetY
         let expandDrift = abs(offsetAfterExpand - offsetBeforeExpand)
@@ -105,6 +105,33 @@ struct ToolExpandScrollMatrixTests {
         let collapseDrift = abs(offsetAfterCollapse - offsetBeforeCollapse)
         #expect(collapseDrift < 8.0,
                 "Anchored collapse drifted \(collapseDrift)pt for \(toolCase.name)")
+    }
+
+    @MainActor
+    @Test(arguments: ToolExpandScrollMatrixCase.allCases)
+    func expandedToolRowsFollowFullScreenSupportMatrix(_ toolCase: ToolExpandScrollMatrixCase) throws {
+        let fixture = try #require(
+            ToolExpandScrollMatrixFixture.make(for: toolCase, sessionSuffix: "fullscreen")
+        )
+
+        fixture.prepareDetachedViewport()
+        fixture.expandTarget()
+
+        let item = try #require(fixture.items.first { $0.id == toolCase.targetItemID })
+        let config = try #require(
+            fixture.harness.coordinator.toolRowConfiguration(itemID: toolCase.targetItemID, item: item)
+        )
+        let expandedContent = try #require(config.expandedContent)
+        let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent)
+
+        #expect(policy.supportsFullScreenPreview == toolCase.expectedSupportsFullScreenPreview)
+
+        let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: config,
+            outputCopyText: config.copyOutputText,
+            interactionPolicy: policy
+        )
+        #expect((fullScreenContent != nil) == toolCase.expectedSupportsFullScreenPreview)
     }
 
     @MainActor

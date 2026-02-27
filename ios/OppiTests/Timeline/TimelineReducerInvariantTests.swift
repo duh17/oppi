@@ -140,6 +140,38 @@ struct TimelineReducerInvariantTests {
             #expect(!unfinishedThinking)
         }
     }
+
+    @MainActor
+    @Test func partitionedProcessBatchMatchesSequentialProcessingContracts() {
+        let events = makeSeededBatches(seed: 0xA11CE, count: 40).flatMap { $0 }
+
+        let sequential = TimelineReducer()
+        for event in events {
+            sequential.process(event)
+        }
+
+        let chunked = TimelineReducer()
+        for chunk in chunkEvents(events, widths: [1, 4, 2, 3, 5]) {
+            chunked.processBatch(chunk)
+        }
+
+        #expect(itemSignatures(chunked.items) == itemSignatures(sequential.items))
+        #expect(snapshot(of: chunked).toolOutputsByVisibleToolID == snapshot(of: sequential).toolOutputsByVisibleToolID)
+    }
+
+    @Test func timelineHotPathComplexityBudgets() throws {
+        for budget in timelineComplexityBudgets {
+            let metrics = try sourceMetrics(for: budget.path)
+            #expect(
+                metrics.lines <= budget.maxLines,
+                "\(budget.path) grew to \(metrics.lines) lines (budget \(budget.maxLines))"
+            )
+            #expect(
+                metrics.cyclomaticDisableCount <= budget.maxCyclomaticDisables,
+                "\(budget.path) has \(metrics.cyclomaticDisableCount) cyclomatic disables (budget \(budget.maxCyclomaticDisables))"
+            )
+        }
+    }
 }
 
 private struct ReducerSnapshot: Equatable {
@@ -322,4 +354,120 @@ private func deterministicTerminalEvents() -> [AgentEvent] {
         .agentEnd(sessionId: "s1"),
         .sessionEnded(sessionId: "s1", reason: "disconnect"),
     ]
+}
+
+private struct TimelineComplexityBudget {
+    let path: String
+    let maxLines: Int
+    let maxCyclomaticDisables: Int
+}
+
+private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
+    .init(
+        path: "ios/Oppi/Core/Runtime/TimelineReducer.swift",
+        maxLines: 1_100,
+        maxCyclomaticDisables: 1
+    ),
+    .init(
+        path: "ios/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift",
+        maxLines: 620,
+        maxCyclomaticDisables: 0
+    ),
+    .init(
+        path: "ios/Oppi/Features/Chat/Timeline/ToolTimelineRowContent.swift",
+        maxLines: 1_700,
+        maxCyclomaticDisables: 0
+    ),
+]
+
+private struct SourceMetrics {
+    let lines: Int
+    let cyclomaticDisableCount: Int
+}
+
+private func sourceMetrics(for relativePath: String) throws -> SourceMetrics {
+    let projectRoot = try findProjectRoot(startingFrom: URL(filePath: #filePath))
+    let fileURL = projectRoot.appending(path: relativePath)
+    let text = try String(contentsOf: fileURL, encoding: .utf8)
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
+    let cyclomaticDisableCount = text
+        .components(separatedBy: "cyclomatic_complexity")
+        .count - 1
+
+    return SourceMetrics(lines: lines, cyclomaticDisableCount: cyclomaticDisableCount)
+}
+
+private func findProjectRoot(startingFrom url: URL) throws -> URL {
+    var candidate = url.deletingLastPathComponent()
+
+    while candidate.path != "/" {
+        let probe = candidate.appending(path: "ios/Oppi/Core/Runtime/TimelineReducer.swift")
+        if FileManager.default.fileExists(atPath: probe.path) {
+            return candidate
+        }
+        candidate.deleteLastPathComponent()
+    }
+
+    throw NSError(
+        domain: "TimelineReducerInvariantTests",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not locate project root"]
+    )
+}
+
+private func chunkEvents(_ events: [AgentEvent], widths: [Int]) -> [[AgentEvent]] {
+    guard !widths.isEmpty else { return [events] }
+
+    var chunks: [[AgentEvent]] = []
+    chunks.reserveCapacity(events.count)
+
+    var cursor = 0
+    var widthIndex = 0
+    while cursor < events.count {
+        let width = max(1, widths[widthIndex % widths.count])
+        let end = min(events.count, cursor + width)
+        chunks.append(Array(events[cursor..<end]))
+        cursor = end
+        widthIndex += 1
+    }
+
+    return chunks
+}
+
+private enum ItemSignature: Equatable {
+    case user(String)
+    case assistant(String)
+    case audio(String)
+    case thinking(String, Bool)
+    case tool(String, String, String, Bool, Bool)
+    case permission(String)
+    case permissionResolved(PermissionOutcome, String, String)
+    case system(String)
+    case error(String)
+}
+
+private func itemSignatures(_ items: [ChatItem]) -> [ItemSignature] {
+    items.map { item in
+        switch item {
+        case .userMessage(_, let text, _, _):
+            return .user(text)
+        case .assistantMessage(_, let text, _):
+            return .assistant(text)
+        case .audioClip(_, let title, _, _):
+            return .audio(title)
+        case .thinking(_, let preview, _, let isDone):
+            return .thinking(preview, isDone)
+        case .toolCall(let id, let tool, _, let outputPreview, _, let isError, let isDone):
+            return .tool(id, tool, outputPreview, isError, isDone)
+        case .permission(let request):
+            return .permission(request.id)
+        case .permissionResolved(_, let outcome, let tool, let summary):
+            return .permissionResolved(outcome, tool, summary)
+        case .systemEvent(_, let message):
+            return .system(message)
+        case .error(_, let message):
+            return .error(message)
+        }
+    }
 }

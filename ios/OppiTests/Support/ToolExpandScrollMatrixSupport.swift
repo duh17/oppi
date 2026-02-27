@@ -37,6 +37,16 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var targetItemID: String { "tc-tool-matrix-\(name)" }
 
+    var expectedSupportsFullScreenPreview: Bool {
+        switch self {
+        case .todoCard, .plot, .readMedia:
+            return false
+        case .writeCode, .readCode, .bashOutput, .editDiff, .todoDiff,
+                .rememberMarkdown, .recallText, .customText, .readMarkdown:
+            return true
+        }
+    }
+
     @MainActor
     func makeTimeline(
         toolArgsStore: ToolArgsStore,
@@ -494,7 +504,7 @@ struct ToolExpandScrollMatrixFixture {
         min(max(0, targetY), maxOffsetY)
     }
 
-    func assertExpandedInnerScrollViewsDoNotBounceVertically() {
+    func assertExpandedInnerScrollViewsDoNotCompeteForVerticalScroll() {
         guard let cell = collectionView.cellForItem(at: targetIndexPath) else {
             Issue.record("Expanded target cell not visible for \(toolCase.name)")
             return
@@ -504,6 +514,7 @@ struct ToolExpandScrollMatrixFixture {
             .filter { $0 !== collectionView }
 
         #expect(!innerScrollViews.isEmpty, "Expected inner scroll views for \(toolCase.name)")
+        #expect(collectionView.isScrollEnabled, "Outer collection view must own vertical scroll")
 
         for inner in innerScrollViews {
             #expect(!inner.alwaysBounceVertical,
@@ -518,6 +529,7 @@ struct ToolExpandScrollMatrixFixture {
                     verticalOverflow <= 12,
                     "Inner scroll view can consume vertical drags (overflow=\(verticalOverflow)) for \(toolCase.name)"
                 )
+
             }
         }
     }
@@ -535,4 +547,5 @@ struct ToolExpandScrollMatrixFixture {
         settleLayout()
         harness.scrollController.detachFromBottomForUserScroll()
     }
+
 }
