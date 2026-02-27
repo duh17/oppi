@@ -47,6 +47,8 @@
     "test:e2e:linux:https": "E2E_TLS=1 ./scripts/e2e-linux-container.sh",
     "test:e2e:linux:full": "E2E_MODE=full ./scripts/e2e-linux-container.sh",
     "test:e2e:lmstudio:contract": "node ./scripts/e2e-lmstudio-contract.mjs",
+    "test:gate:pr-fast": "node ./scripts/testing-gates.mjs pr-fast",
+    "test:gate:nightly-deep": "node ./scripts/testing-gates.mjs nightly-deep",
     "test:security:adversarial": "tsx ./scripts/manual/security-adversarial.ts",
     "test:load:ws": "tsx ./scripts/manual/load-ws.ts",
     "tool:gate-client": "tsx ./scripts/manual/gate-client.ts",

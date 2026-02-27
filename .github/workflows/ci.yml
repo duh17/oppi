@@ -1,4 +1,6 @@
-# CI: run full test suite on every push to main.
+# CI lanes:
+# - PR/push: server PR-fast gate + iOS test suite
+# - Nightly: server nightly-deep gate
 #
 # Self-hosted runner on Mac Studio.
 # Release to TestFlight is manual via ios/scripts/release.sh.
@@ -8,6 +10,10 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 10 * * *'
 
 concurrency:
   group: ci
@@ -29,21 +35,24 @@ jobs:
         working-directory: server
         run: npm ci
 
-      - name: "Server: typecheck + lint"
+      - name: "Server: testing gate"
         working-directory: server
-        run: npm run check
-
-      - name: "Server: tests"
-        working-directory: server
-        run: npm test
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            npm run test:gate:nightly-deep
+          else
+            npm run test:gate:pr-fast
+          fi
 
       # ── iOS ─────────────────────────────────────────────────
 
       - name: "iOS: generate project"
+        if: github.event_name != 'schedule'
         working-directory: ios
         run: xcodegen generate
 
       - name: "iOS: unit tests"
+        if: github.event_name != 'schedule'
         working-directory: ios
         run: |
           xcodebuild test \
@@ -55,6 +64,7 @@ jobs:
             -quiet
 
       - name: "iOS: UI tests"
+        if: github.event_name != 'schedule'
         working-directory: ios
         run: |
           xcodebuild test \
