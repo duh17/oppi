@@ -172,7 +172,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
-        if let appendStart = incrementalAppendStartIndex(for: events) {
+        if let appendStart = TimelineHistoryLoadPlanner.incrementalAppendStartIndex(
+            timelineMatchesTrace: timelineMatchesTrace,
+            loadedTraceEventIDs: loadedTraceEventIDs,
+            events: events
+        ) {
             _lastLoadWasIncrementalForTesting = true
 
             // No-op reload: trace unchanged and timeline already canonical.
@@ -228,18 +232,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items")
 
         prewarmMarkdownCache(for: assistantTextsToCache)
-    }
-
-    private func incrementalAppendStartIndex(for events: [TraceEvent]) -> Int? {
-        guard timelineMatchesTrace else { return nil }
-        guard !loadedTraceEventIDs.isEmpty else { return nil }
-        guard events.count >= loadedTraceEventIDs.count else { return nil }
-
-        for (index, loadedID) in loadedTraceEventIDs.enumerated() {
-            guard events[index].id == loadedID else { return nil }
-        }
-
-        return loadedTraceEventIDs.count
     }
 
     @discardableResult
