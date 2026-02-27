@@ -19,29 +19,26 @@ struct ServerConnectionLifecycleTests {
 
     @MainActor
     @Test func disconnectSessionClearsActiveId() {
-        let conn = makeTestConnection(sessionId: "s1")
+        let scenario = EventFlowServerConnectionScenario()
+        let conn = scenario.connection
 
         conn.disconnectSession()
 
         // After disconnect, messages should be ignored (no active session)
-        let session = makeTestSession(status: .busy)
-        conn.handleServerMessage(.connected(session: session), sessionId: "s1")
+        scenario.whenHandle(.connected(session: makeTestSession(status: .busy)))
         #expect(conn.sessionStore.sessions.isEmpty)
     }
 
     @MainActor
     @Test func flushAndSuspendDelivers() {
-        let conn = makeTestConnection()
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.textDelta(delta: "buffered"), sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .whenHandle(.agentStart)
+            .whenHandle(.textDelta(delta: "buffered"))
+            .whenFlush()
 
-        let has = conn.reducer.items.contains {
-            if case .assistantMessage = $0 { return true }
-            return false
-        }
-        #expect(has)
+        #expect(scenario.timelineItemCount(of: .assistantMessage) == 1)
     }
 
     @MainActor

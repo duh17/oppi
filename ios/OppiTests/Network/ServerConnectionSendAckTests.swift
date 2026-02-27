@@ -7,13 +7,12 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckSuccessForPromptSteerAndFollowUp() async throws {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
+        for command in EventFlowAckCommand.allCases {
+            let conn = makeEventFlowAckTestConnection()
 
             var sentRequestId: String?
             conn._sendMessageForTesting = { message in
-                guard let sent = extractAckRequest(from: message) else {
+                guard let sent = extractEventFlowAckRequest(from: message) else {
                     Issue.record("Expected prompt/steer/follow_up message")
                     return
                 }
@@ -42,11 +41,10 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckUsesTurnAckStages() async throws {
-        let conn = ServerConnection()
-        conn._setActiveSessionIdForTesting("s1")
+        let conn = makeEventFlowAckTestConnection()
 
         conn._sendMessageForTesting = { message in
-            guard let sent = extractAckRequest(from: message),
+            guard let sent = extractEventFlowAckRequest(from: message),
                   let clientTurnId = sent.clientTurnId else {
                 Issue.record("Expected turn command with clientTurnId")
                 return
@@ -80,13 +78,12 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckStageCallbackReceivesProgressStages() async throws {
-        let conn = ServerConnection()
-        conn._setActiveSessionIdForTesting("s1")
+        let conn = makeEventFlowAckTestConnection()
 
-        let stageRecorder = AckStageRecorder()
+        let stageRecorder = EventFlowAckStageRecorder()
 
         conn._sendMessageForTesting = { message in
-            guard let sent = extractAckRequest(from: message),
+            guard let sent = extractEventFlowAckRequest(from: message),
                   let clientTurnId = sent.clientTurnId,
                   let requestId = sent.requestId else {
                 Issue.record("Expected turn command with requestId/clientTurnId")
@@ -138,15 +135,14 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendRetryReusesClientTurnId() async throws {
-        let conn = ServerConnection()
-        conn._setActiveSessionIdForTesting("s1")
+        let conn = makeEventFlowAckTestConnection()
 
         var attempt = 0
         var seenTurnIds: [String] = []
         var seenRequestIds: [String] = []
 
         conn._sendMessageForTesting = { message in
-            guard let sent = extractAckRequest(from: message),
+            guard let sent = extractEventFlowAckRequest(from: message),
                   let clientTurnId = sent.clientTurnId,
                   let requestId = sent.requestId else {
                 Issue.record("Expected turn command with requestId/clientTurnId")
@@ -184,9 +180,7 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendPromptChurnAlwaysResolvesWithoutSilentDrop() async {
-        let conn = ServerConnection()
-        conn._setActiveSessionIdForTesting("s1")
-        conn._sendAckTimeoutForTesting = .milliseconds(160)
+        let conn = makeEventFlowAckTestConnection(timeout: .milliseconds(160))
 
         var requestOrder: [String: Int] = [:]
         var attemptsByRequest: [String: Int] = [:]
@@ -194,7 +188,7 @@ struct ServerConnectionSendAckTests {
         var nextOrder = 0
 
         conn._sendMessageForTesting = { message in
-            guard let sent = extractAckRequest(from: message),
+            guard let sent = extractEventFlowAckRequest(from: message),
                   let requestId = sent.requestId,
                   let clientTurnId = sent.clientTurnId else {
                 Issue.record("Expected prompt/steer/follow_up with ids")
@@ -277,12 +271,11 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckRejectedForPromptSteerAndFollowUp() async {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
+        for command in EventFlowAckCommand.allCases {
+            let conn = makeEventFlowAckTestConnection()
 
             conn._sendMessageForTesting = { message in
-                guard let sent = extractAckRequest(from: message) else {
+                guard let sent = extractEventFlowAckRequest(from: message) else {
                     Issue.record("Expected prompt/steer/follow_up message")
                     return
                 }
@@ -321,10 +314,8 @@ struct ServerConnectionSendAckTests {
 
     @MainActor
     @Test func sendAckTimeoutForPromptSteerAndFollowUp() async {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
-            conn._sendAckTimeoutForTesting = .milliseconds(120)
+        for command in EventFlowAckCommand.allCases {
+            let conn = makeEventFlowAckTestConnection(timeout: .milliseconds(120))
 
             conn._sendMessageForTesting = { _ in }
 
@@ -550,64 +541,5 @@ struct ServerConnectionSendAckTests {
         }
 
         #expect(sentTypes == ["get_fork_messages"])
-    }
-}
-
-// MARK: - Private helpers
-
-private enum AckCommand: CaseIterable {
-    case prompt
-    case steer
-    case followUp
-
-    var rawValue: String {
-        switch self {
-        case .prompt: return "prompt"
-        case .steer: return "steer"
-        case .followUp: return "follow_up"
-        }
-    }
-
-    @MainActor
-    func send(using connection: ServerConnection, text: String) async throws {
-        switch self {
-        case .prompt:
-            try await connection.sendPrompt(text)
-        case .steer:
-            try await connection.sendSteer(text)
-        case .followUp:
-            try await connection.sendFollowUp(text)
-        }
-    }
-}
-
-private struct AckRequest {
-    let command: String
-    let requestId: String?
-    let clientTurnId: String?
-}
-
-private func extractAckRequest(from message: ClientMessage) -> AckRequest? {
-    switch message {
-    case .prompt(_, _, _, let requestId, let clientTurnId):
-        return AckRequest(command: "prompt", requestId: requestId, clientTurnId: clientTurnId)
-    case .steer(_, _, let requestId, let clientTurnId):
-        return AckRequest(command: "steer", requestId: requestId, clientTurnId: clientTurnId)
-    case .followUp(_, _, let requestId, let clientTurnId):
-        return AckRequest(command: "follow_up", requestId: requestId, clientTurnId: clientTurnId)
-    default:
-        return nil
-    }
-}
-
-private actor AckStageRecorder {
-    private var stages: [TurnAckStage] = []
-
-    func record(_ stage: TurnAckStage) {
-        stages.append(stage)
-    }
-
-    func snapshot() -> [TurnAckStage] {
-        stages
     }
 }
