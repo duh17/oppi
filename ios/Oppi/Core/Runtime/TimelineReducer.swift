@@ -551,20 +551,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 // Replay/reconnect can deliver duplicate tool_start for an
                 // existing tool call ID. Update in place instead of appending
                 // a second row with the same identifier.
-                items[idx] = .toolCall(
+                items[idx] = TimelineTurnAssembler.makeToolCallItem(
                     id: toolEventId,
                     tool: tool,
-                    argsSummary: ChatItem.preview(argsSummary),
+                    argsSummary: argsSummary,
                     outputPreview: outputPreview,
                     outputByteCount: outputByteCount,
                     isError: existingError,
                     isDone: false
                 )
             } else {
-                let toolItem = ChatItem.toolCall(
+                let toolItem = TimelineTurnAssembler.makeToolCallItem(
                     id: toolEventId,
                     tool: tool,
-                    argsSummary: ChatItem.preview(argsSummary),
+                    argsSummary: argsSummary,
                     outputPreview: outputPreview,
                     outputByteCount: outputByteCount,
                     isError: false,
@@ -919,35 +919,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// agentEnd during reconnect, or concurrent tool calls in future protocol).
     private func closeAllOrphanedTools() {
         for idx in items.indices {
-            if case .toolCall(let id, let tool, let args, let preview, let bytes, let isErr, let isDone) = items[idx],
-               !isDone {
-                items[idx] = .toolCall(
-                    id: id, tool: tool, argsSummary: args,
-                    outputPreview: preview, outputByteCount: bytes,
-                    isError: isErr, isDone: true
-                )
+            guard case .toolCall = items[idx] else { continue }
+            guard let doneItem = TimelineTurnAssembler.makeDoneToolCall(existing: items[idx], isError: false) else {
+                continue
+            }
+            if doneItem != items[idx] {
+                items[idx] = doneItem
             }
         }
     }
 
     @discardableResult
     private func updateToolCallPreview(id: String, isError: Bool) -> Bool {
-        guard let idx = indexForID(id),
-              case .toolCall(_, let tool, let args, _, _, let existingError, let isDone) = items[idx]
-        else {
+        guard let idx = indexForID(id) else {
             return false
         }
 
         let fullOutput = toolOutputStore.fullOutput(for: id)
-        let updated = ChatItem.toolCall(
-            id: id,
-            tool: tool,
-            argsSummary: args,
-            outputPreview: ChatItem.preview(fullOutput),
-            outputByteCount: fullOutput.utf8.count,
-            isError: existingError || isError,
-            isDone: isDone
-        )
+        guard let updated = TimelineTurnAssembler.makeUpdatedToolCallPreview(
+            existing: items[idx],
+            output: fullOutput,
+            isError: isError
+        ) else {
+            return false
+        }
 
         if items[idx] == updated {
             return false
@@ -959,18 +954,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private func updateToolCallDone(id: String, isError: Bool = false) {
         guard let idx = indexForID(id),
-              case .toolCall(_, let tool, let args, let preview, let bytes, let streamIsErr, _) = items[idx]
+              let doneItem = TimelineTurnAssembler.makeDoneToolCall(existing: items[idx], isError: isError)
         else {
             return
         }
 
-        // tool_end isError is authoritative; streaming error state is a hint.
-        let finalIsError = isError || streamIsErr
-        items[idx] = .toolCall(
-            id: id, tool: tool, argsSummary: args,
-            outputPreview: preview, outputByteCount: bytes,
-            isError: finalIsError, isDone: true
-        )
+        items[idx] = doneItem
     }
 
     // trimIfNeeded() removed — full timeline is always preserved.
