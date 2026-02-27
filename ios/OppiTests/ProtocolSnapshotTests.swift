@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 @testable import Oppi
 
 /// Cross-platform protocol contract tests.
@@ -9,7 +10,8 @@ import XCTest
 ///
 /// To regenerate the snapshot file:
 ///   cd server && npx vitest run tests/protocol-snapshots.test.ts
-final class ProtocolSnapshotTests: XCTestCase {
+@Suite
+struct ProtocolSnapshotTests {
 
     // MARK: - Snapshot Loading
 
@@ -45,14 +47,14 @@ final class ProtocolSnapshotTests: XCTestCase {
 
     // MARK: - Decode Every Message Type
 
-    func testSnapshotFileExists() throws {
-        XCTAssertTrue(
+    @Test func snapshotFileExists() throws {
+        #expect(
             FileManager.default.fileExists(atPath: snapshotURL.path),
             "Protocol snapshot not found at \(snapshotURL.path). Run: cd server && npx vitest run tests/protocol-snapshots.test.ts"
         )
     }
 
-    func testDecodeAllServerMessages() throws {
+    @Test func decodeAllServerMessages() throws {
         let messages = try loadSnapshot()
 
         var failures: [String] = []
@@ -79,241 +81,241 @@ final class ProtocolSnapshotTests: XCTestCase {
         }
 
         if !failures.isEmpty {
-            XCTFail("Failed to decode \(failures.count) message(s):\n" + failures.joined(separator: "\n"))
+            Issue.record("Failed to decode \(failures.count) message(s):\n\(failures.joined(separator: "\n"))")
         }
     }
 
     // MARK: - Specific Type Assertions
 
-    func testConnectedMessage() throws {
+    @Test func connectedMessage() throws {
         let msg = try decodeMessage("connected")
 
         guard case .connected(let session) = msg else {
-            XCTFail("Expected .connected, got \(msg.typeLabel)")
+            Issue.record("Expected .connected, got \(msg.typeLabel)")
             return
         }
 
-        XCTAssertEqual(session.id, "test-session-1")
-        XCTAssertEqual(session.status, .ready)
-        XCTAssertEqual(session.workspaceId, "ws-1")
-        XCTAssertEqual(session.workspaceName, "My Workspace")
-        XCTAssertEqual(session.name, "Test Session")
-        XCTAssertEqual(session.model, "anthropic/claude-sonnet-4-20250514")
-        XCTAssertEqual(session.messageCount, 5)
-        XCTAssertEqual(session.tokens.input, 1500)
-        XCTAssertEqual(session.tokens.output, 800)
-        XCTAssertEqual(session.cost, 0.012, accuracy: 0.001)
-        XCTAssertEqual(session.contextTokens, 2300)
-        XCTAssertEqual(session.contextWindow, 200000)
-        XCTAssertEqual(session.thinkingLevel, "high")
+        #expect(session.id == "test-session-1")
+        #expect(session.status == .ready)
+        #expect(session.workspaceId == "ws-1")
+        #expect(session.workspaceName == "My Workspace")
+        #expect(session.name == "Test Session")
+        #expect(session.model == "anthropic/claude-sonnet-4-20250514")
+        #expect(session.messageCount == 5)
+        #expect(session.tokens.input == 1500)
+        #expect(session.tokens.output == 800)
+        #expect(abs(session.cost - 0.012) < 0.001)
+        #expect(session.contextTokens == 2300)
+        #expect(session.contextWindow == 200000)
+        #expect(session.thinkingLevel == "high")
     }
 
-    func testSessionChangeStats() throws {
+    @Test func sessionChangeStats() throws {
         let msg = try decodeMessage("connected")
 
         guard case .connected(let session) = msg else {
-            XCTFail("Expected .connected")
+            Issue.record("Expected .connected")
             return
         }
 
         let stats = session.changeStats
-        XCTAssertNotNil(stats)
-        XCTAssertEqual(stats?.mutatingToolCalls, 3)
-        XCTAssertEqual(stats?.filesChanged, 6)
-        XCTAssertEqual(stats?.changedFiles, ["src/main.ts", "README.md"])
-        XCTAssertEqual(stats?.changedFilesOverflow, 4)
-        XCTAssertEqual(stats?.addedLines, 45)
-        XCTAssertEqual(stats?.removedLines, 12)
+        #expect(stats != nil)
+        #expect(stats?.mutatingToolCalls == 3)
+        #expect(stats?.filesChanged == 6)
+        #expect(stats?.changedFiles == ["src/main.ts", "README.md"])
+        #expect(stats?.changedFilesOverflow == 4)
+        #expect(stats?.addedLines == 45)
+        #expect(stats?.removedLines == 12)
     }
 
-    func testPermissionRequest() throws {
+    @Test func permissionRequest() throws {
         let msg = try decodeMessage("permission_request")
 
         guard case .permissionRequest(let perm) = msg else {
-            XCTFail("Expected .permissionRequest, got \(msg.typeLabel)")
+            Issue.record("Expected .permissionRequest, got \(msg.typeLabel)")
             return
         }
 
-        XCTAssertEqual(perm.id, "perm-001")
-        XCTAssertEqual(perm.sessionId, "test-session-1")
-        XCTAssertEqual(perm.tool, "bash")
-        XCTAssertEqual(perm.displaySummary, "Run: rm -rf node_modules")
-        XCTAssertEqual(perm.reason, "Destructive file operation")
+        #expect(perm.id == "perm-001")
+        #expect(perm.sessionId == "test-session-1")
+        #expect(perm.tool == "bash")
+        #expect(perm.displaySummary == "Run: rm -rf node_modules")
+        #expect(perm.reason == "Destructive file operation")
     }
 
-    func testExtensionUIRequest() throws {
+    @Test func extensionUIRequest() throws {
         let msg = try decodeMessage("extension_ui_request")
 
         guard case .extensionUIRequest(let req) = msg else {
-            XCTFail("Expected .extensionUIRequest, got \(msg.typeLabel)")
+            Issue.record("Expected .extensionUIRequest, got \(msg.typeLabel)")
             return
         }
 
-        XCTAssertEqual(req.id, "ui-001")
-        XCTAssertEqual(req.sessionId, "test-session-1")
-        XCTAssertEqual(req.method, "select")
-        XCTAssertEqual(req.title, "Choose a model")
-        XCTAssertEqual(req.options, ["claude-sonnet", "claude-opus"])
+        #expect(req.id == "ui-001")
+        #expect(req.sessionId == "test-session-1")
+        #expect(req.method == "select")
+        #expect(req.title == "Choose a model")
+        #expect(req.options == ["claude-sonnet", "claude-opus"])
     }
 
-    func testTurnAck() throws {
+    @Test func turnAck() throws {
         let msg = try decodeMessage("turn_ack")
 
         guard case .turnAck(let command, let clientTurnId, let stage, let requestId, let duplicate) = msg else {
-            XCTFail("Expected .turnAck, got \(msg.typeLabel)")
+            Issue.record("Expected .turnAck, got \(msg.typeLabel)")
             return
         }
 
-        XCTAssertEqual(command, "prompt")
-        XCTAssertEqual(clientTurnId, "turn-abc-123")
-        XCTAssertEqual(stage, .accepted)
-        XCTAssertEqual(requestId, "req-001")
-        XCTAssertEqual(duplicate, false)
+        #expect(command == "prompt")
+        #expect(clientTurnId == "turn-abc-123")
+        #expect(stage == .accepted)
+        #expect(requestId == "req-001")
+        #expect(duplicate == false)
     }
 
-    func testToolExecution() throws {
+    @Test func toolExecution() throws {
         // tool_start
         let startMsg = try decodeMessage("tool_start")
         guard case .toolStart(let tool, _, let toolCallId, _) = startMsg else {
-            XCTFail("Expected .toolStart")
+            Issue.record("Expected .toolStart")
             return
         }
-        XCTAssertEqual(tool, "bash")
-        XCTAssertEqual(toolCallId, "tc-001")
+        #expect(tool == "bash")
+        #expect(toolCallId == "tc-001")
 
         // tool_output
         let outputMsg = try decodeMessage("tool_output")
         guard case .toolOutput(let output, let isError, _) = outputMsg else {
-            XCTFail("Expected .toolOutput")
+            Issue.record("Expected .toolOutput")
             return
         }
-        XCTAssertEqual(output, "All 42 tests passed")
-        XCTAssertEqual(isError, false)
+        #expect(output == "All 42 tests passed")
+        #expect(isError == false)
 
         // tool_end
         let endMsg = try decodeMessage("tool_end")
         guard case .toolEnd(let endTool, _, _, _, _) = endMsg else {
-            XCTFail("Expected .toolEnd")
+            Issue.record("Expected .toolEnd")
             return
         }
-        XCTAssertEqual(endTool, "bash")
+        #expect(endTool == "bash")
 
         // tool_end_with_details
         let detailsMsg = try decodeMessage("tool_end_with_details")
         guard case .toolEnd(let detTool, _, let details, let isError, let resultSegs) = detailsMsg else {
-            XCTFail("Expected .toolEnd with details")
+            Issue.record("Expected .toolEnd with details")
             return
         }
-        XCTAssertEqual(detTool, "remember")
-        XCTAssertEqual(isError, false)
+        #expect(detTool == "remember")
+        #expect(isError == false)
         if case .object(let dict) = details {
-            XCTAssertEqual(dict["file"], .string("2026-02-18.md"))
-            XCTAssertEqual(dict["redacted"], .bool(false))
+            #expect(dict["file"] == .string("2026-02-18.md"))
+            #expect(dict["redacted"] == .bool(false))
         } else {
-            XCTFail("Expected object details")
+            Issue.record("Expected object details")
         }
         // Result segments from server mobile renderer
-        XCTAssertNotNil(resultSegs)
-        XCTAssertEqual(resultSegs?.count, 2)
-        XCTAssertEqual(resultSegs?[0].text, "✓ Saved")
-        XCTAssertEqual(resultSegs?[0].style, .success)
-        XCTAssertEqual(resultSegs?[1].style, .muted)
+        #expect(resultSegs != nil)
+        #expect(resultSegs?.count == 2)
+        #expect(resultSegs?[0].text == "✓ Saved")
+        #expect(resultSegs?[0].style == .success)
+        #expect(resultSegs?[1].style == .muted)
 
         // tool_start_with_segments
         let segMsg = try decodeMessage("tool_start_with_segments")
         guard case .toolStart(let segTool, let segArgs, _, let callSegs) = segMsg else {
-            XCTFail("Expected .toolStart with callSegments")
+            Issue.record("Expected .toolStart with callSegments")
             return
         }
-        XCTAssertEqual(segTool, "read")
-        XCTAssertEqual(segArgs["path"], .string("src/main.ts"))
-        XCTAssertNotNil(callSegs)
-        XCTAssertEqual(callSegs?.count, 3)
-        XCTAssertEqual(callSegs?[0].text, "read ")
-        XCTAssertEqual(callSegs?[0].style, .bold)
-        XCTAssertEqual(callSegs?[1].text, "src/main.ts")
-        XCTAssertEqual(callSegs?[1].style, .accent)
-        XCTAssertEqual(callSegs?[2].text, ":1-50")
-        XCTAssertEqual(callSegs?[2].style, .warning)
+        #expect(segTool == "read")
+        #expect(segArgs["path"] == .string("src/main.ts"))
+        #expect(callSegs != nil)
+        #expect(callSegs?.count == 3)
+        #expect(callSegs?[0].text == "read ")
+        #expect(callSegs?[0].style == .bold)
+        #expect(callSegs?[1].text == "src/main.ts")
+        #expect(callSegs?[1].style == .accent)
+        #expect(callSegs?[2].text == ":1-50")
+        #expect(callSegs?[2].style == .warning)
     }
 
-    func testCompaction() throws {
+    @Test func compaction() throws {
         let startMsg = try decodeMessage("compaction_start")
         guard case .compactionStart(let reason) = startMsg else {
-            XCTFail("Expected .compactionStart")
+            Issue.record("Expected .compactionStart")
             return
         }
-        XCTAssertEqual(reason, "Context window 85% full")
+        #expect(reason == "Context window 85% full")
 
         let endMsg = try decodeMessage("compaction_end")
         guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore) = endMsg else {
-            XCTFail("Expected .compactionEnd")
+            Issue.record("Expected .compactionEnd")
             return
         }
-        XCTAssertEqual(aborted, false)
-        XCTAssertEqual(willRetry, false)
-        XCTAssertEqual(summary, "Compacted 15k tokens to 8k tokens")
-        XCTAssertEqual(tokensBefore, 15000)
+        #expect(aborted == false)
+        #expect(willRetry == false)
+        #expect(summary == "Compacted 15k tokens to 8k tokens")
+        #expect(tokensBefore == 15000)
     }
 
-    func testRetry() throws {
+    @Test func retry() throws {
         let startMsg = try decodeMessage("retry_start")
         guard case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage) = startMsg else {
-            XCTFail("Expected .retryStart")
+            Issue.record("Expected .retryStart")
             return
         }
-        XCTAssertEqual(attempt, 1)
-        XCTAssertEqual(maxAttempts, 3)
-        XCTAssertEqual(delayMs, 5000)
-        XCTAssertEqual(errorMessage, "API overloaded")
+        #expect(attempt == 1)
+        #expect(maxAttempts == 3)
+        #expect(delayMs == 5000)
+        #expect(errorMessage == "API overloaded")
 
         let endMsg = try decodeMessage("retry_end")
         guard case .retryEnd(let success, let endAttempt, _) = endMsg else {
-            XCTFail("Expected .retryEnd")
+            Issue.record("Expected .retryEnd")
             return
         }
-        XCTAssertEqual(success, true)
-        XCTAssertEqual(endAttempt, 2)
+        #expect(success == true)
+        #expect(endAttempt == 2)
     }
 
-    func testStopLifecycle() throws {
+    @Test func stopLifecycle() throws {
         let reqMsg = try decodeMessage("stop_requested")
         guard case .stopRequested(let source, _) = reqMsg else {
-            XCTFail("Expected .stopRequested")
+            Issue.record("Expected .stopRequested")
             return
         }
-        XCTAssertEqual(source, .user)
+        #expect(source == .user)
 
         let confMsg = try decodeMessage("stop_confirmed")
         guard case .stopConfirmed = confMsg else {
-            XCTFail("Expected .stopConfirmed")
+            Issue.record("Expected .stopConfirmed")
             return
         }
 
         let failMsg = try decodeMessage("stop_failed")
         guard case .stopFailed(let failSource, let reason) = failMsg else {
-            XCTFail("Expected .stopFailed")
+            Issue.record("Expected .stopFailed")
             return
         }
-        XCTAssertEqual(failSource, .timeout)
-        XCTAssertTrue(reason.contains("SIGTERM"))
+        #expect(failSource == .timeout)
+        #expect(reason.contains("SIGTERM"))
     }
 
-    func testErrorMessage() throws {
+    @Test func errorMessage() throws {
         let msg = try decodeMessage("error")
 
         guard case .error(let message, let code, let fatal) = msg else {
-            XCTFail("Expected .error")
+            Issue.record("Expected .error")
             return
         }
-        XCTAssertEqual(message, "Model API rate limit exceeded")
-        XCTAssertEqual(code, "rate_limit")
-        XCTAssertEqual(fatal, false)
+        #expect(message == "Model API rate limit exceeded")
+        #expect(code == "rate_limit")
+        #expect(fatal == false)
     }
 
     // MARK: - Message Count Validation
 
-    func testSnapshotCoversAllExpectedTypes() throws {
+    @Test func snapshotCoversAllExpectedTypes() throws {
         let messages = try loadSnapshot()
 
         // All type discriminators that iOS handles (excluding stream_connected which is mux-only)
@@ -336,6 +338,6 @@ final class ProtocolSnapshotTests: XCTestCase {
         })
 
         let missing = expectedTypes.subtracting(messageTypes)
-        XCTAssertTrue(missing.isEmpty, "Missing snapshots for types: \(missing.sorted())")
+        #expect(missing.isEmpty, "Missing snapshots for types: \(missing.sorted())")
     }
 }
