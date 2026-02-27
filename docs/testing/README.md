@@ -70,11 +70,8 @@ cd server && npm run check:testing-policy
 - Shared single-runner lock: `mac-studio-single-runner`
 - Stale PR cancellation enabled in PR workflow.
 
-## Supporting references (non-canonical)
+## Supporting references
 
-- `docs/testing/server.md`
-- `docs/testing/ios.md`
-- `docs/testing/pr-vs-nightly-gates.md`
 - `docs/testing/requirements-matrix.md`
 - `docs/testing/bug-bash-playbook.md`
 
