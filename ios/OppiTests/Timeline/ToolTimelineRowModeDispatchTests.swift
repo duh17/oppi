@@ -129,6 +129,50 @@ struct ToolTimelineRowModeDispatchTests {
         }
     }
 
+    @Test func interactionPolicyMatrixMatchesModeExpectations() {
+        let markdownPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .markdown(text: "# Header")
+        )
+        #expect(!markdownPolicy.enablesTapCopyGesture)
+        #expect(markdownPolicy.enablesPinchGesture)
+        #expect(!markdownPolicy.allowsHorizontalScroll)
+        #expect(markdownPolicy.supportsFullScreenPreview)
+
+        let codePolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "Test.swift")
+        )
+        #expect(codePolicy.enablesTapCopyGesture)
+        #expect(codePolicy.enablesPinchGesture)
+        #expect(codePolicy.allowsHorizontalScroll)
+        #expect(codePolicy.supportsFullScreenPreview)
+
+        let wrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .bash(command: "echo hi", output: "hi", unwrapped: false)
+        )
+        #expect(!wrappedBashPolicy.allowsHorizontalScroll)
+
+        let unwrappedBashPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .bash(command: "echo hi", output: "hi", unwrapped: true)
+        )
+        #expect(unwrappedBashPolicy.allowsHorizontalScroll)
+
+        let recallTextPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: "Recall result", language: nil)
+        )
+        #expect(recallTextPolicy.enablesTapCopyGesture)
+        #expect(recallTextPolicy.enablesPinchGesture)
+        #expect(!recallTextPolicy.allowsHorizontalScroll)
+        #expect(recallTextPolicy.supportsFullScreenPreview)
+
+        let hostedPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .todoCard(output: "{\"id\":\"TODO-1\"}")
+        )
+        #expect(!hostedPolicy.enablesTapCopyGesture)
+        #expect(!hostedPolicy.enablesPinchGesture)
+        #expect(!hostedPolicy.allowsHorizontalScroll)
+        #expect(!hostedPolicy.supportsFullScreenPreview)
+    }
+
     @Test func expandedTodoItemBodyUsesMarkdownWhileKeepingMetadataRows() throws {
         let output = """
         {
@@ -530,6 +574,21 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!scrollView.showsHorizontalScrollIndicator, "Markdown mode should not show horizontal indicator")
     }
 
+    @Test func expandedMarkdownDisablesVerticalBounceToAvoidOuterScrollLock() throws {
+        let mdConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .markdown(text: String(repeating: "line\n", count: 600)),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: mdConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let scrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        #expect(!scrollView.alwaysBounceVertical)
+        #expect(!scrollView.bounces, "Markdown expanded scroll should not rubber-band vertically")
+    }
+
     @Test func cellReuseMarkdownGestureInterceptionDisabledForTextSelection() throws {
         // remember expanded in markdown mode should disable gesture interception
         // so users can select text via standard UITextView interactions.
@@ -558,6 +617,68 @@ struct ToolTimelineRowModeDispatchTests {
             !view.expandedTapCopyGestureEnabledForTesting,
             "Markdown mode should disable tap-copy gesture for text selection"
         )
+    }
+
+    @Test func expandedDoneTextDoesNotAutoFollowToBottomOnFirstRender() throws {
+        let longText = (1...600)
+            .map { "[\($0)] recall result line with enough text to overflow viewport" }
+            .joined(separator: "\n")
+
+        let collapsed = makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: nil,
+            isExpanded: false,
+            isDone: true
+        )
+        let expanded = makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: .text(text: longText, language: nil),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        _ = fittedSize(for: view, width: 360)
+
+        view.configuration = expanded
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue()
+
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        let visualOffset = expandedScrollView.contentOffset.y + expandedScrollView.adjustedContentInset.top
+        #expect(visualOffset < 1.0, "Done text tools should open at top; got visual offset \(visualOffset)")
+
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
+        #expect(!shouldAutoFollow, "Done text tools should not auto-follow after first render")
+    }
+
+    @Test func expandedStreamingTextKeepsAutoFollowEnabledOnFirstRender() throws {
+        let longText = (1...600)
+            .map { "[\($0)] streaming line with enough text to overflow viewport" }
+            .joined(separator: "\n")
+
+        let collapsed = makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: nil,
+            isExpanded: false,
+            isDone: false
+        )
+        let expanded = makeToolConfiguration(
+            toolNamePrefix: "recall",
+            expandedContent: .text(text: longText, language: nil),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        _ = fittedSize(for: view, width: 360)
+
+        view.configuration = expanded
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue()
+
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
+        #expect(shouldAutoFollow, "Streaming text should keep auto-follow enabled")
     }
 
     @Test func expandedCodeApplySetsUnwrappedWidthImmediately() throws {
@@ -609,7 +730,8 @@ private func makeToolConfiguration(
     title: String = "tool title",
     toolNamePrefix: String = "read",
     expandedContent: ToolPresentationBuilder.ToolExpandedContent? = nil,
-    isExpanded: Bool = false
+    isExpanded: Bool = false,
+    isDone: Bool = true
 ) -> ToolTimelineRowConfiguration {
     ToolTimelineRowConfiguration(
         title: title,
@@ -627,7 +749,7 @@ private func makeToolConfiguration(
         collapsedImageBase64: nil,
         collapsedImageMimeType: nil,
         isExpanded: isExpanded,
-        isDone: true,
+        isDone: isDone,
         isError: false,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil
@@ -650,8 +772,20 @@ private func privateConstraint(named name: String, in view: ToolTimelineRowConte
 }
 
 @MainActor
+private func privateBool(named name: String, in view: ToolTimelineRowContentView) -> Bool? {
+    Mirror(reflecting: view).children.first { $0.label == name }?.value as? Bool
+}
+
+@MainActor
 private func privateHostedExpandedView(in view: ToolTimelineRowContentView) -> UIView? {
     Mirror(reflecting: view).children.first { $0.label == "expandedReadMediaContentView" }?.value as? UIView
+}
+
+@MainActor
+private func drainMainQueue(passes: Int = 3) {
+    for _ in 0..<max(1, passes) {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
 }
 
 @MainActor

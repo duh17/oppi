@@ -4,22 +4,26 @@ enum ToolTimelineRowFullScreenSupport {
     private static let outputTruncationMarker = "\n\n… [output truncated]"
     static func supportsPreview(toolNamePrefix: String?) -> Bool {
         switch toolNamePrefix {
-        case "read", "write", "edit", "bash", "grep", "find", "ls":
-            return true
-        default:
+        case "todo", "plot":
             return false
+        default:
+            return true
         }
     }
 
     static func fullScreenContent(
         configuration: ToolTimelineRowConfiguration,
-        outputCopyText: String?
+        outputCopyText: String?,
+        interactionPolicy: ToolTimelineRowInteractionPolicy?
     ) -> FullScreenCodeContent? {
         guard configuration.isExpanded,
-              supportsPreview(toolNamePrefix: configuration.toolNamePrefix),
               let content = configuration.expandedContent else {
             return nil
         }
+
+        let supportsPreview = interactionPolicy?.supportsFullScreenPreview
+            ?? supportsPreview(toolNamePrefix: configuration.toolNamePrefix)
+        guard supportsPreview else { return nil }
 
         switch content {
         case .diff(let lines, let path):
