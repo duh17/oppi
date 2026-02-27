@@ -13,6 +13,7 @@ Scope: repeatable bug intake -> repro -> replay fixture capture -> regression fo
 4. Capture replay fixture bundle (Section 4).
 5. Re-run with replay flow (Section 5) on server-only or end-to-end (server + iOS).
 6. Add matrix traceability row and regression test target (Section 6).
+   - For timeline scroll/full-screen bugs, always map to `RQ-TL-003` and record which matrix mode failed (e.g. `read-markdown detached`).
 
 ---
 
@@ -230,6 +231,7 @@ Closure checklist:
 - [ ] Replay fixture committed
 - [ ] Regression test added and passing
 - [ ] Requirements matrix row updated to `fixed/verified` status
+- [ ] Timeline bugs map matrix case + ownership mode when using `RQ-TL-003`
 - [ ] Any remaining `partial/gap` follow-up tracked
 
 ---

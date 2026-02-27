@@ -173,6 +173,52 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!hostedPolicy.supportsFullScreenPreview)
     }
 
+    @Test func expandedModeRouterAndInteractionPolicyStayInLockstep() {
+        struct PolicyCase {
+            let content: ToolPresentationBuilder.ToolExpandedContent
+            let expectedMode: RoutedExpandedMode
+            let expectsFullScreen: Bool
+            let expectsHorizontalScroll: Bool
+        }
+
+        let cases: [PolicyCase] = [
+            .init(content: .bash(command: "echo hi", output: "hi", unwrapped: false), expectedMode: .bash, expectsFullScreen: true, expectsHorizontalScroll: false),
+            .init(content: .bash(command: "echo hi", output: "hi", unwrapped: true), expectedMode: .bash, expectsFullScreen: true, expectsHorizontalScroll: true),
+            .init(content: .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), expectedMode: .diff, expectsFullScreen: true, expectsHorizontalScroll: true),
+            .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
+            .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
+            .init(content: .todoCard(output: "{}"), expectedMode: .todo, expectsFullScreen: false, expectsHorizontalScroll: false),
+            .init(
+                content: .plot(
+                    spec: PlotChartSpec(
+                        title: nil,
+                        rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
+                        marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
+                        xAxis: .init(label: "x", invert: false),
+                        yAxis: .init(label: "y", invert: false),
+                        interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
+                        preferredHeight: 180
+                    ),
+                    fallbackText: nil
+                ),
+                expectedMode: .plot,
+                expectsFullScreen: false,
+                expectsHorizontalScroll: false
+            ),
+            .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
+            .init(content: .text(text: "recall output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
+        ]
+
+        for testCase in cases {
+            let routed = route(testCase.content)
+            #expect(routed == testCase.expectedMode)
+
+            let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(testCase.content)
+            #expect(policy.supportsFullScreenPreview == testCase.expectsFullScreen)
+            #expect(policy.allowsHorizontalScroll == testCase.expectsHorizontalScroll)
+        }
+    }
+
     @Test func scrollAxisOwnershipUsesHorizontalOnlyInnerScrolls() throws {
         let markdownView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
             toolNamePrefix: "remember",
@@ -769,6 +815,32 @@ struct ToolTimelineRowModeDispatchTests {
             "Expanded diff should set a positive unwrapped width delta during apply; got \(widthConstraint.constant)"
         )
     }
+}
+
+private enum RoutedExpandedMode: Equatable {
+    case bash
+    case diff
+    case code
+    case markdown
+    case todo
+    case plot
+    case readMedia
+    case text
+}
+
+@MainActor
+private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> RoutedExpandedMode {
+    ToolTimelineRowExpandedModeRouter.route(
+        expandedContent: content,
+        renderBash: { _, _, _ in .bash },
+        renderDiff: { _, _ in .diff },
+        renderCode: { _, _, _ in .code },
+        renderMarkdown: { _ in .markdown },
+        renderTodo: { _ in .todo },
+        renderPlot: { _, _ in .plot },
+        renderReadMedia: { _, _, _ in .readMedia },
+        renderText: { _, _ in .text }
+    )
 }
 
 private func makeToolConfiguration(
