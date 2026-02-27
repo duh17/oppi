@@ -190,6 +190,34 @@ struct ExpandedToolOutputLoaderTests {
         #expect(loader.staleDiscardCountForTesting == 1)
     }
 
+    @Test func readToolTerminalEmptyOutputReconfiguresToClearLoadingState() async {
+        let loader = ExpandedToolOutputLoader()
+        var reconfigureCount = 0
+
+        // attempt == 6 is terminal for current retry policy.
+        let request = makeRequest(
+            tool: "read",
+            attempt: 6,
+            fetchToolOutput: { _, _ in "" },
+            reconfigureItem: {
+                reconfigureCount += 1
+            }
+        )
+
+        loader.loadIfNeeded(request)
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                loader.taskCountForTesting == 0
+                    && !loader.isLoading("tool-1")
+            }
+        })
+
+        #expect(reconfigureCount == 1)
+        #expect(loader.appliedCountForTesting == 0)
+        #expect(loader.staleDiscardCountForTesting == 1)
+    }
+
     @Test func fetchFailureReconfiguresToClearLoadingState() async {
         let loader = ExpandedToolOutputLoader()
         var reconfigureCount = 0

@@ -1094,6 +1094,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
                     cancelToolOutputRetryWork(for: itemID)
+                    cancelToolOutputLoadTasks(for: [itemID])
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
                     ensureExpandedToolOutputLoaded(
