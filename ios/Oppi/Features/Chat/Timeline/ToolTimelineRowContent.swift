@@ -132,8 +132,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
     private var outputViewportHeightConstraint: NSLayoutConstraint?
     private var outputLabelWidthConstraint: NSLayoutConstraint?
+    private var outputLabelHeightLockConstraint: NSLayoutConstraint?
     private var expandedViewportHeightConstraint: NSLayoutConstraint?
     private var expandedLabelWidthConstraint: NSLayoutConstraint?
+    private var expandedLabelHeightLockConstraint: NSLayoutConstraint?
     private var expandedMarkdownWidthConstraint: NSLayoutConstraint?
     private var expandedReadMediaWidthConstraint: NSLayoutConstraint?
     private var imagePreviewHeightConstraint: NSLayoutConstraint?
@@ -354,6 +356,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateExpandedReadMediaWidthIfNeeded() {
         guard let expandedReadMediaWidthConstraint else { return }
         expandedReadMediaWidthConstraint.constant = -12
+    }
+
+    private func setOutputVerticalLockEnabled(_ enabled: Bool) {
+        outputLabelHeightLockConstraint?.isActive = enabled
+    }
+
+    private func setExpandedVerticalLockEnabled(_ enabled: Bool) {
+        expandedLabelHeightLockConstraint?.isActive = enabled
     }
 
     private func preferredViewportHeight(
@@ -634,6 +644,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         clearExpandedReadMediaView()
         expandedScrollView.alwaysBounceHorizontal = false
         expandedScrollView.showsHorizontalScrollIndicator = false
+        expandedScrollView.isScrollEnabled = false
+        setExpandedVerticalLockEnabled(false)
         expandedViewportMode = .none
         expandedRenderedText = nil
         expandedRenderSignature = nil
@@ -775,7 +787,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         titleLeadingToStatusConstraint = layout.titleLeadingToStatus
         titleLeadingToToolConstraint = layout.titleLeadingToTool
         outputLabelWidthConstraint = layout.outputLabelWidth
+        outputLabelHeightLockConstraint = layout.outputLabelHeightLock
         expandedLabelWidthConstraint = layout.expandedLabelWidth
+        expandedLabelHeightLockConstraint = layout.expandedLabelHeightLock
         expandedMarkdownWidthConstraint = layout.expandedMarkdownWidth
         expandedReadMediaWidthConstraint = layout.expandedReadMediaWidth
         imagePreviewHeightConstraint = layout.imagePreviewHeight
@@ -966,6 +980,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputShouldAutoFollow = localOutputShouldAutoFollow
 
             updateOutputLabelWidthIfNeeded()
+            outputScrollView.isScrollEnabled = false
+            setOutputVerticalLockEnabled(false)
         }
         ToolTimelineRowDisplayState.applyContainerVisibility(
             outputContainer,
@@ -974,10 +990,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             wasVisible: wasOutputVisible
         )
 
-        if showExpandedContainer, let policy = currentInteractionPolicy {
+        if let policy = currentInteractionPolicy,
+           showExpandedContainer || showOutputContainer {
             applyInteractionPolicy(policy, showOutputContainer: showOutputContainer)
         } else {
             setExpandedContainerGestureInterceptionEnabled(true)
+            expandedScrollView.isScrollEnabled = false
+            outputScrollView.isScrollEnabled = false
         }
 
         let showImagePreview = !imagePreviewContainer.isHidden
@@ -1041,7 +1060,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputShouldAutoFollow = localOutputShouldAutoFollow
 
         if visibility.showOutputContainer {
+            setOutputVerticalLockEnabled(localOutputUsesUnwrappedLayout)
             updateOutputLabelWidthIfNeeded()
+        } else {
+            setOutputVerticalLockEnabled(false)
         }
         if outputDidTextChange {
             scheduleOutputAutoScrollToBottomIfNeeded()
@@ -1075,6 +1097,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
         if visibility.showExpandedContainer {
+            setExpandedVerticalLockEnabled(true)
             updateExpandedLabelWidthIfNeeded()
         }
 
@@ -1111,6 +1134,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
 
         if visibility.showExpandedContainer {
+            setExpandedVerticalLockEnabled(true)
             updateExpandedLabelWidthIfNeeded()
         }
 
@@ -1146,6 +1170,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
 
         // Markdown subviews are added synchronously but Auto Layout hasn't
         // measured them yet when preferredViewportHeight runs in the same
@@ -1184,6 +1209,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
 
         return visibility
     }
@@ -1214,6 +1240,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
 
         return visibility
     }
@@ -1248,6 +1275,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
 
         return visibility
     }
@@ -1288,6 +1316,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedRenderSignature = localExpandedRenderSignature
         expandedRenderedText = localExpandedRenderedText
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
+        setExpandedVerticalLockEnabled(false)
 
         return visibility
     }
@@ -1328,10 +1357,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         expandedScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
         expandedScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
+        expandedScrollView.isScrollEnabled = policy.allowsHorizontalScroll
 
-        if showOutputContainer, case .bash = policy.mode {
+        if showOutputContainer, case .bash(let unwrapped) = policy.mode {
             outputScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
             outputScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
+            outputScrollView.isScrollEnabled = unwrapped
+            setOutputVerticalLockEnabled(unwrapped)
+        } else {
+            outputScrollView.isScrollEnabled = false
+            setOutputVerticalLockEnabled(false)
         }
     }
 
@@ -1523,8 +1558,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if scrollView === outputScrollView {
+            if outputLabelHeightLockConstraint?.isActive == true {
+                let lockedY = -outputScrollView.adjustedContentInset.top
+                if abs(outputScrollView.contentOffset.y - lockedY) > 0.5 {
+                    outputScrollView.contentOffset.y = lockedY
+                }
+            }
             outputShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(outputScrollView)
         } else if scrollView === expandedScrollView {
+            if expandedLabelHeightLockConstraint?.isActive == true {
+                let lockedY = -expandedScrollView.adjustedContentInset.top
+                if abs(expandedScrollView.contentOffset.y - lockedY) > 0.5 {
+                    expandedScrollView.contentOffset.y = lockedY
+                }
+            }
             expandedShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
         }
     }
