@@ -151,8 +151,8 @@ struct ServerConnectionRoutingTests {
                 requestId: nil,
                 success: true,
                 data: makeGetCommandsPayload([
-                    ("compact", "Compact context", "prompt"),
-                    ("skill:lint", "Run linter skill", "skill"),
+                    GetCommandsPayload(name: "compact", description: "Compact context", source: "prompt"),
+                    GetCommandsPayload(name: "skill:lint", description: "Run linter skill", source: "skill"),
                 ]),
                 error: nil
             ),
@@ -373,8 +373,14 @@ struct ServerConnectionRoutingTests {
 
 // MARK: - Private helpers
 
+private struct GetCommandsPayload {
+    let name: String
+    let description: String
+    let source: String
+}
+
 private func makeGetCommandsPayload(
-    _ commands: [(name: String, description: String, source: String)]
+    _ commands: [GetCommandsPayload]
 ) -> JSONValue {
     .object([
         "commands": .array(commands.map { command in

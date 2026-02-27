@@ -121,10 +121,8 @@ enum KeychainService {
     @discardableResult
     static func migrateLegacyServersToSharedGroup() -> Int {
         var migratedCount = 0
-        for server in discoverServersAnyGroup() {
-            if migrateToSharedGroupIfNeeded(server) {
-                migratedCount += 1
-            }
+        for server in discoverServersAnyGroup() where migrateToSharedGroupIfNeeded(server) {
+            migratedCount += 1
         }
 
         if migratedCount > 0 {
