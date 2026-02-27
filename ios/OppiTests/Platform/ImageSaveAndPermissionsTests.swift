@@ -32,6 +32,7 @@ struct PhotoLibrarySaverTests {
 struct ImageSavePermissionsTests {
     private var iosRoot: URL {
         URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Platform
             .deletingLastPathComponent() // OppiTests
             .deletingLastPathComponent() // ios
     }

@@ -29,56 +29,43 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeStopRequestedMarksStopping() {
-        let conn = makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .busy))
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(
-            .stopRequested(source: .user, reason: "Stopping current turn"),
-            sessionId: "s1"
-        )
-        conn.flushAndSuspend()
+        scenario
+            .givenStoredSession(status: .busy)
+            .whenHandle(
+                .stopRequested(source: .user, reason: "Stopping current turn"),
+                flushAfter: true
+            )
 
-        #expect(conn.sessionStore.sessions.first?.status == .stopping)
-
-        let system = conn.reducer.items.filter {
-            if case .systemEvent = $0 { return true }
-            return false
-        }
-        #expect(system.count == 1)
+        #expect(scenario.firstSessionStatus() == .stopping)
+        #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 
     @MainActor
     @Test func routeStopFailedRestoresBusyAndEmitsError() {
-        let conn = makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .stopping))
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(
-            .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms"),
-            sessionId: "s1"
-        )
-        conn.flushAndSuspend()
+        scenario
+            .givenStoredSession(status: .stopping)
+            .whenHandle(
+                .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms"),
+                flushAfter: true
+            )
 
-        #expect(conn.sessionStore.sessions.first?.status == .busy)
-
-        let errors = conn.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.count == 1)
+        #expect(scenario.firstSessionStatus() == .busy)
+        #expect(scenario.timelineItemCount(of: .error) == 1)
     }
 
     @MainActor
     @Test func routeStopConfirmedRestoresReady() {
-        let conn = makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .stopping))
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(
-            .stopConfirmed(source: .user, reason: nil),
-            sessionId: "s1"
-        )
-        conn.flushAndSuspend()
+        scenario
+            .givenStoredSession(status: .stopping)
+            .whenHandle(.stopConfirmed(source: .user, reason: nil), flushAfter: true)
 
-        #expect(conn.sessionStore.sessions.first?.status == .ready)
+        #expect(scenario.firstSessionStatus() == .ready)
     }
 
     @MainActor
@@ -165,15 +152,16 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeAgentStartAndTextAndEnd() {
-        let conn = makeTestConnection()
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.flushAndSuspend()
-        conn.handleServerMessage(.textDelta(delta: "Hello"), sessionId: "s1")
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .whenHandle(.agentStart)
+            .whenFlush()
+            .whenHandle(.textDelta(delta: "Hello"))
+            .whenHandle(.agentEnd)
+            .whenFlush()
 
-        let assistants = conn.reducer.items.filter {
+        let assistants = scenario.connection.reducer.items.filter {
             if case .assistantMessage = $0 { return true }
             return false
         }
@@ -207,35 +195,33 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeThinkingDelta() {
-        let conn = makeTestConnection()
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.thinkingDelta(delta: "thinking..."), sessionId: "s1")
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .whenHandle(.agentStart)
+            .whenHandle(.thinkingDelta(delta: "thinking..."))
+            .whenHandle(.agentEnd)
+            .whenFlush()
 
-        let thinking = conn.reducer.items.filter {
-            if case .thinking = $0 { return true }
-            return false
-        }
-        #expect(thinking.count == 1)
+        #expect(scenario.timelineItemCount(of: .thinking) == 1)
     }
 
     @MainActor
     @Test func routeToolStartOutputEnd() {
-        let conn = makeTestConnection()
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.agentStart, sessionId: "s1")
-        conn.handleServerMessage(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil), sessionId: "s1")
-        conn.flushAndSuspend()
-        conn.handleServerMessage(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1"), sessionId: "s1")
-        conn.flushAndSuspend()
-        conn.handleServerMessage(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil), sessionId: "s1")
-        conn.flushAndSuspend()
-        conn.handleServerMessage(.agentEnd, sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .whenHandle(.agentStart)
+            .whenHandle(.toolStart(tool: "bash", args: ["command": "ls"], toolCallId: "tc-1", callSegments: nil))
+            .whenFlush()
+            .whenHandle(.toolOutput(output: "file.txt", isError: false, toolCallId: "tc-1"))
+            .whenFlush()
+            .whenHandle(.toolEnd(tool: "bash", toolCallId: "tc-1", details: nil, isError: false, resultSegments: nil))
+            .whenFlush()
+            .whenHandle(.agentEnd)
+            .whenFlush()
 
-        let tools = conn.reducer.items.filter {
+        let tools = scenario.connection.reducer.items.filter {
             if case .toolCall = $0 { return true }
             return false
         }
@@ -250,33 +236,24 @@ struct ServerConnectionRoutingTests {
 
     @MainActor
     @Test func routeSessionEnded() {
-        let conn = makeTestConnection()
-        conn.sessionStore.upsert(makeTestSession(status: .busy))
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.sessionEnded(reason: "stopped"), sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .givenStoredSession(status: .busy)
+            .whenHandle(.sessionEnded(reason: "stopped"), flushAfter: true)
 
-        #expect(conn.sessionStore.sessions.first?.status == .stopped)
-
-        let system = conn.reducer.items.filter {
-            if case .systemEvent = $0 { return true }
-            return false
-        }
-        #expect(system.count == 1)
+        #expect(scenario.firstSessionStatus() == .stopped)
+        #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 
     @MainActor
     @Test func routeError() {
-        let conn = makeTestConnection()
+        let scenario = EventFlowServerConnectionScenario()
 
-        conn.handleServerMessage(.error(message: "Something failed", code: nil, fatal: false), sessionId: "s1")
-        conn.flushAndSuspend()
+        scenario
+            .whenHandle(.error(message: "Something failed", code: nil, fatal: false), flushAfter: true)
 
-        let errors = conn.reducer.items.filter {
-            if case .error = $0 { return true }
-            return false
-        }
-        #expect(errors.count == 1)
+        #expect(scenario.timelineItemCount(of: .error) == 1)
     }
 
     @MainActor
@@ -368,6 +345,156 @@ struct ServerConnectionRoutingTests {
 
         // Session store should NOT have s2 (message was for wrong active session)
         #expect(conn.sessionStore.sessions.isEmpty)
+    }
+}
+
+// MARK: - Shared scenario helpers
+
+@MainActor
+final class EventFlowServerConnectionScenario {
+    let connection: ServerConnection
+    let activeSessionId: String
+
+    init(sessionId: String = "s1") {
+        self.connection = makeTestConnection(sessionId: sessionId)
+        self.activeSessionId = sessionId
+    }
+
+    @discardableResult
+    func givenStoredSession(
+        id: String? = nil,
+        status: SessionStatus,
+        workspaceId: String? = nil,
+        thinkingLevel: String? = nil
+    ) -> Self {
+        connection.sessionStore.upsert(
+            makeTestSession(
+                id: id ?? activeSessionId,
+                workspaceId: workspaceId,
+                status: status,
+                thinkingLevel: thinkingLevel
+            )
+        )
+        return self
+    }
+
+    @discardableResult
+    func whenHandle(
+        _ message: ServerMessage,
+        sessionId: String? = nil,
+        flushAfter: Bool = false
+    ) -> Self {
+        connection.handleServerMessage(message, sessionId: sessionId ?? activeSessionId)
+        if flushAfter {
+            connection.flushAndSuspend()
+        }
+        return self
+    }
+
+    @discardableResult
+    func whenFlush() -> Self {
+        connection.flushAndSuspend()
+        return self
+    }
+
+    func firstSessionStatus() -> SessionStatus? {
+        connection.sessionStore.sessions.first?.status
+    }
+
+    func timelineItemCount(of kind: EventFlowTimelineItemKind) -> Int {
+        connection.reducer.items.filter { item in
+            switch kind {
+            case .assistantMessage:
+                if case .assistantMessage = item { return true }
+            case .systemEvent:
+                if case .systemEvent = item { return true }
+            case .error:
+                if case .error = item { return true }
+            case .thinking:
+                if case .thinking = item { return true }
+            case .toolCall:
+                if case .toolCall = item { return true }
+            }
+            return false
+        }.count
+    }
+}
+
+enum EventFlowTimelineItemKind {
+    case assistantMessage
+    case systemEvent
+    case error
+    case thinking
+    case toolCall
+}
+
+enum EventFlowAckCommand: CaseIterable {
+    case prompt
+    case steer
+    case followUp
+
+    var rawValue: String {
+        switch self {
+        case .prompt: return "prompt"
+        case .steer: return "steer"
+        case .followUp: return "follow_up"
+        }
+    }
+
+    @MainActor
+    func send(using connection: ServerConnection, text: String) async throws {
+        switch self {
+        case .prompt:
+            try await connection.sendPrompt(text)
+        case .steer:
+            try await connection.sendSteer(text)
+        case .followUp:
+            try await connection.sendFollowUp(text)
+        }
+    }
+}
+
+struct EventFlowAckRequest {
+    let command: String
+    let requestId: String?
+    let clientTurnId: String?
+}
+
+func extractEventFlowAckRequest(from message: ClientMessage) -> EventFlowAckRequest? {
+    switch message {
+    case .prompt(_, _, _, let requestId, let clientTurnId):
+        return EventFlowAckRequest(command: "prompt", requestId: requestId, clientTurnId: clientTurnId)
+    case .steer(_, _, let requestId, let clientTurnId):
+        return EventFlowAckRequest(command: "steer", requestId: requestId, clientTurnId: clientTurnId)
+    case .followUp(_, _, let requestId, let clientTurnId):
+        return EventFlowAckRequest(command: "follow_up", requestId: requestId, clientTurnId: clientTurnId)
+    default:
+        return nil
+    }
+}
+
+@MainActor
+func makeEventFlowAckTestConnection(
+    sessionId: String = "s1",
+    timeout: Duration? = nil
+) -> ServerConnection {
+    let connection = ServerConnection()
+    connection._setActiveSessionIdForTesting(sessionId)
+    if let timeout {
+        connection._sendAckTimeoutForTesting = timeout
+    }
+    return connection
+}
+
+actor EventFlowAckStageRecorder {
+    private var stages: [TurnAckStage] = []
+
+    func record(_ stage: TurnAckStage) {
+        stages.append(stage)
+    }
+
+    func snapshot() -> [TurnAckStage] {
+        stages
     }
 }
 
