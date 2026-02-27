@@ -7,6 +7,7 @@ This is the combined testing strategy for the Oppi monorepo (`ios` + `server`).
 - iOS detail: [`docs/testing/ios.md`](./ios.md)
 - Server detail: [`docs/testing/server.md`](./server.md)
 - Requirements/invariants matrix: [`docs/testing/requirements-matrix.md`](./requirements-matrix.md)
+- Bug-bash playbook + replay fixture flow: [`docs/testing/bug-bash-playbook.md`](./bug-bash-playbook.md)
 
 ## Requirements Matrix
 
