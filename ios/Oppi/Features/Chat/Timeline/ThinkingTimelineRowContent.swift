@@ -250,6 +250,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             textLeadingConstraint?.constant = Self.bubblePadding + Self.brainIndent
 
             if text.isEmpty {
+                textLabel.attributedText = nil
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -259,8 +260,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             bubbleView.isHidden = false
             brainIcon.isHidden = false
             bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.08)
-            textLabel.textColor = UIColor(palette.fg).withAlphaComponent(0.94)
-            textLabel.text = text
+            textLabel.attributedText = makeThinkingAttributedText(
+                text,
+                color: UIColor(palette.fg).withAlphaComponent(0.94)
+            )
 
             // Reset scroll for done state.
             shouldAutoScroll = true
@@ -277,17 +280,56 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             textLeadingConstraint?.constant = Self.bubblePadding
 
             if text.isEmpty {
+                textLabel.attributedText = nil
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
             } else {
                 bubbleView.isHidden = false
                 bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.06)
-                textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
-                textLabel.text = text
+                textLabel.attributedText = makeThinkingAttributedText(
+                    text,
+                    color: UIColor(palette.comment).withAlphaComponent(0.88)
+                )
                 updateBubbleHeight(forWidth: bounds.width)
             }
         }
+    }
+
+    private func makeThinkingAttributedText(_ text: String, color: UIColor) -> NSAttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+
+        let rendered: NSMutableAttributedString
+        if let markdown = try? AttributedString(markdown: text, options: options) {
+            rendered = NSMutableAttributedString(attributedString: NSAttributedString(markdown))
+        } else {
+            rendered = NSMutableAttributedString(string: text)
+        }
+
+        let fullRange = NSRange(location: 0, length: rendered.length)
+        guard fullRange.length > 0 else { return rendered }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 1
+        paragraph.lineBreakMode = .byWordWrapping
+
+        rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
+        rendered.addAttribute(.foregroundColor, value: color, range: fullRange)
+
+        rendered.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            if value == nil {
+                rendered.addAttribute(
+                    .font,
+                    value: UIFont.preferredFont(forTextStyle: .callout),
+                    range: range
+                )
+            }
+        }
+
+        return rendered
     }
 
     // MARK: - Height
