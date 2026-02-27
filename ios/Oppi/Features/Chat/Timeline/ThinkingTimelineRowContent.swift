@@ -1,15 +1,18 @@
 import SwiftUI
 import UIKit
 
-/// Native UIKit thinking row — simple and reliable.
+/// Native UIKit thinking row.
 ///
-/// Done state: brain icon + text in a rounded bubble, capped at ~200pt.
-/// Height snaps to line boundaries so the last visible line is never clipped.
-/// When truncated, a bottom fade mask hints at more content; tap opens full-screen.
+/// Single-vertical-owner policy:
+/// - Inner bubble never owns vertical scrolling.
+/// - Timeline collection view remains the only vertical scroll surface.
+/// - Streaming overflow auto-follows tail programmatically for deterministic
+///   readability while preserving outer follow semantics.
 ///
-/// Streaming state: spinner + "Thinking…" header + scrollable preview.
-/// Auto-tails to the bottom like the main chat view. Scrolling up pauses
-/// auto-tail; scrolling back to the bottom resumes it.
+/// Long-form/full-screen policy (aligned with tool rows):
+/// - Floating expand button appears only when content overflows bubble cap.
+/// - Context menu exposes "Open Full Screen" and "Copy".
+/// - Pinch-out or double-tap also opens full screen.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
@@ -37,6 +40,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private static let brainIndent: CGFloat = 14 + 6 // icon width + spacing
     /// Fraction of the bubble height where the fade begins (bottom 30%).
     private static let fadeStartFraction: Float = 0.7
+    private static let fullScreenOverflowThreshold: CGFloat = 2
 
     // Header (streaming state)
     private let headerStack = UIStackView()
@@ -49,17 +53,30 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private let scrollView = UIScrollView()
     private let textLabel = UILabel()
     private let fadeMask = CAGradientLayer()
+    private let expandFloatingButton = UIButton(type: .system)
     private var bubbleHeightConstraint: NSLayoutConstraint?
     private var textLeadingConstraint: NSLayoutConstraint?
+    private var pinchDidTriggerFullScreen = false
 
     /// True when the text exceeds the bubble cap.
     private(set) var contentIsTruncated = false
     /// Whether the fade mask is currently applied.
     private var fadeApplied = false
-    /// Auto-tail: scroll to bottom on new content. Paused when user scrolls up.
-    private var shouldAutoScroll = true
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
+
+    private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTap))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+
+    private lazy var bubblePinchGesture: UIPinchGestureRecognizer = {
+        let recognizer = UIPinchGestureRecognizer(target: self, action: #selector(handleBubblePinch(_:)))
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }()
 
     init(configuration: ThinkingTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -131,15 +148,18 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         bubbleView.layer.cornerRadius = 10
         bubbleView.clipsToBounds = true
+        bubbleView.addGestureRecognizer(bubbleDoubleTapGesture)
+        bubbleView.addGestureRecognizer(bubblePinchGesture)
+        bubbleView.addInteraction(UIContextMenuInteraction(delegate: self))
 
-        // Scroll view — enables scrolling during streaming.
+        // Inner scroll view is for layout/content-size bookkeeping only.
+        // Keep it non-interactive so timeline stays the sole vertical owner.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = true
+        scrollView.showsVerticalScrollIndicator = false
         scrollView.alwaysBounceVertical = false
         scrollView.isScrollEnabled = false
         scrollView.isUserInteractionEnabled = false
-        scrollView.delegate = self
 
         brainIcon.translatesAutoresizingMaskIntoConstraints = false
         brainIcon.image = UIImage(systemName: "sparkle")
@@ -150,6 +170,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         textLabel.numberOfLines = 0
         textLabel.lineBreakMode = .byWordWrapping
         textLabel.adjustsFontForContentSizeCategory = true
+
+        ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
+        expandFloatingButton.accessibilityIdentifier = "thinking.expand-full-screen"
+        expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
 
         // Fade mask — applied to bubbleView.layer.mask when done + truncated.
         fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
@@ -169,6 +193,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         stack.alignment = .fill
         stack.spacing = 4
         addSubview(stack)
+        addSubview(expandFloatingButton)
 
         let bubbleHeight = bubbleView.heightAnchor.constraint(equalToConstant: 0)
         bubbleHeightConstraint = bubbleHeight
@@ -218,6 +243,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             ),
 
             bubbleHeight,
+
+            expandFloatingButton.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -8),
+            expandFloatingButton.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8),
         ])
     }
 
@@ -228,9 +256,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let isNowStreaming = !configuration.isDone
         currentConfiguration = configuration
 
-        // Reset auto-scroll when entering streaming state.
         if isNowStreaming && !wasStreaming {
-            shouldAutoScroll = true
             scrollView.contentOffset = .zero
         }
 
@@ -254,6 +280,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
+                updateFullScreenAffordances()
                 return
             }
 
@@ -265,13 +292,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                 color: UIColor(palette.fg).withAlphaComponent(0.94)
             )
 
-            // Reset scroll for done state.
-            shouldAutoScroll = true
+            // Done state starts at top of clipped preview.
             scrollView.contentOffset = .zero
-
             updateBubbleHeight(forWidth: bounds.width)
         } else {
-            // Streaming: header spinner + scrollable preview.
+            // Streaming: header spinner + preview bubble (non-interactive vertically).
             headerStack.isHidden = false
             statusSpinner.startAnimating()
             brainIcon.isHidden = true
@@ -294,6 +319,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
                 updateBubbleHeight(forWidth: bounds.width)
             }
         }
+
+        updateFullScreenAffordances()
     }
 
     private func makeThinkingAttributedText(_ text: String, color: UIColor) -> NSAttributedString {
@@ -340,6 +367,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             contentIsTruncated = false
             removeFadeMask()
             configureScrollBehavior()
+            updateFullScreenAffordances()
             return
         }
 
@@ -364,28 +392,28 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             bubbleHeightConstraint?.constant = snappedHeight
             applyFadeMask()
         } else {
-            // Streaming + overflow: cap at max, scrollable.
+            // Streaming + overflow: cap at max and auto-follow tail.
             contentIsTruncated = true
             bubbleHeightConstraint?.constant = Self.maxBubbleHeight
             removeFadeMask()
         }
 
         configureScrollBehavior()
+        updateFullScreenAffordances()
     }
 
     // MARK: - Scroll Behavior
 
     private func configureScrollBehavior() {
-        let scrollable = !currentConfiguration.isDone && contentIsTruncated
-        scrollView.isScrollEnabled = scrollable
-        scrollView.isUserInteractionEnabled = scrollable
-        scrollView.showsVerticalScrollIndicator = scrollable
+        // Single-vertical-owner policy: inner thinking bubble never scrolls.
+        scrollView.isScrollEnabled = false
+        scrollView.isUserInteractionEnabled = false
+        scrollView.showsVerticalScrollIndicator = false
     }
 
     private func performAutoScrollIfNeeded() {
-        guard shouldAutoScroll,
-              !currentConfiguration.isDone,
-              scrollView.isScrollEnabled,
+        guard !currentConfiguration.isDone,
+              contentIsTruncated,
               scrollView.bounds.height > 0 else { return }
 
         let bottomY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
@@ -397,10 +425,97 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         CATransaction.commit()
     }
 
-    private var isAtBottom: Bool {
-        let bottomEdge = scrollView.contentOffset.y + scrollView.bounds.height
-        return bottomEdge >= scrollView.contentSize.height - 20
+    // MARK: - Full Screen
+
+    private var trimmedDisplayText: String {
+        currentConfiguration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private var canShowFullScreen: Bool {
+        guard !trimmedDisplayText.isEmpty else { return false }
+        guard !bubbleView.isHidden else { return false }
+
+        let viewportHeight = max(0, scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom)
+        guard viewportHeight > 1 else {
+            return contentIsTruncated
+        }
+
+        let overflowY = scrollView.contentSize.height - viewportHeight
+        return overflowY > Self.fullScreenOverflowThreshold
+    }
+
+    private func updateFullScreenAffordances() {
+        expandFloatingButton.isHidden = !canShowFullScreen
+    }
+
+    @objc private func handleExpandFloatingButtonTap() {
+        showFullScreen()
+    }
+
+    @objc private func handleBubbleDoubleTap() {
+        showFullScreen()
+    }
+
+    @objc private func handleBubblePinch(_ recognizer: UIPinchGestureRecognizer) {
+        guard canShowFullScreen else { return }
+
+        switch recognizer.state {
+        case .began:
+            pinchDidTriggerFullScreen = false
+
+        case .changed:
+            guard !pinchDidTriggerFullScreen,
+                  recognizer.scale >= 1.10 else {
+                return
+            }
+
+            pinchDidTriggerFullScreen = true
+            showFullScreen()
+
+        case .ended, .cancelled, .failed:
+            pinchDidTriggerFullScreen = false
+
+        default:
+            break
+        }
+    }
+
+    func showFullScreen() {
+        guard canShowFullScreen else { return }
+
+        let content = FullScreenCodeContent.thinking(content: trimmedDisplayText)
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
+    }
+
+    private func copyDisplayText() {
+        guard !trimmedDisplayText.isEmpty else { return }
+        TimelineCopyFeedback.copy(trimmedDisplayText, feedbackView: bubbleView)
+    }
+
+    private func contextMenu() -> UIMenu? {
+        guard canShowFullScreen else { return nil }
+
+        return UIMenu(title: "", children: [
+            UIAction(
+                title: String(localized: "Open Full Screen"),
+                image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+            ) { [weak self] _ in
+                self?.showFullScreen()
+            },
+            UIAction(
+                title: String(localized: "Copy"),
+                image: UIImage(systemName: "doc.on.doc")
+            ) { [weak self] _ in
+                self?.copyDisplayText()
+            },
+        ])
+    }
+
+    #if DEBUG
+    func contextMenuForTesting() -> UIMenu? {
+        contextMenu()
+    }
+    #endif
 
     // MARK: - Fade Mask
 
@@ -429,35 +544,17 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         fadeMask.frame = CGRect(x: 0, y: 0, width: w, height: h)
         CATransaction.commit()
     }
-
-    // MARK: - Full Screen
-
-    func showFullScreen() {
-        let text = currentConfiguration.displayText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-
-        let content = FullScreenCodeContent.markdown(content: text, filePath: nil)
-        ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
-    }
 }
 
-// MARK: - UIScrollViewDelegate (auto-tail)
+extension ThinkingTimelineRowContentView: UIContextMenuInteractionDelegate {
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard contextMenu() != nil else { return nil }
 
-extension ThinkingTimelineRowContentView: UIScrollViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        // Only track user-initiated scrolls, not programmatic ones.
-        guard scrollView.isDragging || scrollView.isDecelerating else { return }
-        shouldAutoScroll = isAtBottom
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate {
-            shouldAutoScroll = isAtBottom
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            self?.contextMenu()
         }
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        shouldAutoScroll = isAtBottom
     }
 }
