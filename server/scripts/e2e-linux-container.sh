@@ -176,7 +176,6 @@ echo "[e2e] Starting linux containerized server on port $PORT (mode=$MODE tls=$E
 CONTAINER_ID="$($RUNTIME "${DOCKER_ARGS[@]}")"
 
 SCHEME="http"
-CURL_TLS_ARGS=()
 CA_CERT_PATH=""
 if [[ "$E2E_TLS" == "1" ]]; then
   SCHEME="https"
@@ -193,21 +192,27 @@ if [[ "$E2E_TLS" == "1" ]]; then
     echo "[e2e] Self-signed CA was not generated in time"
     exit 1
   fi
-
-  CURL_TLS_ARGS=(--cacert "$CA_CERT_PATH")
 fi
 
 HEALTH_URL="$SCHEME://127.0.0.1:$PORT/health"
 
+curl_health() {
+  if [[ "$E2E_TLS" == "1" ]]; then
+    curl -fsS --cacert "$CA_CERT_PATH" "$HEALTH_URL"
+  else
+    curl -fsS "$HEALTH_URL"
+  fi
+}
+
 echo "[e2e] Waiting for /health via $SCHEME"
 for _ in {1..90}; do
-  if curl -fsS "${CURL_TLS_ARGS[@]}" "$HEALTH_URL" >/dev/null 2>&1; then
+  if curl_health >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-if ! curl -fsS "${CURL_TLS_ARGS[@]}" "$HEALTH_URL" >/dev/null 2>&1; then
+if ! curl_health >/dev/null 2>&1; then
   echo "[e2e] Server did not become healthy in time"
   exit 1
 fi
