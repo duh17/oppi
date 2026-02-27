@@ -508,6 +508,17 @@ struct ToolExpandScrollMatrixFixture {
         for inner in innerScrollViews {
             #expect(!inner.alwaysBounceVertical,
                     "Inner scroll view has alwaysBounceVertical=true for \(toolCase.name)")
+
+            if inner.isScrollEnabled {
+                #expect(!inner.bounces,
+                        "Inner scroll view has bounces=true for \(toolCase.name)")
+
+                let verticalOverflow = inner.contentSize.height - inner.bounds.height
+                #expect(
+                    verticalOverflow <= 12,
+                    "Inner scroll view can consume vertical drags (overflow=\(verticalOverflow)) for \(toolCase.name)"
+                )
+            }
         }
     }
 

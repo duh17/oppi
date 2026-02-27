@@ -478,6 +478,8 @@ final class NativeCodeBlockView: UIView {
         let sv = UIScrollView()
         sv.showsHorizontalScrollIndicator = false
         sv.showsVerticalScrollIndicator = false
+        sv.alwaysBounceVertical = false
+        sv.bounces = false
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()
@@ -652,6 +654,8 @@ final class NativeTableBlockView: UIView {
     private let scrollView: UIScrollView = {
         let sv = UIScrollView()
         sv.showsHorizontalScrollIndicator = false
+        sv.alwaysBounceVertical = false
+        sv.bounces = false
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()

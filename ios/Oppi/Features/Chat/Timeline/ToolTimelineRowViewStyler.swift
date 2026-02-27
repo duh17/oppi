@@ -104,6 +104,8 @@ enum ToolTimelineRowViewStyler {
         outputScrollView.translatesAutoresizingMaskIntoConstraints = false
         outputScrollView.alwaysBounceVertical = false
         outputScrollView.alwaysBounceHorizontal = false
+        outputScrollView.bounces = false
+        outputScrollView.isScrollEnabled = false
         outputScrollView.showsVerticalScrollIndicator = true
         outputScrollView.showsHorizontalScrollIndicator = false
         outputScrollView.delegate = delegate
@@ -130,6 +132,8 @@ enum ToolTimelineRowViewStyler {
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
         expandedScrollView.alwaysBounceVertical = false
         expandedScrollView.alwaysBounceHorizontal = false
+        expandedScrollView.bounces = false
+        expandedScrollView.isScrollEnabled = false
         expandedScrollView.showsVerticalScrollIndicator = true
         expandedScrollView.showsHorizontalScrollIndicator = false
         expandedScrollView.delegate = delegate

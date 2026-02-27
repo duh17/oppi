@@ -8,7 +8,9 @@ enum ToolTimelineRowLayoutBuilder {
         let titleLeadingToStatus: NSLayoutConstraint
         let titleLeadingToTool: NSLayoutConstraint
         let outputLabelWidth: NSLayoutConstraint
+        let outputLabelHeightLock: NSLayoutConstraint
         let expandedLabelWidth: NSLayoutConstraint
+        let expandedLabelHeightLock: NSLayoutConstraint
         let expandedMarkdownWidth: NSLayoutConstraint
         let expandedReadMediaWidth: NSLayoutConstraint
         let imagePreviewHeight: NSLayoutConstraint
@@ -60,9 +62,17 @@ enum ToolTimelineRowLayoutBuilder {
             equalTo: outputScrollView.frameLayoutGuide.widthAnchor,
             constant: -12
         )
+        let outputLabelHeightLock = outputLabel.heightAnchor.constraint(
+            equalTo: outputScrollView.frameLayoutGuide.heightAnchor,
+            constant: -10
+        )
         let expandedLabelWidth = expandedLabel.widthAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
             constant: -12
+        )
+        let expandedLabelHeightLock = expandedLabel.heightAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor,
+            constant: -10
         )
         let expandedMarkdownWidth = expandedMarkdownView.widthAnchor.constraint(
             equalTo: expandedScrollView.frameLayoutGuide.widthAnchor,
@@ -165,7 +175,9 @@ enum ToolTimelineRowLayoutBuilder {
             titleLeadingToStatus: titleLeadingToStatus,
             titleLeadingToTool: titleLeadingToTool,
             outputLabelWidth: outputLabelWidth,
+            outputLabelHeightLock: outputLabelHeightLock,
             expandedLabelWidth: expandedLabelWidth,
+            expandedLabelHeightLock: expandedLabelHeightLock,
             expandedMarkdownWidth: expandedMarkdownWidth,
             expandedReadMediaWidth: expandedReadMediaWidth,
             imagePreviewHeight: imagePreviewHeight,

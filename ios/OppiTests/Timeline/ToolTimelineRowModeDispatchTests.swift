@@ -173,6 +173,51 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!hostedPolicy.supportsFullScreenPreview)
     }
 
+    @Test func scrollAxisOwnershipUsesHorizontalOnlyInnerScrolls() throws {
+        let markdownView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "# Header\n\nBody"),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: markdownView, width: 360)
+
+        let markdownScrollView = try #require(privateScrollView(named: "expandedScrollView", in: markdownView))
+        #expect(!markdownScrollView.isScrollEnabled)
+
+        let codeView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: "let value = 1\n" + String(repeating: "0123456789abcdef", count: 16),
+                language: .swift,
+                startLine: 1,
+                filePath: "Sample.swift"
+            ),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: codeView, width: 360)
+
+        let codeScrollView = try #require(privateScrollView(named: "expandedScrollView", in: codeView))
+        #expect(codeScrollView.isScrollEnabled)
+
+        let bashWrapped = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "$",
+            expandedContent: .bash(command: "echo hi", output: "line", unwrapped: false),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: bashWrapped, width: 360)
+        let wrappedOutputScroll = try #require(privateScrollView(named: "outputScrollView", in: bashWrapped))
+        #expect(!wrappedOutputScroll.isScrollEnabled)
+
+        let bashUnwrapped = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "$",
+            expandedContent: .bash(command: "echo hi", output: String(repeating: "x", count: 400), unwrapped: true),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: bashUnwrapped, width: 360)
+        let unwrappedOutputScroll = try #require(privateScrollView(named: "outputScrollView", in: bashUnwrapped))
+        #expect(unwrappedOutputScroll.isScrollEnabled)
+    }
+
     @Test func expandedTodoItemBodyUsesMarkdownWhileKeepingMetadataRows() throws {
         let output = """
         {

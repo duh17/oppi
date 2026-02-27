@@ -193,6 +193,17 @@ struct WriteExpandScrollTests {
                 #expect(!verticalBounce,
                         "Inner scroll view has alwaysBounceVertical=true, which can steal vertical gestures from the outer collection view")
             }
+
+            if innerSV.isScrollEnabled {
+                #expect(!innerSV.bounces,
+                        "Inner scroll view should not bounce vertically in expanded tool rows")
+
+                let verticalOverflow = innerSV.contentSize.height - innerSV.bounds.height
+                #expect(
+                    verticalOverflow <= 12,
+                    "Inner scroll view can still consume vertical drags (overflow=\(verticalOverflow))"
+                )
+            }
         }
     }
 
