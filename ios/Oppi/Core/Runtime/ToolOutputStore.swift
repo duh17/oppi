@@ -26,13 +26,18 @@ final class ToolOutputStore {
     /// Running total of stored bytes.
     private(set) var totalBytes: Int = 0
 
-    func append(_ chunk: String, to itemID: String) {
+    @discardableResult
+    func append(_ chunk: String, to itemID: String) -> Bool {
+        guard !chunk.isEmpty else {
+            return false
+        }
+
         let existing = chunks[itemID]
         let existingBytes = existing?.utf8.count ?? 0
 
         // Per-item cap: stop accumulating once hit
         if existingBytes >= Self.perItemCap {
-            return
+            return false
         }
 
         // Track insertion order
@@ -57,12 +62,14 @@ final class ToolOutputStore {
                 truncated.append(char)
                 bytesSoFar += charBytes
             }
-            chunks[itemID, default: ""] += truncated + Self.truncationMarker
-            totalBytes += truncated.utf8.count + Self.truncationMarker.utf8.count
+            let truncatedOutput = truncated + Self.truncationMarker
+            chunks[itemID, default: ""] += truncatedOutput
+            totalBytes += truncatedOutput.utf8.count
         }
 
         // Evict oldest items if total cap exceeded
         evictIfNeeded()
+        return true
     }
 
     func fullOutput(for itemID: String) -> String {
