@@ -1,0 +1,42 @@
+name: Nightly Deep Gate
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+# Keep nightly runs serialized and never auto-cancel.
+concurrency:
+  group: nightly-deep
+  cancel-in-progress: false
+
+env:
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+jobs:
+  nightly-deep-gate:
+    name: Nightly Deep Gate
+    runs-on: self-hosted
+    timeout-minutes: 180
+
+    # Single Mac Studio runner lock shared across workflows.
+    concurrency:
+      group: mac-studio-single-runner
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: cd server && npm ci
+
+      - name: Run nightly deep gate
+        run: cd server && npm run test:gate:nightly-deep

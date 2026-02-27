@@ -1,0 +1,45 @@
+name: PR Fast Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+# Cancel stale runs for the same PR/branch.
+concurrency:
+  group: pr-fast-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+jobs:
+  pr-fast-gate:
+    name: PR Fast Gate
+    runs-on: self-hosted
+    timeout-minutes: 45
+
+    # Single Mac Studio runner lock shared across workflows.
+    concurrency:
+      group: mac-studio-single-runner
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: cd server && npm ci
+
+      - name: Run PR fast gate
+        run: cd server && npm run test:gate:pr-fast
