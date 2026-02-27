@@ -58,3 +58,17 @@ cd server && npm run test:load:ws
 cd server && npm run test:security:adversarial
 ios/scripts/test-ui.sh
 ```
+
+## CI behavior (single self-hosted Mac runner)
+
+GitHub Actions uses two workflows:
+
+- PR Fast Gate: `.github/workflows/pr-fast-gate.yml`
+- Nightly Deep Gate: `.github/workflows/nightly-deep-gate.yml`
+
+Concurrency strategy for one runner:
+
+- **Stale PR cancellation:** workflow concurrency group `pr-fast-${{ github.event.pull_request.number || github.ref }}` with `cancel-in-progress: true`.
+- **Cross-workflow runner lock:** job-level concurrency group `mac-studio-single-runner` with `cancel-in-progress: false` in both workflows.
+
+This gives deterministic single-runner execution while still canceling superseded PR runs.
