@@ -258,7 +258,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     private static var samplePNGBase64: String {
         // 1x1 transparent PNG.
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
     }
 
     private static func sampleSwiftSource(functionPrefix: String, count: Int) -> String {
