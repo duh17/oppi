@@ -8,6 +8,7 @@ const gates = {
     "check",
     "test",
     "test:e2e:linux",
+    "test:e2e:linux:https",
     "test:e2e:lmstudio:contract",
   ],
 };
