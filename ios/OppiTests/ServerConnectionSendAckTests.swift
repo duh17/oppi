@@ -581,14 +581,20 @@ private enum AckCommand: CaseIterable {
     }
 }
 
-private func extractAckRequest(from message: ClientMessage) -> (command: String, requestId: String?, clientTurnId: String?)? {
+private struct AckRequest {
+    let command: String
+    let requestId: String?
+    let clientTurnId: String?
+}
+
+private func extractAckRequest(from message: ClientMessage) -> AckRequest? {
     switch message {
     case .prompt(_, _, _, let requestId, let clientTurnId):
-        return ("prompt", requestId, clientTurnId)
+        return AckRequest(command: "prompt", requestId: requestId, clientTurnId: clientTurnId)
     case .steer(_, _, let requestId, let clientTurnId):
-        return ("steer", requestId, clientTurnId)
+        return AckRequest(command: "steer", requestId: requestId, clientTurnId: clientTurnId)
     case .followUp(_, _, let requestId, let clientTurnId):
-        return ("follow_up", requestId, clientTurnId)
+        return AckRequest(command: "follow_up", requestId: requestId, clientTurnId: clientTurnId)
     default:
         return nil
     }

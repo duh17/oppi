@@ -57,9 +57,12 @@ struct PlotChartSpecTests {
             ]),
         ])
 
-        #expect(spec != nil)
-        #expect(spec!.columnIsNumeric("x") == true)
-        #expect(spec!.columnIsNumeric("y") == true)
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
+        #expect(spec.columnIsNumeric("x") == true)
+        #expect(spec.columnIsNumeric("y") == true)
     }
 
     @Test("columnIsNumeric detects categorical string columns")
@@ -78,9 +81,12 @@ struct PlotChartSpecTests {
             ]),
         ])
 
-        #expect(spec != nil)
-        #expect(spec!.columnIsNumeric("state") == false)
-        #expect(spec!.columnIsNumeric("count") == true)
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
+        #expect(spec.columnIsNumeric("state") == false)
+        #expect(spec.columnIsNumeric("count") == true)
     }
 
     @Test("columnIsNumeric treats numeric strings as numeric")
@@ -99,8 +105,11 @@ struct PlotChartSpecTests {
             ]),
         ])
 
-        #expect(spec != nil)
-        #expect(spec!.columnIsNumeric("x") == true)
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
+        #expect(spec.columnIsNumeric("x") == true)
     }
 
     @Test("columnIsNumeric returns true for missing key")
@@ -118,10 +127,13 @@ struct PlotChartSpecTests {
             ]),
         ])
 
-        #expect(spec != nil)
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
         // No row has "z", defaults to true
-        #expect(spec!.columnIsNumeric("z") == true)
-        #expect(spec!.columnIsNumeric(nil) == true)
+        #expect(spec.columnIsNumeric("z") == true)
+        #expect(spec.columnIsNumeric(nil) == true)
     }
 
     @Test("parses categorical bar chart spec from plot args")
@@ -141,13 +153,16 @@ struct PlotChartSpecTests {
             ]),
         ])
 
-        #expect(spec != nil)
-        #expect(spec!.title == "Tester States")
-        #expect(spec!.rows.count == 2)
-        #expect(spec!.marks.count == 1)
-        #expect(spec!.rows[0].seriesLabel(for: "state") == "Invited")
-        #expect(spec!.rows[0].number(for: "state") == nil)
-        #expect(spec!.rows[0].number(for: "count") == 5)
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
+        #expect(spec.title == "Tester States")
+        #expect(spec.rows.count == 2)
+        #expect(spec.marks.count == 1)
+        #expect(spec.rows[0].seriesLabel(for: "state") == "Invited")
+        #expect(spec.rows[0].number(for: "state") == nil)
+        #expect(spec.rows[0].number(for: "count") == 5)
     }
 
     @Test("ignores unsupported chart version")

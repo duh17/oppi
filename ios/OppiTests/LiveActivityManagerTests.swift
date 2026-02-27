@@ -391,7 +391,10 @@ struct LiveActivityDeepLinkTests {
 
     @Test("session deep link parses oppi://session/<id>")
     func sessionDeepLinkParse() {
-        let url = URL(string: "oppi://session/abc-123")!
+        guard let url = URL(string: "oppi://session/abc-123") else {
+            Issue.record("Expected deep link URL to parse")
+            return
+        }
         #expect(url.scheme == "oppi")
         #expect(url.host == "session")
         let sessionId = url.path

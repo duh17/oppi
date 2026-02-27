@@ -72,7 +72,10 @@ struct ServerConnectionLifecycleTests {
             host: "studio.ts.net", port: 7749, token: "sk_studio",
             name: "studio", serverFingerprint: "sha256:studio-fp"
         )
-        let server = PairedServer(from: creds)!
+        guard let server = PairedServer(from: creds) else {
+            Issue.record("Expected PairedServer to be created from credentials")
+            return
+        }
 
         let result = conn.switchServer(to: server)
         #expect(result == true)
@@ -87,7 +90,10 @@ struct ServerConnectionLifecycleTests {
             host: "studio.ts.net", port: 7749, token: "sk_a",
             name: "studio", serverFingerprint: "sha256:same-fp"
         )
-        let server = PairedServer(from: creds)!
+        guard let server = PairedServer(from: creds) else {
+            Issue.record("Expected PairedServer to be created from credentials")
+            return
+        }
 
         _ = conn.switchServer(to: server)
         let result = conn.switchServer(to: server)
@@ -106,8 +112,12 @@ struct ServerConnectionLifecycleTests {
             host: "mini.ts.net", port: 7749, token: "sk_b",
             name: "mini", serverFingerprint: "sha256:fp-b"
         )
-        let server1 = PairedServer(from: creds1)!
-        let server2 = PairedServer(from: creds2)!
+        guard let server1 = PairedServer(from: creds1),
+              let server2 = PairedServer(from: creds2)
+        else {
+            Issue.record("Expected PairedServer values to be created from credentials")
+            return
+        }
 
         _ = conn.switchServer(to: server1)
         #expect(conn.currentServerId == "sha256:fp-a")
