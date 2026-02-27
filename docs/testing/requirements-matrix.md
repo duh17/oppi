@@ -1,9 +1,12 @@
 # Oppi Test Requirements Matrix
 
-Last updated: 2026-02-26
+Last updated: 2026-02-27
 Owner: Oppi maintainers (iOS + server)
 
 This matrix tracks core product requirements/invariants against current test coverage.
+
+Gate policy for when tests are required on PR vs nightly is defined in:
+- [`docs/testing/pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md)
 
 Status legend:
 - **covered**: invariant has direct tests on at least one side and no known blind spot
@@ -26,6 +29,12 @@ Status legend:
 | RQ-PERM-002 | Permission UX routing (deep link/notification) lands on correct approval context | `ios/OppiTests/Platform/PermissionDeepLinkTests.swift`, `ios/OppiTests/Platform/PermissionNotificationServiceTests.swift` | `server/tests/live-activity.test.ts`, `server/tests/push-redaction.test.ts` | partial | Strong iOS behavior coverage; server side is mostly adjacent transport/notification checks. |
 | RQ-OFFLINE-001 | Offline/foreground transitions recover safely and preserve user-visible session continuity | `ios/OppiTests/Network/ForegroundReconnectGateTests.swift`, `ios/OppiTests/Network/ServerConnectionForegroundRecoveryTests.swift`, `ios/OppiTests/Stores/RestorationStateTests.swift` | `server/tests/user-stream-replay.test.ts`, `server/tests/local-sessions.test.ts` | partial | Recovery exists, but explicit airplane-mode/offline UX assertions are limited. |
 | RQ-OFFLINE-002 | Explicit offline UX states (banner, disabled actions, retry affordance) are tested | `ios/OppiUITests/UIHangHarnessUITests.swift` | _(none mapped)_ | gap | Add dedicated offline UX scenario tests (UI + integration) and link regressions here. |
+
+## Using this matrix with gate policy
+
+- Use this matrix to decide **what must be tested** based on impacted invariants.
+- Use [`pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md) to decide **when each lane must run** (PR vs nightly/release).
+- If a change touches any `RQ-PROTO-*` invariant, run `./scripts/check-protocol.sh` on PR.
 
 ## Bug-bash Traceability
 
