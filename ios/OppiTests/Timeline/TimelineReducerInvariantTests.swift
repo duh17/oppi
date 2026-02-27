@@ -71,6 +71,75 @@ struct TimelineReducerInvariantTests {
             }
         }
     }
+
+    @MainActor
+    @Test func cappedToolOutputNoOpBatchesDoNotMutateVisibleState() {
+        let reducer = TimelineReducer()
+        let toolID = "tool-cap"
+
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .toolStart(sessionId: "s1", toolEventId: toolID, tool: "read", args: [:]),
+        ])
+
+        let huge = String(repeating: "x", count: ToolOutputStore.perItemCap + 512)
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: huge, isError: false),
+        ])
+
+        let baselineVersion = reducer.renderVersion
+        let baselineSnapshot = snapshot(of: reducer)
+
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "", isError: false),
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "ignored-after-cap", isError: false),
+        ])
+
+        #expect(reducer.renderVersion == baselineVersion)
+        #expect(snapshot(of: reducer) == baselineSnapshot)
+    }
+
+    @MainActor
+    @Test func reconnectReplayMaintainsSingleToolIdentityAndTerminalInvariants() {
+        for terminalEvent in deterministicTerminalEvents() {
+            let reducer = TimelineReducer()
+
+            reducer.processBatch([
+                .agentStart(sessionId: "s1"),
+                .thinkingDelta(sessionId: "s1", delta: "plan"),
+                .textDelta(sessionId: "s1", delta: "before "),
+                .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
+                .toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false),
+                .toolEnd(sessionId: "s1", toolEventId: "t1"),
+                .textDelta(sessionId: "s1", delta: "after"),
+                terminalEvent,
+            ])
+
+            // Simulate replay after reconnect: duplicate tool_start + message_end.
+            reducer.processBatch([
+                .agentStart(sessionId: "s1"),
+                .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
+                .toolEnd(sessionId: "s1", toolEventId: "t1"),
+                .messageEnd(sessionId: "s1", content: "after"),
+                .agentEnd(sessionId: "s1"),
+            ])
+
+            let toolItems = reducer.items.compactMap { item -> (id: String, isDone: Bool)? in
+                guard case .toolCall(let id, _, _, _, _, _, let isDone) = item else { return nil }
+                return (id: id, isDone: isDone)
+            }
+
+            #expect(toolItems.filter { $0.id == "t1" }.count == 1)
+            #expect(toolItems.allSatisfy { $0.isDone })
+            #expect(reducer.streamingAssistantID == nil)
+
+            let unfinishedThinking = reducer.items.contains { item in
+                guard case .thinking(_, _, _, let isDone) = item else { return false }
+                return !isDone
+            }
+            #expect(!unfinishedThinking)
+        }
+    }
 }
 
 private struct ReducerSnapshot: Equatable {
@@ -245,5 +314,12 @@ private func timelinePermutationCases() -> [TimelinePermutationCase] {
             ],
             expectAssistantSplitAroundTool: false
         ),
+    ]
+}
+
+private func deterministicTerminalEvents() -> [AgentEvent] {
+    [
+        .agentEnd(sessionId: "s1"),
+        .sessionEnded(sessionId: "s1", reason: "disconnect"),
     ]
 }

@@ -229,6 +229,60 @@ struct DeltaCoalescerTests {
         }
     }
 
+    @MainActor
+    @Test func immediateEventPreservesMixedDeltaOrderingWithinFlush() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        coalescer.receive(.textDelta(sessionId: "s1", delta: "a"))
+        coalescer.receive(.thinkingDelta(sessionId: "s1", delta: "b"))
+        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "c", isError: false))
+
+        coalescer.receive(.toolStart(
+            sessionId: "s1",
+            toolEventId: "t1",
+            tool: "bash",
+            args: ["command": "echo hi"]
+        ))
+
+        #expect(flushed.count == 2)
+        #expect(flushed[0].map(\.typeLabel) == ["textDelta", "thinkingDelta", "toolOutput"])
+        #expect(flushed[1].map(\.typeLabel) == ["toolStart"])
+    }
+
+    @MainActor
+    @Test func maxBufferedEventCountForcesDeterministicFlush() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        for _ in 0..<512 {
+            coalescer.receive(.textDelta(sessionId: "s1", delta: "x"))
+        }
+
+        #expect(flushed.count == 1)
+        #expect(flushed[0].count == 512)
+    }
+
+    @MainActor
+    @Test func maxBufferedBytesForcesDeterministicFlush() {
+        let coalescer = DeltaCoalescer()
+        var flushed: [[AgentEvent]] = []
+        coalescer.onFlush = { flushed.append($0) }
+
+        let oversized = String(repeating: "z", count: (256 * 1024) + 8)
+        coalescer.receive(.textDelta(sessionId: "s1", delta: oversized))
+
+        #expect(flushed.count == 1)
+        #expect(flushed[0].count == 1)
+        guard case .textDelta(_, let payload) = flushed[0][0] else {
+            Issue.record("Expected textDelta payload")
+            return
+        }
+        #expect(payload.count == oversized.count)
+    }
+
     // MARK: - Timer-based flush
 
     @MainActor
