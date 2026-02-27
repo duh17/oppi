@@ -288,6 +288,13 @@ struct WorkspaceDetailView: View {
                 )
             }
         }
+        .onAppear {
+            Task {
+                await refreshSessions()
+                await refreshLocalSessions()
+                await refreshPolicyFallback()
+            }
+        }
         .overlay {
             if isCreating || isImportingLocal {
                 ProgressView(isImportingLocal ? "Resuming session..." : "Creating session...")
@@ -446,7 +453,10 @@ struct WorkspaceDetailView: View {
     // MARK: - Actions
 
     private func createSession() async {
-        guard let api = connection.apiClient else { return }
+        guard let api = connection.apiClient else {
+            error = "Server is offline — reconnecting in background"
+            return
+        }
         isCreating = true
         error = nil
 
