@@ -783,12 +783,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
-        guard !turnInProgress, currentAssistantID == nil else { return false }
-        guard let lastAssistant = items.last else { return false }
-        guard case .assistantMessage(_, let existingText, _) = lastAssistant else { return false }
-
-        return existingText.trimmingCharacters(in: .whitespacesAndNewlines)
-            == content.trimmingCharacters(in: .whitespacesAndNewlines)
+        TimelineTurnAssembler.shouldSuppressDuplicateMessageEnd(
+            content: content,
+            turnInProgress: turnInProgress,
+            currentAssistantID: currentAssistantID,
+            lastItem: items.last
+        )
     }
 
     private func upsertAssistantMessage() {
@@ -799,7 +799,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         lastAssistantIDThisTurn = id
 
-        let item = ChatItem.assistantMessage(
+        let item = TimelineTurnAssembler.makeAssistantItem(
             id: id,
             text: assistantBuffer,
             timestamp: currentAssistantTimestamp ?? Date()
@@ -848,7 +848,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private func upsertThinking() {
         let id = ensureCurrentThinkingID()
 
-        let item = ChatItem.thinking(
+        let item = TimelineTurnAssembler.makeThinkingItem(
             id: id,
             preview: thinkingPreviewText(),
             hasMore: thinkingBuffer.count > ChatItem.maxPreviewLength
@@ -878,7 +878,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         // If the buffer is only whitespace (e.g., "\n\n" before a tool call),
         // discard it instead of creating an empty bubble.
-        if assistantBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if TimelineTurnAssembler.isWhitespaceOnly(assistantBuffer) {
             // Remove the in-progress item if it was already appended
             if let id = currentAssistantID {
                 items.removeAll { $0.id == id }
@@ -902,7 +902,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 rebuildIndex()
             } else {
                 // Mark the thinking item as done so the spinner stops.
-                items[idx] = .thinking(id: id, preview: preview, hasMore: hasMore, isDone: true)
+                items[idx] = TimelineTurnAssembler.makeThinkingItem(
+                    id: id,
+                    preview: preview,
+                    hasMore: hasMore,
+                    isDone: true
+                )
             }
         }
         thinkingBuffer = ""
