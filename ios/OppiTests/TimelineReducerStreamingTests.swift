@@ -88,6 +88,36 @@ struct TimelineReducerStreamingTests {
     }
 
     @MainActor
+    @Test func toolOutputOverflowNoOpSkipsRenderVersionBump() {
+        let reducer = TimelineReducer()
+        let toolID = "t-overflow"
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "read", args: [:]))
+
+        let firstChunk = String(repeating: "x", count: ToolOutputStore.perItemCap + 1_024)
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: firstChunk, isError: false),
+        ])
+
+        let versionAfterFirstChunk = reducer.renderVersion
+        let outputAfterFirstChunk = reducer.toolOutputStore.fullOutput(for: toolID)
+
+        #expect(!outputAfterFirstChunk.isEmpty)
+        #expect(outputAfterFirstChunk.hasSuffix(ToolOutputStore.truncationMarker))
+
+        reducer.processBatch([
+            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "ignored-after-cap", isError: false),
+        ])
+
+        #expect(
+            reducer.renderVersion == versionAfterFirstChunk,
+            "No-op tool output after per-item cap should not bump renderVersion"
+        )
+        #expect(reducer.toolOutputStore.fullOutput(for: toolID) == outputAfterFirstChunk)
+    }
+
+    @MainActor
     @Test func longThinkingStaysInThinkingPreviewOnAgentEnd() {
         let reducer = TimelineReducer()
         let longThinking = String(repeating: "y", count: 600) // > maxPreviewLength
