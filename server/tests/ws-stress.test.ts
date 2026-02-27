@@ -16,7 +16,15 @@ import { join } from "node:path";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { WebSocket } from "ws";
-import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import type { ServerMessage } from "../src/types.js";
+import {
+  collectMessages,
+  connectStream as connectHarnessStream,
+  messagesOfType,
+  requireMessageOfType,
+  sendClientMessage,
+  waitForMessage,
+} from "./harness/ws-harness.js";
 
 // ─── Test Harness ───
 
@@ -51,49 +59,11 @@ afterAll(async () => {
 // ─── Helpers ───
 
 function connectStream(): WebSocket {
-  return new WebSocket(`${baseWsUrl}/stream`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return connectHarnessStream(baseWsUrl, token);
 }
 
-function waitForOpen(ws: WebSocket): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (ws.readyState === WebSocket.OPEN) return resolve();
-    ws.once("open", resolve);
-    ws.once("error", reject);
-    setTimeout(() => reject(new Error("WS open timeout")), 5_000);
-  });
-}
-
-function waitForMessage(ws: WebSocket, timeoutMs = 3_000): Promise<ServerMessage> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Message timeout")), timeoutMs);
-    ws.once("message", (data) => {
-      clearTimeout(timer);
-      resolve(JSON.parse(data.toString()) as ServerMessage);
-    });
-  });
-}
-
-function collectMessages(
-  ws: WebSocket,
-  durationMs: number,
-): Promise<ServerMessage[]> {
-  return new Promise((resolve) => {
-    const messages: ServerMessage[] = [];
-    const handler = (data: unknown): void => {
-      messages.push(JSON.parse(data!.toString()) as ServerMessage);
-    };
-    ws.on("message", handler);
-    setTimeout(() => {
-      ws.off("message", handler);
-      resolve(messages);
-    }, durationMs);
-  });
-}
-
-function sendJson(ws: WebSocket, msg: ClientMessage): void {
-  ws.send(JSON.stringify(msg));
+function sendJson(ws: WebSocket, message: Parameters<typeof sendClientMessage>[1]): void {
+  sendClientMessage(ws, message);
 }
 
 async function createWorkspaceAndSession(): Promise<{
@@ -203,10 +173,7 @@ describe("subscribe/unsubscribe churn", () => {
       // via promise chain, so the final state should be subscribed.
       const messages = await collectMessages(ws, 2_000);
 
-      const results = messages.filter(
-        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-          msg.type === "command_result",
-      );
+      const results = messagesOfType(messages, "command_result");
 
       // Should have 3 command_results (2 subscribe + 1 unsubscribe)
       const subResults = results.filter((r) => r.command === "subscribe");
@@ -235,14 +202,14 @@ describe("subscribe/unsubscribe churn", () => {
       });
 
       const messages = await collectMessages(ws, 1_000);
-      const result = messages.find(
-        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-          msg.type === "command_result" && msg.requestId === "sub-missing",
+      const result = requireMessageOfType(
+        messages,
+        "command_result",
+        (msg) => msg.requestId === "sub-missing",
       );
 
-      expect(result).toBeDefined();
-      expect(result!.success).toBe(false);
-      expect(result!.error).toContain("not found");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("not found");
     } finally {
       ws.close();
     }
@@ -260,16 +227,12 @@ describe("subscribe/unsubscribe churn", () => {
         type: "prompt",
         sessionId,
         message: "hello",
-      } as unknown as ClientMessage);
+      });
 
       const messages = await collectMessages(ws, 1_000);
-      const error = messages.find(
-        (msg): msg is Extract<ServerMessage, { type: "error" }> =>
-          msg.type === "error",
-      );
+      const error = requireMessageOfType(messages, "error");
 
-      expect(error).toBeDefined();
-      expect(error!.error).toContain("not subscribed");
+      expect(error.error).toContain("not subscribed");
     } finally {
       ws.close();
     }
@@ -309,7 +272,7 @@ describe("reconnect + catch-up sequence", () => {
     const normalize = (msgs: ServerMessage[]) =>
       msgs.map((msg) => ({
         type: msg.type,
-        command: msg.type === "command_result" ? (msg as { command?: string }).command : undefined,
+        command: msg.type === "command_result" ? msg.command : undefined,
         sessionId: msg.sessionId,
       }));
 
@@ -350,9 +313,7 @@ describe("message ordering under load", () => {
 
       // Find the subscribe result and any state events
       const subResultIdx = messages.findIndex(
-        (msg) =>
-          msg.type === "command_result" &&
-          (msg as { command?: string }).command === "subscribe",
+        (msg) => msg.type === "command_result" && msg.command === "subscribe",
       );
 
       // Command result must exist
@@ -465,10 +426,10 @@ describe("malformed message handling", () => {
     const ws = connectStream();
     await waitForMessage(ws);
 
-    sendJson(ws, { type: "future_command_v99" } as unknown as ClientMessage);
+    ws.send(JSON.stringify({ type: "future_command_v99" }));
 
     // Should get an error response, not a crash
-    const messages = await collectMessages(ws, 500);
+    await collectMessages(ws, 500);
     // Server should handle gracefully (either ignore or error response)
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
@@ -490,13 +451,13 @@ describe("malformed message handling", () => {
       });
 
       const messages = await collectMessages(ws, 1_000);
-      const result = messages.find(
-        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-          msg.type === "command_result" && msg.requestId === "bad-seq",
+      const result = requireMessageOfType(
+        messages,
+        "command_result",
+        (msg) => msg.requestId === "bad-seq",
       );
 
-      expect(result).toBeDefined();
-      expect(result!.success).toBe(false);
+      expect(result.success).toBe(false);
     } finally {
       ws.close();
     }
@@ -591,7 +552,7 @@ describe("reconnect bootstrap order (integration)", () => {
           type: msg.type,
           command:
             msg.type === "command_result"
-              ? (msg as { command?: string }).command
+              ? msg.command
               : undefined,
         }));
 
@@ -628,14 +589,9 @@ describe("reconnect bootstrap order (integration)", () => {
 
       const messages = await collectMessages(ws, 3_000);
 
-      const subResults = messages.filter(
-        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-          msg.type === "command_result" && msg.command === "subscribe",
-      );
-      const unsubResults = messages.filter(
-        (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-          msg.type === "command_result" && msg.command === "unsubscribe",
-      );
+      const commandResults = messagesOfType(messages, "command_result");
+      const subResults = commandResults.filter((msg) => msg.command === "subscribe");
+      const unsubResults = commandResults.filter((msg) => msg.command === "unsubscribe");
 
       // Should have 3 subscribe + 2 unsubscribe results
       expect(subResults).toHaveLength(3);

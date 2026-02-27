@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { UserStreamMux, startServerPing, type StreamContext } from "../src/stream.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import { messagesOfType, requireMessageOfType } from "./harness/ws-harness.js";
 
 function makeSession(id: string): Session {
   const now = Date.now();
@@ -14,15 +15,6 @@ function makeSession(id: string): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-  };
-}
-
-function makeUser(): User {
-  return {
-    id: "u1",
-    name: "Bob",
-    token: "tok",
-    createdAt: Date.now(),
   };
 }
 
@@ -57,7 +49,7 @@ class FakeWebSocket {
     this.sent.push(JSON.parse(data) as ServerMessage);
   }
 
-  emitMessage(msg: unknown): void {
+  emitClientMessage(msg: ClientMessage): void {
     const data = Buffer.from(JSON.stringify(msg));
     for (const handler of this.handlers.message) {
       handler(data);
@@ -93,7 +85,7 @@ function makeHarness(options?: {
   >;
   ensureSessionContextWindow?: (session: Session) => Session;
 }): Harness {
-  const sessions = options?.sessions ?? [makeSession("s1", "owner")];
+  const sessions = options?.sessions ?? [makeSession("s1")];
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const sessionCallbacks = new Map<string, (msg: ServerMessage) => void>();
   const unsubscribeCalls: string[] = [];
@@ -181,11 +173,16 @@ describe("/stream websocket behavior", () => {
     const harness = makeHarness({ sessions: [makeSession("s1"), makeSession("s2")] });
     const ws = new FakeWebSocket();
 
-    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
-    ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-1",
+    });
     await flushQueue();
-    ws.emitMessage({
+    ws.emitClientMessage({
       type: "subscribe",
       sessionId: "s2",
       level: "notifications",
@@ -231,9 +228,14 @@ describe("/stream websocket behavior", () => {
     });
     const ws = new FakeWebSocket();
 
-    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
-    ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-1",
+    });
     await flushQueue();
 
     const callback = harness.sessionCallbacks.get("s1");
@@ -251,9 +253,9 @@ describe("/stream websocket behavior", () => {
     const harness = makeHarness();
     const ws = new FakeWebSocket();
 
-    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
-    ws.emitMessage({
+    ws.emitClientMessage({
       type: "subscribe",
       sessionId: "s1",
       level: "notifications",
@@ -261,7 +263,7 @@ describe("/stream websocket behavior", () => {
     });
     await flushQueue();
 
-    ws.emitMessage({
+    ws.emitClientMessage({
       type: "subscribe",
       sessionId: "s1",
       level: "notifications",
@@ -271,14 +273,13 @@ describe("/stream websocket behavior", () => {
 
     expect(harness.unsubscribeCalls).toEqual(["s1"]);
 
-    ws.emitMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-1" });
+    ws.emitClientMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-1" });
     await flushQueue();
-    ws.emitMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-2" });
+    ws.emitClientMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-2" });
     await flushQueue();
 
-    const unsubscribeResults = ws.sent.filter(
-      (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
-        msg.type === "command_result" && msg.command === "unsubscribe",
+    const unsubscribeResults = messagesOfType(ws.sent, "command_result").filter(
+      (msg) => msg.command === "unsubscribe",
     );
 
     expect(unsubscribeResults).toHaveLength(2);
@@ -289,25 +290,32 @@ describe("/stream websocket behavior", () => {
     const harness = makeHarness({ sessions: [makeSession("s1"), makeSession("s2")] });
     const ws = new FakeWebSocket();
 
-    await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
-    ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s1",
+      level: "full",
+      requestId: "sub-1",
+    });
     await flushQueue();
-    ws.emitMessage({ type: "subscribe", sessionId: "s2", level: "full", requestId: "sub-2" });
+    ws.emitClientMessage({
+      type: "subscribe",
+      sessionId: "s2",
+      level: "full",
+      requestId: "sub-2",
+    });
     await flushQueue();
 
     const beforeOldFullPrompt = ws.sent.length;
-    ws.emitMessage({ type: "prompt", sessionId: "s1", message: "should fail" });
+    ws.emitClientMessage({ type: "prompt", sessionId: "s1", message: "should fail" });
     await flushQueue();
 
-    const oldFullError = ws.sent.slice(beforeOldFullPrompt).find((msg) => msg.type === "error");
-    expect(oldFullError?.type).toBe("error");
-    if (oldFullError?.type === "error") {
-      expect(oldFullError.error).toContain("not subscribed at level=full");
-    }
+    const oldFullError = requireMessageOfType(ws.sent.slice(beforeOldFullPrompt), "error");
+    expect(oldFullError.error).toContain("not subscribed at level=full");
 
     const beforeNewFullPrompt = ws.sent.length;
-    ws.emitMessage({ type: "prompt", sessionId: "s2", message: "should pass" });
+    ws.emitClientMessage({ type: "prompt", sessionId: "s2", message: "should pass" });
     await flushQueue();
 
     expect(harness.handleClientMessage).toHaveBeenCalledTimes(1);
@@ -340,12 +348,12 @@ describe("/stream websocket behavior", () => {
 
     const connect = async (): Promise<FakeWebSocket> => {
       const ws = new FakeWebSocket();
-      await harness.mux.handleWebSocket(ws as unknown as WebSocket, harness.user);
+      await harness.mux.handleWebSocket(ws as unknown as WebSocket);
       return ws;
     };
 
     const ws1 = await connect();
-    ws1.emitMessage({
+    ws1.emitClientMessage({
       type: "subscribe",
       sessionId: "s1",
       level: "full",
@@ -356,7 +364,7 @@ describe("/stream websocket behavior", () => {
     ws1.emitClose();
 
     const ws2 = await connect();
-    ws2.emitMessage({
+    ws2.emitClientMessage({
       type: "subscribe",
       sessionId: "s1",
       level: "full",
