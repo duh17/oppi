@@ -61,4 +61,57 @@ struct ToolExpandScrollMatrixTests {
         #expect(downwardDrift < 5.0,
                 "Post-collapse downward scroll snapped by \(downwardDrift)pt for \(toolCase.name)")
     }
+
+    @MainActor
+    @Test(arguments: TimelineStreamingScrollMatrixCase.allCases)
+    func streamingScrollAndRenderingMatrix(_ matrixCase: TimelineStreamingScrollMatrixCase) {
+        let runner = TimelineStreamingScrollScenarioRunner(
+            sessionSuffix: matrixCase.name,
+            followState: matrixCase.followState,
+            useAnchoredCollectionView: matrixCase.followState == .detachedFollow
+        )
+
+        runner.runRound(
+            content: matrixCase.content,
+            highlightPhase: matrixCase.phase,
+            toolEventID: "matrix-tool-\(matrixCase.name)",
+            token: matrixCase.name
+        )
+
+        runner.assertFollowTransitions(step: "\(matrixCase.name)-follow")
+    }
+
+    @MainActor
+    @Test func longDeterministicMixedContentStressScenario() {
+        let runner = TimelineStreamingScrollScenarioRunner(
+            sessionSuffix: "long-stress",
+            followState: .detachedFollow,
+            useAnchoredCollectionView: true
+        )
+
+        for round in 0..<18 {
+            let content = TimelineStreamingContentKind.allCases[
+                round % TimelineStreamingContentKind.allCases.count
+            ]
+            let phase = TimelineStreamingPhase.allCases[
+                (round / 2) % TimelineStreamingPhase.allCases.count
+            ]
+            let token = "stress-\(round)-\(content.name)-\(phase.name)"
+
+            runner.runRound(
+                content: content,
+                highlightPhase: phase,
+                toolEventID: "stress-tool-\(round)",
+                token: token
+            )
+
+            if round.isMultiple(of: 4) {
+                runner.assertFollowTransitions(step: "stress-follow-\(round)")
+            }
+        }
+
+        #expect(runner.harness.reducer.items.count > 50)
+        #expect(timelineDuplicateIDs(in: runner.harness.reducer.items).isEmpty)
+        #expect(!runner.harness.scrollController.isCurrentlyNearBottom)
+    }
 }
