@@ -63,6 +63,51 @@ struct ToolExpandScrollMatrixTests {
     }
 
     @MainActor
+    @Test(arguments: ToolExpandScrollMatrixCase.allCases)
+    func expandingToolRowsKeepsAnchoredOffsetStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
+        let fixture = try #require(
+            ToolExpandScrollMatrixFixture.make(
+                for: toolCase,
+                sessionSuffix: "expand-anchored",
+                useAnchoredCollectionView: true
+            )
+        )
+
+        fixture.prepareDetachedViewport()
+        let offsetBeforeExpand = fixture.offsetY
+
+        fixture.expandTarget()
+
+        let offsetAfterExpand = fixture.offsetY
+        let expandDrift = abs(offsetAfterExpand - offsetBeforeExpand)
+        #expect(expandDrift < 8.0,
+                "Anchored expand drifted \(expandDrift)pt for \(toolCase.name)")
+    }
+
+    @MainActor
+    @Test(arguments: ToolExpandScrollMatrixCase.allCases)
+    func collapsingToolRowsKeepsAnchoredOffsetStable(_ toolCase: ToolExpandScrollMatrixCase) throws {
+        let fixture = try #require(
+            ToolExpandScrollMatrixFixture.make(
+                for: toolCase,
+                sessionSuffix: "collapse-anchored",
+                useAnchoredCollectionView: true
+            )
+        )
+
+        fixture.prepareDetachedViewport()
+        fixture.expandTarget()
+        let offsetBeforeCollapse = fixture.offsetY
+
+        fixture.collapseTarget()
+
+        let offsetAfterCollapse = fixture.offsetY
+        let collapseDrift = abs(offsetAfterCollapse - offsetBeforeCollapse)
+        #expect(collapseDrift < 8.0,
+                "Anchored collapse drifted \(collapseDrift)pt for \(toolCase.name)")
+    }
+
+    @MainActor
     @Test(arguments: TimelineStreamingScrollMatrixCase.allCases)
     func streamingScrollAndRenderingMatrix(_ matrixCase: TimelineStreamingScrollMatrixCase) {
         let runner = TimelineStreamingScrollScenarioRunner(

@@ -10,6 +10,10 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     case bashOutput
     case editDiff
     case todoDiff
+    case todoCard
+    case rememberMarkdown
+    case recallText
+    case customText
     case plot
     case readMarkdown
     case readMedia
@@ -21,6 +25,10 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         case .bashOutput: return "bash-output"
         case .editDiff: return "edit-diff"
         case .todoDiff: return "todo-diff"
+        case .todoCard: return "todo-card"
+        case .rememberMarkdown: return "remember-markdown"
+        case .recallText: return "recall-text"
+        case .customText: return "custom-text"
         case .plot: return "plot"
         case .readMarkdown: return "read-markdown"
         case .readMedia: return "read-media"
@@ -32,7 +40,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     @MainActor
     func makeTimeline(
         toolArgsStore: ToolArgsStore,
-        toolOutputStore: ToolOutputStore
+        toolOutputStore: ToolOutputStore,
+        toolSegmentStore: ToolSegmentStore
     ) -> [ChatItem] {
         var items: [ChatItem] = []
 
@@ -43,7 +52,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         items.append(makeTargetToolCall(
             itemID: targetItemID,
             toolArgsStore: toolArgsStore,
-            toolOutputStore: toolOutputStore
+            toolOutputStore: toolOutputStore,
+            toolSegmentStore: toolSegmentStore
         ))
 
         for index in 0..<12 {
@@ -57,7 +67,8 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     private func makeTargetToolCall(
         itemID: String,
         toolArgsStore: ToolArgsStore,
-        toolOutputStore: ToolOutputStore
+        toolOutputStore: ToolOutputStore,
+        toolSegmentStore: ToolSegmentStore
     ) -> ChatItem {
         switch self {
         case .writeCode:
@@ -166,6 +177,120 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 argsSummary: "action: update, id: TODO-matrix-scroll",
                 outputPreview: "Updated TODO",
                 outputByteCount: body.utf8.count,
+                isError: false,
+                isDone: true
+            )
+
+        case .todoCard:
+            let output = """
+            [
+              {"id":"TODO-a1","title":"Stabilize scroll anchor","status":"in_progress","tags":["ios","scroll"]},
+              {"id":"TODO-a2","title":"Audit remember/recall rows","status":"open","tags":["timeline"]},
+              {"id":"TODO-a3","title":"Capture perf traces","status":"done","tags":["perf"]}
+            ]
+            """
+
+            toolArgsStore.set([
+                "action": .string("list-all"),
+            ], for: itemID)
+            toolOutputStore.append(output, to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "todo ", style: .bold),
+                StyledSegment(text: "list-all", style: .accent),
+            ], for: itemID)
+            toolSegmentStore.setResultSegments([
+                StyledSegment(text: "3 items", style: .success),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "todo",
+                argsSummary: "action: list-all",
+                outputPreview: "TODO-a1",
+                outputByteCount: output.utf8.count,
+                isError: false,
+                isDone: true
+            )
+
+        case .rememberMarkdown:
+            let text = Self.sampleMarkdownDocument(title: "Remembered Notes", sections: 10)
+
+            toolArgsStore.set([
+                "text": .string(text),
+                "tags": .array([.string("ios"), .string("scroll"), .string("timeline")]),
+            ], for: itemID)
+            toolOutputStore.append("", to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "remember ", style: .bold),
+                StyledSegment(text: "\"Remembered Notes\"", style: .accent),
+                StyledSegment(text: " [ios, scroll, timeline]", style: .muted),
+            ], for: itemID)
+            toolSegmentStore.setResultSegments([
+                StyledSegment(text: "saved", style: .success),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "remember",
+                argsSummary: "text: remembered notes",
+                outputPreview: "",
+                outputByteCount: text.utf8.count,
+                isError: false,
+                isDone: true
+            )
+
+        case .recallText:
+            let output = (1...80)
+                .map { "[\($0)] /journal/entry-\($0).md: matched architecture decision line \($0)" }
+                .joined(separator: "\n")
+
+            toolArgsStore.set([
+                "query": .string("scroll anchoring"),
+                "scope": .string("journal"),
+                "days": .number(30),
+            ], for: itemID)
+            toolOutputStore.append(output, to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "recall ", style: .bold),
+                StyledSegment(text: "\"scroll anchoring\"", style: .accent),
+                StyledSegment(text: " scope:journal 30d", style: .muted),
+            ], for: itemID)
+            toolSegmentStore.setResultSegments([
+                StyledSegment(text: "80 matches", style: .success),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "recall",
+                argsSummary: "query: scroll anchoring",
+                outputPreview: "[1] /journal/entry-1.md",
+                outputByteCount: output.utf8.count,
+                isError: false,
+                isDone: true
+            )
+
+        case .customText:
+            let output = (1...100).map { "custom-result-\($0): extension output" }.joined(separator: "\n")
+
+            toolArgsStore.set([
+                "query": .string("scroll reset bug"),
+                "mode": .string("hybrid"),
+            ], for: itemID)
+            toolOutputStore.append(output, to: itemID)
+            toolSegmentStore.setCallSegments([
+                StyledSegment(text: "search ", style: .bold),
+                StyledSegment(text: "\"scroll reset bug\"", style: .accent),
+            ], for: itemID)
+            toolSegmentStore.setResultSegments([
+                StyledSegment(text: "100 hits", style: .success),
+            ], for: itemID)
+
+            return .toolCall(
+                id: itemID,
+                tool: "extensions.search",
+                argsSummary: "query: scroll reset bug",
+                outputPreview: "custom-result-1",
+                outputByteCount: output.utf8.count,
                 isError: false,
                 isDone: true
             )
@@ -294,12 +419,18 @@ struct ToolExpandScrollMatrixFixture {
 
     static func make(
         for toolCase: ToolExpandScrollMatrixCase,
-        sessionSuffix: String
+        sessionSuffix: String,
+        useAnchoredCollectionView: Bool = false
     ) -> Self? {
-        let harness = makeWindowedTimelineHarness(sessionId: "s-tool-matrix-\(toolCase.name)-\(sessionSuffix)")
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "s-tool-matrix-\(toolCase.name)-\(sessionSuffix)",
+            useAnchoredCollectionView: useAnchoredCollectionView
+        )
+
         let items = toolCase.makeTimeline(
             toolArgsStore: harness.toolArgsStore,
-            toolOutputStore: harness.toolOutputStore
+            toolOutputStore: harness.toolOutputStore,
+            toolSegmentStore: harness.toolSegmentStore
         )
         harness.applyItems(items, isBusy: false)
 
@@ -317,18 +448,24 @@ struct ToolExpandScrollMatrixFixture {
 
     var collectionView: UICollectionView { harness.collectionView }
 
-    var offsetY: CGFloat { collectionView.contentOffset.y }
+    var offsetY: CGFloat {
+        collectionView.contentOffset.y + collectionView.adjustedContentInset.top
+    }
 
     var maxOffsetY: CGFloat {
-        max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        let insets = collectionView.adjustedContentInset
+        return max(
+            0,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + insets.top
+                + insets.bottom
+        )
     }
 
     func prepareDetachedViewport() {
-        collectionView.contentOffset.y = maxOffsetY
-        settleLayout()
-
-        collectionView.contentOffset.y = maxOffsetY * 0.5
-        settleLayout()
+        _ = setOffsetY(maxOffsetY)
+        _ = setOffsetY(maxOffsetY * 0.5)
         harness.scrollController.detachFromBottomForUserScroll()
 
         ensureTargetVisible()
@@ -347,7 +484,8 @@ struct ToolExpandScrollMatrixFixture {
     @discardableResult
     func setOffsetY(_ targetY: CGFloat) -> CGFloat {
         let clamped = clampOffsetY(targetY)
-        collectionView.contentOffset.y = clamped
+        let rawOffset = clamped - collectionView.adjustedContentInset.top
+        collectionView.contentOffset.y = rawOffset
         settleLayout()
         return clamped
     }
