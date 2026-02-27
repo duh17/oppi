@@ -31,6 +31,8 @@ Status legend:
 
 Use this section to map bug-bash findings to explicit invariants and permanent regression tests.
 
+Reference workflow: [`docs/testing/bug-bash-playbook.md`](./bug-bash-playbook.md)
+
 ### Mapping fields
 
 - **Bug ID**: tracker ID (issue/todo)
@@ -43,7 +45,7 @@ Use this section to map bug-bash findings to explicit invariants and permanent r
 
 | Bug ID | Invariant violated | Repro artifact | Regression test path | Status | Notes |
 |---|---|---|---|---|---|
-| BUG-YYYYMMDD-001 | RQ-TL-002 | `docs/testing/bug-bash/artifacts/<artifact>.md` | `ios/OppiTests/Timeline/TimelineReducerStreamingTests.swift :: <testName>` | open | Add server-side regression if protocol/event ordering contributed. |
+| BUG-YYYYMMDD-001 | RQ-TL-002 | `docs/testing/bug-bash/fixtures/<BUG-ID>/` | `ios/OppiTests/Timeline/TimelineReducerStreamingTests.swift :: <testName>` | open | Add server-side regression if protocol/event ordering contributed. |
 
 ## Update Process
 
