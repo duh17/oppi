@@ -128,6 +128,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let borderView = UIView()
 
     private var currentConfiguration: ToolTimelineRowConfiguration
+    private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
     private var bodyStackCollapsedHeightConstraint: NSLayoutConstraint?
     private var outputViewportHeightConstraint: NSLayoutConstraint?
     private var outputLabelWidthConstraint: NSLayoutConstraint?
@@ -841,6 +842,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         // Reset gesture interception (specific cases disable it below)
         setExpandedContainerGestureInterceptionEnabled(true)
+        currentInteractionPolicy = nil
 
         var showExpandedContainer = false
         var showCommandContainer = false
@@ -848,6 +850,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if configuration.isExpanded, let rawExpandedContent = configuration.expandedContent {
             let expandedContent = normalizedExpandedContentForHotPath(rawExpandedContent)
+            currentInteractionPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+                expandedContent
+            )
             let visibility = ToolTimelineRowExpandedModeRouter.route(
                 expandedContent: expandedContent,
                 renderBash: { command, output, unwrapped in
@@ -873,7 +878,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 renderMarkdown: { text in
                     self.renderExpandedMarkdownMode(
                         text: text,
-                        wasExpandedVisible: wasExpandedVisible
+                        wasExpandedVisible: wasExpandedVisible,
+                        isDone: configuration.isDone
                     )
                 },
                 renderTodo: { output in
@@ -967,6 +973,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isExpandingTransition: isExpandingTransition,
             wasVisible: wasOutputVisible
         )
+
+        if showExpandedContainer, let policy = currentInteractionPolicy {
+            applyInteractionPolicy(policy, showOutputContainer: showOutputContainer)
+        } else {
+            setExpandedContainerGestureInterceptionEnabled(true)
+        }
 
         let showImagePreview = !imagePreviewContainer.isHidden
         let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
@@ -1107,7 +1119,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func renderExpandedMarkdownMode(
         text: String,
-        wasExpandedVisible: Bool
+        wasExpandedVisible: Bool,
+        isDone: Bool
     ) -> ExpandedRenderVisibility {
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
@@ -1122,8 +1135,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
             wasExpandedVisible: wasExpandedVisible,
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
+            shouldAutoFollowOnFirstRender: !isDone,
             showExpandedMarkdown: showExpandedMarkdown,
-            setExpandedContainerTapCopyGestureEnabled: setExpandedContainerTapCopyGestureEnabled,
             setModeText: { self.expandedViewportMode = .text },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
             showExpandedViewport: showExpandedViewport,
@@ -1264,6 +1277,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isCurrentModeText: expandedViewportMode == .text,
             isUsingMarkdownLayout: expandedUsesMarkdownLayout,
             isUsingReadMediaLayout: expandedUsesReadMediaLayout,
+            shouldAutoFollowOnFirstRender: !configuration.isDone,
             showExpandedLabel: showExpandedLabel,
             setModeText: { self.expandedViewportMode = .text },
             updateExpandedLabelWidthIfNeeded: updateExpandedLabelWidthIfNeeded,
@@ -1303,6 +1317,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // Expanded tool content is now UIKit-first for timeline hot paths.
         // SwiftUI is preserved behind per-view install gates as a fallback.
         content
+    }
+
+    private func applyInteractionPolicy(
+        _ policy: ToolTimelineRowInteractionPolicy,
+        showOutputContainer: Bool
+    ) {
+        setExpandedContainerTapCopyGestureEnabled(policy.enablesTapCopyGesture)
+        expandedPinchGesture.isEnabled = policy.enablesPinchGesture
+
+        expandedScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
+        expandedScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
+
+        if showOutputContainer, case .bash = policy.mode {
+            outputScrollView.alwaysBounceHorizontal = policy.allowsHorizontalScroll
+            outputScrollView.showsHorizontalScrollIndicator = policy.allowsHorizontalScroll
+        }
     }
 
     private func setExpandedContainerGestureInterceptionEnabled(_ enabled: Bool) {
@@ -1395,17 +1425,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return nil
     }
 
-    private var supportsFullScreenPreview: Bool {
-        ToolTimelineRowFullScreenSupport.supportsPreview(
-            toolNamePrefix: currentConfiguration.toolNamePrefix
-        )
-    }
-
     private var fullScreenContent: FullScreenCodeContent? {
-        guard supportsFullScreenPreview else { return nil }
-        return ToolTimelineRowFullScreenSupport.fullScreenContent(
+        ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: currentConfiguration,
-            outputCopyText: outputCopyText
+            outputCopyText: outputCopyText,
+            interactionPolicy: currentInteractionPolicy
         )
     }
 
