@@ -439,20 +439,32 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
 
             if !pendingToolOutputOrder.isEmpty {
+                var didMutateToolOutputs = false
+
                 for toolEventId in pendingToolOutputOrder {
+                    let outputDidChange: Bool
                     if let chunks = pendingToolOutputChunksByID[toolEventId], !chunks.isEmpty {
                         let mergedOutput = chunks.count == 1 ? chunks[0] : chunks.joined()
-                        toolOutputStore.append(mergedOutput, to: toolEventId)
+                        outputDidChange = toolOutputStore.append(mergedOutput, to: toolEventId)
+                    } else {
+                        outputDidChange = false
                     }
-                    updateToolCallPreview(
+
+                    let previewDidChange = updateToolCallPreview(
                         id: toolEventId,
                         isError: pendingToolOutputIsError[toolEventId] ?? false
                     )
+
+                    if outputDidChange || previewDidChange {
+                        didMutateToolOutputs = true
+                    }
                 }
                 pendingToolOutputChunksByID.removeAll(keepingCapacity: true)
                 pendingToolOutputIsError.removeAll(keepingCapacity: true)
                 pendingToolOutputOrder.removeAll(keepingCapacity: true)
-                didMutate = true
+                if didMutateToolOutputs {
+                    didMutate = true
+                }
             }
         }
 
@@ -921,15 +933,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
-    private func updateToolCallPreview(id: String, isError: Bool) {
+    @discardableResult
+    private func updateToolCallPreview(id: String, isError: Bool) -> Bool {
         guard let idx = indexForID(id),
               case .toolCall(_, let tool, let args, _, _, let existingError, let isDone) = items[idx]
         else {
-            return
+            return false
         }
 
         let fullOutput = toolOutputStore.fullOutput(for: id)
-        items[idx] = .toolCall(
+        let updated = ChatItem.toolCall(
             id: id,
             tool: tool,
             argsSummary: args,
@@ -938,6 +951,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             isError: existingError || isError,
             isDone: isDone
         )
+
+        if items[idx] == updated {
+            return false
+        }
+
+        items[idx] = updated
+        return true
     }
 
     private func updateToolCallDone(id: String, isError: Bool = false) {
