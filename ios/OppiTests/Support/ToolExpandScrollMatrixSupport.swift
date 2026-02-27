@@ -374,11 +374,7 @@ struct ToolExpandScrollMatrixFixture {
     }
 
     func settleLayout(passes: Int = 2) {
-        for _ in 0..<passes {
-            collectionView.layoutIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        collectionView.layoutIfNeeded()
+        settleTimelineLayout(collectionView, passes: passes)
     }
 
     private func ensureTargetVisible() {
