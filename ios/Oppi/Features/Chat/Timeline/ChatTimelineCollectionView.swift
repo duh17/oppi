@@ -533,16 +533,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             )
 
-            dataSource = TimelineDataSourceCoordinator.makeDataSource(
-                collectionView: collectionView,
-                itemByIDProvider: { [weak self] in
-                    self?.currentItemByID ?? [:]
-                },
-                registrations: registrations,
-                isCompactionMessage: { message in
-                    Self.compactionPresentation(from: message) != nil
-                }
-            )
+            dataSource = UICollectionViewDiffableDataSource<Int, String>(
+                collectionView: collectionView
+            ) { [weak self] collectionView, indexPath, itemID in
+                TimelineCellFactory.dequeueCell(
+                    collectionView: collectionView,
+                    indexPath: indexPath,
+                    itemID: itemID,
+                    itemByID: self?.currentItemByID ?? [:],
+                    registrations: registrations,
+                    isCompactionMessage: { message in
+                        Self.compactionPresentation(from: message) != nil
+                    }
+                )
+            }
 
         }
 
