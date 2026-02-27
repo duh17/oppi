@@ -82,8 +82,13 @@ struct ScrollFollowBehaviorTests {
             bottomItemID: "bottom-1"
         ) { _ in scrollCount += 1 }
 
-        try? await Task.sleep(for: .milliseconds(120))
-        #expect(scrollCount == 0,
+        let stayedDetached = await waitForMainActorConditionToStayTrue(
+            for: .milliseconds(160),
+            poll: .milliseconds(10)
+        ) {
+            scrollCount == 0
+        }
+        #expect(stayedDetached,
                 "auto-scroll must not fire while user is scrolled up")
     }
 

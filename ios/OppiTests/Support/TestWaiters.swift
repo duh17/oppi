@@ -1,19 +1,69 @@
 import Foundation
 
 func waitForTestCondition(
-    timeoutMs: Int = 1_000,
-    pollMs: Int = 20,
+    timeout: Duration = .seconds(1),
+    poll: Duration = .milliseconds(20),
     _ predicate: @escaping @Sendable () async -> Bool
 ) async -> Bool {
-    let sanitizedPollMs = max(1, pollMs)
-    let attempts = max(1, timeoutMs / sanitizedPollMs)
+    let deadline = ContinuousClock.now.advanced(by: timeout)
 
-    for _ in 0..<attempts {
+    while ContinuousClock.now < deadline {
         if await predicate() {
             return true
         }
-        try? await Task.sleep(for: .milliseconds(sanitizedPollMs))
+        await Task.yield()
+        try? await Task.sleep(for: poll)
     }
 
     return await predicate()
+}
+
+func waitForTestCondition(
+    timeoutMs: Int,
+    pollMs: Int = 20,
+    _ predicate: @escaping @Sendable () async -> Bool
+) async -> Bool {
+    await waitForTestCondition(
+        timeout: .milliseconds(timeoutMs),
+        poll: .milliseconds(max(1, pollMs)),
+        predicate
+    )
+}
+
+@MainActor
+func waitForMainActorCondition(
+    timeout: Duration = .seconds(1),
+    poll: Duration = .milliseconds(20),
+    _ predicate: () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+
+    while ContinuousClock.now < deadline {
+        if predicate() {
+            return true
+        }
+        await Task.yield()
+        try? await Task.sleep(for: poll)
+    }
+
+    return predicate()
+}
+
+@MainActor
+func waitForMainActorConditionToStayTrue(
+    for duration: Duration,
+    poll: Duration = .milliseconds(20),
+    _ predicate: () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: duration)
+
+    while ContinuousClock.now < deadline {
+        if !predicate() {
+            return false
+        }
+        await Task.yield()
+        try? await Task.sleep(for: poll)
+    }
+
+    return predicate()
 }
