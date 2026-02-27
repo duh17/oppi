@@ -62,6 +62,16 @@ function isValidHex(v: string): boolean {
   return v === "" || /^#[0-9a-fA-F]{6}$/.test(v);
 }
 
+function requireConvertedTheme(
+  result: ReturnType<typeof convertPiTheme>,
+): NonNullable<ReturnType<typeof convertPiTheme>> {
+  expect(result).not.toBeNull();
+  if (result === null) {
+    throw new Error("Expected converted theme to be non-null");
+  }
+  return result;
+}
+
 describe("color256ToHex", () => {
   test("basic ANSI colors (0-15)", () => {
     expect(color256ToHex(0)).toBe("#000000");
@@ -182,16 +192,16 @@ describe("convertPiTheme", () => {
     };
 
     const result = convertPiTheme(pi);
-    expect(result).not.toBeNull();
-    expect(result!.name).toBe("Test");
-    expect(result!.colorScheme).toBe("dark");
-    expect(result!.source).toBe("pi");
+    const theme = requireConvertedTheme(result);
+    expect(theme.name).toBe("Test");
+    expect(theme.colorScheme).toBe("dark");
+    expect(theme.source).toBe("pi");
 
     // bg should come from vars.bg, not toolPendingBg
-    expect(result!.colors.bg).toBe("#16161e"); // darkest bg-like var
-    expect(result!.colors.blue).toBe("#0066cc");
-    expect(result!.colors.fg).toBe("#c0c4ce"); // default for dark theme with text=""
-    expect(result!.colors.toolTitle).toBe("#0066cc"); // resolved from var
+    expect(theme.colors.bg).toBe("#16161e"); // darkest bg-like var
+    expect(theme.colors.blue).toBe("#0066cc");
+    expect(theme.colors.fg).toBe("#c0c4ce"); // default for dark theme with text=""
+    expect(theme.colors.toolTitle).toBe("#0066cc"); // resolved from var
   });
 
   test("picks darkest bg-like var for bg", () => {
@@ -252,11 +262,11 @@ describe("convertPiTheme", () => {
     };
 
     const result = convertPiTheme(pi);
-    expect(result).not.toBeNull();
+    const theme = requireConvertedTheme(result);
     // void (#0c0d12) is darkest — should be bg
-    expect(result!.colors.bg).toBe("#0c0d12");
+    expect(theme.colors.bg).toBe("#0c0d12");
     // onyx (#13141b) is next — should be bgDark
-    expect(result!.colors.bgDark).toBe("#13141b");
+    expect(theme.colors.bgDark).toBe("#13141b");
   });
 
   test("detects light theme", () => {
@@ -310,9 +320,9 @@ describe("convertPiTheme", () => {
     };
 
     const result = convertPiTheme(pi);
-    expect(result).not.toBeNull();
-    expect(result!.colorScheme).toBe("light");
-    expect(result!.colors.fg).toBe("#1a1a1a"); // explicit text, not default
+    const theme = requireConvertedTheme(result);
+    expect(theme.colorScheme).toBe("light");
+    expect(theme.colors.fg).toBe("#1a1a1a"); // explicit text, not default
   });
 
   test("handles theme with missing colors (fallbacks)", () => {
@@ -326,10 +336,10 @@ describe("convertPiTheme", () => {
     };
 
     const result = convertPiTheme(pi);
-    expect(result).not.toBeNull();
+    const theme = requireConvertedTheme(result);
     // Should have fallback values
-    expect(result!.colors.bg).toBeTruthy();
-    expect(result!.colors.blue).toBeTruthy();
+    expect(theme.colors.bg).toBeTruthy();
+    expect(theme.colors.blue).toBeTruthy();
   });
 
   test("all output values are valid hex or empty", () => {
@@ -383,8 +393,8 @@ describe("convertPiTheme", () => {
     };
 
     const result = convertPiTheme(pi);
-    expect(result).not.toBeNull();
-    for (const [key, value] of Object.entries(result!.colors)) {
+    const theme = requireConvertedTheme(result);
+    for (const [key, value] of Object.entries(theme.colors)) {
       expect(isValidHex(value), `${key}="${value}" is not valid hex`).toBe(true);
     }
   });
@@ -400,19 +410,19 @@ describe("convertPiTheme", () => {
     const content = readFileSync(emberPath, "utf8");
     const piTheme = JSON.parse(content);
     const result = convertPiTheme(piTheme);
+    const theme = requireConvertedTheme(result);
 
-    expect(result).not.toBeNull();
-    expect(result!.name).toBe("ember");
-    expect(result!.colorScheme).toBe("dark");
-    expect(result!.source).toBe("pi");
+    expect(theme.name).toBe("ember");
+    expect(theme.colorScheme).toBe("dark");
+    expect(theme.source).toBe("pi");
 
     // All 49 tokens present and valid
     for (const key of REQUIRED_OPPI_KEYS) {
-      expect(result!.colors, `missing key: ${key}`).toHaveProperty(key);
-      expect(isValidHex(result!.colors[key]), `${key}="${result!.colors[key]}" invalid`).toBe(true);
+      expect(theme.colors, `missing key: ${key}`).toHaveProperty(key);
+      expect(isValidHex(theme.colors[key]), `${key}="${theme.colors[key]}" invalid`).toBe(true);
     }
 
     // Verify bg comes from darkest var (void=#0c0d12), not toolPendingBg
-    expect(result!.colors.bg).toBe("#0c0d12");
+    expect(theme.colors.bg).toBe("#0c0d12");
   });
 });
