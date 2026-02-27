@@ -232,22 +232,24 @@ struct DeltaCoalescerTests {
     // MARK: - Timer-based flush
 
     @MainActor
-    @Test func bufferedDeltasFlushAfterInterval() async throws {
+    @Test func bufferedDeltasFlushAfterInterval() async {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
 
         coalescer.receive(.textDelta(sessionId: "s1", delta: "delayed"))
 
-        // Wait longer than the 33ms flush interval
-        try await Task.sleep(for: .milliseconds(80))
+        let didFlush = await waitForMainActorCondition(timeout: .milliseconds(300), poll: .milliseconds(10)) {
+            flushed.count == 1
+        }
 
+        #expect(didFlush)
         #expect(flushed.count == 1)
         #expect(flushed[0].count == 1)
     }
 
     @MainActor
-    @Test func multipleBufferedDeltasCoalesceInSingleFlush() async throws {
+    @Test func multipleBufferedDeltasCoalesceInSingleFlush() async {
         let coalescer = DeltaCoalescer()
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
@@ -256,8 +258,11 @@ struct DeltaCoalescerTests {
         coalescer.receive(.thinkingDelta(sessionId: "s1", delta: "b"))
         coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "c", isError: false))
 
-        try await Task.sleep(for: .milliseconds(80))
+        let didFlush = await waitForMainActorCondition(timeout: .milliseconds(300), poll: .milliseconds(10)) {
+            flushed.count == 1
+        }
 
+        #expect(didFlush)
         #expect(flushed.count == 1)
         #expect(flushed[0].count == 3)
     }
