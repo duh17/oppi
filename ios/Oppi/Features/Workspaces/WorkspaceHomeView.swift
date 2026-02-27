@@ -63,6 +63,9 @@ struct WorkspaceHomeView: View {
         .task {
             await refresh(force: false)
         }
+        .onAppear {
+            Task { await refresh(force: false) }
+        }
     }
 
     // MARK: - Server Section
@@ -79,8 +82,8 @@ struct WorkspaceHomeView: View {
 
         Section {
             if !isCollapsed {
-                if workspaces.isEmpty && !isUnreachable {
-                    Text("No workspaces")
+                if workspaces.isEmpty {
+                    Text(isUnreachable ? "Offline — cached workspaces unavailable" : "No workspaces")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                 } else {
@@ -96,7 +99,9 @@ struct WorkspaceHomeView: View {
                                 badgeColor: server.resolvedBadgeColor
                             )
                         }
-                        .disabled(isUnreachable)
+                        // Never disable read-only navigation — cached data
+                        // should always be browsable even when the server
+                        // is unreachable (e.g. phone on cellular after a run).
                     }
                 }
             }
@@ -264,13 +269,12 @@ private struct WorkspaceHomeRow: View {
         HStack(spacing: 12) {
             WorkspaceIcon(icon: workspace.icon, size: 28)
                 .frame(width: 40, height: 40)
-                .opacity(isUnreachable ? 0.5 : 1)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(workspace.name)
                         .font(.headline)
-                        .foregroundStyle(isUnreachable ? .themeComment : .themeFg)
+                        .foregroundStyle(.themeFg)
 
                     if hasAttention {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -283,13 +287,15 @@ private struct WorkspaceHomeRow: View {
                     RuntimeBadge(compact: true, icon: badgeIcon, badgeColor: badgeColor)
 
                     if isUnreachable {
-                        Text("Unreachable")
+                        Label("Offline", systemImage: "wifi.slash")
                             .font(.caption)
-                            .foregroundStyle(.themeRed)
-                    } else if activeCount > 0 {
+                            .foregroundStyle(.themeComment)
+                    }
+
+                    if activeCount > 0 {
                         Label("\(activeCount) active", systemImage: "circle.fill")
                             .font(.caption)
-                            .foregroundStyle(.themeGreen)
+                            .foregroundStyle(isUnreachable ? .themeComment : .themeGreen)
                     }
 
                     if stoppedCount > 0 {
