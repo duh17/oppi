@@ -172,11 +172,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
-        switch TimelineHistoryLoadPlanner.loadMode(
-            timelineMatchesTrace: timelineMatchesTrace,
-            loadedTraceEventIDs: loadedTraceEventIDs,
-            events: events
-        ) {
+        switch loadSessionMode(events: events) {
         case .noOp:
             _lastLoadWasIncrementalForTesting = true
             return
@@ -392,6 +388,29 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private static func formatTokenCount(_ value: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
+    }
+
+    private enum HistoryLoadMode: Equatable {
+        case noOp
+        case incremental(appendStart: Int)
+        case fullRebuild
+    }
+
+    private func loadSessionMode(events: [TraceEvent]) -> HistoryLoadMode {
+        guard timelineMatchesTrace else { return .fullRebuild }
+        guard !loadedTraceEventIDs.isEmpty else { return .fullRebuild }
+        guard events.count >= loadedTraceEventIDs.count else { return .fullRebuild }
+
+        for (index, loadedID) in loadedTraceEventIDs.enumerated() {
+            guard events[index].id == loadedID else { return .fullRebuild }
+        }
+
+        let appendStart = loadedTraceEventIDs.count
+        if appendStart == events.count {
+            return .noOp
+        }
+
+        return .incremental(appendStart: appendStart)
     }
 
     // MARK: - Process Agent Events
