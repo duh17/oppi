@@ -60,6 +60,9 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Read at mic-tap time to select the correct speech model.
     @State private var keyboardLanguage: String?
 
+    /// Tracks text view focus to reveal composer controls on demand.
+    @State private var isInputFocused = false
+
     private let inlineMaxLines = 8
     private let inlineMaxLinesWithImages = 4
     private let expandVisibilityLineThreshold = 5
@@ -126,6 +129,11 @@ struct ChatInputBar<ActionRow: View>: View {
             || (!pendingImages.isEmpty && inlineVisualLineCount >= inlineMaxLinesWithImages)
     }
 
+    /// Slack-style inline controls row: hidden until composer is active.
+    private var showsComposerActionRow: Bool {
+        isInputFocused || !pendingImages.isEmpty
+    }
+
     /// Text binding for the input field.
     private var textFieldBinding: Binding<String> {
         Binding(
@@ -172,12 +180,6 @@ struct ChatInputBar<ActionRow: View>: View {
             }
 
             composerCapsule
-
-            // Action row: attach (fixed) + pills/controls (trailing)
-            HStack(spacing: 6) {
-                attachButton
-                actionRow()
-            }
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
         .padding(.bottom, appliesOuterPadding ? 8 : 0)
@@ -247,7 +249,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         onCommandEnter: handleSend,
                         onOverflowChange: nil,
                         onLineCountChange: handleInlineLineCountChange,
-                        onFocusChange: nil,
+                        onFocusChange: handleInputFocusChange,
                         onDictationStateChange: nil,
                         focusRequestID: focusRequestID,
                         blurRequestID: 0,
@@ -266,6 +268,17 @@ struct ChatInputBar<ActionRow: View>: View {
             }
             .padding(.horizontal, composerHorizontalPadding)
             .padding(.vertical, 7)
+
+            if showsComposerActionRow {
+                HStack(spacing: 6) {
+                    attachButton
+                    actionRow()
+                }
+                .padding(.horizontal, composerHorizontalPadding)
+                .padding(.top, 2)
+                .padding(.bottom, 7)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .frame(minHeight: 38)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -277,6 +290,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     .padding(.trailing, composerHorizontalPadding)
             }
         }
+        .animation(.easeInOut(duration: 0.18), value: showsComposerActionRow)
     }
 
     private var attachButton: some View {
@@ -484,6 +498,10 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private func handleInlineLineCountChange(_ lineCount: Int) {
         inlineVisualLineCount = max(lineCount, 1)
+    }
+
+    private func handleInputFocusChange(_ isFocused: Bool) {
+        isInputFocused = isFocused
     }
 
     private func handleSend() {

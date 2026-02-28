@@ -115,42 +115,62 @@ struct SessionToolbar: View {
         } label: {
             PillLabel(text: thinkingLabel, tint: thinkingTint, showChevron: true) {
                 Image(systemName: "sparkle")
-                    .font(.caption2.weight(.semibold))
+                    .font(.system(size: 11, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
             }
         }
 
         if let contextDisplay {
-            PillLabel(text: contextDisplay, tint: contextTint, showChevron: false) { }
-                .contentShape(Capsule())
-                .onLongPressGesture {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    onCompact()
-                }
+            PillLabel(
+                text: contextDisplay,
+                tint: contextTint,
+                showChevron: false,
+                showsLeadingIcon: false
+            ) { }
+            .contentShape(Capsule())
+            .onLongPressGesture {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                onCompact()
+            }
         }
     }
 }
 
 private struct PillLabel<LeadingIcon: View>: View {
+    private let iconSlotSize: CGFloat = 11
+    private let chevronSlotWidth: CGFloat = 9
+    private let minPillHeight: CGFloat = 17
+
     let text: String
     var tint: Color
     let showChevron: Bool
+    let showsLeadingIcon: Bool
     let leadingIcon: LeadingIcon
 
     init(
         text: String,
         tint: Color = .themeFg,
         showChevron: Bool,
+        showsLeadingIcon: Bool = true,
         @ViewBuilder leadingIcon: () -> LeadingIcon
     ) {
         self.text = text
         self.tint = tint
         self.showChevron = showChevron
+        self.showsLeadingIcon = showsLeadingIcon
         self.leadingIcon = leadingIcon()
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            leadingIcon
+        HStack(alignment: .center, spacing: 3) {
+            if showsLeadingIcon {
+                leadingIcon
+                    .frame(
+                        width: iconSlotSize,
+                        height: iconSlotSize,
+                        alignment: .center
+                    )
+            }
 
             Text(text)
                 .font(.caption2.monospacedDigit().weight(.medium))
@@ -160,11 +180,17 @@ private struct PillLabel<LeadingIcon: View>: View {
             if showChevron {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
+                    .frame(
+                        width: chevronSlotWidth,
+                        height: iconSlotSize,
+                        alignment: .center
+                    )
             }
         }
+        .frame(minHeight: minPillHeight)
         .foregroundStyle(tint)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
         .glassEffect(.regular, in: Capsule())
         .contentShape(Capsule())
     }
