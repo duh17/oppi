@@ -44,13 +44,6 @@ struct ToolPresentationConfigTests {
                 fullOutput: ""
             )
         )
-        #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "todo",
-                outputPreview: sample,
-                fullOutput: ""
-            )
-        )
     }
 
     @MainActor
@@ -100,19 +93,19 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func inlineMediaWarningHeuristicDoesNotFlagRememberRecallOrPlot() {
+    @Test func inlineMediaWarningHeuristicFlagsUnknownExtensionToolsButNotPlot() {
         let sample = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
 
         #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "remember",
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+                normalizedTool: "notes",
                 outputPreview: sample,
                 fullOutput: ""
             )
         )
         #expect(
-            !ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
-                normalizedTool: "recall",
+            ToolPresentationBuilder.shouldWarnInlineMediaForToolOutput(
+                normalizedTool: "lookup",
                 outputPreview: sample,
                 fullOutput: ""
             )
@@ -190,7 +183,7 @@ struct ToolPresentationConfigTests {
             .toolCall(id: "read-1", tool: "read", argsSummary: "path: src/main.swift", outputPreview: "line1\nline2", outputByteCount: 32, isError: false, isDone: true),
             .toolCall(id: "write-1", tool: "write", argsSummary: "path: src/main.swift", outputPreview: "", outputByteCount: 16, isError: false, isDone: true),
             .toolCall(id: "edit-1", tool: "edit", argsSummary: "path: src/main.swift", outputPreview: "", outputByteCount: 16, isError: false, isDone: true),
-            .toolCall(id: "todo-1", tool: "todo", argsSummary: "action: list-all", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .toolCall(id: "extension-1", tool: "extensions.backlog", argsSummary: "action: list-all", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
         ]
 
         harness.applyAndLayout(items: rows)
@@ -441,7 +434,7 @@ struct ToolPresentationConfigTests {
             .toolCall(id: "read-2", tool: "functions.read", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .toolCall(id: "write-1", tool: "write", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .toolCall(id: "edit-1", tool: "edit", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .toolCall(id: "todo-1", tool: "todo", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .toolCall(id: "extension-1", tool: "extensions.backlog", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
         ]
 
         for row in rows {
@@ -451,9 +444,9 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func expandedTodoToolFormatsListOutputForReadableNativeRendering() throws {
+    @Test func expandedExtensionToolUsesGenericTextRendererForStructuredOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let itemID = "todo-list-1"
+        let itemID = "extension-list-1"
         harness.reducer.expandedItemIDs.insert(itemID)
         harness.toolArgsStore.set(["action": .string("list-all")], for: itemID)
         harness.toolOutputStore.append(
@@ -461,18 +454,12 @@ struct ToolPresentationConfigTests {
             {
               "assigned": [
                 {
-                  "id": "TODO-a27df231",
+                  "id": "EXT-a27df231",
                   "title": "Control tower Live Activity",
                   "status": "in_progress"
                 }
               ],
-              "open": [
-                {
-                  "id": "TODO-9a0c8c1c",
-                  "title": "MAC phase",
-                  "status": "open"
-                }
-              ],
+              "open": [],
               "closed": []
             }
             """,
@@ -481,7 +468,7 @@ struct ToolPresentationConfigTests {
 
         let item = ChatItem.toolCall(
             id: itemID,
-            tool: "todo",
+            tool: "extensions.backlog",
             argsSummary: "action: list-all",
             outputPreview: "",
             outputByteCount: 512,
@@ -490,28 +477,34 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
-        // Now uses the rich card renderer instead of markdown text
-        guard case .todoCard = config.expandedContent else { Issue.record("Expected .todoCard"); return }
-        if case .todoCard(let output) = config.expandedContent { #expect(output.contains("TODO-a27df231")) }
-        // Trailing now comes from server resultSegments, not hardcoded. Without segments, it's nil.
+        guard case .text(let output, let language) = config.expandedContent else {
+            Issue.record("Expected .text")
+            return
+        }
+        #expect(output.contains("EXT-a27df231"))
+        #expect(language == nil)
         #expect(config.trailing == nil)
     }
 
     @MainActor
-    @Test func expandedTodoAppendUsesAddedOnlyDiffPresentation() throws {
+    @Test func expandedExtensionAppendUsesGenericTextOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let itemID = "todo-append-1"
+        let itemID = "extension-append-1"
         harness.reducer.expandedItemIDs.insert(itemID)
         harness.toolArgsStore.set([
             "action": .string("append"),
-            "id": .string("TODO-463187a1"),
+            "id": .string("EXT-463187a1"),
             "body": .string("Investigate smooth scroll follow\nAdd regression tests")
         ], for: itemID)
+        harness.toolOutputStore.append(
+            "Updated EXT-463187a1 body with 2 lines",
+            to: itemID
+        )
 
         let item = ChatItem.toolCall(
             id: itemID,
-            tool: "todo",
-            argsSummary: "action: append, id: TODO-463187a1",
+            tool: "extensions.backlog",
+            argsSummary: "action: append, id: EXT-463187a1",
             outputPreview: "",
             outputByteCount: 4096,
             isError: false,
@@ -519,31 +512,37 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
-        // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
         #expect(config.trailing == nil)
-        // expandedText == nil is now implicit (content is .diff not .text)
-        guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
-        #expect(diffLines.count == 2)
-        #expect(config.copyOutputText?.contains("+ Investigate smooth scroll follow") == true)
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text")
+            return
+        }
+        #expect(language == nil)
+        #expect(text.contains("EXT-463187a1"))
+        #expect(config.copyOutputText?.contains("EXT-463187a1") == true)
     }
 
     @MainActor
-    @Test func expandedTodoUpdateUsesDiffPresentationForChangedFields() throws {
+    @Test func expandedExtensionUpdateUsesGenericTextOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let itemID = "todo-update-1"
+        let itemID = "extension-update-1"
         harness.reducer.expandedItemIDs.insert(itemID)
         harness.toolArgsStore.set([
             "action": .string("update"),
-            "id": .string("TODO-463187a1"),
+            "id": .string("EXT-463187a1"),
             "status": .string("closed"),
             "title": .string("Refine auto-follow scrolling during streaming"),
             "body": .string("Done.\nValidated on simulator and device.")
         ], for: itemID)
+        harness.toolOutputStore.append(
+            "Updated EXT-463187a1 (status: closed)",
+            to: itemID
+        )
 
         let item = ChatItem.toolCall(
             id: itemID,
-            tool: "todo",
-            argsSummary: "action: update, id: TODO-463187a1",
+            tool: "extensions.backlog",
+            argsSummary: "action: update, id: EXT-463187a1",
             outputPreview: "",
             outputByteCount: 2048,
             isError: false,
@@ -551,20 +550,14 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
-        guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
-
-        // editAdded/editRemoved now come from server segments, not hardcoded todo diff stats
         #expect(config.trailing == nil)
-        // expandedText == nil is now implicit (content is .diff not .text)
-        #expect(diffLines.contains(where: { line in
-            switch line.kind {
-            case .added:
-                return line.text == "status: closed"
-            case .context, .removed:
-                return false
-            }
-        }))
-        #expect(config.copyOutputText?.contains("+ status: closed") == true)
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text")
+            return
+        }
+        #expect(language == nil)
+        #expect(text.contains("status: closed"))
+        #expect(config.copyOutputText?.contains("status: closed") == true)
     }
 
     @MainActor
@@ -719,9 +712,9 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func collapsedTodoToolConfigurationOmitsPreviewForSingleLineConsistency() throws {
+    @Test func collapsedExtensionToolConfigurationOmitsPreviewForSingleLineConsistency() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        let toolID = "todo-preview-1"
+        let toolID = "extension-preview-1"
 
         harness.toolArgsStore.set([
             "action": .string("append"),
@@ -731,7 +724,7 @@ struct ToolPresentationConfigTests {
 
         let item = ChatItem.toolCall(
             id: toolID,
-            tool: "todo",
+            tool: "extensions.backlog",
             argsSummary: "action: append",
             outputPreview: "",
             outputByteCount: 0,
@@ -833,8 +826,8 @@ private let collapsedParityToolRows: [ChatItem] = [
         isDone: true
     ),
     .toolCall(
-        id: "parity-todo-1",
-        tool: "todo",
+        id: "parity-extension-1",
+        tool: "extensions.backlog",
         argsSummary: "action: list-all",
         outputPreview: "",
         outputByteCount: 0,

@@ -193,9 +193,6 @@ enum ToolCallFormatting {
     static func isGrepTool(_ name: String) -> Bool { normalized(name) == "grep" }
     static func isFindTool(_ name: String) -> Bool { normalized(name) == "find" }
     static func isLsTool(_ name: String) -> Bool { normalized(name) == "ls" }
-    static func isTodoTool(_ name: String) -> Bool { normalized(name) == "todo" }
-    static func isRememberTool(_ name: String) -> Bool { normalized(name) == "remember" }
-    static func isRecallTool(_ name: String) -> Bool { normalized(name) == "recall" }
 
     // MARK: - Edit Diff Stats
 

@@ -6,7 +6,6 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case diff
         case code
         case markdown
-        case todo
         case plot
         case readMedia
         case text
@@ -20,13 +19,13 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
 
     static func forExpandedContent(
         _ content: ToolPresentationBuilder.ToolExpandedContent
-    ) -> ToolTimelineRowInteractionPolicy {
+    ) -> Self {
         let mode = ExpandedMode(content)
         let supportsFullScreenPreview = supportsFullScreenPreview(mode: mode)
 
         switch mode {
         case .bash(let unwrapped):
-            return ToolTimelineRowInteractionPolicy(
+            return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
@@ -35,7 +34,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
             )
 
         case .diff, .code:
-            return ToolTimelineRowInteractionPolicy(
+            return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
@@ -44,7 +43,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
             )
 
         case .markdown:
-            return ToolTimelineRowInteractionPolicy(
+            return Self(
                 mode: mode,
                 enablesTapCopyGesture: false,
                 enablesPinchGesture: true,
@@ -52,8 +51,8 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: false
             )
 
-        case .todo, .plot, .readMedia:
-            return ToolTimelineRowInteractionPolicy(
+        case .plot, .readMedia:
+            return Self(
                 mode: mode,
                 enablesTapCopyGesture: false,
                 enablesPinchGesture: false,
@@ -62,7 +61,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
             )
 
         case .text:
-            return ToolTimelineRowInteractionPolicy(
+            return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
                 enablesPinchGesture: true,
@@ -76,7 +75,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         switch mode {
         case .diff, .code, .markdown, .bash, .text:
             return true
-        case .todo, .plot, .readMedia:
+        case .plot, .readMedia:
             return false
         }
     }
@@ -93,8 +92,6 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .code
         case .markdown:
             self = .markdown
-        case .todoCard:
-            self = .todo
         case .plot:
             self = .plot
         case .readMedia:

@@ -51,9 +51,9 @@ struct ToolTimelineRowModeDispatchTests {
                 expected: .init(expanded: true, command: false, output: false)
             ),
             DispatchCase(
-                name: "todoCard",
-                toolNamePrefix: "todo",
-                content: .todoCard(output: "{\"id\":\"TODO-1\",\"title\":\"Test\"}"),
+                name: "extensionText",
+                toolNamePrefix: "extensions.notes",
+                content: .text(text: "{\"id\":\"EXT-1\",\"title\":\"Test\"}", language: nil),
                 expected: .init(expanded: true, command: false, output: false)
             ),
             DispatchCase(
@@ -95,8 +95,8 @@ struct ToolTimelineRowModeDispatchTests {
             ),
             DispatchCase(
                 name: "text",
-                toolNamePrefix: "remember",
-                content: .text(text: "remembered notes", language: nil),
+                toolNamePrefix: "extensions.notes",
+                content: .text(text: "extension notes", language: nil),
                 expected: .init(expanded: true, command: false, output: false)
             ),
         ]
@@ -156,16 +156,16 @@ struct ToolTimelineRowModeDispatchTests {
         )
         #expect(unwrappedBashPolicy.allowsHorizontalScroll)
 
-        let recallTextPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .text(text: "Recall result", language: nil)
+        let extensionTextPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: "Extension result", language: nil)
         )
-        #expect(recallTextPolicy.enablesTapCopyGesture)
-        #expect(recallTextPolicy.enablesPinchGesture)
-        #expect(!recallTextPolicy.allowsHorizontalScroll)
-        #expect(recallTextPolicy.supportsFullScreenPreview)
+        #expect(extensionTextPolicy.enablesTapCopyGesture)
+        #expect(extensionTextPolicy.enablesPinchGesture)
+        #expect(!extensionTextPolicy.allowsHorizontalScroll)
+        #expect(extensionTextPolicy.supportsFullScreenPreview)
 
         let hostedPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
-            .todoCard(output: "{\"id\":\"TODO-1\"}")
+            .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1)
         )
         #expect(!hostedPolicy.enablesTapCopyGesture)
         #expect(!hostedPolicy.enablesPinchGesture)
@@ -187,7 +187,6 @@ struct ToolTimelineRowModeDispatchTests {
             .init(content: .diff(lines: [DiffLine(kind: .added, text: "x")], path: "a.swift"), expectedMode: .diff, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"), expectedMode: .code, expectsFullScreen: true, expectsHorizontalScroll: true),
             .init(content: .markdown(text: "# H"), expectedMode: .markdown, expectsFullScreen: true, expectsHorizontalScroll: false),
-            .init(content: .todoCard(output: "{}"), expectedMode: .todo, expectsFullScreen: false, expectsHorizontalScroll: false),
             .init(
                 content: .plot(
                     spec: PlotChartSpec(
@@ -206,7 +205,7 @@ struct ToolTimelineRowModeDispatchTests {
                 expectsHorizontalScroll: false
             ),
             .init(content: .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1), expectedMode: .readMedia, expectsFullScreen: false, expectsHorizontalScroll: false),
-            .init(content: .text(text: "recall output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
+            .init(content: .text(text: "extension output", language: nil), expectedMode: .text, expectsFullScreen: true, expectsHorizontalScroll: false),
         ]
 
         for testCase in cases {
@@ -221,7 +220,7 @@ struct ToolTimelineRowModeDispatchTests {
 
     @Test func scrollAxisOwnershipUsesHorizontalOnlyInnerScrolls() throws {
         let markdownView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
-            toolNamePrefix: "remember",
+            toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "# Header\n\nBody"),
             isExpanded: true
         ))
@@ -264,33 +263,63 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(unwrappedOutputScroll.isScrollEnabled)
     }
 
-    @Test func expandedTodoItemBodyUsesMarkdownWhileKeepingMetadataRows() throws {
+    @Test func horizontalPanPassthroughRejectsVerticalIntent() {
+        #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 180, y: 20)))
+        #expect(HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 70, y: 55)))
+        #expect(!HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 20, y: 180)))
+        #expect(!HorizontalPanPassthroughScrollView.shouldBeginHorizontalPan(with: CGPoint(x: 45, y: 44)))
+    }
+
+    @Test func expandedBuiltInHorizontalViewportsUsePanPassthroughScrollViews() throws {
+        let codeView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: String(repeating: "0123456789abcdef", count: 20),
+                language: .swift,
+                startLine: 1,
+                filePath: "Sample.swift"
+            ),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: codeView, width: 360)
+
+        let expanded = try #require(privateScrollView(named: "expandedScrollView", in: codeView))
+        #expect(expanded is HorizontalPanPassthroughScrollView)
+
+        let bashView = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "$",
+            expandedContent: .bash(
+                command: "echo hi",
+                output: String(repeating: "line-with-very-long-token ", count: 80),
+                unwrapped: true
+            ),
+            isExpanded: true
+        ))
+        _ = fittedSize(for: bashView, width: 360)
+
+        let output = try #require(privateScrollView(named: "outputScrollView", in: bashView))
+        #expect(output is HorizontalPanPassthroughScrollView)
+    }
+
+    @Test func expandedExtensionTextUsesWrappedLabelRendering() throws {
         let output = """
-        {
-          "id": "TODO-md-1",
-          "title": "Render todo body as markdown",
-          "status": "open",
-          "created_at": "2026-02-24T09:00:00.000Z",
-          "tags": ["ios", "live-activity"],
-          "body": "## Summary\\n- Render markdown body\\n- Keep tags visible"
-        }
+        extension result line 1
+        extension result line 2
+        extension result line 3
         """
 
         let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
-            toolNamePrefix: "todo",
-            expandedContent: .todoCard(output: output),
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .text(text: output, language: nil),
             isExpanded: true
         ))
 
         _ = fittedSize(for: view, width: 360)
 
-        let hosted = try #require(privateHostedExpandedView(in: view))
-        let markdownView = firstView(ofType: AssistantMarkdownContentView.self, in: hosted)
-        #expect(markdownView != nil)
-
-        let labels = allLabels(in: hosted).map(renderedText(of:))
-        #expect(labels.contains(where: { $0.contains("TODO-md-1") }))
-        #expect(labels.contains(where: { $0.contains("tags: ios, live-activity") }))
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(rendered.contains("extension result line 1"))
+        #expect(rendered.contains("extension result line 3"))
     }
 
     @Test func reproducesFatalAccessConflictWhenResettingOutputScrollOnReconfigure() throws {
@@ -423,7 +452,7 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
-    // Verify the hosted view path (todo, plot) also clears stale markdown
+    // Verify the hosted view path also clears stale markdown
     @Test func cellReuseFromMarkdownToHostedViewClearsStaleMarkdownContent() throws {
         let markdownConfig = makeToolConfiguration(
             toolNamePrefix: "read",
@@ -440,13 +469,24 @@ struct ToolTimelineRowModeDispatchTests {
         let markdownStack = try #require(markdownStackView(in: markdownView))
         #expect(!markdownStack.arrangedSubviews.isEmpty)
 
-        let todoConfig = makeToolConfiguration(
-            toolNamePrefix: "todo",
-            expandedContent: .todoCard(output: "{\"id\":\"TODO-1\",\"title\":\"Test\",\"status\":\"open\"}"),
+        let plotConfig = makeToolConfiguration(
+            toolNamePrefix: "plot",
+            expandedContent: .plot(
+                spec: PlotChartSpec(
+                    title: nil,
+                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
+                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
+                    xAxis: .init(label: "x", invert: false),
+                    yAxis: .init(label: "y", invert: false),
+                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
+                    preferredHeight: 180
+                ),
+                fallbackText: nil
+            ),
             isExpanded: true
         )
 
-        view.configuration = todoConfig
+        view.configuration = plotConfig
         _ = fittedSize(for: view, width: 360)
 
         #expect(
@@ -493,11 +533,11 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(firstPassSize.height < 300, "Initial code sizing should stay compact; got \(firstPassSize.height)")
     }
 
-    // MARK: - Cell Reuse: remember / recall constraint bugs
+    // MARK: - Cell Reuse: extension markdown/text constraint bugs
 
-    @Test func cellReuseFromCodeToRememberMarkdownResetsLabelWidthPriority() throws {
+    @Test func cellReuseFromCodeToExtensionMarkdownResetsLabelWidthPriority() throws {
         // Bug: cell previously in code mode has expandedLabelWidthConstraint at
-        // .required priority. Reusing for remember (markdown) hides the label
+        // .required priority. Reusing for extension markdown hides the label
         // but leaves the constraint at .required, forcing contentLayoutGuide
         // wider than intended and causing scroll/layout problems.
         let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
@@ -519,13 +559,13 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(widthConstraint.priority == .required, "Code mode should set required width")
         #expect(widthConstraint.constant > 1, "Code mode should have positive width delta")
 
-        // Now reuse the cell for remember (markdown content)
-        let rememberConfig = makeToolConfiguration(
-            toolNamePrefix: "remember",
+        // Now reuse the cell for extension markdown content.
+        let extensionMarkdownConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "# Discovery\n\nSome important text"),
             isExpanded: true
         )
-        view.configuration = rememberConfig
+        view.configuration = extensionMarkdownConfig
         _ = fittedSize(for: view, width: 360)
 
         // After reuse, the label is hidden in markdown mode. Its width
@@ -537,8 +577,8 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
-    @Test func cellReuseFromDiffToRecallTextResetsLabelWidthPriority() throws {
-        // Similar to above but diff → recall (text mode)
+    @Test func cellReuseFromDiffToExtensionTextResetsLabelWidthPriority() throws {
+        // Similar to above but diff → extension text mode.
         let longDiffLine = String(repeating: "abcdefghijklmnopqrstuvwxyz", count: 20)
         let diffConfig = makeToolConfiguration(
             toolNamePrefix: "edit",
@@ -555,24 +595,24 @@ struct ToolTimelineRowModeDispatchTests {
         let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required, "Diff mode should set required width")
 
-        // Reuse for recall (text mode)
-        let recallConfig = makeToolConfiguration(
-            toolNamePrefix: "recall",
+        // Reuse for extension text mode.
+        let extensionTextConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.lookup",
             expandedContent: .text(text: "5 matches found\n\nResult 1: architecture doc", language: nil),
             isExpanded: true
         )
-        view.configuration = recallConfig
+        view.configuration = extensionTextConfig
         _ = fittedSize(for: view, width: 360)
 
-        // Text mode uses .defaultHigh priority for wrapped layout
+        // Text mode uses .defaultHigh priority for wrapped layout.
         #expect(
             widthConstraint.priority < .required,
             "After reuse to text, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
         )
     }
 
-    @Test func cellReuseFromCodeToRememberMarkdownExpandedContainerIsVisible() throws {
-        // Ensure the expanded container is actually visible after reuse
+    @Test func cellReuseFromCodeToExtensionMarkdownExpandedContainerIsVisible() throws {
+        // Ensure the expanded container is actually visible after reuse.
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
             expandedContent: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"),
@@ -585,26 +625,26 @@ struct ToolTimelineRowModeDispatchTests {
         let expandedContainer = try #require(privateView(named: "expandedContainer", in: view))
         #expect(!expandedContainer.isHidden)
 
-        // Reuse for remember (markdown)
-        let rememberConfig = makeToolConfiguration(
-            toolNamePrefix: "remember",
+        // Reuse for extension markdown.
+        let extensionMarkdownConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "Important discovery"),
             isExpanded: true
         )
-        view.configuration = rememberConfig
+        view.configuration = extensionMarkdownConfig
         _ = fittedSize(for: view, width: 360)
 
-        #expect(!expandedContainer.isHidden, "Expanded container should remain visible for remember")
+        #expect(!expandedContainer.isHidden, "Expanded container should remain visible for extension markdown")
 
         let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
-        #expect(!markdownView.isHidden, "Markdown view should be visible for remember")
+        #expect(!markdownView.isHidden, "Markdown view should be visible for extension markdown")
 
         let label = try #require(privateView(named: "expandedLabel", in: view))
         #expect(label.isHidden, "Label should be hidden in markdown mode")
     }
 
-    @Test func cellReuseFromCodeToHostedTodoResetsLabelWidthPriority() throws {
-        // Code → todo (hosted view) also needs label width reset
+    @Test func cellReuseFromCodeToHostedPlotResetsLabelWidthPriority() throws {
+        // Code → plot (hosted view) also needs label width reset
         let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
@@ -618,13 +658,24 @@ struct ToolTimelineRowModeDispatchTests {
         let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
         #expect(widthConstraint.priority == .required)
 
-        // Reuse for todo (hosted view)
-        let todoConfig = makeToolConfiguration(
-            toolNamePrefix: "todo",
-            expandedContent: .todoCard(output: "{\"id\":\"TODO-1\",\"title\":\"Test\"}"),
+        // Reuse for plot (hosted view)
+        let plotConfig = makeToolConfiguration(
+            toolNamePrefix: "plot",
+            expandedContent: .plot(
+                spec: PlotChartSpec(
+                    title: nil,
+                    rows: [.init(id: 0, values: ["x": .number(0), "y": .number(1)])],
+                    marks: [.init(id: "m0", type: .line, x: "x", y: "y")],
+                    xAxis: .init(label: "x", invert: false),
+                    yAxis: .init(label: "y", invert: false),
+                    interaction: .init(xSelection: false, xRangeSelection: false, scrollableX: false),
+                    preferredHeight: 180
+                ),
+                fallbackText: nil
+            ),
             isExpanded: true
         )
-        view.configuration = todoConfig
+        view.configuration = plotConfig
         _ = fittedSize(for: view, width: 360)
 
         #expect(
@@ -652,9 +703,9 @@ struct ToolTimelineRowModeDispatchTests {
         let scrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
         #expect(scrollView.alwaysBounceHorizontal)
 
-        // Reuse for remember markdown
+        // Reuse for extension markdown.
         let mdConfig = makeToolConfiguration(
-            toolNamePrefix: "remember",
+            toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "Short note"),
             isExpanded: true
         )
@@ -680,9 +731,29 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!scrollView.bounces, "Markdown expanded scroll should not rubber-band vertically")
     }
 
+    @Test func expandedExtensionMarkdownInnerTextViewsDisableBounce() throws {
+        let extensionMarkdownConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .markdown(text: String(repeating: "extension line\n", count: 180)),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: extensionMarkdownConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let markdownView = try #require(privateView(named: "expandedMarkdownView", in: view))
+        let innerScrollViews = timelineAllScrollViews(in: markdownView)
+        #expect(!innerScrollViews.isEmpty, "Expected markdown text/cell scroll views")
+
+        for inner in innerScrollViews {
+            #expect(!inner.alwaysBounceVertical)
+            #expect(!inner.bounces)
+        }
+    }
+
     @Test func cellReuseMarkdownGestureInterceptionDisabledForTextSelection() throws {
-        // remember expanded in markdown mode should disable gesture interception
-        // so users can select text via standard UITextView interactions.
+        // Extension markdown mode should disable gesture interception so users
+        // can select text via standard UITextView interactions.
         let codeConfig = makeToolConfiguration(
             toolNamePrefix: "read",
             expandedContent: .code(text: "let x = 1", language: .swift, startLine: 1, filePath: "A.swift"),
@@ -692,12 +763,12 @@ struct ToolTimelineRowModeDispatchTests {
         let view = ToolTimelineRowContentView(configuration: codeConfig)
         _ = fittedSize(for: view, width: 360)
 
-        // Code mode should have gesture interception enabled
+        // Code mode should have gesture interception enabled.
         #expect(view.expandedTapCopyGestureEnabledForTesting)
 
-        // Reuse for remember (markdown — needs text selection)
+        // Reuse for extension markdown (needs text selection).
         let mdConfig = makeToolConfiguration(
-            toolNamePrefix: "remember",
+            toolNamePrefix: "extensions.notes",
             expandedContent: .markdown(text: "# Note\n\nSome text to select"),
             isExpanded: true
         )
@@ -712,17 +783,17 @@ struct ToolTimelineRowModeDispatchTests {
 
     @Test func expandedDoneTextDoesNotAutoFollowToBottomOnFirstRender() throws {
         let longText = (1...600)
-            .map { "[\($0)] recall result line with enough text to overflow viewport" }
+            .map { "[\($0)] extension result line with enough text to overflow viewport" }
             .joined(separator: "\n")
 
         let collapsed = makeToolConfiguration(
-            toolNamePrefix: "recall",
+            toolNamePrefix: "extensions.lookup",
             expandedContent: nil,
             isExpanded: false,
             isDone: true
         )
         let expanded = makeToolConfiguration(
-            toolNamePrefix: "recall",
+            toolNamePrefix: "extensions.lookup",
             expandedContent: .text(text: longText, language: nil),
             isExpanded: true,
             isDone: true
@@ -749,13 +820,13 @@ struct ToolTimelineRowModeDispatchTests {
             .joined(separator: "\n")
 
         let collapsed = makeToolConfiguration(
-            toolNamePrefix: "recall",
+            toolNamePrefix: "extensions.lookup",
             expandedContent: nil,
             isExpanded: false,
             isDone: false
         )
         let expanded = makeToolConfiguration(
-            toolNamePrefix: "recall",
+            toolNamePrefix: "extensions.lookup",
             expandedContent: .text(text: longText, language: nil),
             isExpanded: true,
             isDone: false
@@ -770,6 +841,46 @@ struct ToolTimelineRowModeDispatchTests {
 
         let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
         #expect(shouldAutoFollow, "Streaming text should keep auto-follow enabled")
+    }
+
+    @Test func cellReuseFromStreamingTextToDoneTextResetsExpandedOffsetToTop() throws {
+        let streamingText = (1...700)
+            .map { "[\($0)] streaming text segment with enough payload to overflow viewport" }
+            .joined(separator: "\n")
+        let doneText = (1...700)
+            .map { "[\($0)] finalized text segment with enough payload to overflow viewport" }
+            .joined(separator: "\n")
+
+        let streamingConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.lookup",
+            expandedContent: .text(text: streamingText, language: nil),
+            isExpanded: true,
+            isDone: false
+        )
+        let doneConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.lookup",
+            expandedContent: .text(text: doneText, language: nil),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streamingConfig)
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 6)
+
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        ToolTimelineRowUIHelpers.scrollToBottom(expandedScrollView, animated: false)
+        drainMainQueue(passes: 2)
+
+        view.configuration = doneConfig
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 6)
+
+        let visualOffset = expandedScrollView.contentOffset.y + expandedScrollView.adjustedContentInset.top
+        #expect(visualOffset < 1.0, "Done text reuse should reset to top; got visual offset \(visualOffset)")
+
+        let shouldAutoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view) as Bool?)
+        #expect(!shouldAutoFollow, "Done text reuse should disable auto-follow")
     }
 
     @Test func expandedCodeApplySetsUnwrappedWidthImmediately() throws {
@@ -822,7 +933,6 @@ private enum RoutedExpandedMode: Equatable {
     case diff
     case code
     case markdown
-    case todo
     case plot
     case readMedia
     case text
@@ -836,7 +946,6 @@ private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Ro
         renderDiff: { _, _ in .diff },
         renderCode: { _, _, _ in .code },
         renderMarkdown: { _ in .markdown },
-        renderTodo: { _ in .todo },
         renderPlot: { _, _ in .plot },
         renderReadMedia: { _, _, _ in .readMedia },
         renderText: { _, _ in .text }
@@ -894,50 +1003,10 @@ private func privateBool(named name: String, in view: ToolTimelineRowContentView
 }
 
 @MainActor
-private func privateHostedExpandedView(in view: ToolTimelineRowContentView) -> UIView? {
-    Mirror(reflecting: view).children.first { $0.label == "expandedReadMediaContentView" }?.value as? UIView
-}
-
-@MainActor
 private func drainMainQueue(passes: Int = 3) {
     for _ in 0..<max(1, passes) {
         RunLoop.main.run(until: Date().addingTimeInterval(0.01))
     }
-}
-
-@MainActor
-private func firstView<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
-    if let match = root as? T {
-        return match
-    }
-
-    for child in root.subviews {
-        if let found = firstView(ofType: type, in: child) {
-            return found
-        }
-    }
-
-    return nil
-}
-
-@MainActor
-private func allLabels(in root: UIView) -> [UILabel] {
-    var result: [UILabel] = []
-
-    if let label = root as? UILabel {
-        result.append(label)
-    }
-
-    for child in root.subviews {
-        result.append(contentsOf: allLabels(in: child))
-    }
-
-    return result
-}
-
-@MainActor
-private func renderedText(of label: UILabel) -> String {
-    label.attributedText?.string ?? label.text ?? ""
 }
 
 @MainActor

@@ -64,20 +64,20 @@ struct ToolPresentationSegmentTests {
 
     @Test func callSegmentsOverrideToolNamePrefix() {
         let config = buildConfig(
-            tool: "remember",
+            tool: "extensions.notes",
             callSegments: [
-                StyledSegment(text: "remember ", style: .bold),
+                StyledSegment(text: "notes ", style: .bold),
                 StyledSegment(text: "\"note\"", style: .muted),
             ]
         )
-        #expect(config.toolNamePrefix == "remember")
+        #expect(config.toolNamePrefix == "notes")
     }
 
     // MARK: - Result Segments
 
     @Test func resultSegmentsProduceAttributedTrailing() {
         let config = buildConfig(
-            tool: "remember",
+            tool: "extensions.notes",
             resultSegments: [
                 StyledSegment(text: "✓ Saved ", style: .success),
                 StyledSegment(text: "→ journal", style: .muted),
@@ -90,9 +90,8 @@ struct ToolPresentationSegmentTests {
     }
 
     @Test func noResultSegmentsFallsBackToPlainTrailing() {
-        // remember without segments → falls back to ToolCallFormatting.rememberTrailing
         let config = buildConfig(
-            tool: "remember",
+            tool: "extensions.notes",
             argsSummary: "text: hello"
         )
         #expect(config.segmentAttributedTrailing == nil)
@@ -129,25 +128,25 @@ struct ToolPresentationSegmentTests {
         #expect(config.segmentAttributedTrailing!.string == "3 items")
     }
 
-    // MARK: - Memory Extension
+    // MARK: - Extension tools
 
-    @Test func rememberCallSegments() {
+    @Test func extensionNotesCallSegments() {
         let config = buildConfig(
-            tool: "remember",
+            tool: "extensions.notes",
             callSegments: [
-                StyledSegment(text: "remember ", style: .bold),
+                StyledSegment(text: "notes ", style: .bold),
                 StyledSegment(text: "\"Node 25 supports TS\"", style: .muted),
                 StyledSegment(text: " [oppi, node]", style: .dim),
             ]
         )
-        #expect(config.segmentAttributedTitle!.string == "remember \"Node 25 supports TS\" [oppi, node]")
+        #expect(config.segmentAttributedTitle!.string == "notes \"Node 25 supports TS\" [oppi, node]")
     }
 
-    @Test func recallResultSegments() {
+    @Test func extensionLookupResultSegments() {
         let config = buildConfig(
-            tool: "recall",
+            tool: "extensions.lookup",
             callSegments: [
-                StyledSegment(text: "recall ", style: .bold),
+                StyledSegment(text: "lookup ", style: .bold),
                 StyledSegment(text: "\"rendering\"", style: .muted),
             ],
             resultSegments: [
@@ -156,24 +155,22 @@ struct ToolPresentationSegmentTests {
                 StyledSegment(text: "[0.85] Tool rendering design", style: .dim),
             ]
         )
-        #expect(config.segmentAttributedTitle!.string == "recall \"rendering\"")
+        #expect(config.segmentAttributedTitle!.string == "lookup \"rendering\"")
         #expect(config.segmentAttributedTrailing!.string == "5 match(es) — top: [0.85] Tool rendering design")
     }
 
-    // MARK: - Todo Extension
-
-    @Test func todoListResultSegments() {
+    @Test func extensionBacklogResultSegments() {
         let config = buildConfig(
-            tool: "todo",
+            tool: "extensions.backlog",
             callSegments: [
-                StyledSegment(text: "todo ", style: .bold),
+                StyledSegment(text: "backlog ", style: .bold),
                 StyledSegment(text: "list", style: .muted),
             ],
             resultSegments: [
                 StyledSegment(text: "3/5 open", style: .success),
             ]
         )
-        #expect(config.segmentAttributedTitle!.string == "todo list")
+        #expect(config.segmentAttributedTitle!.string == "backlog list")
         #expect(config.segmentAttributedTrailing!.string == "3/5 open")
     }
 }

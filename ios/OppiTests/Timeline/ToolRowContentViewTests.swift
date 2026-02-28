@@ -22,7 +22,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func collapsedTitleStaysSingleLineForConsistency() throws {
         let config = makeTimelineToolConfiguration(
-            title: "todo Refine compaction row preview behavior for consistency across timeline",
+            title: "extensions.backlog Refine compaction row preview behavior for consistency across timeline",
             isExpanded: false
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -31,7 +31,7 @@ struct ToolTimelineRowContentViewTests {
 
         let labels = timelineAllLabels(in: view)
         let titleLabel = try #require(labels.first {
-            timelineRenderedText(of: $0).contains("todo Refine compaction row preview behavior")
+            timelineRenderedText(of: $0).contains("extensions.backlog Refine compaction row preview behavior")
         })
 
         #expect(titleLabel.numberOfLines == 1)
@@ -169,10 +169,10 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedRememberMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
+    @Test func expandedExtensionMarkdownAlsoDisablesRowTapCopyToAllowTextSelection() {
         let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "remembered note"),
-            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "extension note"),
+            toolNamePrefix: "extensions.notes",
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -245,12 +245,12 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedContextMenuIncludesFullScreenForRememberMarkdown() throws {
+    @Test func expandedContextMenuIncludesFullScreenForExtensionMarkdown() throws {
         let config = makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "# Journal\n\nLong-lived note"),
-            copyCommandText: "remember Journal note",
-            copyOutputText: "# Journal\n\nLong-lived note",
-            toolNamePrefix: "remember",
+            expandedContent: .markdown(text: "# Notes\n\nLong-lived extension content"),
+            copyCommandText: "extensions.notes save",
+            copyOutputText: "# Notes\n\nLong-lived extension content",
+            toolNamePrefix: "extensions.notes",
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -260,12 +260,12 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedContextMenuIncludesFullScreenForRecallText() throws {
+    @Test func expandedContextMenuIncludesFullScreenForExtensionText() throws {
         let config = makeTimelineToolConfiguration(
-            expandedContent: .text(text: "Recall hit #1\nRecall hit #2", language: nil),
-            copyCommandText: "recall architecture",
-            copyOutputText: "Recall hit #1\nRecall hit #2",
-            toolNamePrefix: "recall",
+            expandedContent: .text(text: "Extension hit #1\nExtension hit #2", language: nil),
+            copyCommandText: "extensions.lookup architecture",
+            copyOutputText: "Extension hit #1\nExtension hit #2",
+            toolNamePrefix: "extensions.lookup",
             isExpanded: true
         )
         let view = ToolTimelineRowContentView(configuration: config)
@@ -381,46 +381,32 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func reapplyingSameExpandedTodoCardUsesUIKitNativeViewWhenSwiftUIHotPathDisabled() throws {
+    @Test func reapplyingSameExpandedExtensionTextReusesRenderedLabelContent() throws {
         let output = """
-        {
-          "id": "TODO-a27df231",
-          "title": "Control tower Live Activity",
-          "status": "in_progress",
-          "body": "- Capture stall\n- Validate fix"
-        }
+        EXT-a27df231
+        Control tower Live Activity
+        in_progress
         """
 
         let config = makeTimelineToolConfiguration(
-            expandedContent: .todoCard(output: output),
-            toolNamePrefix: "todo",
+            expandedContent: .text(text: output, language: nil),
+            toolNamePrefix: "extensions.backlog",
             isExpanded: true
         )
 
         let view = ToolTimelineRowContentView(configuration: config)
         _ = fittedTimelineSize(for: view, width: 370)
 
-        // UIKit-first hot-path policy: no hosted SwiftUI view by default.
-        let initialHosted = timelineAllViews(in: view).first {
-            String(describing: type(of: $0)).contains("UIHosting")
-        }
-        #expect(initialHosted == nil)
-
         let initialLabel = try #require(timelineAllLabels(in: view).first {
-            timelineRenderedText(of: $0).contains("TODO-a27df231")
+            timelineRenderedText(of: $0).contains("EXT-a27df231")
         })
         let initialRendered = timelineRenderedText(of: initialLabel)
 
         view.configuration = config
         _ = fittedTimelineSize(for: view, width: 370)
 
-        let updatedHosted = timelineAllViews(in: view).first {
-            String(describing: type(of: $0)).contains("UIHosting")
-        }
-        #expect(updatedHosted == nil)
-
         let updatedLabel = try #require(timelineAllLabels(in: view).first {
-            timelineRenderedText(of: $0).contains("TODO-a27df231")
+            timelineRenderedText(of: $0).contains("EXT-a27df231")
         })
         #expect(timelineRenderedText(of: updatedLabel) == initialRendered)
     }
@@ -450,19 +436,16 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func repeatedExpandedTodoReconfigureStaysWithinBudget() {
+    @Test func repeatedExpandedExtensionTextReconfigureStaysWithinBudget() {
         let output = """
-        {
-          "id": "TODO-a27df231",
-          "title": "Control tower Live Activity",
-          "status": "in_progress",
-          "body": "- Capture stall\n- Validate fix"
-        }
+        EXT-a27df231
+        Control tower Live Activity
+        in_progress
         """
 
         let config = makeTimelineToolConfiguration(
-            expandedContent: .todoCard(output: output),
-            toolNamePrefix: "todo",
+            expandedContent: .text(text: output, language: nil),
+            toolNamePrefix: "extensions.backlog",
             isExpanded: true
         )
 
@@ -475,7 +458,7 @@ struct ToolTimelineRowContentViewTests {
         }
         let elapsed = ContinuousClock.now - start
 
-        #expect(elapsed < .milliseconds(600), "120 identical todo reconfigures took \(elapsed)")
+        #expect(elapsed < .milliseconds(600), "120 identical extension reconfigures took \(elapsed)")
     }
 
     @MainActor
@@ -549,7 +532,7 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedMarkdownInitialSizingBeforeLayoutPassAvoidsViewportMaxJump() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "Oppi repo normalized per request."),
-            toolNamePrefix: "remember",
+            toolNamePrefix: "extensions.notes",
             isExpanded: true
         )
 
@@ -568,10 +551,10 @@ struct ToolTimelineRowContentViewTests {
     @Test func expandedPlainTextInitialSizingBeforeLayoutPassAvoidsViewportMaxJump() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .text(
-                text: "remember text: Oppi iOS bash tool-row header updated, tags: [6 items]",
+                text: "extension text: Oppi iOS bash tool-row header updated, tags: [6 items]",
                 language: nil
             ),
-            toolNamePrefix: "remember",
+            toolNamePrefix: "extensions.notes",
             isExpanded: true
         )
 

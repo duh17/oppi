@@ -63,6 +63,8 @@ enum TimelineScrollCoordinator {
         guard let scrollController else { return nil }
 
         let insets = collectionView.adjustedContentInset
+        scrollController.updateContentOffsetY(collectionView.contentOffset.y + insets.top)
+
         let visibleHeight = collectionView.bounds.height - insets.top - insets.bottom
         guard visibleHeight > 0 else { return nil }
 

@@ -307,19 +307,19 @@ struct ToolPresentationBuilderTests {
         #expect(filePath == "file.txt")
     }
 
-    // MARK: - Todo
+    // MARK: - Extension tools
 
-    @Test("todo collapsed uses segments when available")
-    func todoCollapsedWithSegments() throws {
+    @Test("extension collapsed uses segments when available")
+    func extensionCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "todo",
+            itemID: "t1", tool: "extensions.backlog",
             argsSummary: "action: create, title: Add tests",
             outputPreview: "",
             isError: false, isDone: true,
             context: .init(
                 args: nil, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
                 callSegments: [
-                    StyledSegment(text: "todo ", style: .bold),
+                    StyledSegment(text: "backlog ", style: .bold),
                     StyledSegment(text: "create", style: .muted),
                     StyledSegment(text: " \"Add tests\"", style: .dim),
                 ]
@@ -327,14 +327,14 @@ struct ToolPresentationBuilderTests {
         )
 
         let title = try #require(config.segmentAttributedTitle)
-        #expect(title.string == "todo create \"Add tests\"")
-        #expect(config.toolNamePrefix == "todo")
+        #expect(title.string == "backlog create \"Add tests\"")
+        #expect(config.toolNamePrefix == "backlog")
     }
 
-    @Test("todo collapsed falls back to default when no segments")
-    func todoCollapsedNoSegments() {
+    @Test("extension collapsed falls back to default when no segments")
+    func extensionCollapsedNoSegments() {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "todo",
+            itemID: "t1", tool: "extensions.backlog",
             argsSummary: "action: create, title: Add tests",
             outputPreview: "",
             isError: false, isDone: true,
@@ -343,18 +343,18 @@ struct ToolPresentationBuilderTests {
 
         // Without segments, falls through to default: tool + argsSummary
         #expect(config.segmentAttributedTitle == nil)
-        #expect(config.title.contains("todo"))
-        #expect(config.toolNamePrefix == "todo")
+        #expect(config.title.contains("extensions.backlog"))
+        #expect(config.toolNamePrefix == "extensions.backlog")
     }
 
-    @Test("todo collapsed path stays cheaper than expanded diff path")
-    func todoCollapsedVsExpandedCost() {
+    @Test("extension collapsed path stays within budget versus expanded text path")
+    func extensionCollapsedVsExpandedCost() {
         let body = (0..<1_200)
             .map { "line-\($0): append detail" }
             .joined(separator: "\n")
         let args: [String: JSONValue] = [
             "action": .string("append"),
-            "id": .string("TODO-a27df231"),
+            "id": .string("EXT-a27df231"),
             "body": .string(body),
         ]
 
@@ -363,9 +363,9 @@ struct ToolPresentationBuilderTests {
         let collapsedStart = DispatchTime.now().uptimeNanoseconds
         for index in 0..<iterations {
             _ = ToolPresentationBuilder.build(
-                itemID: "todo-collapsed-\(index)",
-                tool: "todo",
-                argsSummary: "action: append, id: TODO-a27df231",
+                itemID: "extension-collapsed-\(index)",
+                tool: "extensions.backlog",
+                argsSummary: "action: append, id: EXT-a27df231",
                 outputPreview: "",
                 isError: false,
                 isDone: true,
@@ -376,11 +376,11 @@ struct ToolPresentationBuilderTests {
 
         let expandedStart = DispatchTime.now().uptimeNanoseconds
         for index in 0..<iterations {
-            let itemID = "todo-expanded-\(index)"
+            let itemID = "extension-expanded-\(index)"
             _ = ToolPresentationBuilder.build(
                 itemID: itemID,
-                tool: "todo",
-                argsSummary: "action: append, id: TODO-a27df231",
+                tool: "extensions.backlog",
+                argsSummary: "action: append, id: EXT-a27df231",
                 outputPreview: "",
                 isError: false,
                 isDone: true,
@@ -389,22 +389,23 @@ struct ToolPresentationBuilderTests {
         }
         let expandedElapsed = DispatchTime.now().uptimeNanoseconds - expandedStart
 
-        #expect(collapsedElapsed < expandedElapsed)
+        #expect(
+            collapsedElapsed <= expandedElapsed + (expandedElapsed / 2),
+            "Collapsed build path regressed unexpectedly (collapsed=\(collapsedElapsed), expanded=\(expandedElapsed))"
+        )
     }
 
-    // MARK: - Remember
-
-    @Test("remember collapsed uses segments when available")
-    func rememberCollapsedWithSegments() throws {
+    @Test("extension markdown collapsed uses segments when available")
+    func extensionMarkdownCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "remember",
+            itemID: "t1", tool: "extensions.notes",
             argsSummary: "text: Some important discovery",
             outputPreview: "",
             isError: false, isDone: true,
             context: .init(
                 args: nil, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
                 callSegments: [
-                    StyledSegment(text: "remember ", style: .bold),
+                    StyledSegment(text: "notes ", style: .bold),
                     StyledSegment(text: "\"Some important discovery\"", style: .muted),
                     StyledSegment(text: " [oppi, ios]", style: .dim),
                 ],
@@ -417,14 +418,14 @@ struct ToolPresentationBuilderTests {
 
         let title = try #require(config.segmentAttributedTitle)
         let trailing = try #require(config.segmentAttributedTrailing)
-        #expect(title.string == "remember \"Some important discovery\" [oppi, ios]")
+        #expect(title.string == "notes \"Some important discovery\" [oppi, ios]")
         #expect(trailing.string == "✓ Saved → journal")
     }
 
-    @Test("remember expanded shows full text and tags")
-    func rememberExpanded() {
+    @Test("extension markdown expanded uses generic text output")
+    func extensionMarkdownExpanded() {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "remember",
+            itemID: "t1", tool: "extensions.notes",
             argsSummary: "",
             outputPreview: "Saved to journal",
             isError: false, isDone: true,
@@ -437,26 +438,25 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let text) = config.expandedContent else {
-            Issue.record("Expected .markdown content for remember")
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content for extension markdown tool")
             return
         }
-        #expect(text == "Full discovery text\n\nTags: tag1")
+        #expect(language == nil)
+        #expect(text == "Saved to journal")
     }
 
-    // MARK: - Recall
-
-    @Test("recall collapsed uses segments when available")
-    func recallCollapsedWithSegments() throws {
+    @Test("extension lookup collapsed uses segments when available")
+    func extensionLookupCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "recall",
+            itemID: "t1", tool: "extensions.lookup",
             argsSummary: "query: architecture decisions",
             outputPreview: "",
             isError: false, isDone: true,
             context: .init(
                 args: nil, expandedItemIDs: [], fullOutput: "", isLoadingOutput: false,
                 callSegments: [
-                    StyledSegment(text: "recall ", style: .bold),
+                    StyledSegment(text: "lookup ", style: .bold),
                     StyledSegment(text: "\"architecture decisions\"", style: .muted),
                     StyledSegment(text: " scope:journal", style: .dim),
                     StyledSegment(text: " 7d", style: .dim),
@@ -471,14 +471,14 @@ struct ToolPresentationBuilderTests {
 
         let title = try #require(config.segmentAttributedTitle)
         let trailing = try #require(config.segmentAttributedTrailing)
-        #expect(title.string == "recall \"architecture decisions\" scope:journal 7d")
+        #expect(title.string == "lookup \"architecture decisions\" scope:journal 7d")
         #expect(trailing.string == "5 match(es) — top: [0.85] Design doc")
     }
 
-    @Test("recall collapsed falls back to default when no segments")
-    func recallCollapsedNoSegments() {
+    @Test("extension lookup collapsed falls back to default when no segments")
+    func extensionLookupCollapsedNoSegments() {
         let config = ToolPresentationBuilder.build(
-            itemID: "t1", tool: "recall",
+            itemID: "t1", tool: "extensions.lookup",
             argsSummary: "query: test",
             outputPreview: "",
             isError: false, isDone: true,
@@ -487,7 +487,7 @@ struct ToolPresentationBuilderTests {
 
         // Without segments, falls through to default: tool + argsSummary
         #expect(config.segmentAttributedTitle == nil)
-        #expect(config.title.contains("recall"))
+        #expect(config.title.contains("extensions.lookup"))
     }
 
     // MARK: - Plot

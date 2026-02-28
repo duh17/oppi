@@ -370,11 +370,21 @@ struct UIHangHarnessView: View {
                 ))
 
                 items.append(.toolCall(
-                    id: "\(sessionPrefix)-visual-tool-todo",
-                    tool: "todo",
-                    argsSummary: "action: list, status: in_progress",
+                    id: "\(sessionPrefix)-visual-tool-extension-a",
+                    tool: "extensions.lookup",
+                    argsSummary: "query: renderer parity checklist",
                     outputPreview: "- [ ] keep renderer parity checklist up to date",
                     outputByteCount: 80,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-extension-b",
+                    tool: "extensions.notes",
+                    argsSummary: "query: harness markdown payload",
+                    outputPreview: "",
+                    outputByteCount: 2_400,
                     isError: false,
                     isDone: true
                 ))
@@ -537,6 +547,30 @@ struct UIHangHarnessView: View {
         }
     }
 
+    private var extensionMarkdownToolID: String {
+        extensionMarkdownToolItemID(for: selectedSession)
+    }
+
+    private var extensionTextToolID: String {
+        extensionTextToolItemID(for: selectedSession)
+    }
+
+    private var extensionMarkdownIsExpandedValue: Int {
+        connection.reducer.expandedItemIDs.contains(extensionMarkdownToolID) ? 1 : 0
+    }
+
+    private var extensionTextIsExpandedValue: Int {
+        connection.reducer.expandedItemIDs.contains(extensionTextToolID) ? 1 : 0
+    }
+
+    private var extensionMarkdownIsTopVisibleValue: Int {
+        scrollController.currentTopVisibleItemId == extensionMarkdownToolID ? 1 : 0
+    }
+
+    private var offsetYValue: Int {
+        Int(scrollController.currentContentOffsetY.rounded())
+    }
+
     private var bottomItemID: String? {
         visibleItems.last?.id
     }
@@ -594,6 +628,8 @@ struct UIHangHarnessView: View {
             resetRuntimeMetrics()
             frameIntervalMonitor.start()
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
+            seedExtensionMarkdownFixtures()
+            seedExtensionTextFixtures()
             startDiagnosticsLoop()
             restartStreamingLoop()
 
@@ -611,6 +647,8 @@ struct UIHangHarnessView: View {
         }
         .onChange(of: selectedSession) { _, _ in
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
+            seedExtensionMarkdownFixtures()
+            seedExtensionTextFixtures()
             heartbeat &+= 1
             restartStreamingLoop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -661,6 +699,18 @@ struct UIHangHarnessView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.tools.render")
 
+                Button("Extension") {
+                    focusExtensionMarkdownTool()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.extension.focus")
+
+                Button("Extension Text") {
+                    focusExtensionTextTool()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.extensionText.focus")
+
                 Button("Visual Image") {
                     scrollToVisualUserImage(animated: false)
                 }
@@ -681,6 +731,12 @@ struct UIHangHarnessView: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("harness.theme.toggle")
 
+                Button("Diag") {
+                    refreshDiagnostics()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.diag.tick")
+
                 Button("Reset Metrics") {
                     resetRuntimeMetrics()
                 }
@@ -700,6 +756,7 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.itemCount", value: currentItems.count)
             diagnosticValue(id: "diag.nearBottom", value: nearBottomValue)
             diagnosticValue(id: "diag.topIndex", value: topVisibleIndex)
+            diagnosticValue(id: "diag.offsetY", value: offsetYValue)
             diagnosticValue(id: "diag.streamTick", value: streamTick)
             diagnosticValue(id: "diag.theme", value: themeOrdinal)
             diagnosticValue(id: "diag.nativeMode", value: nativeAssistantMode)
@@ -707,6 +764,9 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.nativeThinkingMode", value: nativeThinkingMode)
             diagnosticValue(id: "diag.nativeToolMode", value: nativeToolMode)
             diagnosticValue(id: "diag.visualTools", value: visualToolCount)
+            diagnosticValue(id: "diag.extensionExpanded", value: extensionMarkdownIsExpandedValue)
+            diagnosticValue(id: "diag.extensionTextExpanded", value: extensionTextIsExpandedValue)
+            diagnosticValue(id: "diag.extensionTop", value: extensionMarkdownIsTopVisibleValue)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
             diagnosticValue(id: "diag.cellMs", value: perf.cellConfigureLastMs)
@@ -851,10 +911,72 @@ struct UIHangHarnessView: View {
             "\(prefix)-visual-tool-read",
             "\(prefix)-visual-tool-write",
             "\(prefix)-visual-tool-edit",
-            "\(prefix)-visual-tool-todo",
+            "\(prefix)-visual-tool-extension-a",
+            "\(prefix)-visual-tool-extension-b",
             "\(prefix)-visual-tool-read-image",
             "\(prefix)-visual-tool-unknown",
         ]
+    }
+
+    private func extensionMarkdownToolItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-tool-extension-b"
+    }
+
+    private func extensionTextToolItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-tool-extension-a"
+    }
+
+    private func visualExtensionMarkdown(for session: HarnessSession) -> String {
+        var sections: [String] = ["# Extension harness notes — \(session.title)"]
+        for index in 1...22 {
+            sections.append("## Segment \(index)")
+            sections.append(
+                "- detail \(index).1\n- detail \(index).2\n- detail \(index).3\n- detail \(index).4"
+            )
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func visualExtensionTextOutput(for session: HarnessSession) -> String {
+        let bodySections = (1...28).map { index in
+            "section \(index): detail \(index).1, detail \(index).2, detail \(index).3"
+        }
+
+        return ([
+            "extension lookup result — \(session.title)",
+            "status: in_progress",
+        ] + bodySections).joined(separator: "\n")
+    }
+
+    private func seedExtensionMarkdownFixtures() {
+        let extensionIDs = Set(HarnessSession.allCases.map(extensionMarkdownToolItemID(for:)))
+        connection.reducer.toolOutputStore.clear(itemIDs: extensionIDs)
+
+        for session in HarnessSession.allCases {
+            let extensionID = extensionMarkdownToolItemID(for: session)
+            let markdown = visualExtensionMarkdown(for: session)
+
+            connection.reducer.toolArgsStore.set([
+                "text": .string(markdown),
+                "tags": .array([
+                    .string("harness"),
+                    .string("extension-markdown"),
+                    .string(session.rawValue),
+                ]),
+            ], for: extensionID)
+            _ = connection.reducer.toolOutputStore.append(markdown, to: extensionID)
+        }
+    }
+
+    private func seedExtensionTextFixtures() {
+        let extensionIDs = Set(HarnessSession.allCases.map(extensionTextToolItemID(for:)))
+        connection.reducer.toolOutputStore.clear(itemIDs: extensionIDs)
+
+        for session in HarnessSession.allCases {
+            let extensionID = extensionTextToolItemID(for: session)
+            let output = visualExtensionTextOutput(for: session)
+            _ = connection.reducer.toolOutputStore.append(output, to: extensionID)
+        }
     }
 
     private func visualUserImageItemID(for session: HarnessSession) -> String {
@@ -873,6 +995,26 @@ struct UIHangHarnessView: View {
         scrollToBottom(animated: false)
     }
 
+    private func focusExtensionMarkdownTool() {
+        let extensionID = extensionMarkdownToolItemID(for: selectedSession)
+        guard currentItems.contains(where: { $0.id == extensionID }) else { return }
+
+        renderWindow = currentItems.count
+        connection.reducer.expandedItemIDs.insert(extensionID)
+        heartbeat &+= 1
+        issueScrollCommand(id: extensionID, anchor: .top, animated: false)
+    }
+
+    private func focusExtensionTextTool() {
+        let extensionID = extensionTextToolItemID(for: selectedSession)
+        guard currentItems.contains(where: { $0.id == extensionID }) else { return }
+
+        renderWindow = currentItems.count
+        connection.reducer.expandedItemIDs.insert(extensionID)
+        heartbeat &+= 1
+        issueScrollCommand(id: extensionID, anchor: .top, animated: false)
+    }
+
     private func scrollToVisualUserImage(animated: Bool) {
         let itemID = visualUserImageItemID(for: selectedSession)
         guard currentItems.contains(where: { $0.id == itemID }) else { return }
@@ -886,6 +1028,10 @@ struct UIHangHarnessView: View {
         case .light, .custom:
             themeID = .dark
         }
+    }
+
+    private func refreshDiagnostics() {
+        heartbeat &+= 1
     }
 
     private func scrollToTop(animated: Bool) {

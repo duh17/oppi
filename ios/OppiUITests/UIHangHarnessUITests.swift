@@ -210,6 +210,197 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
     }
 
+    func testExpandedExtensionMarkdownGestureOwnsVerticalScroll() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 8)
+
+        let extensionFocus = app.descendants(matching: .any)["harness.extension.focus"]
+        let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+
+        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        extensionFocus.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.extensionExpanded", equals: 1, timeout: 4), 1)
+
+        diagTick.tap()
+        let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.72),
+            to: CGVector(dx: 0.5, dy: 0.28)
+        )
+
+        diagTick.tap()
+        let offsetAfterUpDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertGreaterThan(
+            offsetAfterUpDrag,
+            baselineOffset + 40,
+            "Upward drag inside expanded extension markdown did not move timeline (baseline=\(baselineOffset), after=\(offsetAfterUpDrag))"
+        )
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.28),
+            to: CGVector(dx: 0.5, dy: 0.82)
+        )
+
+        diagTick.tap()
+        let offsetAfterDownDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThan(
+            offsetAfterDownDrag,
+            offsetAfterUpDrag - 40,
+            "Downward drag inside expanded extension markdown snapped/stuck (afterUp=\(offsetAfterUpDrag), afterDown=\(offsetAfterDownDrag))"
+        )
+
+        // Repro guard: scroll past extension markdown, then scroll down again.
+        // This catches offset snapback loops seen after markdown rows have
+        // already moved off-screen.
+        var offsetAfterPastExtensionDrag = offsetAfterDownDrag
+        for _ in 0..<2 {
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.80),
+                to: CGVector(dx: 0.5, dy: 0.16)
+            )
+
+            diagTick.tap()
+            offsetAfterPastExtensionDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+            if offsetAfterPastExtensionDrag > offsetAfterDownDrag + 80 {
+                break
+            }
+        }
+
+        XCTAssertGreaterThan(
+            offsetAfterPastExtensionDrag,
+            offsetAfterDownDrag + 80,
+            "Expected to scroll further past extension markdown before snapback check (afterDown=\(offsetAfterDownDrag), past=\(offsetAfterPastExtensionDrag))"
+        )
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.24),
+            to: CGVector(dx: 0.5, dy: 0.86)
+        )
+
+        diagTick.tap()
+        let offsetAfterReturnDown = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThan(
+            offsetAfterReturnDown,
+            offsetAfterPastExtensionDrag - 40,
+            "Downward drag after passing extension markdown failed (past=\(offsetAfterPastExtensionDrag), down=\(offsetAfterReturnDown))"
+        )
+
+        Thread.sleep(forTimeInterval: 0.35)
+        diagTick.tap()
+        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThanOrEqual(
+            abs(settledOffset - offsetAfterReturnDown),
+            24,
+            "Offset snapped back after downward drag past extension markdown (down=\(offsetAfterReturnDown), settled=\(settledOffset))"
+        )
+    }
+
+    func testExpandedExtensionTextScrollOwnership() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 8)
+
+        let extensionFocus = app.descendants(matching: .any)["harness.extensionText.focus"]
+        let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+
+        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        extensionFocus.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
+
+        diagTick.tap()
+        let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.72),
+            to: CGVector(dx: 0.5, dy: 0.28)
+        )
+
+        diagTick.tap()
+        let offsetAfterUpDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertGreaterThan(
+            offsetAfterUpDrag,
+            baselineOffset + 40,
+            "Upward drag inside expanded extension text did not move timeline (baseline=\(baselineOffset), after=\(offsetAfterUpDrag))"
+        )
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.28),
+            to: CGVector(dx: 0.5, dy: 0.82)
+        )
+
+        diagTick.tap()
+        let offsetAfterDownDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThan(
+            offsetAfterDownDrag,
+            offsetAfterUpDrag - 40,
+            "Downward drag inside expanded extension text snapped/stuck (afterUp=\(offsetAfterUpDrag), afterDown=\(offsetAfterDownDrag))"
+        )
+
+        var offsetAfterPastExtensionDrag = offsetAfterDownDrag
+        for _ in 0..<2 {
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.80),
+                to: CGVector(dx: 0.5, dy: 0.16)
+            )
+
+            diagTick.tap()
+            offsetAfterPastExtensionDrag = pollDiagnostic("diag.offsetY", timeout: 4)
+            if offsetAfterPastExtensionDrag > offsetAfterDownDrag + 80 {
+                break
+            }
+        }
+
+        XCTAssertGreaterThan(
+            offsetAfterPastExtensionDrag,
+            offsetAfterDownDrag + 80,
+            "Expected to scroll further past extension text before snapback check (afterDown=\(offsetAfterDownDrag), past=\(offsetAfterPastExtensionDrag))"
+        )
+
+        dragTimeline(
+            timeline,
+            from: CGVector(dx: 0.5, dy: 0.24),
+            to: CGVector(dx: 0.5, dy: 0.86)
+        )
+
+        diagTick.tap()
+        let offsetAfterReturnDown = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThan(
+            offsetAfterReturnDown,
+            offsetAfterPastExtensionDrag - 40,
+            "Downward drag after passing extension text failed (past=\(offsetAfterPastExtensionDrag), down=\(offsetAfterReturnDown))"
+        )
+
+        Thread.sleep(forTimeInterval: 0.35)
+        diagTick.tap()
+        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThanOrEqual(
+            abs(settledOffset - offsetAfterReturnDown),
+            24,
+            "Offset snapped back after downward drag past extension text (down=\(offsetAfterReturnDown), settled=\(settledOffset))"
+        )
+    }
+
     func testExpandedToolRowsReconfigureStressNoStalls() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 

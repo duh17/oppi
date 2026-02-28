@@ -6,7 +6,6 @@ enum ToolTimelineRowExpandedModeRouter {
         renderDiff: (_ lines: [DiffLine], _ path: String?) -> Visibility,
         renderCode: (_ text: String, _ language: SyntaxLanguage?, _ startLine: Int?) -> Visibility,
         renderMarkdown: (_ text: String) -> Visibility,
-        renderTodo: (_ output: String) -> Visibility,
         renderPlot: (_ spec: PlotChartSpec, _ fallbackText: String?) -> Visibility,
         renderReadMedia: (_ output: String, _ filePath: String?, _ startLine: Int) -> Visibility,
         renderText: (_ text: String, _ language: SyntaxLanguage?) -> Visibility
@@ -23,9 +22,6 @@ enum ToolTimelineRowExpandedModeRouter {
 
         case .markdown(let text):
             return renderMarkdown(text)
-
-        case .todoCard(let output):
-            return renderTodo(output)
 
         case .plot(let spec, let fallbackText):
             return renderPlot(spec, fallbackText)

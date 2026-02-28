@@ -65,6 +65,15 @@ final class ChatScrollController: NSObject {
         anchor.topVisibleItemId
     }
 
+    /// Current visual vertical offset (`contentOffset.y + adjusted top inset`).
+    ///
+    /// Stored non-reactively for harness diagnostics so tests can read exact
+    /// scroll movement after gesture drags without reintroducing SwiftUI body
+    /// feedback loops on every scroll tick.
+    var currentContentOffsetY: CGFloat {
+        anchor.contentOffsetY
+    }
+
     /// Whether the user is currently scrolled to the bottom.
     var isCurrentlyNearBottom: Bool {
         anchor.isNearBottom
@@ -184,6 +193,11 @@ final class ChatScrollController: NSObject {
         anchor.topVisibleItemId = itemId
     }
 
+    /// CollectionView backend updates precise visual offset for diagnostics.
+    func updateContentOffsetY(_ value: CGFloat) {
+        anchor.contentOffsetY = value
+    }
+
     // MARK: - Auto-Scroll on Content Change
 
     /// Called when `renderVersion` changes. Schedules a throttled scroll
@@ -290,6 +304,7 @@ final class ChatScrollController: NSObject {
         keyboardTransitionUntil = nil
         anchor.isUserInteracting = false
         anchor.isFollowLocked = false
+        anchor.contentOffsetY = 0
         isDetachedStreamingHintVisible = false
         isJumpToBottomHintVisible = false
     }
@@ -307,4 +322,5 @@ private final class ScrollAnchorState {
     var isUserInteracting = false
     var isFollowLocked = false
     var topVisibleItemId: String?
+    var contentOffsetY: CGFloat = 0
 }

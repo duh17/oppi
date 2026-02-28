@@ -116,10 +116,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let commandContainer = UIView()
     private let commandLabel = UILabel()
     private let outputContainer = UIView()
-    private let outputScrollView = UIScrollView()
+    private let outputScrollView = HorizontalPanPassthroughScrollView()
     private let outputLabel = UILabel()
     private let expandedContainer = UIView()
-    private let expandedScrollView = UIScrollView()
+    private let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedLabel = UILabel()
     private let expandedMarkdownView = AssistantMarkdownContentView()
     private let expandedReadMediaContainer = UIView()
@@ -460,19 +460,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             startLine: startLine,
             themeID: ThemeRuntimeState.currentThemeID()
         )
-    }
-
-    private func installExpandedTodoView(output: String) {
-        let native: NativeExpandedTodoView
-        if let existing = expandedReadMediaContentView as? NativeExpandedTodoView {
-            native = existing
-        } else {
-            clearExpandedReadMediaView()
-            native = NativeExpandedTodoView()
-            installExpandedEmbeddedView(native)
-        }
-
-        native.apply(output: output, themeID: ThemeRuntimeState.currentThemeID())
     }
 
     private func installExpandedPlotView(spec: PlotChartSpec, fallbackText: String?) {
@@ -896,9 +883,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                         isDone: configuration.isDone
                     )
                 },
-                renderTodo: { output in
-                    self.renderExpandedTodoMode(output: output)
-                },
                 renderPlot: { spec, fallbackText in
                     self.renderExpandedPlotMode(spec: spec, fallbackText: fallbackText)
                 },
@@ -1146,6 +1130,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         wasExpandedVisible: Bool,
         isDone: Bool
     ) -> ExpandedRenderVisibility {
+        let previousExpandedRenderSignature = expandedRenderSignature
+        let wasUsingMarkdownLayout = expandedUsesMarkdownLayout
+
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1172,44 +1159,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedShouldAutoFollow = localExpandedShouldAutoFollow
         setExpandedVerticalLockEnabled(false)
 
+        let didRerenderMarkdown = localExpandedRenderSignature != previousExpandedRenderSignature
+        let didEnterMarkdownLayout = !wasUsingMarkdownLayout && expandedUsesMarkdownLayout
+
         // Markdown subviews are added synchronously but Auto Layout hasn't
         // measured them yet when preferredViewportHeight runs in the same
-        // cycle. Defer a layout invalidation so the collection view
-        // re-measures with the correct intrinsic height — same pattern
-        // used by installExpandedEmbeddedView for todo/plot/readMedia.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.setNeedsLayout()
-            self.layoutIfNeeded()
-            ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        // cycle. Defer one layout invalidation only when markdown content
+        // actually changed (or mode switched into markdown). Re-invalidating
+        // every apply causes avoidable mid-gesture reflows and scroll snapback.
+        if didRerenderMarkdown || didEnterMarkdownLayout {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.setNeedsLayout()
+                self.layoutIfNeeded()
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+            }
         }
-
-        return visibility
-    }
-
-    private func renderExpandedTodoMode(output: String) -> ExpandedRenderVisibility {
-        var localExpandedRenderSignature = expandedRenderSignature
-        var localExpandedRenderedText = expandedRenderedText
-        var localExpandedShouldAutoFollow = expandedShouldAutoFollow
-
-        let visibility = ToolTimelineRowExpandedRenderer.renderTodoMode(
-            output: output,
-            expandedScrollView: expandedScrollView,
-            expandedRenderSignature: &localExpandedRenderSignature,
-            expandedRenderedText: &localExpandedRenderedText,
-            expandedShouldAutoFollow: &localExpandedShouldAutoFollow,
-            isUsingReadMediaLayout: expandedUsesReadMediaLayout,
-            hasExpandedReadMediaContentView: expandedReadMediaContentView != nil,
-            showExpandedHostedView: showExpandedHostedView,
-            installExpandedTodoView: installExpandedTodoView(output:),
-            setModeText: { self.expandedViewportMode = .text },
-            showExpandedViewport: showExpandedViewport
-        )
-
-        expandedRenderSignature = localExpandedRenderSignature
-        expandedRenderedText = localExpandedRenderedText
-        expandedShouldAutoFollow = localExpandedShouldAutoFollow
-        setExpandedVerticalLockEnabled(false)
 
         return visibility
     }

@@ -225,6 +225,7 @@ enum ToolTimelineRowExpandedRenderer {
         let signature = ToolTimelineRowRenderMetrics.markdownSignature(text)
         let shouldRerender = signature != expandedRenderSignature
             || !isUsingMarkdownLayout
+        let previousRenderedText = expandedRenderedText
 
         showExpandedMarkdown()
 
@@ -243,49 +244,26 @@ enum ToolTimelineRowExpandedRenderer {
         expandedScrollView.showsHorizontalScrollIndicator = false
         setModeText()
         showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = shouldAutoFollowOnFirstRender }
-        if shouldRerender, expandedShouldAutoFollow {
-            scheduleExpandedAutoScrollToBottomIfNeeded()
+
+        if !wasExpandedVisible {
+            expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
+        } else if !shouldAutoFollowOnFirstRender,
+                  shouldRerender,
+                  !(previousRenderedText.map { !$0.isEmpty && text.hasPrefix($0) } ?? false) {
+            // Cell reuse can carry over a stale auto-follow state + non-zero
+            // contentOffset from a previous expanded row. For finalized
+            // markdown that does not continue prior streaming content, reset
+            // to deterministic top-of-content behavior.
+            expandedShouldAutoFollow = false
         }
 
-        return Visibility(
-            showExpandedContainer: true,
-            showCommandContainer: false,
-            showOutputContainer: false
-        )
-    }
-
-    static func renderTodoMode(
-        output: String,
-        expandedScrollView: UIScrollView,
-        expandedRenderSignature: inout Int?,
-        expandedRenderedText: inout String?,
-        expandedShouldAutoFollow: inout Bool,
-        isUsingReadMediaLayout: Bool,
-        hasExpandedReadMediaContentView: Bool,
-        showExpandedHostedView: () -> Void,
-        installExpandedTodoView: (String) -> Void,
-        setModeText: () -> Void,
-        showExpandedViewport: () -> Void
-    ) -> Visibility {
-        let signature = ToolTimelineRowRenderMetrics.todoSignature(output)
-        let shouldReinstall = signature != expandedRenderSignature
-            || !isUsingReadMediaLayout
-            || !hasExpandedReadMediaContentView
-
-        showExpandedHostedView()
-        expandedRenderedText = output
-        if shouldReinstall {
-            installExpandedTodoView(output)
-            expandedRenderSignature = signature
+        if shouldRerender {
+            if expandedShouldAutoFollow {
+                scheduleExpandedAutoScrollToBottomIfNeeded()
+            } else {
+                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
+            }
         }
-
-        expandedScrollView.alwaysBounceHorizontal = false
-        expandedScrollView.showsHorizontalScrollIndicator = false
-        setModeText()
-        showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldReinstall { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
 
         return Visibility(
             showExpandedContainer: true,
@@ -416,6 +394,7 @@ enum ToolTimelineRowExpandedRenderer {
             || isUsingMarkdownLayout
             || isUsingReadMediaLayout
             || (expandedLabel.attributedText == nil && expandedLabel.text == nil)
+        let previousRenderedText = expandedRenderedText
 
         showExpandedLabel()
         if shouldRerender {
@@ -447,9 +426,24 @@ enum ToolTimelineRowExpandedRenderer {
         setModeText()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
-        if !wasExpandedVisible { expandedShouldAutoFollow = shouldAutoFollowOnFirstRender }
-        if shouldRerender, expandedShouldAutoFollow {
-            scheduleExpandedAutoScrollToBottomIfNeeded()
+
+        if !wasExpandedVisible {
+            expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
+        } else if !shouldAutoFollowOnFirstRender,
+                  shouldRerender,
+                  !(previousRenderedText.map { !$0.isEmpty && displayText.hasPrefix($0) } ?? false) {
+            // Cell reuse can leave expanded text rows at a stale bottom offset.
+            // Finalized content that is not a continuation of prior streaming
+            // output should reopen at top.
+            expandedShouldAutoFollow = false
+        }
+
+        if shouldRerender {
+            if expandedShouldAutoFollow {
+                scheduleExpandedAutoScrollToBottomIfNeeded()
+            } else {
+                ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
+            }
         }
 
         return Visibility(
