@@ -4,7 +4,7 @@ enum ToolTimelineRowFullScreenSupport {
     private static let outputTruncationMarker = "\n\n… [output truncated]"
     static func supportsPreview(toolNamePrefix: String?) -> Bool {
         switch toolNamePrefix {
-        case "todo", "plot":
+        case "plot":
             return false
         default:
             return true
@@ -68,7 +68,7 @@ enum ToolTimelineRowFullScreenSupport {
                 command: configuration.copyCommandText
             )
 
-        case .readMedia, .todoCard, .plot:
+        case .readMedia, .plot:
             return nil
         }
     }

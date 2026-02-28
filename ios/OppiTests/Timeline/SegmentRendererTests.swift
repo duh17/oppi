@@ -51,21 +51,21 @@ struct SegmentRendererTests {
 
     @Test func plainTextConcatenation() {
         let segments: [StyledSegment] = [
-            StyledSegment(text: "remember ", style: .bold),
+            StyledSegment(text: "notes ", style: .bold),
             StyledSegment(text: "\"hello\"", style: .muted),
             StyledSegment(text: " [test]", style: .dim),
         ]
-        #expect(SegmentRenderer.plainText(from: segments) == "remember \"hello\" [test]")
+        #expect(SegmentRenderer.plainText(from: segments) == "notes \"hello\" [test]")
     }
 
     // MARK: - toolNamePrefix
 
     @Test func toolNamePrefixFromBoldFirstSegment() {
         let segments: [StyledSegment] = [
-            StyledSegment(text: "recall ", style: .bold),
+            StyledSegment(text: "lookup ", style: .bold),
             StyledSegment(text: "\"query\"", style: .muted),
         ]
-        #expect(SegmentRenderer.toolNamePrefix(from: segments) == "recall")
+        #expect(SegmentRenderer.toolNamePrefix(from: segments) == "lookup")
     }
 
     @Test func toolNamePrefixNilWhenNotBold() {

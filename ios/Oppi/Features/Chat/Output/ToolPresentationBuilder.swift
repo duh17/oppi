@@ -74,10 +74,6 @@ enum ToolPresentationBuilder {
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded {
-            let todoMutationDiff = normalizedTool == "todo"
-                ? ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: argsSummary)
-                : nil
-
             expanded = buildExpanded(
                 normalizedTool: normalizedTool,
                 args: args,
@@ -87,8 +83,7 @@ enum ToolPresentationBuilder {
                 outputPreview: outputPreview,
                 isError: isError,
                 isDone: isDone,
-                isLoadingOutput: context.isLoadingOutput,
-                todoMutationDiff: todoMutationDiff
+                isLoadingOutput: context.isLoadingOutput
             )
         } else {
             expanded = ExpandedPresentation()
@@ -128,8 +123,8 @@ enum ToolPresentationBuilder {
         // Server-rendered segments: build attributed title and trailing.
         // For tools with SF Symbol icons (read, write, edit, bash), the first
         // bold segment is the tool name — strip it since the icon already
-        // represents the tool. Other tools (todo, remember, recall, extensions)
-        // keep the name in the title per their non-segment fallback behavior.
+        // represents the tool. Generic extension tools keep the name in the
+        // title per their non-segment fallback behavior.
         //
         // Expanded bash rows render a dedicated command panel, so we suppress
         // segment title commands there to avoid duplicate command text.
@@ -257,9 +252,8 @@ enum ToolPresentationBuilder {
             result.toolNameColor = UIColor(Color.themePurple)
 
         default:
-            // Extension tools (todo, remember, recall, etc.) are rendered via
-            // server-provided StyledSegments. This default case is the fallback
-            // when segments aren't available.
+            // Extension tools are rendered via server-provided StyledSegments.
+            // This default case is the fallback when segments aren't available.
             result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
             result.toolNamePrefix = tool
             result.toolNameColor = UIColor(Color.themeCyan)
@@ -277,14 +271,12 @@ enum ToolPresentationBuilder {
     enum ToolExpandedContent {
         /// Bash: separated command block + scrollable output viewport
         case bash(command: String?, output: String?, unwrapped: Bool)
-        /// Unified diff (edit, todo append/update)
+        /// Unified diff (edit)
         case diff(lines: [DiffLine], path: String?)
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
-        /// Rendered markdown (read .md, remember)
+        /// Rendered markdown (read .md)
         case markdown(text: String)
-        /// Rich todo card rendered natively
-        case todoCard(output: String)
         /// Native chart renderer for `plot` tool specs.
         case plot(spec: PlotChartSpec, fallbackText: String?)
         /// Media renderer for images/audio in read output
@@ -308,8 +300,7 @@ enum ToolPresentationBuilder {
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
-        isLoadingOutput: Bool,
-        todoMutationDiff: ToolCallFormatting.TodoMutationDiffPresentation?
+        isLoadingOutput: Bool
     ) -> ExpandedPresentation {
         let output = fullOutput.isEmpty ? outputPreview : fullOutput
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -397,14 +388,6 @@ enum ToolPresentationBuilder {
                 content = .code(text: outputTrimmed, language: language, startLine: nil, filePath: filePath)
             }
 
-        case "todo":
-            if let todoMutationDiff {
-                content = .diff(lines: todoMutationDiff.diffLines, path: nil)
-                copyOutput = todoMutationDiff.unifiedText
-            } else if !outputTrimmed.isEmpty {
-                content = .todoCard(output: outputTrimmed)
-            }
-
         case "plot":
             if NativePlotPreferences.isEnabled {
                 if let detailsChart = PlotChartSpec.fromToolDetails(details) {
@@ -422,28 +405,6 @@ enum ToolPresentationBuilder {
                 }
             } else if !outputTrimmed.isEmpty {
                 content = .text(text: outputTrimmed, language: .json)
-            }
-
-        case "remember":
-            var parts: [String] = []
-            if let text = args?["text"]?.stringValue {
-                parts.append(text)
-            }
-            if let tagsArray = args?["tags"]?.arrayValue {
-                let tags = tagsArray.compactMap(\.stringValue).filter { !$0.isEmpty }
-                if !tags.isEmpty {
-                    parts.append("Tags: \(tags.joined(separator: ", "))")
-                }
-            }
-            if !parts.isEmpty {
-                content = .markdown(text: parts.joined(separator: "\n\n"))
-            } else if !outputTrimmed.isEmpty {
-                content = .text(text: outputTrimmed, language: nil)
-            }
-
-        case "recall":
-            if !outputTrimmed.isEmpty {
-                content = .text(text: outputTrimmed, language: nil)
             }
 
         default:
@@ -464,7 +425,7 @@ enum ToolPresentationBuilder {
     /// Tools where the SF Symbol icon fully replaces the tool name in the title.
     /// These tools' non-segment `buildCollapsed` path sets `title` to the path/command
     /// (without the tool name), so the segment title should match by stripping the prefix.
-    /// Tools like todo/remember/recall keep the name in the title alongside their icon.
+    /// Generic extension tools keep the name in the title.
     private static func toolPrefixIconReplacesName(_ prefix: String?) -> Bool {
         switch prefix {
         case "$", "read", "write", "edit":
@@ -481,7 +442,7 @@ enum ToolPresentationBuilder {
     ) -> Bool {
         let tool = ToolCallFormatting.normalized(normalizedTool)
         switch tool {
-        case "bash", "read", "write", "edit", "todo", "remember", "recall", "plot":
+        case "bash", "read", "write", "edit", "plot":
             return false
         default:
             break

@@ -248,6 +248,9 @@ final class AssistantMarkdownContentView: UIView {
         tv.isEditable = false
         tv.isSelectable = true
         tv.isScrollEnabled = false
+        tv.alwaysBounceVertical = false
+        tv.alwaysBounceHorizontal = false
+        tv.bounces = false
         tv.backgroundColor = .clear
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
@@ -474,12 +477,13 @@ final class NativeCodeBlockView: UIView {
         return button
     }()
 
-    private let codeScrollView: UIScrollView = {
-        let sv = UIScrollView()
+    private let codeScrollView: HorizontalPanPassthroughScrollView = {
+        let sv = HorizontalPanPassthroughScrollView()
         sv.showsHorizontalScrollIndicator = false
         sv.showsVerticalScrollIndicator = false
         sv.alwaysBounceVertical = false
         sv.bounces = false
+        sv.isDirectionalLockEnabled = true
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()
@@ -651,11 +655,12 @@ final class NativeTableBlockView: UIView {
         return v
     }()
 
-    private let scrollView: UIScrollView = {
-        let sv = UIScrollView()
+    private let scrollView: HorizontalPanPassthroughScrollView = {
+        let sv = HorizontalPanPassthroughScrollView()
         sv.showsHorizontalScrollIndicator = false
         sv.alwaysBounceVertical = false
         sv.bounces = false
+        sv.isDirectionalLockEnabled = true
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()

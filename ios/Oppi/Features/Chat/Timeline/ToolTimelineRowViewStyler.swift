@@ -105,6 +105,7 @@ enum ToolTimelineRowViewStyler {
         outputScrollView.alwaysBounceVertical = false
         outputScrollView.alwaysBounceHorizontal = false
         outputScrollView.bounces = false
+        outputScrollView.isDirectionalLockEnabled = true
         outputScrollView.isScrollEnabled = false
         outputScrollView.showsVerticalScrollIndicator = true
         outputScrollView.showsHorizontalScrollIndicator = false
@@ -133,6 +134,7 @@ enum ToolTimelineRowViewStyler {
         expandedScrollView.alwaysBounceVertical = false
         expandedScrollView.alwaysBounceHorizontal = false
         expandedScrollView.bounces = false
+        expandedScrollView.isDirectionalLockEnabled = true
         expandedScrollView.isScrollEnabled = false
         expandedScrollView.showsVerticalScrollIndicator = true
         expandedScrollView.showsHorizontalScrollIndicator = false

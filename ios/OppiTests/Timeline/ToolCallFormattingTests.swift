@@ -31,18 +31,11 @@ struct ToolCallFormattingTests {
         #expect(!ToolCallFormatting.isEditTool("Write"))
     }
 
-    @Test func isTodoToolRecognizesNamespacedNames() {
-        #expect(ToolCallFormatting.isTodoTool("todo"))
-        #expect(ToolCallFormatting.isTodoTool("functions.todo"))
-        #expect(ToolCallFormatting.isTodoTool("tools/todo"))
-        #expect(!ToolCallFormatting.isTodoTool("bash"))
-    }
-
     @Test func normalizedCanonicalizesNamespacedTools() {
         #expect(ToolCallFormatting.normalized("  BASH\n") == "bash")
         #expect(ToolCallFormatting.normalized("functions.read") == "read")
         #expect(ToolCallFormatting.normalized("tools/write") == "write")
-        #expect(ToolCallFormatting.normalized("mcp:todo") == "todo")
+        #expect(ToolCallFormatting.normalized("mcp:extensions.lookup") == "lookup")
     }
 
     // MARK: - Arg Extraction
@@ -121,184 +114,6 @@ struct ToolCallFormattingTests {
     @Test func bashCommandRawSummary() {
         let result = ToolCallFormatting.bashCommand(args: nil, argsSummary: "some arg")
         #expect(result == "some arg")
-    }
-
-    // MARK: - Todo Summary
-
-    @Test func todoSummaryGetWithID() {
-        let args: [String: JSONValue] = [
-            "action": .string("get"),
-            "id": .string("TODO-218e1364"),
-        ]
-        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
-        #expect(result == "get TODO-218e1364")
-    }
-
-    @Test func todoSummaryCreateWithTitle() {
-        let args: [String: JSONValue] = [
-            "action": .string("create"),
-            "title": .string("iOS syntax highlighting follow-up"),
-        ]
-        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
-        #expect(result == "create iOS syntax highlighting follow-up")
-    }
-
-    @Test func todoSummaryListWithStatus() {
-        let args: [String: JSONValue] = [
-            "action": .string("list"),
-            "status": .string("open"),
-        ]
-        let result = ToolCallFormatting.todoSummary(args: args, argsSummary: "")
-        #expect(result == "list status=open")
-    }
-
-    @Test func todoSummaryFallbackToArgsSummary() {
-        let result = ToolCallFormatting.todoSummary(args: nil, argsSummary: "action: list-all")
-        #expect(result == "list-all")
-    }
-
-    @Test func todoOutputPresentationFormatsSectionedList() {
-        let output = """
-        {
-          "assigned": [
-            {
-              "id": "TODO-a1",
-              "title": "Ship host-mode gate fixes",
-              "status": "in_progress"
-            }
-          ],
-          "open": [
-            {
-              "id": "TODO-b2",
-              "title": "Write migration notes",
-              "status": "open"
-            }
-          ],
-          "closed": []
-        }
-        """
-
-        let presentation = ToolCallFormatting.todoOutputPresentation(
-            args: ["action": .string("list-all")],
-            argsSummary: "",
-            output: output
-        )
-
-        #expect(presentation?.usesMarkdown == true)
-        #expect(presentation?.trailing == "1 assigned · 1 open")
-        #expect(presentation?.text.contains("### Assigned (1)") == true)
-        #expect(presentation?.text.contains("TODO-a1") == true)
-        #expect(presentation?.text.contains("### Open (1)") == true)
-    }
-
-    @Test func todoOutputPresentationFormatsSingleItemAndKeepsMarkdownBody() {
-        let output = """
-        {
-          "id": "TODO-abc123",
-          "title": "Polish todo output renderer",
-          "tags": ["ios", "chat"],
-          "status": "in_progress",
-          "created_at": "2026-02-12T08:30:00.000Z",
-          "body": "## Acceptance\\n- list output is readable\\n- markdown body renders"
-        }
-        """
-
-        let presentation = ToolCallFormatting.todoOutputPresentation(
-            args: ["action": .string("get")],
-            argsSummary: "",
-            output: output
-        )
-
-        #expect(presentation?.usesMarkdown == true)
-        #expect(presentation?.trailing == "in-progress")
-        #expect(presentation?.text.contains("todo get") == true)
-        #expect(presentation?.text.contains("## Acceptance") == true)
-        #expect(presentation?.text.contains("Tags:") == true)
-    }
-
-    @Test func todoOutputPresentationReturnsNilForNonJSONText() {
-        let presentation = ToolCallFormatting.todoOutputPresentation(
-            args: ["action": .string("claim")],
-            argsSummary: "",
-            output: "claimed"
-        )
-
-        #expect(presentation == nil)
-    }
-
-    @Test func todoAppendDiffPresentationUsesAddedLinesOnly() {
-        let args: [String: JSONValue] = [
-            "action": .string("append"),
-            "body": .string("First line\n- bullet item\n```swift\nprint(\"hi\")\n```")
-        ]
-
-        let presentation = ToolCallFormatting.todoAppendDiffPresentation(args: args, argsSummary: "")
-
-        #expect(presentation?.addedLineCount == 5)
-        #expect(
-            presentation?.diffLines.allSatisfy { line in
-                switch line.kind {
-                case .added: return true
-                case .context, .removed: return false
-                }
-            } == true
-        )
-        #expect(presentation?.preview == "First line\n- bullet item")
-        #expect(presentation?.unifiedText.contains("+ print(\"hi\")") == true)
-    }
-
-    @Test func todoAppendDiffPresentationReturnsNilForNonAppendAction() {
-        let args: [String: JSONValue] = [
-            "action": .string("get"),
-            "body": .string("ignored")
-        ]
-
-        let presentation = ToolCallFormatting.todoAppendDiffPresentation(args: args, argsSummary: "")
-        #expect(presentation == nil)
-    }
-
-    @Test func todoMutationDiffPresentationFormatsUpdatePayloadAsDiff() {
-        let args: [String: JSONValue] = [
-            "action": .string("update"),
-            "id": .string("TODO-463187a1"),
-            "status": .string("closed"),
-            "title": .string("Refine auto-follow scrolling during streaming"),
-            "tags": .array([.string("ios"), .string("chat-ui")]),
-            "body": .string("Done.\nValidated on simulator and device.")
-        ]
-
-        let presentation = ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: "")
-
-        #expect(presentation?.addedLineCount == 6)
-        #expect(presentation?.removedLineCount == 0)
-        #expect(presentation?.preview == "title: Refine auto-follow scrolling during streaming\nstatus: closed")
-        #expect(presentation?.unifiedText.contains("+ status: closed") == true)
-        #expect(presentation?.unifiedText.contains("+ tags: ios, chat-ui") == true)
-        #expect(presentation?.unifiedText.contains("+ body:") == true)
-    }
-
-    @Test func todoMutationDiffPresentationMarksClearedBodyAsRemoval() {
-        let args: [String: JSONValue] = [
-            "action": .string("update"),
-            "id": .string("TODO-463187a1"),
-            "body": .string("   ")
-        ]
-
-        let presentation = ToolCallFormatting.todoMutationDiffPresentation(args: args, argsSummary: "")
-
-        #expect(presentation?.addedLineCount == 0)
-        #expect(presentation?.removedLineCount == 1)
-        #expect(
-            presentation?.diffLines.first.map { line in
-                switch line.kind {
-                case .removed:
-                    return true
-                case .added, .context:
-                    return false
-                }
-            } == true
-        )
-        #expect(presentation?.unifiedText.contains("- body: <cleared>") == true)
     }
 
     // MARK: - Display File Path
@@ -458,20 +273,5 @@ struct ToolCallFormattingTests {
     @Test func formatBytesMegabytes() {
         #expect(ToolCallFormatting.formatBytes(1048576) == "1.0MB")
         #expect(ToolCallFormatting.formatBytes(5242880) == "5.0MB")
-    }
-
-    // Remember/recall collapsed formatting moved to server-side mobile renderers
-    // (memory.mobile.ts sidecar). See docs/chat-rendering.md.
-
-    @Test func isRememberTool() {
-        #expect(ToolCallFormatting.isRememberTool("remember") == true)
-        #expect(ToolCallFormatting.isRememberTool("functions.remember") == true)
-        #expect(ToolCallFormatting.isRememberTool("recall") == false)
-    }
-
-    @Test func isRecallTool() {
-        #expect(ToolCallFormatting.isRecallTool("recall") == true)
-        #expect(ToolCallFormatting.isRecallTool("tools/recall") == true)
-        #expect(ToolCallFormatting.isRecallTool("remember") == false)
     }
 }

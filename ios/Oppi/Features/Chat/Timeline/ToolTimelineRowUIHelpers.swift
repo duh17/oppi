@@ -70,12 +70,6 @@ enum ToolTimelineRowUIHelpers {
             return "pencil"
         case "edit":
             return "arrow.left.arrow.right"
-        case "todo":
-            return "checklist"
-        case "remember":
-            return "brain.head.profile"
-        case "recall":
-            return "brain.head.profile"
         default:
             return nil
         }

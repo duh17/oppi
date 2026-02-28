@@ -9,10 +9,10 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     case readCode
     case bashOutput
     case editDiff
-    case todoDiff
-    case todoCard
-    case rememberMarkdown
-    case recallText
+    case extensionMutation
+    case extensionStructured
+    case extensionMarkdown
+    case extensionLookup
     case customText
     case plot
     case readMarkdown
@@ -24,10 +24,10 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         case .readCode: return "read-code"
         case .bashOutput: return "bash-output"
         case .editDiff: return "edit-diff"
-        case .todoDiff: return "todo-diff"
-        case .todoCard: return "todo-card"
-        case .rememberMarkdown: return "remember-markdown"
-        case .recallText: return "recall-text"
+        case .extensionMutation: return "extension-mutation"
+        case .extensionStructured: return "extension-structured"
+        case .extensionMarkdown: return "extension-markdown"
+        case .extensionLookup: return "extension-lookup"
         case .customText: return "custom-text"
         case .plot: return "plot"
         case .readMarkdown: return "read-markdown"
@@ -39,10 +39,11 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     var expectedSupportsFullScreenPreview: Bool {
         switch self {
-        case .todoCard, .plot, .readMedia:
+        case .plot, .readMedia:
             return false
-        case .writeCode, .readCode, .bashOutput, .editDiff, .todoDiff,
-                .rememberMarkdown, .recallText, .customText, .readMarkdown:
+        case .writeCode, .readCode, .bashOutput, .editDiff, .extensionMutation,
+                .extensionStructured, .extensionMarkdown, .extensionLookup,
+                .customText, .readMarkdown:
             return true
         }
     }
@@ -169,34 +170,34 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
                 isDone: true
             )
 
-        case .todoDiff:
+        case .extensionMutation:
             let body = (1...36).map { "- checklist item \($0)" }.joined(separator: "\n")
 
             toolArgsStore.set([
                 "action": .string("update"),
-                "id": .string("TODO-matrix-scroll"),
+                "id": .string("EXT-matrix-scroll"),
                 "title": .string("Stabilize scroll matrix"),
                 "status": .string("in_progress"),
                 "body": .string(body),
             ], for: itemID)
-            toolOutputStore.append("Updated TODO", to: itemID)
+            toolOutputStore.append("Updated extension item", to: itemID)
 
             return .toolCall(
                 id: itemID,
-                tool: "todo",
-                argsSummary: "action: update, id: TODO-matrix-scroll",
-                outputPreview: "Updated TODO",
+                tool: "extensions.backlog",
+                argsSummary: "action: update, id: EXT-matrix-scroll",
+                outputPreview: "Updated extension item",
                 outputByteCount: body.utf8.count,
                 isError: false,
                 isDone: true
             )
 
-        case .todoCard:
+        case .extensionStructured:
             let output = """
             [
-              {"id":"TODO-a1","title":"Stabilize scroll anchor","status":"in_progress","tags":["ios","scroll"]},
-              {"id":"TODO-a2","title":"Audit remember/recall rows","status":"open","tags":["timeline"]},
-              {"id":"TODO-a3","title":"Capture perf traces","status":"done","tags":["perf"]}
+              {"id":"EXT-a1","title":"Stabilize scroll anchor","status":"in_progress","tags":["ios","scroll"]},
+              {"id":"EXT-a2","title":"Audit extension rows","status":"open","tags":["timeline"]},
+              {"id":"EXT-a3","title":"Capture perf traces","status":"done","tags":["perf"]}
             ]
             """
 
@@ -205,7 +206,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
             ], for: itemID)
             toolOutputStore.append(output, to: itemID)
             toolSegmentStore.setCallSegments([
-                StyledSegment(text: "todo ", style: .bold),
+                StyledSegment(text: "backlog ", style: .bold),
                 StyledSegment(text: "list-all", style: .accent),
             ], for: itemID)
             toolSegmentStore.setResultSegments([
@@ -214,25 +215,25 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
             return .toolCall(
                 id: itemID,
-                tool: "todo",
+                tool: "extensions.backlog",
                 argsSummary: "action: list-all",
-                outputPreview: "TODO-a1",
+                outputPreview: "EXT-a1",
                 outputByteCount: output.utf8.count,
                 isError: false,
                 isDone: true
             )
 
-        case .rememberMarkdown:
-            let text = Self.sampleMarkdownDocument(title: "Remembered Notes", sections: 10)
+        case .extensionMarkdown:
+            let text = Self.sampleMarkdownDocument(title: "Extension Notes", sections: 10)
 
             toolArgsStore.set([
                 "text": .string(text),
                 "tags": .array([.string("ios"), .string("scroll"), .string("timeline")]),
             ], for: itemID)
-            toolOutputStore.append("", to: itemID)
+            toolOutputStore.append(text, to: itemID)
             toolSegmentStore.setCallSegments([
-                StyledSegment(text: "remember ", style: .bold),
-                StyledSegment(text: "\"Remembered Notes\"", style: .accent),
+                StyledSegment(text: "notes ", style: .bold),
+                StyledSegment(text: "\"Extension Notes\"", style: .accent),
                 StyledSegment(text: " [ios, scroll, timeline]", style: .muted),
             ], for: itemID)
             toolSegmentStore.setResultSegments([
@@ -241,15 +242,15 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
             return .toolCall(
                 id: itemID,
-                tool: "remember",
-                argsSummary: "text: remembered notes",
-                outputPreview: "",
+                tool: "extensions.notes",
+                argsSummary: "text: extension notes",
+                outputPreview: "# Extension Notes",
                 outputByteCount: text.utf8.count,
                 isError: false,
                 isDone: true
             )
 
-        case .recallText:
+        case .extensionLookup:
             let output = (1...80)
                 .map { "[\($0)] /journal/entry-\($0).md: matched architecture decision line \($0)" }
                 .joined(separator: "\n")
@@ -261,7 +262,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
             ], for: itemID)
             toolOutputStore.append(output, to: itemID)
             toolSegmentStore.setCallSegments([
-                StyledSegment(text: "recall ", style: .bold),
+                StyledSegment(text: "lookup ", style: .bold),
                 StyledSegment(text: "\"scroll anchoring\"", style: .accent),
                 StyledSegment(text: " scope:journal 30d", style: .muted),
             ], for: itemID)
@@ -271,7 +272,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
             return .toolCall(
                 id: itemID,
-                tool: "recall",
+                tool: "extensions.lookup",
                 argsSummary: "query: scroll anchoring",
                 outputPreview: "[1] /journal/entry-1.md",
                 outputByteCount: output.utf8.count,

@@ -80,13 +80,6 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
-    static func todoSignature(_ output: String) -> Int {
-        var hasher = Hasher()
-        hasher.combine("todo")
-        hasher.combine(output)
-        return hasher.finalize()
-    }
-
     static func readMediaSignature(
         output: String,
         filePath: String?,

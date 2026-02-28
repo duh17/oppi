@@ -349,10 +349,6 @@ struct SessionOutlineView: View {
             let path = args?["path"]?.stringValue ?? args?["file_path"]?.stringValue ?? ""
             return "edit " + path.shortenedPath
 
-        case "todo", "Todo":
-            let summary = ToolCallFormatting.todoSummary(args: args, argsSummary: argsSummary)
-            return summary.isEmpty ? "todo" : "todo \(summary)"
-
         default:
             return "\(tool): \(String(argsSummary.prefix(80)))"
         }
@@ -492,7 +488,6 @@ private struct OutlineRow: View {
             case "read", "Read": return "doc.text"
             case "write", "Write": return "square.and.pencil"
             case "edit", "Edit": return "pencil"
-            case "todo", "Todo": return "checklist"
             default: return "wrench"
             }
         case .permission: return "exclamationmark.shield"
