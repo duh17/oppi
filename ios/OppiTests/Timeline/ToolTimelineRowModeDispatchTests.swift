@@ -164,6 +164,14 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(!extensionTextPolicy.allowsHorizontalScroll)
         #expect(extensionTextPolicy.supportsFullScreenPreview)
 
+        let extensionJSONPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
+            .text(text: "{\"id\":\"EXT-1\"}", language: .json)
+        )
+        #expect(extensionJSONPolicy.enablesTapCopyGesture)
+        #expect(extensionJSONPolicy.enablesPinchGesture)
+        #expect(!extensionJSONPolicy.allowsHorizontalScroll)
+        #expect(extensionJSONPolicy.supportsFullScreenPreview)
+
         let hostedPolicy = ToolTimelineRowInteractionPolicy.forExpandedContent(
             .readMedia(output: "data:image/png;base64,abc", filePath: "a.png", startLine: 1)
         )
@@ -320,6 +328,26 @@ struct ToolTimelineRowModeDispatchTests {
         let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
         #expect(rendered.contains("extension result line 1"))
         #expect(rendered.contains("extension result line 3"))
+    }
+
+    @Test func expandedExtensionJSONUsesWrappedLabelRendering() throws {
+        let output = "{\"assigned\":[{\"id\":\"EXT-1\",\"title\":\"Test\"}]}"
+
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "extensions.lookup",
+            expandedContent: .text(text: output, language: .json),
+            isExpanded: true
+        ))
+
+        _ = fittedSize(for: view, width: 360)
+
+        let expandedLabel = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
+        #expect(rendered.contains("EXT-1"))
+
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        #expect(!expandedScrollView.alwaysBounceHorizontal)
+        #expect(!expandedScrollView.showsHorizontalScrollIndicator)
     }
 
     @Test func reproducesFatalAccessConflictWhenResettingOutputScrollOnReconfigure() throws {
@@ -608,6 +636,34 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(
             widthConstraint.priority < .required,
             "After reuse to text, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
+        )
+    }
+
+    @Test func cellReuseFromCodeToExtensionJSONResetsLabelWidthPriority() throws {
+        let longCodeLine = String(repeating: "0123456789abcdef", count: 32)
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(text: longCodeLine, language: .swift, startLine: 1, filePath: "Long.swift"),
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        let widthConstraint = try #require(privateConstraint(named: "expandedLabelWidthConstraint", in: view))
+        #expect(widthConstraint.priority == .required)
+
+        let extensionJSONConfig = makeToolConfiguration(
+            toolNamePrefix: "extensions.lookup",
+            expandedContent: .text(text: "{\"assigned\":[{\"id\":\"EXT-1\"}]}", language: .json),
+            isExpanded: true
+        )
+        view.configuration = extensionJSONConfig
+        _ = fittedSize(for: view, width: 360)
+
+        #expect(
+            widthConstraint.priority < .required,
+            "After reuse to json text, label width priority should be below required; got \(widthConstraint.priority.rawValue)"
         )
     }
 
@@ -924,6 +980,71 @@ struct ToolTimelineRowModeDispatchTests {
         #expect(
             widthConstraint.constant > 1,
             "Expanded diff should set a positive unwrapped width delta during apply; got \(widthConstraint.constant)"
+        )
+    }
+
+    @Test func cellReuseFromLargeCodeToRememberTextFirstExpandedPassStaysCompact() throws {
+        let repeatedToken = String(repeating: "0123456789abcdef", count: 4)
+        let largeCode = (0..<420)
+            .map { "let line\($0) = \"\(repeatedToken)\"" }
+            .joined(separator: "\n")
+
+        let codeConfig = makeToolConfiguration(
+            toolNamePrefix: "read",
+            expandedContent: .code(
+                text: largeCode,
+                language: .swift,
+                startLine: 1,
+                filePath: "Large.swift"
+            ),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let collapsedRemember = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: nil,
+            isExpanded: false,
+            isDone: true
+        )
+
+        let expandedRemember = makeToolConfiguration(
+            toolNamePrefix: "remember",
+            expandedContent: .text(text: "Saved to journal: 2026-02-28-mac-studio.md", language: nil),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: codeConfig)
+        _ = fittedSize(for: view, width: 360)
+
+        view.configuration = collapsedRemember
+        _ = fittedSize(for: view, width: 360)
+
+        view.configuration = expandedRemember
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(
+            viewportConstraint.constant < 120,
+            "Remember expanded viewport should be compact after reuse; got \(viewportConstraint.constant)"
+        )
+
+        let expandButton = try #require(privateView(named: "expandFloatingButton", in: view) as? UIButton)
+        #expect(
+            expandButton.isHidden,
+            "Remember expanded row should not show floating full-screen button for short text"
+        )
+
+        let firstPassSize = fittedSizeWithoutPrelayout(for: view, width: 360)
+
+        #expect(firstPassSize.height.isFinite)
+        #expect(firstPassSize.height > 0)
+        #expect(
+            firstPassSize.height < 260,
+            "Remember first-pass expanded sizing should stay compact after reuse; got \(firstPassSize.height)"
         )
     }
 }

@@ -374,6 +374,51 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func tappingReadImageToolPresentsPreviewInsteadOfExpandingWhenPresenterExists() throws {
+        let harness = makeWindowedTimelineHarness(sessionId: "session-read-image")
+
+        let root = UIViewController()
+        harness.window.rootViewController = root
+        root.loadViewIfNeeded()
+        harness.collectionView.removeFromSuperview()
+        harness.collectionView.frame = root.view.bounds
+        harness.collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        root.view.addSubview(harness.collectionView)
+        harness.window.makeKeyAndVisible()
+
+        let toolID = "tool-read-image-1"
+        let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+
+        harness.toolArgsStore.set(["path": .string("fixtures/icon.png")], for: toolID)
+        harness.toolOutputStore.append("Read image file [image/png]\n\ndata:image/png;base64,\(pngBase64)", to: toolID)
+
+        harness.applyItems([
+            .toolCall(
+                id: toolID,
+                tool: "read",
+                argsSummary: "path: fixtures/icon.png",
+                outputPreview: "data:image/png;base64,\(pngBase64)",
+                outputByteCount: pngBase64.utf8.count,
+                isError: false,
+                isDone: true
+            ),
+        ], isBusy: false)
+
+        _ = try configuredTimelineCell(in: harness.collectionView, item: 0)
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didSelectItemAt: IndexPath(item: 0, section: 0)
+        )
+
+        #expect(!harness.reducer.expandedItemIDs.contains(toolID))
+        #expect(root.presentedViewController is FullScreenImageViewController)
+
+        root.dismiss(animated: false)
+        harness.window.isHidden = true
+    }
+
+    @MainActor
     @Test func compactionChevronActionTogglesExpansionWhenSummaryIsLong() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let itemID = "compaction-expand-1"

@@ -378,7 +378,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             ? bounds.width
             : (window?.bounds.width ?? 375)
         let fallbackContainerWidth = max(100, cellWidth - 16)
-        let measuredContainerWidth = container.bounds.width > 10 ? container.bounds.width : fallbackContainerWidth
+        let measuredContainerWidth = max(container.bounds.width, fallbackContainerWidth)
 
         // For diff/horizontal-scroll modes, measure at the label's actual
         // width (lines don't wrap). Using the container width would cause
@@ -404,13 +404,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         } else {
             width = max(1, measuredContainerWidth - 12)
         }
-        let contentSize = contentView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingExpandedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
+        let contentHeight = measuredExpandedContentHeight(
+            for: contentView,
+            width: width
         )
-
-        let contentHeight = ceil(contentSize.height + 10)
         let windowHeight = window?.bounds.height
             ?? superview?.bounds.height
             ?? max(bounds.height, 600)
@@ -422,6 +419,22 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let maxAllowed = min(mode.maxHeight, availableHeight)
 
         return min(maxAllowed, max(mode.minHeight, contentHeight))
+    }
+
+    private func measuredExpandedContentHeight(for contentView: UIView, width: CGFloat) -> CGFloat {
+        if let label = contentView as? UILabel {
+            let labelSize = label.sizeThatFits(
+                CGSize(width: width, height: .greatestFiniteMagnitude)
+            )
+            return ceil(max(1, labelSize.height) + 10)
+        }
+
+        let contentSize = contentView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingExpandedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return ceil(max(1, contentSize.height) + 10)
     }
 
     private static func sanitizedFittingSize(_ size: CGSize, fallbackWidth: CGFloat) -> CGSize {
@@ -990,6 +1003,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateViewportHeightsIfNeeded()
         updateExpandFloatingButtonVisibility()
 
+        if isExpandingTransition {
+            // Reuse path: an expanded code/diff row can leave stack-view layout
+            // caches with stale large fitting heights until the next layout pass.
+            // Force one synchronous layout on expand so first self-sizing uses
+            // current constraints/content instead of stale cached geometry.
+            setNeedsLayout()
+            layoutIfNeeded()
+        }
+
         ToolTimelineRowDisplayState.applyStatusAppearance(
             isDone: configuration.isDone,
             isError: configuration.isError,
@@ -1295,13 +1317,52 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func expandedContentOverflowsViewport() -> Bool {
         let inset = expandedScrollView.adjustedContentInset
-        let viewportHeight = max(0, expandedScrollView.bounds.height - inset.top - inset.bottom)
+        let scrollViewportHeight = max(0, expandedScrollView.bounds.height - inset.top - inset.bottom)
+
+        let constraintViewportHeight: CGFloat
+        if let expandedViewportHeightConstraint, expandedViewportHeightConstraint.isActive {
+            constraintViewportHeight = max(0, expandedViewportHeightConstraint.constant)
+        } else {
+            constraintViewportHeight = 0
+        }
+
+        let viewportHeight = constraintViewportHeight > 1
+            ? constraintViewportHeight
+            : scrollViewportHeight
 
         guard viewportHeight > 1 else {
             return false
         }
 
+        if !expandedUsesMarkdownLayout && !expandedUsesReadMediaLayout {
+            return expandedLabelOverflowsViewport(viewportHeight)
+        }
+
         let overflowY = expandedScrollView.contentSize.height - viewportHeight
+        return overflowY > Self.fullScreenOverflowThreshold
+    }
+
+    private func expandedLabelOverflowsViewport(_ viewportHeight: CGFloat) -> Bool {
+        let cellWidth = bounds.width > 10
+            ? bounds.width
+            : (window?.bounds.width ?? 375)
+        let fallbackContainerWidth = max(100, cellWidth - 16)
+        let measuredContainerWidth = max(expandedContainer.bounds.width, fallbackContainerWidth)
+
+        let width: CGFloat
+        if (expandedViewportMode == .diff || expandedViewportMode == .code),
+           let widthConstraint = expandedLabelWidthConstraint,
+           widthConstraint.constant > 1 {
+            let frameWidth = expandedScrollView.bounds.width > 10
+                ? expandedScrollView.bounds.width
+                : measuredContainerWidth
+            width = max(1, frameWidth + widthConstraint.constant)
+        } else {
+            width = max(1, measuredContainerWidth - 12)
+        }
+
+        let contentHeight = measuredExpandedContentHeight(for: expandedLabel, width: width)
+        let overflowY = contentHeight - viewportHeight
         return overflowY > Self.fullScreenOverflowThreshold
     }
 
@@ -1381,8 +1442,31 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     @objc private func handleImagePreviewTap() {
-        guard let image = imagePreviewImageView.image else { return }
+        _ = presentCollapsedImagePreviewIfAvailable()
+    }
+
+    @discardableResult
+    func presentCollapsedImagePreviewIfAvailable() -> Bool {
+        // Requires a presenter in the responder chain. UI test harnesses that
+        // attach collection views directly to windows may intentionally skip
+        // modal presentation and fall back to default row expansion behavior.
+        guard ToolTimelineRowPresentationHelpers.nearestViewController(from: self) != nil else {
+            return false
+        }
+
+        if let image = imagePreviewImageView.image {
+            ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
+            return true
+        }
+
+        guard let base64 = currentConfiguration.collapsedImageBase64,
+              !base64.isEmpty,
+              let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600) else {
+            return false
+        }
+
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
+        return true
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {

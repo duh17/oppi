@@ -444,7 +444,7 @@ struct ToolPresentationConfigTests {
     }
 
     @MainActor
-    @Test func expandedExtensionToolUsesGenericTextRendererForStructuredOutput() throws {
+    @Test func expandedExtensionToolAutoDetectsStructuredJSONForExpandedOutput() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let itemID = "extension-list-1"
         harness.reducer.expandedItemIDs.insert(itemID)
@@ -482,7 +482,7 @@ struct ToolPresentationConfigTests {
             return
         }
         #expect(output.contains("EXT-a27df231"))
-        #expect(language == nil)
+        #expect(language == .json)
         #expect(config.trailing == nil)
     }
 

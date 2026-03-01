@@ -8,6 +8,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 /// Navigated to from the file tree in ``SkillDetailView``.
 /// Text files are rendered as syntax-highlighted code or markdown.
 struct SkillFileView: View {
+    static let contentPresentation: FileContentPresentation = .document
+    static let allowsNestedFullScreenExpansion = false
+
     let skillName: String
     let filePath: String
 
@@ -20,23 +23,12 @@ struct SkillFileView: View {
         filePath.components(separatedBy: "/").last ?? filePath
     }
 
-    private var isMarkdown: Bool {
-        filePath.hasSuffix(".md")
-    }
-
     var body: some View {
-        ScrollView {
+        Group {
             if let content {
-                if isMarkdown {
-                    MarkdownText(content)
-                        .padding()
-                } else {
-                    Text(content)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
+                FileContentView(content: content, filePath: filePath, presentation: Self.contentPresentation)
+                    .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else if isLoading {
                 ProgressView("Loading…")
                     .padding(.top, 80)
@@ -48,6 +40,7 @@ struct SkillFileView: View {
                 )
             }
         }
+        .background(Color.themeBg)
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

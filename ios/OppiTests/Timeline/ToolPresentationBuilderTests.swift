@@ -446,6 +446,231 @@ struct ToolPresentationBuilderTests {
         #expect(text == "Saved to journal")
     }
 
+    @Test("extension expanded mode routing uses visual/json/markdown/text deterministically")
+    func extensionExpandedModeRoutingMatrix() {
+        let jsonHint = ToolPresentationBuilder.build(
+            itemID: "ext-json-hint", tool: "extensions.lookup",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("json")]),
+                expanded: ["ext-json-hint"],
+                fullOutput: "{\"b\":2,\"a\":1}"
+            )
+        )
+
+        guard case .text(let hintedJSONText, let hintedJSONLanguage) = jsonHint.expandedContent else {
+            Issue.record("Expected .text(.json) for explicit json format")
+            return
+        }
+        #expect(hintedJSONLanguage == .json)
+        #expect(hintedJSONText.contains("\n"))
+
+        let autoJSON = ToolPresentationBuilder.build(
+            itemID: "ext-json-auto", tool: "extensions.lookup",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["ext-json-auto"],
+                fullOutput: "{\"assigned\":[{\"id\":\"EXT-1\"}],\"open\":[],\"closed\":[]}"
+            )
+        )
+
+        guard case .text(let autoJSONText, let autoJSONLanguage) = autoJSON.expandedContent else {
+            Issue.record("Expected .text(.json) for auto-detected json")
+            return
+        }
+        #expect(autoJSONLanguage == .json)
+        #expect(autoJSONText.contains("\"EXT-1\""))
+
+        let markdownHint = ToolPresentationBuilder.build(
+            itemID: "ext-md-hint", tool: "extensions.notes",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("markdown")]),
+                expanded: ["ext-md-hint"],
+                fullOutput: "# Header\n\nBody"
+            )
+        )
+
+        guard case .markdown(let markdownText) = markdownHint.expandedContent else {
+            Issue.record("Expected .markdown for explicit markdown format")
+            return
+        }
+        #expect(markdownText == "# Header\n\nBody")
+
+        let visualDetails: JSONValue = .object([
+            "presentationFormat": .string("markdown"),
+            "ui": .array([
+                .object([
+                    "id": .string("chart-1"),
+                    "kind": .string("chart"),
+                    "version": .number(1),
+                    "spec": .object([
+                        "dataset": .object([
+                            "rows": .array([
+                                .object(["x": .number(0), "y": .number(1)]),
+                            ]),
+                        ]),
+                        "marks": .array([
+                            .object(["type": .string("line"), "x": .string("x"), "y": .string("y")]),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ])
+
+        let visual = ToolPresentationBuilder.build(
+            itemID: "ext-visual", tool: "extensions.metrics",
+            argsSummary: "",
+            outputPreview: "fallback",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: visualDetails,
+                expanded: ["ext-visual"],
+                fullOutput: "fallback"
+            )
+        )
+
+        guard case .plot = visual.expandedContent else {
+            Issue.record("Expected .plot when details.ui chart payload is present")
+            return
+        }
+    }
+
+    @Test("extension json/markdown over budget fall back to text with note")
+    func extensionStructuredBudgetFallbackToText() {
+        let oversizedJSON = "{\"payload\":\"" + String(repeating: "x", count: 70_000) + "\"}"
+        let jsonFallback = ToolPresentationBuilder.build(
+            itemID: "ext-json-over-budget", tool: "extensions.lookup",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("json")]),
+                expanded: ["ext-json-over-budget"],
+                fullOutput: oversizedJSON
+            )
+        )
+
+        guard case .text(let jsonText, let jsonLanguage) = jsonFallback.expandedContent else {
+            Issue.record("Expected text fallback for oversized json")
+            return
+        }
+        #expect(jsonLanguage == nil)
+        #expect(jsonText.contains("json preview skipped (over 64KB)"))
+        #expect(jsonFallback.copyOutputText == oversizedJSON)
+
+        let oversizedMarkdown = String(repeating: "- row\n", count: 20_000)
+        let markdownFallback = ToolPresentationBuilder.build(
+            itemID: "ext-md-over-budget", tool: "extensions.notes",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("markdown")]),
+                expanded: ["ext-md-over-budget"],
+                fullOutput: oversizedMarkdown
+            )
+        )
+
+        guard case .text(let markdownText, let markdownLanguage) = markdownFallback.expandedContent else {
+            Issue.record("Expected text fallback for oversized markdown")
+            return
+        }
+        #expect(markdownLanguage == nil)
+        #expect(markdownText.contains("markdown preview skipped (over 64KB)"))
+        #expect(markdownFallback.copyOutputText == oversizedMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    @Test("extension expanded strips invocation echo and excessive blank lines")
+    func extensionExpandedStripsInvocationEcho() {
+        let noisyOutput = """
+        remember tags: [6 items], text:
+        Oppi timeline epic status sync
+        M3 complete, dispatch M4
+
+
+
+        Saved to journal: 2026-02-28-mac-studio.md
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-remember", tool: "remember",
+            argsSummary: "tags: [6 items], text: Oppi timeline epic status sync",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(expanded: ["t-remember"], fullOutput: noisyOutput)
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content for remember tool")
+            return
+        }
+
+        #expect(language == nil)
+        #expect(text == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(config.copyOutputText == "Saved to journal: 2026-02-28-mac-studio.md")
+
+        let namespacedOutput = """
+        extensions.remember(tags: [2], text: first line
+        second line)
+
+        Saved to journal: 2026-02-28-mac-studio.md
+        """
+
+        let namespaced = ToolPresentationBuilder.build(
+            itemID: "t-remember-ns", tool: "extensions.remember",
+            argsSummary: "tags: [2], text: first line",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(expanded: ["t-remember-ns"], fullOutput: namespacedOutput)
+        )
+
+        guard case .text(let namespacedText, _) = namespaced.expandedContent else {
+            Issue.record("Expected .text content for namespaced remember tool")
+            return
+        }
+
+        #expect(namespacedText == "Saved to journal: 2026-02-28-mac-studio.md")
+    }
+
+    @Test("extension expanded quoted invocation + ansi progress lines reproduces empty-space bug")
+    func extensionExpandedQuotedInvocationWithANSIProgressArtifacts() {
+        let ansiClearLine = "\u{001B}[2K"
+        let ansiProgressBlock = Array(repeating: ansiClearLine, count: 120).joined(separator: "\n")
+        let noisyOutput = """
+        \(ansiProgressBlock)
+        remember "Compacted summary and details"
+        \(ansiProgressBlock)
+
+        Saved to journal: 2026-02-28-mac-studio.md
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-remember-quoted-ansi", tool: "remember",
+            argsSummary: "text: Compacted summary and details",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(expanded: ["t-remember-quoted-ansi"], fullOutput: noisyOutput)
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected .text content for remember tool")
+            return
+        }
+
+        #expect(language == nil)
+        #expect(text == "Saved to journal: 2026-02-28-mac-studio.md")
+        #expect(!text.contains("remember \"Compacted"))
+        #expect(!text.contains("\u{001B}["))
+        #expect(config.copyOutputText == "Saved to journal: 2026-02-28-mac-studio.md")
+    }
+
     @Test("extension lookup collapsed uses segments when available")
     func extensionLookupCollapsedWithSegments() throws {
         let config = ToolPresentationBuilder.build(

@@ -560,6 +560,7 @@ private struct OverallFileDiffDetailView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.themeBg)
+        .allowsFullScreenExpansion(false)
         .navigationTitle("Overall Diff")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -604,6 +605,7 @@ private struct FileChangeEntryDetailView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.themeBg)
+        .allowsFullScreenExpansion(false)
         .navigationTitle(entry.kind == .edit ? "Change Detail" : "Write Detail")
         .navigationBarTitleDisplayMode(.inline)
     }

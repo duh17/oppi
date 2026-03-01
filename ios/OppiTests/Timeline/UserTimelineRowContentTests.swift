@@ -101,6 +101,31 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("tool timeline image presentation uses page-sheet swipe dismiss")
+    func toolTimelineImagePresentationUsesPageSheet() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.loadViewIfNeeded()
+
+        let source = UIView(frame: .zero)
+        host.view.addSubview(source)
+
+        ToolTimelineRowPresentationHelpers.presentFullScreenImage(makeTestImage(), from: source)
+
+        let presented = try #require(host.presentedViewController as? FullScreenImageViewController)
+        #expect(presented.modalPresentationStyle == .pageSheet)
+
+        let sheet = try #require(presented.sheetPresentationController)
+        #expect(sheet.prefersGrabberVisible)
+        #expect(sheet.detents.count == 1)
+
+        host.dismiss(animated: false)
+        window.isHidden = true
+    }
+
+    @MainActor
     private func makeTestImage() -> UIImage {
         let size = CGSize(width: 120, height: 80)
         let renderer = UIGraphicsImageRenderer(size: size)

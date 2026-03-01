@@ -15,6 +15,7 @@ struct DiffContentView: View {
     private let diffLines: [DiffLine]
 
     @Environment(\.theme) private var theme
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @State private var showFullScreen = false
 
     init(
@@ -62,8 +63,10 @@ struct DiffContentView: View {
                 .stroke(theme.text.tertiary.opacity(0.35), lineWidth: 1)
         )
         .contextMenu {
-            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
-                showFullScreen = true
+            if allowsFullScreenExpansion {
+                Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
+                    showFullScreen = true
+                }
             }
             Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = newText
@@ -115,12 +118,14 @@ struct DiffContentView: View {
                     .foregroundStyle(theme.diff.removedAccent)
             }
 
-            Button { showFullScreen = true } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.caption2)
-                    .foregroundStyle(theme.text.secondary)
+            if allowsFullScreenExpansion {
+                Button { showFullScreen = true } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(theme.text.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

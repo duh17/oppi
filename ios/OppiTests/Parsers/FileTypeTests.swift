@@ -78,6 +78,55 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "LICENSE") == .plain)
     }
 
+    @Test func noExtensionShellShebangDetected() {
+        let ft = FileType.detect(from: "scripts/run", content: "#!/bin/bash\necho hi")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for shebang shell script")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func noExtensionEnvShellShebangDetected() {
+        let ft = FileType.detect(from: "scripts/run", content: "#!/usr/bin/env -S bash -eu\necho hi")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for env shebang shell script")
+            return
+        }
+        #expect(lang == .shell)
+    }
+
+    @Test func noExtensionPythonShebangDetected() {
+        let ft = FileType.detect(from: "scripts/run", content: "#!/usr/bin/env python3\nprint('hi')")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for python shebang script")
+            return
+        }
+        #expect(lang == .python)
+    }
+
+    @Test func noExtensionRubyShebangDetected() {
+        let ft = FileType.detect(from: "scripts/run", content: "#!/usr/bin/ruby\nputs 'hi'")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for ruby shebang script")
+            return
+        }
+        #expect(lang == .ruby)
+    }
+
+    @Test func noExtensionNodeShebangDetected() {
+        let ft = FileType.detect(from: "scripts/run", content: "#!/usr/bin/env node\nconsole.log('hi')")
+        guard case .code(let lang) = ft else {
+            Issue.record("Expected .code for node shebang script")
+            return
+        }
+        #expect(lang == .javascript)
+    }
+
+    @Test func extensionTakesPrecedenceOverShebang() {
+        #expect(FileType.detect(from: "README.md", content: "#!/bin/bash\necho hi") == .markdown)
+    }
+
     @Test func audioExtensionDetected() {
         #expect(FileType.detect(from: "voice.wav") == .audio)
         #expect(FileType.detect(from: "voice.mp3") == .audio)
@@ -90,5 +139,32 @@ struct FileTypeTests {
         #expect(FileType.audio.displayLabel == "Audio")
         #expect(FileType.plain.displayLabel == "Text")
         #expect(FileType.code(language: .swift).displayLabel == "Swift")
+    }
+}
+
+@Suite("File content presentation policy")
+struct FileContentPresentationPolicyTests {
+    @Test func inlinePresentationUsesTimelineChrome() {
+        #expect(FileContentPresentation.inline.usesInlineChrome)
+        #expect(FileContentPresentation.inline.viewportMaxHeight == 500)
+        #expect(FileContentPresentation.inline.allowsExpansionAffordance)
+    }
+
+    @Test func documentPresentationUsesNativeViewerLayout() {
+        #expect(FileContentPresentation.document.usesInlineChrome == false)
+        #expect(FileContentPresentation.document.viewportMaxHeight == nil)
+        #expect(FileContentPresentation.document.allowsExpansionAffordance == false)
+    }
+
+    @MainActor
+    @Test func skillFileViewIsPinnedToDocumentPresentation() {
+        #expect(SkillFileView.contentPresentation == .document)
+        #expect(SkillFileView.allowsNestedFullScreenExpansion == false)
+    }
+
+    @MainActor
+    @Test func remoteFileViewIsPinnedToDocumentPresentation() {
+        #expect(RemoteFileView.contentPresentation == .document)
+        #expect(RemoteFileView.allowsNestedFullScreenExpansion == false)
     }
 }
