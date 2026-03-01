@@ -83,6 +83,13 @@ extension ServerConnection {
         try await send(.compact(customInstructions: instructions))
     }
 
+    func getSessionStats() async throws -> SessionStatsSnapshot? {
+        let data = try await sendCommandAwaitingResult(command: "get_session_stats") { requestId in
+            .getSessionStats(requestId: requestId)
+        }
+        return Self.parseSessionStats(from: data)
+    }
+
     // MARK: - Internal Helpers
 
     func slashCommandCacheKey(for session: Session) -> String {
@@ -105,6 +112,51 @@ extension ServerConnection {
         } catch {
             slashCommandsRequestId = nil
         }
+    }
+
+    static func parseSessionStats(from data: JSONValue?) -> SessionStatsSnapshot? {
+        guard let root = data?.objectValue,
+              let tokenObject = root["tokens"]?.objectValue else {
+            return nil
+        }
+
+        let input = parseInt(tokenObject["input"]) ?? 0
+        let output = parseInt(tokenObject["output"]) ?? 0
+        let cacheRead = parseInt(tokenObject["cacheRead"]) ?? 0
+        let cacheWrite = parseInt(tokenObject["cacheWrite"]) ?? 0
+        let total = parseInt(tokenObject["total"]) ?? (input + output + cacheRead + cacheWrite)
+        let cost = parseDouble(root["cost"]) ?? 0
+
+        return SessionStatsSnapshot(
+            tokens: SessionTokenStats(
+                input: input,
+                output: output,
+                cacheRead: cacheRead,
+                cacheWrite: cacheWrite,
+                total: total
+            ),
+            cost: cost
+        )
+    }
+
+    private static func parseInt(_ value: JSONValue?) -> Int? {
+        if let number = value?.numberValue {
+            return Int(number)
+        }
+        if let string = value?.stringValue {
+            return Int(string)
+        }
+        return nil
+    }
+
+    private static func parseDouble(_ value: JSONValue?) -> Double? {
+        if let number = value?.numberValue {
+            return number
+        }
+        if let string = value?.stringValue {
+            return Double(string)
+        }
+        return nil
     }
 
     static func parseSlashCommands(from data: JSONValue?) -> [SlashCommand] {

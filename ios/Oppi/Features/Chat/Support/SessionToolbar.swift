@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Session control pills (model, thinking, context).
+/// Session control pills (model + thinking).
 ///
 /// Body returns flat children (no wrapping container) so they merge
 /// into the parent's `HStack` for even distribution with the attach button.
@@ -9,7 +9,6 @@ struct SessionToolbar: View {
     let thinkingLevel: ThinkingLevel
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
-    let onCompact: () -> Void
 
     @Environment(\.theme) private var theme
 
@@ -25,40 +24,6 @@ struct SessionToolbar: View {
 
     private var thinkingTint: Color {
         theme.thinking.color(for: thinkingLevel)
-    }
-
-    private var contextDisplay: String? {
-        guard let window = resolvedContextWindow, window > 0 else { return nil }
-        let used = effectiveContextTokens
-        let percent = (Double(used) / Double(window)) * 100
-        return String(format: "%.0f%%/%@", percent, formatTokenCount(window))
-    }
-
-    private var contextPercent: Double {
-        guard let window = resolvedContextWindow, window > 0 else { return 0 }
-        return min(max(Double(effectiveContextTokens) / Double(window), 0), 1)
-    }
-
-    private var contextTint: Color {
-        if contextPercent > 0.9 { return .themeRed }
-        if contextPercent > 0.7 { return .themeOrange }
-        return .themeGreen
-    }
-
-    private var effectiveContextTokens: Int {
-        let tokens = session?.contextTokens
-            ?? ((session?.tokens.input ?? 0) + (session?.tokens.output ?? 0))
-        return max(0, tokens)
-    }
-
-    private var resolvedContextWindow: Int? {
-        if let window = session?.contextWindow, window > 0 {
-            return window
-        }
-        guard let model = session?.model else {
-            return nil
-        }
-        return inferContextWindow(from: model)
     }
 
     private static let thinkingOptions: [ThinkingLevel] = [.off, .minimal, .low, .medium, .high, .xhigh]
@@ -117,20 +82,6 @@ struct SessionToolbar: View {
                 Image(systemName: "sparkle")
                     .font(.system(size: 11, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
-            }
-        }
-
-        if let contextDisplay {
-            PillLabel(
-                text: contextDisplay,
-                tint: contextTint,
-                showChevron: false,
-                showsLeadingIcon: false
-            ) { }
-            .contentShape(Capsule())
-            .onLongPressGesture {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                onCompact()
             }
         }
     }

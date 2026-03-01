@@ -12,7 +12,13 @@
 
 import { EventEmitter } from "node:events";
 
-import type { Session, ServerMessage, Workspace } from "./types.js";
+import type {
+  MessageQueueDraftItem,
+  MessageQueueState,
+  Session,
+  ServerMessage,
+  Workspace,
+} from "./types.js";
 import type { Storage } from "./storage.js";
 import type { GateServer } from "./gate.js";
 
@@ -74,6 +80,7 @@ export class SessionManager extends EventEmitter {
   private readonly activationCoordinator: SessionCoordinatorBundle["activationCoordinator"];
   private readonly lifecycleCoordinator: SessionCoordinatorBundle["lifecycleCoordinator"];
   private readonly inputCoordinator: SessionCoordinatorBundle["inputCoordinator"];
+  private readonly queueCoordinator: SessionCoordinatorBundle["queueCoordinator"];
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
   private readonly uiCoordinator: SessionCoordinatorBundle["uiCoordinator"];
@@ -118,6 +125,7 @@ export class SessionManager extends EventEmitter {
     this.activationCoordinator = bundle.activationCoordinator;
     this.lifecycleCoordinator = bundle.lifecycleCoordinator;
     this.inputCoordinator = bundle.inputCoordinator;
+    this.queueCoordinator = bundle.queueCoordinator;
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
     this.uiCoordinator = bundle.uiCoordinator;
@@ -235,6 +243,23 @@ export class SessionManager extends EventEmitter {
   ): Promise<void> {
     const key = this.sessionKey(sessionId);
     await this.inputCoordinator.sendFollowUp(key, message, opts);
+  }
+
+  getMessageQueue(sessionId: string): MessageQueueState {
+    const key = this.sessionKey(sessionId);
+    return this.queueCoordinator.getQueue(key);
+  }
+
+  async setMessageQueue(
+    sessionId: string,
+    payload: {
+      baseVersion: number;
+      steering: MessageQueueDraftItem[];
+      followUp: MessageQueueDraftItem[];
+    },
+  ): Promise<MessageQueueState> {
+    const key = this.sessionKey(sessionId);
+    return this.queueCoordinator.setQueue(key, payload);
   }
 
   /**

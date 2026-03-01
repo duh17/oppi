@@ -129,20 +129,20 @@ struct RuntimeStatusBadge: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RuntimeBadge(compact: true, icon: icon, badgeColor: badgeColor)
-
-            Circle()
-                .fill(dotFillColor)
-                .frame(width: 7, height: 7)
-                .overlay(
-                    Circle()
-                        .stroke(dotRingColor, lineWidth: 1.5)
-                )
-                .offset(x: 2, y: 2)
-        }
-        .frame(width: 24, height: 24)
-        .accessibilityLabel("\(syncState.accessibilityText) session status")
+        RuntimeBadge(compact: true, icon: icon, badgeColor: badgeColor)
+            .frame(width: 24, height: 24, alignment: .center)
+            .overlay(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(dotFillColor)
+                    .frame(width: 7, height: 7)
+                    .overlay(
+                        Circle()
+                            .stroke(dotRingColor, lineWidth: 1.5)
+                    )
+                    .offset(x: 2, y: 2)
+            }
+            .frame(width: 24, height: 24)
+            .accessibilityLabel("\(syncState.accessibilityText) session status")
     }
 }
 

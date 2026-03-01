@@ -459,6 +459,7 @@ struct PastableTextView: UIViewRepresentable {
 /// (drag to dismiss). Can optionally auto-focus on appear.
 struct FullSizeTextView: UIViewRepresentable {
     @Binding var text: String
+    @Binding var keyboardLanguage: String?
     let font: UIFont
     let textColor: UIColor
     let tintColor: UIColor
@@ -484,11 +485,13 @@ struct FullSizeTextView: UIViewRepresentable {
 
         applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
         context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
+        context.coordinator.observedTextView = textView
 
         if autoFocusOnAppear {
             // Auto-focus after sheet animation settles
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 textView.becomeFirstResponder()
+                context.coordinator.updateKeyboardLanguage(from: textView)
                 // Place cursor at end
                 if let end = textView.textRange(
                     from: textView.endOfDocument,
@@ -511,6 +514,7 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
+        context.coordinator.observedTextView = textView
 
         let traitsChanged = context.coordinator.lastAutocorrectionEnabled != autocorrectionEnabled
         context.coordinator.lastAutocorrectionEnabled = autocorrectionEnabled
@@ -524,19 +528,54 @@ struct FullSizeTextView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, keyboardLanguage: $keyboardLanguage)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding var text: String
-        var lastAutocorrectionEnabled: Bool?
+        @Binding var keyboardLanguage: String?
 
-        init(text: Binding<String>) {
+        var lastAutocorrectionEnabled: Bool?
+        weak var observedTextView: UITextView?
+        nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
+
+        init(text: Binding<String>, keyboardLanguage: Binding<String?>) {
             _text = text
+            _keyboardLanguage = keyboardLanguage
+            super.init()
+
+            inputModeObserver = NotificationCenter.default.addObserver(
+                forName: UITextInputMode.currentInputModeDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.updateKeyboardLanguageFromObservedTextView()
+            }
+        }
+
+        deinit {
+            if let observer = inputModeObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            updateKeyboardLanguage(from: textView)
         }
 
         func textViewDidChange(_ textView: UITextView) {
             text = textView.text
+        }
+
+        func updateKeyboardLanguage(from textView: UITextView) {
+            let lang = textView.textInputMode?.primaryLanguage
+            keyboardLanguage = lang
+            KeyboardLanguageStore.save(lang)
+        }
+
+        private func updateKeyboardLanguageFromObservedTextView() {
+            guard let textView = observedTextView, textView.isFirstResponder else { return }
+            updateKeyboardLanguage(from: textView)
         }
     }
 }

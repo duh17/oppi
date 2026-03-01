@@ -22,6 +22,37 @@ struct ClientMessageTests {
         #expect(json["type"] as? String == "get_state")
     }
 
+    @Test func encodesGetQueue() throws {
+        let json = try decode(ClientMessage.getQueue(requestId: "req-q1"))
+        #expect(json["type"] as? String == "get_queue")
+        #expect(json["requestId"] as? String == "req-q1")
+    }
+
+    @Test func encodesSetQueue() throws {
+        let msg = ClientMessage.setQueue(
+            baseVersion: 3,
+            steering: [
+                MessageQueueDraftItem(
+                    id: "q1",
+                    message: "steer this",
+                    images: nil,
+                    createdAt: 123
+                ),
+            ],
+            followUp: [],
+            requestId: "req-q2"
+        )
+
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "set_queue")
+        #expect(json["baseVersion"] as? Int == 3)
+        #expect(json["requestId"] as? String == "req-q2")
+        let steering = json["steering"] as? [[String: Any]]
+        #expect(steering?.count == 1)
+        #expect(steering?.first?["id"] as? String == "q1")
+        #expect(steering?.first?["message"] as? String == "steer this")
+    }
+
     @Test func encodesPermissionResponse() throws {
         let msg = ClientMessage.permissionResponse(id: "perm1", action: .allow)
         let json = try decode(msg)

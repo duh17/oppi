@@ -82,6 +82,7 @@ final class ChatActionHandler {
         text: String,
         images: [PendingImage],
         isBusy: Bool,
+        busyStreamingBehavior: StreamingBehavior = .steer,
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionId: String,
@@ -98,35 +99,63 @@ final class ChatActionHandler {
         if isBusy {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
 
+            let queuedImages = attachments.isEmpty ? nil : attachments
+            let queuedKind: MessageQueueKind = busyStreamingBehavior == .steer ? .steer : .followUp
+            let optimisticQueueItem = connection.messageQueueStore.enqueueOptimisticItem(
+                for: sessionId,
+                kind: queuedKind,
+                message: trimmed,
+                images: queuedImages
+            )
+
             launchTask { @MainActor in
                 self.beginSendTracking()
                 defer { self.isSending = false }
                 onDispatchStarted?()
 
-                let label = attachments.isEmpty
-                    ? "→ \(trimmed)"
-                    : "→ \(trimmed) [\(attachments.count) image\(attachments.count == 1 ? "" : "s")]"
-                reducer.appendSystemEvent(label)
-
                 do {
-                    let steerImages = attachments.isEmpty ? nil : attachments
-                    try await connection.sendSteer(trimmed, images: steerImages, onAckStage: { stage in
-                        self.updateSendAckStage(stage)
-                    })
+                    switch busyStreamingBehavior {
+                    case .steer:
+                        try await connection.sendSteer(trimmed, images: queuedImages, onAckStage: { stage in
+                            self.updateSendAckStage(stage)
+                        })
+                    case .followUp:
+                        try await connection.sendFollowUp(trimmed, images: queuedImages, onAckStage: { stage in
+                            self.updateSendAckStage(stage)
+                        })
+                    }
+                    reducer.appendSystemEvent(
+                        self.busyQueuedMessage(
+                            behavior: busyStreamingBehavior,
+                            text: trimmed,
+                            imageCount: attachments.count
+                        )
+                    )
                     self.scheduleSendStageClear()
+                    Task { @MainActor in
+                        try? await connection.requestMessageQueue()
+                    }
                 } catch {
+                    connection.messageQueueStore.removeQueuedItem(
+                        for: sessionId,
+                        kind: queuedKind,
+                        id: optimisticQueueItem.id,
+                        messageFallback: trimmed
+                    )
                     self.clearSendStageNow()
-                    log.error("SEND steer FAILED: \(error.localizedDescription, privacy: .public)")
+                    let commandName = busyStreamingBehavior == .steer ? "steer" : "follow_up"
+                    let errorPrefix = busyStreamingBehavior == .steer ? "Steer" : "Follow-up"
+                    log.error("SEND \(commandName, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)")
                     ClientLog.error(
                         "Action",
-                        "SEND steer FAILED",
+                        "SEND \(commandName) FAILED",
                         metadata: ["sessionId": sessionId, "error": error.localizedDescription]
                     )
                     if Self.isReconnectableSendError(error) {
                         onNeedsReconnect?()
                     }
                     onAsyncFailure?(text, images)
-                    reducer.process(.error(sessionId: sessionId, message: "Steer failed: \(error.localizedDescription)"))
+                    reducer.process(.error(sessionId: sessionId, message: "\(errorPrefix) failed: \(error.localizedDescription)"))
                 }
             }
         } else {
@@ -176,6 +205,25 @@ final class ChatActionHandler {
         }
 
         return ""
+    }
+
+    private func busyQueuedMessage(
+        behavior: StreamingBehavior,
+        text: String,
+        imageCount: Int
+    ) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snippet = trimmed.isEmpty ? "(attachment)" : trimmed
+        let preview: String
+        if snippet.count > 120 {
+            preview = String(snippet.prefix(117)) + "…"
+        } else {
+            preview = snippet
+        }
+
+        let label = behavior == .steer ? "Steering" : "Follow-up"
+        let imageSuffix = imageCount > 0 ? " [\(imageCount) image\(imageCount == 1 ? "" : "s")]" : ""
+        return "Message Queue • \(label) queued: \(preview)\(imageSuffix)"
     }
 
     // MARK: - Bash

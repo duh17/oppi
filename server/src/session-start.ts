@@ -3,6 +3,7 @@ import type { GateServer } from "./gate.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import type { ExtensionUIRequest } from "./session-events.js";
+import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { PendingStop } from "./session-stop.js";
 import type { Storage } from "./storage.js";
 import { TurnDedupeCache } from "./turn-cache.js";
@@ -19,6 +20,7 @@ export interface SessionStartActiveSession {
   streamedAssistantText: string;
   hasStreamedThinking: boolean;
   toolFullOutputPaths: Map<string, string>;
+  messageQueue?: SessionMessageQueueStore;
   turnCache: TurnDedupeCache;
   pendingTurnStarts: string[];
   pendingStop?: PendingStop;
@@ -82,6 +84,11 @@ export class SessionStartCoordinator {
           streamedAssistantText: "",
           hasStreamedThinking: false,
           toolFullOutputPaths: new Map(),
+          messageQueue: {
+            version: 0,
+            steering: [],
+            followUp: [],
+          },
           turnCache: new TurnDedupeCache(),
           pendingTurnStarts: [],
           seq: 0,

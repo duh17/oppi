@@ -5,11 +5,9 @@ struct ChatView: View {
     let sessionId: String
 
     @Environment(ServerConnection.self) private var connection
-    @Environment(ServerStore.self) private var serverStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
-    @Environment(\.theme) private var theme
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var sessionManager: ChatSessionManager
@@ -19,6 +17,7 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var pendingImages: [PendingImage] = []
+    @State private var busyStreamingBehavior: StreamingBehavior = .steer
 
     @State private var showOutline = false
     @State private var showModelPicker = false
@@ -33,7 +32,8 @@ struct ChatView: View {
     @State private var uploadingClientLogs = false
 #endif
     @State private var showCompactConfirmation = false
-    @State private var showSkillPanel = false
+    @State private var showContextInspector = false
+    @State private var suppressNextContextTap = false
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
@@ -50,19 +50,6 @@ struct ChatView: View {
         sessionStore.sessions.first { $0.id == sessionId }
     }
 
-    private var currentServer: PairedServer? {
-        guard let currentServerId = connection.currentServerId else { return nil }
-        return serverStore.server(for: currentServerId)
-    }
-
-    private var serverBadgeIcon: ServerBadgeIcon {
-        currentServer?.resolvedBadgeIcon ?? .defaultValue
-    }
-
-    private var serverBadgeColor: ServerBadgeColor {
-        currentServer?.resolvedBadgeColor ?? .defaultValue
-    }
-
     private var sessionDisplayName: String {
         session?.displayTitle ?? "Session \(String(sessionId.prefix(8)))"
     }
@@ -77,6 +64,14 @@ struct ChatView: View {
 
     private var isStopped: Bool {
         session?.status == .stopped
+    }
+
+    private var messageQueueState: MessageQueueState {
+        connection.messageQueueStore.queue(for: sessionId)
+    }
+
+    private var showsMessageQueue: Bool {
+        !messageQueueState.steering.isEmpty || !messageQueueState.followUp.isEmpty
     }
 
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
@@ -116,11 +111,25 @@ struct ChatView: View {
         return .init(freshness)
     }
 
+    private var contextUsageSnapshot: ContextUsageSnapshot {
+        let fallbackWindow: Int?
+        if let model = session?.model {
+            fallbackWindow = inferContextWindow(from: model)
+        } else {
+            fallbackWindow = nil
+        }
+
+        return ContextUsageSnapshot(
+            tokens: session?.contextTokens,
+            window: session?.contextWindow ?? fallbackWindow
+        )
+    }
+
     var body: some View {
         chatContent
     }
 
-    private var chatContent: some View {
+    private var chatTimeline: some View {
         ChatTimelineView(
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
@@ -131,30 +140,38 @@ struct ChatView: View {
             topOverlap: headerHeight,
             bottomOverlap: footerHeight
         )
-        .ignoresSafeArea(.container, edges: .top)
-        .overlay(alignment: .top) {
-            WorkspaceContextBar(
-                gitStatus: connection.gitStatusStore.gitStatus,
-                isLoading: connection.gitStatusStore.isLoading
-            )
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
-        }
-        .overlay(alignment: .bottom) {
-            footerArea
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if scrollController.isJumpToBottomHintVisible {
-                JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
-                    scrollController.requestScrollToBottom()
-                }
-                .padding(.trailing, 27)
-                .padding(.bottom, footerHeight + 10)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+    }
+
+    private var chatTimelineScaffold: some View {
+        chatTimeline
+            .ignoresSafeArea(.container, edges: .top)
+            .overlay(alignment: .top) {
+                WorkspaceContextBar(
+                    gitStatus: connection.gitStatusStore.gitStatus,
+                    isLoading: connection.gitStatusStore.isLoading
+                )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             }
-        }
-        .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
-        .background(Color.themeBg.ignoresSafeArea())
+            .overlay(alignment: .bottom) {
+                footerArea
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if scrollController.isJumpToBottomHintVisible {
+                    JumpToBottomHintButton(isStreaming: scrollController.isDetachedStreamingHintVisible) {
+                        scrollController.requestScrollToBottom()
+                    }
+                    .padding(.trailing, 27)
+                    .padding(.bottom, footerHeight + 10)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: scrollController.isJumpToBottomHintVisible)
+    }
+
+    private var chatContent: some View {
+        chatTimelineScaffold
+            .background(Color.themeBg.ignoresSafeArea())
         .navigationTitle(sessionDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -173,7 +190,7 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showOutline) { outlineSheet }
         .sheet(isPresented: $showModelPicker) { modelPickerSheet }
-        .sheet(isPresented: $showSkillPanel) { skillPanelSheet }
+        .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
         .fullScreenCover(isPresented: $showComposer) { composerSheet }
         .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
         .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
@@ -235,6 +252,12 @@ struct ChatView: View {
                 actionHandler.resetStopState()
                 sessionManager.cancelReconciliation()
             }
+
+            if newStatus == .busy {
+                Task {
+                    try? await connection.requestMessageQueue()
+                }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
@@ -280,10 +303,29 @@ struct ChatView: View {
             )
         } else {
             VStack(spacing: 8) {
+                if showsMessageQueue {
+                    MessageQueueContainer(
+                        queue: messageQueueState,
+                        busyStreamingBehavior: $busyStreamingBehavior,
+                        onApply: { baseVersion, steering, followUp in
+                            try await connection.setMessageQueue(
+                                baseVersion: baseVersion,
+                                steering: steering,
+                                followUp: followUp
+                            )
+                        },
+                        onRefresh: {
+                            try? await connection.requestMessageQueue()
+                        }
+                    )
+                    .padding(.horizontal, 16)
+                }
+
                 ChatInputBar(
                     text: $inputText,
                     pendingImages: $pendingImages,
                     isBusy: isBusy,
+                    busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: actionHandler.isSending,
                     sendProgressText: actionHandler.sendProgressText,
                     isStopping: isStopping,
@@ -319,9 +361,6 @@ struct ChatView: View {
                                     reducer: reducer,
                                     sessionId: sessionId
                                 )
-                            },
-                            onCompact: {
-                                showCompactConfirmation = true
                             }
                         )
                     }
@@ -355,21 +394,44 @@ struct ChatView: View {
 
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if !reducer.items.isEmpty {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
                 }
             }
-            Button { showSkillPanel = true } label: {
-                RuntimeStatusBadge(
-                    statusColor: session?.status.color ?? .themeComment,
-                    syncState: runtimeSyncState,
-                    icon: serverBadgeIcon,
-                    badgeColor: serverBadgeColor
+
+            Button {
+                if suppressNextContextTap {
+                    suppressNextContextTap = false
+                    return
+                }
+                triggerToolbarHaptic(style: .soft, intensity: 0.55)
+                showContextInspector = true
+            } label: {
+                ContextUsageRingBadge(
+                    usage: contextUsageSnapshot,
+                    syncState: runtimeSyncState
                 )
+                .padding(.horizontal, 4)
+                .padding(.trailing, 4)
             }
+            .buttonStyle(.plain)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.4)
+                    .onEnded { _ in
+                        suppressNextContextTap = true
+                        triggerToolbarHaptic(style: .rigid, intensity: 0.75)
+                        showCompactConfirmation = true
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(0.6))
+                            suppressNextContextTap = false
+                        }
+                    }
+            )
+            .accessibilityLabel("Open context inspector")
+            .accessibilityHint("Long press to compact context")
         }
     }
 
@@ -398,6 +460,12 @@ struct ChatView: View {
         showComposer = true
     }
 
+    private func triggerToolbarHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat) {
+        let feedback = UIImpactFeedbackGenerator(style: style)
+        feedback.prepare()
+        feedback.impactOccurred(intensity: intensity)
+    }
+
     private func sendPrompt() {
         let text = inputText
         let images = pendingImages
@@ -410,6 +478,7 @@ struct ChatView: View {
             text: text,
             images: images,
             isBusy: isBusy,
+            busyStreamingBehavior: busyStreamingBehavior,
             connection: connection,
             reducer: reducer,
             sessionId: sessionId,
@@ -565,21 +634,33 @@ struct ChatView: View {
         }
     }
 
-    private var currentWorkspaceSkillNames: [String] {
-        guard let wsId = session?.workspaceId else { return [] }
-        return connection.workspaceStore.workspaces.first { $0.id == wsId }?.skills ?? []
+    private var currentWorkspace: Workspace? {
+        guard let wsId = session?.workspaceId else { return nil }
+        return connection.workspaceStore.workspaces.first { $0.id == wsId }
     }
 
-    private var skillPanelSheet: some View {
+    private var currentWorkspaceSkillNames: [String] {
+        currentWorkspace?.skills ?? []
+    }
+
+    private var contextInspectorSheet: some View {
         NavigationStack {
-            SkillPanelView(workspaceSkillNames: currentWorkspaceSkillNames)
-                .navigationTitle("Skills")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showSkillPanel = false }
-                    }
+            ContextInspectorView(
+                session: session,
+                workspace: currentWorkspace,
+                workspaceSkillNames: currentWorkspaceSkillNames,
+                availableSkills: connection.workspaceStore.skills,
+                loadSessionStats: {
+                    try await connection.getSessionStats()
                 }
+            )
+            .navigationTitle("Context")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showContextInspector = false }
+                }
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -596,6 +677,7 @@ struct ChatView: View {
             text: $inputText,
             pendingImages: $pendingImages,
             isBusy: isBusy,
+            busyStreamingBehavior: busyStreamingBehavior,
             slashCommands: connection.slashCommands,
             session: session,
             thinkingLevel: connection.thinkingLevel,
@@ -609,8 +691,7 @@ struct ChatView: View {
                     reducer: reducer,
                     sessionId: sessionId
                 )
-            },
-            onCompact: { showCompactConfirmation = true }
+            }
         )
     }
 

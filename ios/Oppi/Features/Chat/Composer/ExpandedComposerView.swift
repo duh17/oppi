@@ -28,6 +28,7 @@ struct ExpandedComposerView: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
     let isBusy: Bool
+    let busyStreamingBehavior: StreamingBehavior
     let slashCommands: [SlashCommand]
     let session: Session?
     let thinkingLevel: ThinkingLevel
@@ -35,13 +36,16 @@ struct ExpandedComposerView: View {
     let onSend: () -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
-    let onCompact: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
     @State private var showCamera = false
+
+    /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
+    /// Updated by FullSizeTextView while editing.
+    @State private var keyboardLanguage: String?
 
     /// Text in the field before voice recording started.
     @State private var textBeforeRecording: String?
@@ -97,12 +101,18 @@ struct ExpandedComposerView: View {
         max(1, text.components(separatedBy: "\n").count)
     }
 
+    private var expandedTitle: String {
+        guard isBusy else { return "Compose" }
+        return busyStreamingBehavior == .steer ? "Steer Agent" : "Queue Follow-up"
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
 
                 FullSizeTextView(
                     text: textFieldBinding,
+                    keyboardLanguage: $keyboardLanguage,
                     font: composerInputFont,
                     textColor: UIColor(Color.themeFg),
                     tintColor: UIColor(accentColor),
@@ -123,7 +133,7 @@ struct ExpandedComposerView: View {
                 bottomBar
             }
             .background(Color.themeBg)
-            .navigationTitle(isBusy ? "Steer Agent" : "Compose")
+            .navigationTitle(expandedTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(Color.themeBgDark, for: .navigationBar)
@@ -153,6 +163,13 @@ struct ExpandedComposerView: View {
         .onChange(of: voiceInputManager?.currentTranscript) { _, newTranscript in
             guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
             text = prefix + transcript
+        }
+        .onChange(of: keyboardLanguage) { _, newLanguage in
+            guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
+            guard KeyboardLanguageStore.normalize(newLanguage) != nil else { return }
+            Task {
+                await manager.prewarm(keyboardLanguage: newLanguage)
+            }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(
@@ -189,8 +206,7 @@ struct ExpandedComposerView: View {
                     session: session,
                     thinkingLevel: thinkingLevel,
                     onModelTap: onModelTap,
-                    onThinkingSelect: onThinkingSelect,
-                    onCompact: onCompact
+                    onThinkingSelect: onThinkingSelect
                 )
             }
             .padding(.horizontal, 16)
@@ -282,14 +298,19 @@ struct ExpandedComposerView: View {
 
     private func micButton(manager: VoiceInputManager) -> some View {
         let isRecording = manager.isRecording
-        let isProcessing = manager.isProcessing || manager.isPreparing
+        let isPreparing = manager.isPreparing
+        let isProcessing = manager.isProcessing
 
         return Button {
             Task {
-                if isRecording {
+                switch manager.state {
+                case .recording:
                     await manager.stopRecording()
                     textBeforeRecording = nil
-                } else if manager.state == .idle {
+                case .preparingModel:
+                    await manager.cancelRecording()
+                    textBeforeRecording = nil
+                case .idle:
                     let current = text
                     if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
                         textBeforeRecording = current
@@ -297,16 +318,18 @@ struct ExpandedComposerView: View {
                         textBeforeRecording = current + " "
                     }
                     do {
-                        try await manager.startRecording()
+                        try await manager.startRecording(keyboardLanguage: keyboardLanguage)
                     } catch {
                         textBeforeRecording = nil
                     }
+                case .processing, .error:
+                    break
                 }
             }
         } label: {
             MicButtonLabel(
                 isRecording: isRecording,
-                isProcessing: isProcessing,
+                isProcessing: isPreparing || isProcessing,
                 audioLevel: manager.audioLevel,
                 languageLabel: manager.activeLanguageLabel,
                 accentColor: accentColor,
@@ -316,16 +339,32 @@ struct ExpandedComposerView: View {
         .buttonStyle(.plain)
         .disabled(isProcessing)
         .accessibilityIdentifier("expanded.voiceInput")
-        .accessibilityLabel(isRecording ? "Stop recording" : "Start voice input")
+        .accessibilityLabel(accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
     }
 
     // MARK: - Actions
 
+    private func accessibilityLabel(isRecording: Bool, isPreparing: Bool) -> String {
+        if isRecording {
+            return "Stop recording"
+        }
+        if isPreparing {
+            return "Cancel voice input"
+        }
+        return "Start voice input"
+    }
+
     private func handleSend() {
-        // Stop voice recording before sending
-        if let manager = voiceInputManager, manager.isRecording {
+        // Stop voice recording setup/session before sending
+        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
-            Task { await manager.stopRecording() }
+            Task {
+                if manager.isRecording {
+                    await manager.stopRecording()
+                } else {
+                    await manager.cancelRecording()
+                }
+            }
         }
         onSend()
         dismiss()

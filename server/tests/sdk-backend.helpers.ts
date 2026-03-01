@@ -12,7 +12,17 @@ export function makeSdkBackendStub(): {
 } {
   const abort = vi.fn(async () => {});
   const dispose = vi.fn();
-  const prompt = vi.fn();
+
+  const steeringMessages: string[] = [];
+  const followUpMessages: string[] = [];
+
+  const prompt = vi.fn((text: string, opts?: { streamingBehavior?: "steer" | "followUp" }) => {
+    if (opts?.streamingBehavior === "steer") {
+      steeringMessages.push(text);
+    } else if (opts?.streamingBehavior === "followUp") {
+      followUpMessages.push(text);
+    }
+  });
 
   const session = {
     setThinkingLevel: vi.fn(),
@@ -31,6 +41,19 @@ export function makeSdkBackendStub(): {
     setAutoRetryEnabled: vi.fn(),
     abortRetry: vi.fn(),
     abortBash: vi.fn(),
+    steer: vi.fn(async (text: string) => {
+      steeringMessages.push(text);
+    }),
+    followUp: vi.fn(async (text: string) => {
+      followUpMessages.push(text);
+    }),
+    clearQueue: vi.fn(() => {
+      steeringMessages.length = 0;
+      followUpMessages.length = 0;
+      return { steering: [], followUp: [] };
+    }),
+    getSteeringMessages: vi.fn(() => [...steeringMessages]),
+    getFollowUpMessages: vi.fn(() => [...followUpMessages]),
   };
 
   const sdkBackend = {

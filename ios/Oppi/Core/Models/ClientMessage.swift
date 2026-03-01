@@ -22,6 +22,10 @@ enum ClientMessage: Sendable {
     case getMessages(requestId: String? = nil)
     case getSessionStats(requestId: String? = nil)
 
+    // ── Message queue ──
+    case getQueue(requestId: String? = nil)
+    case setQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem], requestId: String? = nil)
+
     // ── Model ──
     case setModel(provider: String, modelId: String, requestId: String? = nil)
     case cycleModel(requestId: String? = nil)
@@ -176,6 +180,18 @@ extension ClientMessage: Encodable {
             try c.encode("get_session_stats", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        // ── Message queue ──
+        case .getQueue(let reqId):
+            try c.encode("get_queue", forKey: .type)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
+        case .setQueue(let baseVersion, let steering, let followUp, let reqId):
+            try c.encode("set_queue", forKey: .type)
+            try c.encode(baseVersion, forKey: .baseVersion)
+            try c.encode(steering, forKey: .steering)
+            try c.encode(followUp, forKey: .followUp)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── Model ──
         case .setModel(let provider, let modelId, let reqId):
             try c.encode("set_model", forKey: .type)
@@ -309,6 +325,7 @@ extension ClientMessage: Encodable {
         case id, action, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
         case customInstructions, entryId, sessionPath, command
+        case baseVersion, steering, followUp
         case sessionId, sinceSeq
     }
 }
@@ -363,6 +380,8 @@ extension ClientMessage {
         case .getState: return "get_state"
         case .getMessages: return "get_messages"
         case .getSessionStats: return "get_session_stats"
+        case .getQueue: return "get_queue"
+        case .setQueue: return "set_queue"
         case .setModel: return "set_model"
         case .cycleModel: return "cycle_model"
         case .getAvailableModels: return "get_available_models"

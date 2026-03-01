@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 import { ts } from "./log-utils.js";
-import type { SessionBackendEvent } from "./pi-events.js";
+import type { PiMessage, SessionBackendEvent } from "./pi-events.js";
 import {
   extractAssistantText,
   extractToolFullOutputPath,
@@ -29,6 +29,7 @@ export interface SessionAgentEventCoordinatorDeps {
   turnCoordinator: SessionTurnCoordinator;
   broadcast: (key: string, message: ServerMessage) => void;
   resetIdleTimer: (key: string) => void;
+  markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
 }
 
 export class SessionAgentEventCoordinator {
@@ -82,6 +83,17 @@ export class SessionAgentEventCoordinator {
       console.log(
         `${ts()} [pi:${active.session.id}] EVENT ${event.type}${tool} (subs=${active.subscribers.size})`,
       );
+    }
+
+    if (event.type === "message_start" && event.message.role === "user") {
+      this.deps.markQueuedMessageStarted?.(key, event.message);
+    }
+
+    // pi may not always emit user message_start for queued steer/follow-up.
+    // Reconcile from SDK queue on each turn_start so queue chips cannot linger
+    // when dequeues happen without a matching message_start payload.
+    if (event.type === "turn_start") {
+      this.deps.markQueuedMessageStarted?.(key, {});
     }
 
     const ctx = this.deps.eventProcessor.translationContext(active);

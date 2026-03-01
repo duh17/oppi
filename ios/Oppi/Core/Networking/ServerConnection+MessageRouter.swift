@@ -30,6 +30,18 @@ extension ServerConnection {
         case .state(let session):
             handleState(session)
 
+        case .queueState(let queue):
+            messageQueueStore.apply(queue, for: sessionId)
+
+        case .queueItemStarted(let kind, let item, let queueVersion):
+            messageQueueStore.applyQueueItemStarted(
+                for: sessionId,
+                kind: kind,
+                item: item,
+                queueVersion: queueVersion
+            )
+            reducer.appendSystemEvent(queueStartedMessage(kind: kind, item: item))
+
         case .extensionUIRequest(let request):
             extensionTimeoutTask?.cancel()
             activeExtensionDialog = request
@@ -131,6 +143,7 @@ extension ServerConnection {
 
         case .sessionEnded(let reason):
             silenceWatchdog.stop()
+            messageQueueStore.clear(sessionId: sessionId)
             if var current = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                 current.status = .stopped
                 current.lastActivity = Date()
@@ -139,6 +152,7 @@ extension ServerConnection {
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
         case .sessionDeleted(let deletedId):
+            messageQueueStore.clear(sessionId: deletedId)
             sessionStore.remove(id: deletedId)
             notificationSessionIds.remove(deletedId)
             syncLiveActivityPermissions()
@@ -223,6 +237,63 @@ extension ServerConnection {
         syncLiveActivityPermissions()
     }
 
+    func queueStartedMessage(kind: MessageQueueKind, item: MessageQueueItem) -> String {
+        let trimmed = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snippet = trimmed.isEmpty ? "(attachment)" : trimmed
+        let preview: String
+        if snippet.count > 120 {
+            preview = String(snippet.prefix(117)) + "…"
+        } else {
+            preview = snippet
+        }
+        let label = kind == .steer ? "Steering" : "Follow-up"
+        return "Message Queue • \(label) started: \(preview)"
+    }
+
+    func decodeQueueStateFromCommandData(_ data: JSONValue?) -> MessageQueueState? {
+        guard let object = data?.objectValue,
+              let versionNumber = object["version"]?.numberValue,
+              let version = Int(exactly: versionNumber) else {
+            return nil
+        }
+
+        let steering = decodeQueueItems(object["steering"]?.arrayValue)
+        let followUp = decodeQueueItems(object["followUp"]?.arrayValue)
+        return MessageQueueState(version: version, steering: steering, followUp: followUp)
+    }
+
+    private func decodeQueueItems(_ values: [JSONValue]?) -> [MessageQueueItem] {
+        guard let values else { return [] }
+
+        return values.compactMap { value in
+            guard let object = value.objectValue,
+                  let id = object["id"]?.stringValue,
+                  let message = object["message"]?.stringValue,
+                  let createdAtNumber = object["createdAt"]?.numberValue,
+                  let createdAt = Int(exactly: createdAtNumber) else {
+                return nil
+            }
+
+            let images = decodeQueueImages(object["images"]?.arrayValue)
+            return MessageQueueItem(id: id, message: message, images: images, createdAt: createdAt)
+        }
+    }
+
+    private func decodeQueueImages(_ values: [JSONValue]?) -> [ImageAttachment]? {
+        guard let values else { return nil }
+
+        let images: [ImageAttachment] = values.compactMap { value in
+            guard let object = value.objectValue,
+                  let data = object["data"]?.stringValue,
+                  let mimeType = object["mimeType"]?.stringValue else {
+                return nil
+            }
+            return ImageAttachment(data: data, mimeType: mimeType)
+        }
+
+        return images.isEmpty ? nil : images
+    }
+
     // MARK: - Stop Lifecycle
 
     func handleStopLifecycleMessage(_ message: ServerMessage, sessionId: String) -> Bool {
@@ -276,6 +347,12 @@ extension ServerConnection {
            command == "prompt" || command == "steer" || command == "follow_up",
            commands.resolveTurnCommandResult(command: command, requestId: requestId, success: success, error: error) {
             return
+        }
+
+        if command == "get_queue" || command == "set_queue" {
+            if success, let queue = decodeQueueStateFromCommandData(data) {
+                messageQueueStore.apply(queue, for: sessionId)
+            }
         }
 
         if command == "get_commands" {
