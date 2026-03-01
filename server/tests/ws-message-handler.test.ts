@@ -328,6 +328,25 @@ describe("WsMessageHandler", () => {
     );
   });
 
+  it("forwards get_commands requests", async () => {
+    const harness = makeHarness();
+
+    await dispatch(harness, {
+      type: "get_commands",
+      requestId: "req-commands-1",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledWith(
+      "s1",
+      {
+        type: "get_commands",
+        requestId: "req-commands-1",
+      },
+      "req-commands-1",
+    );
+  });
+
   it("handles stop aliases through sendAbort and emits command_result", async () => {
     const harness = makeHarness();
 

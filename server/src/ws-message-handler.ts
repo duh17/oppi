@@ -188,6 +188,7 @@ export class WsMessageHandler {
       // ── RPC passthrough — forward to pi and return result ──
       case "get_messages":
       case "get_session_stats":
+      case "get_commands":
       case "set_model":
       case "cycle_model":
       case "get_available_models":
