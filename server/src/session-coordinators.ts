@@ -21,6 +21,7 @@ import {
   SessionLifecycleCoordinator,
   type SessionLifecycleSessionState,
 } from "./session-lifecycle.js";
+import { SessionMessageQueueCoordinator, type SessionMessageQueueState } from "./session-queue.js";
 import { SessionStartCoordinator, type SessionStartActiveSession } from "./session-start.js";
 import { SessionStateCoordinator } from "./session-state.js";
 import {
@@ -47,6 +48,7 @@ export interface SessionCoordinatorBundle {
   lifecycleCoordinator: SessionLifecycleCoordinator;
   inputCoordinator: SessionInputCoordinator;
   turnCoordinator: SessionTurnCoordinator;
+  queueCoordinator: SessionMessageQueueCoordinator;
   agentEventCoordinator: SessionAgentEventCoordinator;
   stopFlowCoordinator: SessionStopFlowCoordinator;
   uiCoordinator: SessionUICoordinator;
@@ -166,6 +168,11 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
   });
 
+  const queueCoordinator = new SessionMessageQueueCoordinator({
+    getActiveSession: (key) => deps.active.get(key) as SessionMessageQueueState | undefined,
+    broadcast: (key, message) => deps.broadcast(key, message),
+  });
+
   const inputCoordinator = new SessionInputCoordinator({
     getActiveSession: (key) => deps.active.get(key) as SessionInputSessionState | undefined,
     beginTurnIntent: (key, active, command, payload, clientTurnId, requestId) =>
@@ -180,6 +187,8 @@ export function createSessionCoordinatorBundle(
     markTurnDispatched: (key, active, command, turn, requestId) =>
       turnCoordinator.markTurnDispatched(key, active as TurnSessionState, command, turn, requestId),
     sendCommand: (key, command) => deps.sendCommand(key, command),
+    enqueueQueuedMessage: (key, kind, message, images, idHint) =>
+      queueCoordinator.enqueueQueuedMessage(key, kind, message, images, idHint),
   });
 
   const agentEventCoordinator = new SessionAgentEventCoordinator({
@@ -189,6 +198,8 @@ export function createSessionCoordinatorBundle(
     turnCoordinator,
     broadcast: (key, message) => deps.broadcast(key, message),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
+    markQueuedMessageStarted: (key, message) =>
+      queueCoordinator.markQueuedMessageStarted(key, message),
   });
 
   const stopFlowCoordinator = new SessionStopFlowCoordinator(
@@ -217,6 +228,7 @@ export function createSessionCoordinatorBundle(
     lifecycleCoordinator,
     inputCoordinator,
     turnCoordinator,
+    queueCoordinator,
     agentEventCoordinator,
     stopFlowCoordinator,
     uiCoordinator,

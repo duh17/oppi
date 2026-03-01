@@ -523,6 +523,103 @@ describe("SessionManager follow_up", () => {
   });
 });
 
+describe("SessionManager message queue", () => {
+  it("tracks steering and follow-up queue state", async () => {
+    const { manager } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendSteer("s1", "first steer", { clientTurnId: "turn-steer-1" });
+    await manager.sendFollowUp("s1", "first follow", { clientTurnId: "turn-follow-1" });
+
+    const queue = manager.getMessageQueue("s1");
+    expect(queue.version).toBeGreaterThan(0);
+    expect(queue.steering.map((item) => item.message)).toEqual(["first steer"]);
+    expect(queue.followUp.map((item) => item.message)).toEqual(["first follow"]);
+  });
+
+  it("reconciles queue state from SDK when user message starts", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendSteer("s1", "queued steer", { clientTurnId: "turn-steer-1" });
+    const before = manager.getMessageQueue("s1");
+    expect(before.steering.map((item) => item.message)).toEqual(["queued steer"]);
+
+    sdkBackend.session.clearQueue();
+
+    // Simulate a user message_start payload shape that does not expose text
+    // in a directly parseable block type. Coordinator should still reconcile
+    // by diffing against SDK queue state.
+    feedEvent(manager, "s1", {
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "unknown_text_block", text: "queued steer" }],
+      },
+    });
+
+    const after = manager.getMessageQueue("s1");
+    expect(after.steering).toHaveLength(0);
+    expect(after.followUp).toHaveLength(0);
+    expect(after.version).toBeGreaterThan(before.version);
+  });
+
+  it("reconciles queue state from SDK when turn starts without user message_start", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendSteer("s1", "queued steer", { clientTurnId: "turn-steer-2" });
+    const before = manager.getMessageQueue("s1");
+    expect(before.steering.map((item) => item.message)).toEqual(["queued steer"]);
+
+    sdkBackend.session.clearQueue();
+
+    feedEvent(manager, "s1", {
+      type: "turn_start",
+      turnId: "t-queue-reconcile",
+      timestamp: Date.now(),
+    });
+
+    const after = manager.getMessageQueue("s1");
+    expect(after.steering).toHaveLength(0);
+    expect(after.followUp).toHaveLength(0);
+    expect(after.version).toBeGreaterThan(before.version);
+  });
+
+  it("replaces queue using optimistic version check", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.sendSteer("s1", "old steer", { clientTurnId: "turn-old-steer" });
+    const before = manager.getMessageQueue("s1");
+
+    const after = await manager.setMessageQueue("s1", {
+      baseVersion: before.version,
+      steering: [{ id: "new-steer", message: "new steer" }],
+      followUp: [{ id: "new-follow", message: "new follow" }],
+    });
+
+    expect(sdkBackend.session.clearQueue).toHaveBeenCalledTimes(1);
+    expect(sdkBackend.session.steer).toHaveBeenCalledWith("new steer", undefined);
+    expect(sdkBackend.session.followUp).toHaveBeenCalledWith("new follow", undefined);
+    expect(after.steering.map((item) => item.message)).toEqual(["new steer"]);
+    expect(after.followUp.map((item) => item.message)).toEqual(["new follow"]);
+  });
+
+  it("rejects stale queue replacement versions", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+    (sdkBackend as { isStreaming: boolean }).isStreaming = true;
+
+    await manager.sendSteer("s1", "baseline", { clientTurnId: "turn-baseline" });
+    const current = manager.getMessageQueue("s1");
+
+    await expect(
+      manager.setMessageQueue("s1", {
+        baseVersion: current.version - 1,
+        steering: [],
+        followUp: [],
+      }),
+    ).rejects.toThrow("Queue version mismatch");
+  });
+});
+
 // ─── RPC Passthrough ───
 
 describe("SessionManager RPC passthrough", () => {

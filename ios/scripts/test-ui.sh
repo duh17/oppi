@@ -37,13 +37,39 @@ cd "$IOS_DIR"
 [[ "$SKIP_GENERATE" -eq 0 ]] && xcodegen generate
 
 if [[ "$TEST_SCOPE" == "harness" ]]; then
-  TEST_FILTER=(-only-testing:OppiUITests/UIHangHarnessUITests)
+  TEST_FILTER=(
+    -only-testing:OppiUITests/UIHangHarnessUITests
+    -only-testing:OppiUITests/UIMessageQueueHarnessUITests
+  )
 else
   TEST_FILTER=(-only-testing:OppiUITests)
 fi
 
+LOG_FILE="$(mktemp -t oppi-ui-tests.XXXXXX.log)"
+trap 'rm -f "$LOG_FILE"' EXIT
+
+set +e
 xcodebuild test \
   -project Oppi.xcodeproj \
   -scheme Oppi \
   -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' \
-  "${TEST_FILTER[@]}"
+  "${TEST_FILTER[@]}" | tee "$LOG_FILE"
+XCODE_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [[ "$XCODE_STATUS" -ne 0 ]]; then
+  exit "$XCODE_STATUS"
+fi
+
+EXECUTED_TESTS="$(grep -Eo 'Executed [0-9]+ tests' "$LOG_FILE" | awk '{print $2}' | sort -n | tail -n1 || true)"
+if [[ -z "$EXECUTED_TESTS" || "$EXECUTED_TESTS" -eq 0 ]]; then
+  echo "xcodebuild reported zero executed tests; failing to avoid false green." >&2
+  exit 2
+fi
+
+if ! grep -q 'testSteeringQueueLifecycle' "$LOG_FILE"; then
+  echo "Queue lifecycle UI test did not execute; expected testSteeringQueueLifecycle in output." >&2
+  exit 3
+fi
+
+echo "UI tests executed: $EXECUTED_TESTS"

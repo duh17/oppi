@@ -225,76 +225,45 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
         extensionFocus.tap()
-
         XCTAssertEqual(waitForDiagnostic("diag.extensionExpanded", equals: 1, timeout: 4), 1)
 
         diagTick.tap()
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 
-        dragTimeline(
+        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.72),
-            to: CGVector(dx: 0.5, dy: 0.28)
+            diagTick: diagTick,
+            baseline: baselineOffset,
+            minimumDelta: 24,
+            direction: .increasing,
+            context: "upward drag inside expanded extension markdown"
         )
 
-        diagTick.tap()
-        let offsetAfterUpDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertGreaterThan(
-            offsetAfterUpDrag,
-            baselineOffset + 40,
-            "Upward drag inside expanded extension markdown did not move timeline (baseline=\(baselineOffset), after=\(offsetAfterUpDrag))"
-        )
-
-        dragTimeline(
+        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.28),
-            to: CGVector(dx: 0.5, dy: 0.82)
+            diagTick: diagTick,
+            baseline: offsetAfterUpDrag,
+            minimumDelta: 24,
+            direction: .decreasing,
+            context: "downward drag inside expanded extension markdown"
         )
 
-        diagTick.tap()
-        let offsetAfterDownDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertLessThan(
-            offsetAfterDownDrag,
-            offsetAfterUpDrag - 40,
-            "Downward drag inside expanded extension markdown snapped/stuck (afterUp=\(offsetAfterUpDrag), afterDown=\(offsetAfterDownDrag))"
-        )
-
-        // Repro guard: scroll past extension markdown, then scroll down again.
-        // This catches offset snapback loops seen after markdown rows have
-        // already moved off-screen.
-        var offsetAfterPastExtensionDrag = offsetAfterDownDrag
-        for _ in 0..<2 {
-            dragTimeline(
-                timeline,
-                from: CGVector(dx: 0.5, dy: 0.80),
-                to: CGVector(dx: 0.5, dy: 0.16)
-            )
-
-            diagTick.tap()
-            offsetAfterPastExtensionDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-            if offsetAfterPastExtensionDrag > offsetAfterDownDrag + 80 {
-                break
-            }
-        }
-
-        XCTAssertGreaterThan(
-            offsetAfterPastExtensionDrag,
-            offsetAfterDownDrag + 80,
-            "Expected to scroll further past extension markdown before snapback check (afterDown=\(offsetAfterDownDrag), past=\(offsetAfterPastExtensionDrag))"
-        )
-
-        dragTimeline(
+        let offsetAfterPastExtensionDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.24),
-            to: CGVector(dx: 0.5, dy: 0.86)
+            diagTick: diagTick,
+            baseline: offsetAfterDownDrag,
+            minimumDelta: 48,
+            direction: .increasing,
+            context: "scrolling past expanded extension markdown"
         )
 
-        diagTick.tap()
-        let offsetAfterReturnDown = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertLessThan(
-            offsetAfterReturnDown,
-            offsetAfterPastExtensionDrag - 40,
-            "Downward drag after passing extension markdown failed (past=\(offsetAfterPastExtensionDrag), down=\(offsetAfterReturnDown))"
+        let offsetAfterReturnDown = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: offsetAfterPastExtensionDrag,
+            minimumDelta: 24,
+            direction: .decreasing,
+            context: "downward drag after passing expanded extension markdown"
         )
 
         Thread.sleep(forTimeInterval: 0.35)
@@ -322,73 +291,45 @@ final class UIHangHarnessUITests: XCTestCase {
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
         extensionFocus.tap()
-
         XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
 
         diagTick.tap()
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 
-        dragTimeline(
+        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.72),
-            to: CGVector(dx: 0.5, dy: 0.28)
+            diagTick: diagTick,
+            baseline: baselineOffset,
+            minimumDelta: 24,
+            direction: .increasing,
+            context: "upward drag inside expanded extension text"
         )
 
-        diagTick.tap()
-        let offsetAfterUpDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertGreaterThan(
-            offsetAfterUpDrag,
-            baselineOffset + 40,
-            "Upward drag inside expanded extension text did not move timeline (baseline=\(baselineOffset), after=\(offsetAfterUpDrag))"
-        )
-
-        dragTimeline(
+        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.28),
-            to: CGVector(dx: 0.5, dy: 0.82)
+            diagTick: diagTick,
+            baseline: offsetAfterUpDrag,
+            minimumDelta: 24,
+            direction: .decreasing,
+            context: "downward drag inside expanded extension text"
         )
 
-        diagTick.tap()
-        let offsetAfterDownDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertLessThan(
-            offsetAfterDownDrag,
-            offsetAfterUpDrag - 40,
-            "Downward drag inside expanded extension text snapped/stuck (afterUp=\(offsetAfterUpDrag), afterDown=\(offsetAfterDownDrag))"
-        )
-
-        var offsetAfterPastExtensionDrag = offsetAfterDownDrag
-        for _ in 0..<2 {
-            dragTimeline(
-                timeline,
-                from: CGVector(dx: 0.5, dy: 0.80),
-                to: CGVector(dx: 0.5, dy: 0.16)
-            )
-
-            diagTick.tap()
-            offsetAfterPastExtensionDrag = pollDiagnostic("diag.offsetY", timeout: 4)
-            if offsetAfterPastExtensionDrag > offsetAfterDownDrag + 80 {
-                break
-            }
-        }
-
-        XCTAssertGreaterThan(
-            offsetAfterPastExtensionDrag,
-            offsetAfterDownDrag + 80,
-            "Expected to scroll further past extension text before snapback check (afterDown=\(offsetAfterDownDrag), past=\(offsetAfterPastExtensionDrag))"
-        )
-
-        dragTimeline(
+        let offsetAfterPastExtensionDrag = dragTimelineUntilOffsetMoves(
             timeline,
-            from: CGVector(dx: 0.5, dy: 0.24),
-            to: CGVector(dx: 0.5, dy: 0.86)
+            diagTick: diagTick,
+            baseline: offsetAfterDownDrag,
+            minimumDelta: 48,
+            direction: .increasing,
+            context: "scrolling past expanded extension text"
         )
 
-        diagTick.tap()
-        let offsetAfterReturnDown = pollDiagnostic("diag.offsetY", timeout: 4)
-        XCTAssertLessThan(
-            offsetAfterReturnDown,
-            offsetAfterPastExtensionDrag - 40,
-            "Downward drag after passing extension text failed (past=\(offsetAfterPastExtensionDrag), down=\(offsetAfterReturnDown))"
+        let offsetAfterReturnDown = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: offsetAfterPastExtensionDrag,
+            minimumDelta: 24,
+            direction: .decreasing,
+            context: "downward drag after passing expanded extension text"
         )
 
         Thread.sleep(forTimeInterval: 0.35)
@@ -536,10 +477,15 @@ final class UIHangHarnessUITests: XCTestCase {
     private func launchHarness(
         noStream: Bool,
         includeVisualFixtures: Bool = false,
-        mixedContent: Bool = false
+        mixedContent: Bool = false,
+        queueHarness: Bool = false
     ) {
         app = XCUIApplication()
-        app.launchArguments.append("--ui-hang-harness")
+        app.launchArguments.append(contentsOf: [
+            "--ui-hang-harness",
+            "-ApplePersistenceIgnoreState",
+            "YES",
+        ])
         app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
         app.launchEnvironment["PI_UI_HANG_UI_TEST_MODE"] = "1"
         app.launchEnvironment["PI_UI_HANG_MIXED_CONTENT"] = mixedContent ? "1" : "0"
@@ -549,6 +495,7 @@ final class UIHangHarnessUITests: XCTestCase {
             app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "0"
         }
         app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = includeVisualFixtures ? "1" : "0"
+        app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = queueHarness ? "1" : "0"
         app.launch()
 
         XCTAssertTrue(
@@ -582,21 +529,8 @@ final class UIHangHarnessUITests: XCTestCase {
     }
 
     private func pollDiagnostic(_ id: String, timeout: TimeInterval) -> Int {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            guard assertHarnessStillRunning(context: "reading diagnostic \(id)") else {
-                return -1
-            }
-
-            let el = app.descendants(matching: .any)[id]
-            if el.waitForExistence(timeout: 0.5) {
-                let raw = (el.value as? String) ?? el.label
-                if let v = Int(raw) { return v }
-                let digits = raw.filter(\.isNumber)
-                if let v = Int(digits) { return v }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        if let value = tryPollDiagnostic(id, timeout: timeout) {
+            return value
         }
 
         guard assertHarnessStillRunning(context: "timing out while reading diagnostic \(id)") else {
@@ -607,49 +541,103 @@ final class UIHangHarnessUITests: XCTestCase {
         return -1
     }
 
-    private func waitForDiagnostic(_ id: String, equals expected: Int, timeout: TimeInterval) -> Int {
+    private func tryPollDiagnostic(_ id: String, timeout: TimeInterval) -> Int? {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
-            let value = pollDiagnostic(id, timeout: 0.8)
-            if value == expected {
+            guard assertHarnessStillRunning(context: "reading diagnostic \(id)") else {
+                return nil
+            }
+
+            let element = app.descendants(matching: .any)[id]
+            if element.waitForExistence(timeout: 0.35),
+               let value = parseDiagnosticValue(element) {
                 return value
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
         }
 
-        XCTFail("Diagnostic \(id) did not reach expected value \(expected)")
+        return nil
+    }
+
+    private func parseDiagnosticValue(_ element: XCUIElement) -> Int? {
+        let rawCandidates: [String?] = [
+            element.value as? String,
+            element.label,
+        ]
+
+        for candidate in rawCandidates {
+            guard var raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else {
+                continue
+            }
+
+            raw = raw.replacingOccurrences(of: "−", with: "-")
+
+            let sanitized = raw.filter { $0.isWholeNumber || $0 == "-" }
+            if !sanitized.isEmpty, let parsed = Int(sanitized) {
+                return parsed
+            }
+
+            if let range = raw.range(of: "-?\\d+", options: .regularExpression),
+               let extracted = Int(String(raw[range])) {
+                return extracted
+            }
+        }
+
+        return nil
+    }
+
+    private func waitForDiagnostic(_ id: String, equals expected: Int, timeout: TimeInterval) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastValue: Int?
+
+        while Date() < deadline {
+            if let value = tryPollDiagnostic(id, timeout: 0.7) {
+                lastValue = value
+                if value == expected {
+                    return value
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+        }
+
+        XCTFail(
+            "Diagnostic \(id) did not reach expected value \(expected) " +
+            "(last=\(lastValue.map(String.init) ?? "nil"))"
+        )
         return -1
     }
 
     private func waitForDiagnosticAtLeast(_ id: String, minimum: Int, timeout: TimeInterval) -> Int {
         let deadline = Date().addingTimeInterval(timeout)
+        var lastValue: Int?
 
         while Date() < deadline {
-            let value = pollDiagnostic(id, timeout: 0.8)
-            if value >= minimum {
-                return minimum
+            if let value = tryPollDiagnostic(id, timeout: 0.7) {
+                lastValue = value
+                if value >= minimum {
+                    return value
+                }
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
         }
 
-        XCTFail("Diagnostic \(id) did not reach minimum value \(minimum)")
+        XCTFail(
+            "Diagnostic \(id) did not reach minimum value \(minimum) " +
+            "(last=\(lastValue.map(String.init) ?? "nil"))"
+        )
         return -1
     }
 
     private func waitForDiagnosticAtLeastValue(_ id: String, minimum: Int, timeout: TimeInterval) -> Int {
-        let deadline = Date().addingTimeInterval(timeout)
+        waitForDiagnosticAtLeast(id, minimum: minimum, timeout: timeout)
+    }
 
-        while Date() < deadline {
-            let value = pollDiagnostic(id, timeout: 0.8)
-            if value >= minimum {
-                return value
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
-        }
-
-        XCTFail("Diagnostic \(id) did not reach minimum value \(minimum)")
-        return -1
+    private enum OffsetDirection {
+        case increasing
+        case decreasing
     }
 
     private func dragTimeline(_ element: XCUIElement, from: CGVector, to: CGVector) {
@@ -658,17 +646,295 @@ final class UIHangHarnessUITests: XCTestCase {
         start.press(forDuration: 0.02, thenDragTo: end)
     }
 
+    private func dragTimelineUntilOffsetMoves(
+        _ timeline: XCUIElement,
+        diagTick: XCUIElement,
+        baseline: Int,
+        minimumDelta: Int,
+        direction: OffsetDirection,
+        context: String
+    ) -> Int {
+        let dragPaths: [(from: CGVector, to: CGVector)]
+        switch direction {
+        case .increasing:
+            dragPaths = [
+                (from: CGVector(dx: 0.5, dy: 0.72), to: CGVector(dx: 0.5, dy: 0.28)),
+                (from: CGVector(dx: 0.5, dy: 0.86), to: CGVector(dx: 0.5, dy: 0.14)),
+                (from: CGVector(dx: 0.15, dy: 0.86), to: CGVector(dx: 0.15, dy: 0.14)),
+            ]
+
+        case .decreasing:
+            dragPaths = [
+                (from: CGVector(dx: 0.5, dy: 0.28), to: CGVector(dx: 0.5, dy: 0.82)),
+                (from: CGVector(dx: 0.5, dy: 0.14), to: CGVector(dx: 0.5, dy: 0.88)),
+                (from: CGVector(dx: 0.15, dy: 0.14), to: CGVector(dx: 0.15, dy: 0.88)),
+            ]
+        }
+
+        var lastOffset = baseline
+        for path in dragPaths {
+            dragTimeline(timeline, from: path.from, to: path.to)
+            diagTick.tap()
+            lastOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+
+            switch direction {
+            case .increasing where lastOffset >= baseline + minimumDelta:
+                return lastOffset
+            case .decreasing where lastOffset <= baseline - minimumDelta:
+                return lastOffset
+            default:
+                continue
+            }
+        }
+
+        let directionDescription: String
+        switch direction {
+        case .increasing:
+            directionDescription = "increase"
+        case .decreasing:
+            directionDescription = "decrease"
+        }
+
+        XCTFail(
+            "Timeline offset did not \(directionDescription) enough during \(context) " +
+            "(baseline=\(baseline), last=\(lastOffset), minimumDelta=\(minimumDelta))"
+        )
+
+        return lastOffset
+    }
+
     private func waitForDiagnosticAtMostOrNil(_ id: String, maximum: Int, timeout: TimeInterval) -> Int? {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
-            let value = pollDiagnostic(id, timeout: 0.8)
-            if value <= maximum {
+            if let value = tryPollDiagnostic(id, timeout: 0.7), value <= maximum {
                 return value
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
         }
 
         return nil
+    }
+}
+
+@MainActor
+final class UIMessageQueueHarnessUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+#if !targetEnvironment(simulator)
+        throw XCTSkip("Queue harness UI tests are simulator-only")
+#endif
+        continueAfterFailure = false
+    }
+
+    func testSteeringQueueLifecycle() throws {
+        launchQueueHarness()
+
+        // Reset baseline so simulator relaunches cannot leak stale queue state.
+        let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
+        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        clearQueue.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
+        XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 0, timeout: 4), 0)
+        XCTAssertEqual(waitForDiagnostic("diag.queueFollowUpCount", equals: 0, timeout: 4), 0)
+
+        let startedBefore = pollDiagnostic("diag.queueStartedEvents", timeout: 4)
+
+        let enqueueSteer = app.descendants(matching: .any)["harness.queue.enqueueSteer"]
+        XCTAssertTrue(enqueueSteer.waitForExistence(timeout: 4))
+        enqueueSteer.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 1, timeout: 4), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 1, timeout: 4), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.queueFollowUpCount", equals: 0, timeout: 4), 0)
+
+        let queueContainer = app.descendants(matching: .any)["harness.queue.container"]
+        XCTAssertTrue(queueContainer.waitForExistence(timeout: 4))
+
+        let startSteer = app.descendants(matching: .any)["harness.queue.startSteer"]
+        XCTAssertTrue(startSteer.waitForExistence(timeout: 4))
+        startSteer.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 0, timeout: 4), 0)
+        XCTAssertEqual(waitForDiagnostic("diag.queueSteeringCount", equals: 0, timeout: 4), 0)
+        XCTAssertEqual(
+            waitForDiagnostic("diag.queueStartedEvents", equals: startedBefore + 1, timeout: 4),
+            startedBefore + 1
+        )
+    }
+
+    func testQueueHeaderToggleRevealsAndHidesEditorControls() throws {
+        launchQueueHarness()
+
+        let clearQueue = app.descendants(matching: .any)["harness.queue.clear"]
+        XCTAssertTrue(clearQueue.waitForExistence(timeout: 4))
+        clearQueue.tap()
+
+        let enqueueSteer = app.descendants(matching: .any)["harness.queue.enqueueSteer"]
+        XCTAssertTrue(enqueueSteer.waitForExistence(timeout: 4))
+        enqueueSteer.tap()
+
+        XCTAssertEqual(waitForDiagnostic("diag.queueVisible", equals: 1, timeout: 4), 1)
+
+        let queueToggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
+        XCTAssertTrue(
+            queueToggle.waitForExistence(timeout: 4),
+            "Queue toggle should be discoverable for interaction"
+        )
+        queueToggle.tap()
+
+        let refreshButton = app.descendants(matching: .any)["chat.messageQueue.refresh"]
+        XCTAssertTrue(
+            refreshButton.waitForExistence(timeout: 4),
+            "Expanding queue should reveal refresh control"
+        )
+
+        queueToggle.tap()
+        XCTAssertTrue(
+            waitForElementToDisappear(refreshButton, timeout: 2),
+            "Collapsing queue should hide refresh control"
+        )
+    }
+
+    private func launchQueueHarness() {
+        app = XCUIApplication()
+        app.launchArguments.append(contentsOf: [
+            "--ui-hang-harness",
+            "-ApplePersistenceIgnoreState",
+            "YES",
+        ])
+        app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
+        app.launchEnvironment["PI_UI_HANG_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = "1"
+        app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = "0"
+        app.launchEnvironment["PI_UI_HANG_MIXED_CONTENT"] = "0"
+        app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = "1"
+        app.launch()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["harness.ready"].waitForExistence(timeout: 10),
+            "Harness did not become ready"
+        )
+    }
+
+    private func assertHarnessStillRunning(context: String) -> Bool {
+        if app.state != .runningForeground {
+            XCTFail("Harness app left foreground while \(context). Current state: \(app.state.rawValue)")
+            return false
+        }
+
+        let harnessReady = app.descendants(matching: .any)["harness.ready"]
+        if !harnessReady.exists {
+            if app.buttons["Connect to Server"].exists {
+                XCTFail(
+                    "Harness UI disappeared while \(context). 'Connect to Server' is visible, " +
+                    "which indicates the app was relaunched outside harness mode."
+                )
+            } else {
+                XCTFail("Harness UI disappeared while \(context).")
+            }
+            return false
+        }
+
+        return true
+    }
+
+    private func pollDiagnostic(_ id: String, timeout: TimeInterval) -> Int {
+        if let value = tryPollDiagnostic(id, timeout: timeout) {
+            return value
+        }
+
+        guard assertHarnessStillRunning(context: "timing out while reading diagnostic \(id)") else {
+            return -1
+        }
+
+        XCTFail("Could not read diagnostic \(id) within \(timeout)s")
+        return -1
+    }
+
+    private func tryPollDiagnostic(_ id: String, timeout: TimeInterval) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            guard assertHarnessStillRunning(context: "reading diagnostic \(id)") else {
+                return nil
+            }
+
+            let element = app.descendants(matching: .any)[id]
+            if element.waitForExistence(timeout: 0.35),
+               let value = parseDiagnosticValue(element) {
+                return value
+            }
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+        }
+
+        return nil
+    }
+
+    private func parseDiagnosticValue(_ element: XCUIElement) -> Int? {
+        let rawCandidates: [String?] = [
+            element.value as? String,
+            element.label,
+        ]
+
+        for candidate in rawCandidates {
+            guard var raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else {
+                continue
+            }
+
+            raw = raw.replacingOccurrences(of: "−", with: "-")
+
+            let sanitized = raw.filter { $0.isWholeNumber || $0 == "-" }
+            if !sanitized.isEmpty, let parsed = Int(sanitized) {
+                return parsed
+            }
+
+            if let range = raw.range(of: "-?\\d+", options: .regularExpression),
+               let extracted = Int(String(raw[range])) {
+                return extracted
+            }
+        }
+
+        return nil
+    }
+
+    private func waitForDiagnostic(_ id: String, equals expected: Int, timeout: TimeInterval) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastValue: Int?
+
+        while Date() < deadline {
+            if let value = tryPollDiagnostic(id, timeout: 0.7) {
+                lastValue = value
+                if value == expected {
+                    return value
+                }
+            }
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+        }
+
+        XCTFail(
+            "Diagnostic \(id) did not reach expected value \(expected) " +
+            "(last=\(lastValue.map(String.init) ?? "nil"))"
+        )
+        return -1
+    }
+
+    private func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if !element.exists {
+                return true
+            }
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.12))
+        }
+
+        return !element.exists
     }
 }

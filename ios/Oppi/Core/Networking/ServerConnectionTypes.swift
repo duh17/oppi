@@ -7,6 +7,21 @@ struct ForkMessage: Equatable, Sendable {
     let text: String
 }
 
+// MARK: - Session Stats Types
+
+struct SessionTokenStats: Equatable, Sendable {
+    let input: Int
+    let output: Int
+    let cacheRead: Int
+    let cacheWrite: Int
+    let total: Int
+}
+
+struct SessionStatsSnapshot: Equatable, Sendable {
+    let tokens: SessionTokenStats
+    let cost: Double
+}
+
 // MARK: - Error Types
 
 enum ForkRequestError: LocalizedError, Equatable {

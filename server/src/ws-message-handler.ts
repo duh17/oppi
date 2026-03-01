@@ -1,10 +1,24 @@
 import { ts } from "./log-utils.js";
-import type { ClientMessage, ImageAttachment, ServerMessage, Session } from "./types.js";
+import type {
+  ClientMessage,
+  ImageAttachment,
+  MessageQueueDraftItem,
+  MessageQueueState,
+  ServerMessage,
+  Session,
+} from "./types.js";
 
 interface TurnCommandMessage {
   message: string;
   images?: ImageAttachment[];
   clientTurnId?: string;
+  requestId?: string;
+}
+
+interface SetQueueMessage {
+  baseVersion: number;
+  steering: MessageQueueDraftItem[];
+  followUp: MessageQueueDraftItem[];
   requestId?: string;
 }
 
@@ -46,6 +60,15 @@ interface WsSessionCommands {
       requestId?: string;
     },
   ) => Promise<void>;
+  getMessageQueue: (sessionId: string) => MessageQueueState;
+  setMessageQueue: (
+    sessionId: string,
+    payload: {
+      baseVersion: number;
+      steering: MessageQueueDraftItem[];
+      followUp: MessageQueueDraftItem[];
+    },
+  ) => Promise<MessageQueueState>;
   sendAbort: (sessionId: string) => Promise<void>;
   stopSession: (sessionId: string) => Promise<void>;
   getActiveSession: (sessionId: string) => Session | undefined;
@@ -126,6 +149,16 @@ export class WsMessageHandler {
         if (active) {
           send({ type: "state", session: this.deps.ensureSessionContextWindow(active) });
         }
+        return;
+      }
+
+      case "get_queue": {
+        await this.handleGetQueueCommand(session, msg, send);
+        return;
+      }
+
+      case "set_queue": {
+        await this.handleSetQueueCommand(session, msg, send);
         return;
       }
 
@@ -223,6 +256,79 @@ export class WsMessageHandler {
       const message = err instanceof Error ? err.message : String(err);
       if (requestId) {
         send({ type: "command_result", command, requestId, success: false, error: message });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private async handleGetQueueCommand(
+    session: Session,
+    msg: Extract<ClientMessage, { type: "get_queue" }>,
+    send: (msg: ServerMessage) => void,
+  ): Promise<void> {
+    const requestId = msg.requestId;
+
+    try {
+      const queue = this.deps.sessions.getMessageQueue(session.id);
+      send({ type: "queue_state", queue });
+      if (requestId) {
+        send({
+          type: "command_result",
+          command: "get_queue",
+          requestId,
+          success: true,
+          data: queue,
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (requestId) {
+        send({
+          type: "command_result",
+          command: "get_queue",
+          requestId,
+          success: false,
+          error: message,
+        });
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private async handleSetQueueCommand(
+    session: Session,
+    msg: SetQueueMessage,
+    send: (msg: ServerMessage) => void,
+  ): Promise<void> {
+    const requestId = msg.requestId;
+
+    try {
+      const queue = await this.deps.sessions.setMessageQueue(session.id, {
+        baseVersion: msg.baseVersion,
+        steering: msg.steering,
+        followUp: msg.followUp,
+      });
+      if (requestId) {
+        send({
+          type: "command_result",
+          command: "set_queue",
+          requestId,
+          success: true,
+          data: queue,
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (requestId) {
+        send({
+          type: "command_result",
+          command: "set_queue",
+          requestId,
+          success: false,
+          error: message,
+        });
         return;
       }
       throw err;

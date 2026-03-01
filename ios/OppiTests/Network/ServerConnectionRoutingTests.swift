@@ -28,6 +28,158 @@ struct ServerConnectionRoutingTests {
     }
 
     @MainActor
+    @Test func routeQueueStateUpdatesQueueStore() {
+        let conn = makeTestConnection()
+        let state = MessageQueueState(
+            version: 7,
+            steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
+            followUp: [MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2)]
+        )
+
+        conn.handleServerMessage(.queueState(queue: state), sessionId: "s1")
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 7)
+        #expect(stored.steering.count == 1)
+        #expect(stored.followUp.count == 1)
+    }
+
+    @MainActor
+    @Test func routeQueueStateIgnoresStaleVersion() {
+        let conn = makeTestConnection()
+        conn.messageQueueStore.apply(
+            MessageQueueState(
+                version: 9,
+                steering: [MessageQueueItem(id: "q9", message: "latest", images: nil, createdAt: 9)],
+                followUp: []
+            ),
+            for: "s1"
+        )
+
+        conn.handleServerMessage(
+            .queueState(
+                queue: MessageQueueState(
+                    version: 8,
+                    steering: [MessageQueueItem(id: "q8", message: "stale", images: nil, createdAt: 8)],
+                    followUp: []
+                )
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 9)
+        #expect(stored.steering.map(\.message) == ["latest"])
+    }
+
+    @MainActor
+    @Test func routeQueueItemStartedRemovesItemAndAppendsSystemEvent() {
+        let conn = makeTestConnection()
+        let initial = MessageQueueState(
+            version: 2,
+            steering: [MessageQueueItem(id: "q1", message: "steer one", images: nil, createdAt: 1)],
+            followUp: [MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2)]
+        )
+        conn.messageQueueStore.apply(initial, for: "s1")
+
+        conn.handleServerMessage(
+            .queueItemStarted(
+                kind: .followUp,
+                item: MessageQueueItem(id: "q2", message: "follow one", images: nil, createdAt: 2),
+                queueVersion: 3
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 3)
+        #expect(stored.followUp.isEmpty)
+
+        guard let first = conn.reducer.items.first,
+              case .systemEvent(_, let text) = first else {
+            Issue.record("Expected queue started system event")
+            return
+        }
+        #expect(text.contains("Message Queue"))
+        #expect(text.contains("Follow-up"))
+    }
+
+    @MainActor
+    @Test func routeGetQueueCommandResultUpdatesQueueStore() {
+        let conn = makeTestConnection()
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "get_queue",
+                requestId: "req-1",
+                success: true,
+                data: [
+                    "version": 11,
+                    "steering": [
+                        [
+                            "id": "q1",
+                            "message": "steer one",
+                            "createdAt": 1,
+                        ],
+                    ],
+                    "followUp": [
+                        [
+                            "id": "q2",
+                            "message": "follow one",
+                            "createdAt": 2,
+                        ],
+                    ],
+                ],
+                error: nil
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 11)
+        #expect(stored.steering.count == 1)
+        #expect(stored.followUp.count == 1)
+    }
+
+    @MainActor
+    @Test func routeGetQueueCommandResultIgnoresStaleVersion() {
+        let conn = makeTestConnection()
+        conn.messageQueueStore.apply(
+            MessageQueueState(
+                version: 12,
+                steering: [],
+                followUp: [MessageQueueItem(id: "q12", message: "fresh follow", images: nil, createdAt: 12)]
+            ),
+            for: "s1"
+        )
+
+        conn.handleServerMessage(
+            .commandResult(
+                command: "get_queue",
+                requestId: "req-stale",
+                success: true,
+                data: [
+                    "version": 11,
+                    "steering": [],
+                    "followUp": [
+                        [
+                            "id": "q11",
+                            "message": "stale follow",
+                            "createdAt": 11,
+                        ],
+                    ],
+                ],
+                error: nil
+            ),
+            sessionId: "s1"
+        )
+
+        let stored = conn.messageQueueStore.queue(for: "s1")
+        #expect(stored.version == 12)
+        #expect(stored.followUp.map(\.message) == ["fresh follow"])
+    }
+
+    @MainActor
     @Test func routeStopRequestedMarksStopping() {
         let scenario = EventFlowServerConnectionScenario()
 

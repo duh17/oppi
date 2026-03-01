@@ -42,6 +42,32 @@ final class VoiceInputManager {
         case error(String)
     }
 
+    enum TranscriptionEngine: String, Equatable, Sendable {
+        case modernSpeech
+        case classicDictation
+
+        var logName: String {
+            switch self {
+            case .modernSpeech: return "speech"
+            case .classicDictation: return "dictation"
+            }
+        }
+    }
+
+    private enum TranscriberModule {
+        case speech(SpeechTranscriber)
+        case dictation(DictationTranscriber)
+
+        var speechModule: any SpeechModule {
+            switch self {
+            case .speech(let transcriber):
+                return transcriber
+            case .dictation(let transcriber):
+                return transcriber
+            }
+        }
+    }
+
     // MARK: - Published State
 
     private(set) var state: State = .idle
@@ -65,23 +91,28 @@ final class VoiceInputManager {
     // MARK: - Private
 
     /// Per-session resources — created fresh, torn down after each session.
-    private var transcriber: DictationTranscriber?
+    private var transcriber: TranscriberModule?
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
     private var audioEngine: AVAudioEngine?
     private var resultsTask: Task<Void, Never>?
 
     /// Cached across sessions — model availability and preferred audio format.
-    /// Keyed by locale so switching languages invalidates correctly.
-    private var cachedLocaleID: String?
+    /// Keyed by engine + locale so switching languages/engines invalidates correctly.
+    private var cachedModelKey: String?
     private var modelReady = false
     private var cachedFormat: AVAudioFormat?
 
     /// In-flight prewarm task. startRecording awaits this instead of racing.
     private var prewarmTask: Task<AVAudioFormat?, Error>?
+    private var prewarmModelKey: String?
 
     /// Operation lock — prevents overlapping async operations.
     private var operationInFlight = false
+
+    /// Request ID for start operations, used to cancel stale in-flight starts.
+    private var nextStartRequestID = 0
+    private var activeStartRequestID: Int?
 
     // MARK: - Init
 
@@ -92,7 +123,7 @@ final class VoiceInputManager {
     /// Resolve locale from a keyboard language string (BCP 47).
     /// Priority: active keyboard → persisted last keyboard → device locale.
     static func resolvedLocale(keyboardLanguage: String? = nil) -> Locale {
-        if let lang = keyboardLanguage {
+        if let lang = KeyboardLanguageStore.normalize(keyboardLanguage) {
             return Locale(identifier: lang)
         }
         if let stored = KeyboardLanguageStore.lastLanguage {
@@ -101,49 +132,85 @@ final class VoiceInputManager {
         return Locale.current
     }
 
+    /// Locale-driven engine routing:
+    /// - English / most Latin locales -> modern SpeechTranscriber
+    /// - Chinese/Japanese/Korean -> classic DictationTranscriber
+    static func preferredEngine(for locale: Locale) -> TranscriptionEngine {
+        let langCode = locale.language.languageCode?.identifier ?? "en"
+        switch langCode {
+        case "zh", "ja", "ko":
+            return .classicDictation
+        default:
+            return .modernSpeech
+        }
+    }
+
+    private static func modelKey(engine: TranscriptionEngine, localeID: String) -> String {
+        "\(engine.rawValue)::\(localeID)"
+    }
+
     // MARK: - Pre-warm
 
     /// Check model availability and cache audio format in the background.
     /// Call from ChatView's .task {} so the first mic tap is fast.
-    /// Safe to call multiple times — no-ops after first success for the same locale.
+    /// Safe to call multiple times — no-ops after first success for the same locale+engine.
     func prewarm(keyboardLanguage: String? = nil) async {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        guard !modelReady || cachedLocaleID != localeID else { return }
+        let engine = Self.preferredEngine(for: locale)
+        let key = Self.modelKey(engine: engine, localeID: localeID)
+
+        guard !modelReady || cachedModelKey != key else { return }
         guard prewarmTask == nil, state == .idle else { return }
 
         let task = Task {
-            try await Self.warmModel(locale: locale)
+            try await Self.warmModel(engine: engine, locale: locale)
         }
         prewarmTask = task
+        prewarmModelKey = key
 
         do {
             let format = try await task.value
+            guard prewarmModelKey == key else { return }
             cachedFormat = format
-            cachedLocaleID = localeID
+            cachedModelKey = key
             modelReady = true
-            logger.info("Pre-warmed dictation model (locale: \(localeID), format: \(String(describing: format)))")
+            logger.info("Pre-warmed \(engine.logName) model (locale: \(localeID), format: \(String(describing: format)))")
         } catch {
             logger.warning("Pre-warm failed: \(error.localizedDescription)")
         }
-        prewarmTask = nil
+
+        if prewarmModelKey == key {
+            prewarmTask = nil
+            prewarmModelKey = nil
+        }
     }
 
     // MARK: - Availability
 
-    /// Whether DictationTranscriber supports a locale.
+    /// Whether the preferred engine for `locale` supports that locale.
     static func isAvailable(for locale: Locale = .current) async -> Bool {
-        let supported = await DictationTranscriber.supportedLocales
-        return supported.contains {
-            $0.identifier(.bcp47) == locale.identifier(.bcp47)
+        let localeID = locale.identifier(.bcp47)
+        switch preferredEngine(for: locale) {
+        case .modernSpeech:
+            let supported = await SpeechTranscriber.supportedLocales
+            return supported.contains { $0.identifier(.bcp47) == localeID }
+        case .classicDictation:
+            let supported = await DictationTranscriber.supportedLocales
+            return supported.contains { $0.identifier(.bcp47) == localeID }
         }
     }
 
-    /// Whether the ML model is already installed for a locale.
+    /// Whether the preferred engine model for `locale` is installed.
     static func isModelInstalled(for locale: Locale) async -> Bool {
-        let installed = await DictationTranscriber.installedLocales
-        return installed.contains {
-            $0.identifier(.bcp47) == locale.identifier(.bcp47)
+        let localeID = locale.identifier(.bcp47)
+        switch preferredEngine(for: locale) {
+        case .modernSpeech:
+            let installed = await SpeechTranscriber.installedLocales
+            return installed.contains { $0.identifier(.bcp47) == localeID }
+        case .classicDictation:
+            let installed = await DictationTranscriber.installedLocales
+            return installed.contains { $0.identifier(.bcp47) == localeID }
         }
     }
 
@@ -201,8 +268,17 @@ final class VoiceInputManager {
             logger.warning("Cannot start: operation already in flight")
             return
         }
+
+        nextStartRequestID += 1
+        let requestID = nextStartRequestID
+        activeStartRequestID = requestID
         operationInFlight = true
-        defer { operationInFlight = false }
+        defer {
+            if activeStartRequestID == requestID {
+                activeStartRequestID = nil
+                operationInFlight = false
+            }
+        }
 
         finalizedTranscript = ""
         volatileTranscript = ""
@@ -219,46 +295,47 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
+        let engine = Self.preferredEngine(for: locale)
+        let key = Self.modelKey(engine: engine, localeID: localeID)
 
-        // Invalidate cache if locale changed
-        if cachedLocaleID != localeID {
+        // Invalidate cache if locale or engine changed
+        if cachedModelKey != key {
             modelReady = false
             cachedFormat = nil
         }
 
         do {
+            try ensureStartRequestActive(requestID)
+
             // Phase 1: ensure model is ready
-            if let inflight = prewarmTask {
-                logger.info("Voice setup: awaiting in-flight prewarm")
+            if let inflight = prewarmTask, prewarmModelKey == key {
+                logger.info("Voice setup: awaiting in-flight \(engine.logName) prewarm")
                 let format = try await inflight.value
+                try ensureStartRequestActive(requestID)
                 cachedFormat = format
-                cachedLocaleID = localeID
+                cachedModelKey = key
                 modelReady = true
                 prewarmTask = nil
+                prewarmModelKey = nil
                 let ms = elapsedMs(since: startTime)
                 logger.error("Voice setup: joined prewarm in \(ms)ms")
             } else if !modelReady {
-                let format = try await Self.warmModel(locale: locale)
+                let format = try await Self.warmModel(engine: engine, locale: locale)
+                try ensureStartRequestActive(requestID)
                 cachedFormat = format
-                cachedLocaleID = localeID
+                cachedModelKey = key
                 modelReady = true
                 let ms = elapsedMs(since: startTime)
-                logger.error("Voice setup: cold model check in \(ms)ms")
+                logger.error("Voice setup: cold \(engine.logName) model check in \(ms)ms")
             } else {
-                logger.error("Voice setup: model ready (0ms)")
+                logger.error("Voice setup: \(engine.logName) model ready (0ms)")
             }
 
             // Phase 2: fresh transcriber for this session
-            let newTranscriber = DictationTranscriber(
-                locale: locale,
-                contentHints: [.shortForm],
-                transcriptionOptions: [.punctuation],
-                reportingOptions: [.volatileResults],
-                attributeOptions: []
-            )
+            let newTranscriber = Self.makeTranscriber(engine: engine, locale: locale)
             transcriber = newTranscriber
             activeLanguageLabel = Self.languageLabel(for: locale)
-            logger.info("Voice setup: created dictation transcriber (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
+            logger.info("Voice setup: created \(engine.logName) transcriber (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
 
             // Use cached format, or compute if missing
             let format: AVAudioFormat?
@@ -266,31 +343,47 @@ final class VoiceInputManager {
                 format = cached
             } else {
                 format = await SpeechAnalyzer.bestAvailableAudioFormat(
-                    compatibleWith: [newTranscriber]
+                    compatibleWith: [newTranscriber.speechModule]
                 )
                 cachedFormat = format
             }
+            try ensureStartRequestActive(requestID)
 
             // Phase 3: start analyzer session
-            let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber])
+            let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber.speechModule])
             analyzer = newAnalyzer
 
             let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
             inputBuilder = builder
 
             try await newAnalyzer.start(inputSequence: sequence)
+            try ensureStartRequestActive(requestID)
             startResultsHandler(transcriber: newTranscriber)
             logger.info("Voice setup: analyzer session started")
 
             // Phase 4: audio engine
             try setupAudioSession()
             try await startAudioEngine(format: format)
+            try ensureStartRequestActive(requestID)
 
             let totalMs = elapsedMs(since: startTime)
-            logger.error("Voice setup: recording started in \(totalMs)ms total (locale: \(localeID))")
+            logger.error("Voice setup: recording started in \(totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
             state = .recording
+        } catch is CancellationError {
+            logger.info("Voice setup cancelled")
+            resultsTask?.cancel()
+            resultsTask = nil
+            await analyzer?.cancelAndFinishNow()
+            deactivateAudioSession()
+            teardownSession()
+            state = .idle
+            return
         } catch {
             logger.error("Voice setup failed: \(error.localizedDescription)")
+            resultsTask?.cancel()
+            resultsTask = nil
+            await analyzer?.cancelAndFinishNow()
+            deactivateAudioSession()
             teardownSession()
             state = .error(error.localizedDescription)
             scheduleErrorReset()
@@ -342,6 +435,15 @@ final class VoiceInputManager {
         }
         logger.info("Cancelling recording")
 
+        if state == .preparingModel {
+            // Invalidate any in-flight start operation so stale async work
+            // cannot flip us back into recording after cancel.
+            activeStartRequestID = nil
+            prewarmTask?.cancel()
+            prewarmTask = nil
+            prewarmModelKey = nil
+        }
+
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
@@ -365,33 +467,67 @@ final class VoiceInputManager {
 
     /// Check model availability and get preferred audio format.
     /// Creates a temporary transcriber to probe — does not retain it.
-    nonisolated private static func warmModel(locale: Locale) async throws -> AVAudioFormat? {
-        let probe = DictationTranscriber(
-            locale: locale,
-            contentHints: [.shortForm],
-            transcriptionOptions: [.punctuation],
-            reportingOptions: [.volatileResults],
-            attributeOptions: []
-        )
+    nonisolated private static func warmModel(
+        engine: TranscriptionEngine,
+        locale: Locale
+    ) async throws -> AVAudioFormat? {
+        let probe = makeTranscriber(engine: engine, locale: locale)
+        let localeID = locale.identifier(.bcp47)
 
-        let installed = await DictationTranscriber.installedLocales
-        if !installed.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
-            logger.info("Downloading dictation model for \(locale.identifier)")
+        let isInstalled: Bool
+        switch engine {
+        case .modernSpeech:
+            let installed = await SpeechTranscriber.installedLocales
+            isInstalled = installed.contains(where: { $0.identifier(.bcp47) == localeID })
+        case .classicDictation:
+            let installed = await DictationTranscriber.installedLocales
+            isInstalled = installed.contains(where: { $0.identifier(.bcp47) == localeID })
+        }
+
+        if !isInstalled {
+            logger.info("Downloading \(engine.logName) model for \(locale.identifier)")
             if let request = try await AssetInventory.assetInstallationRequest(
-                supporting: [probe]
+                supporting: [probe.speechModule]
             ) {
                 try await request.downloadAndInstall()
                 logger.info("Model download complete")
             }
         } else {
-            logger.info("Model already installed for \(locale.identifier)")
+            logger.info("\(engine.logName) model already installed for \(locale.identifier)")
         }
 
         let format = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [probe]
+            compatibleWith: [probe.speechModule]
         )
-        logger.info("Analyzer format: \(String(describing: format))")
+        logger.info("Analyzer format (\(engine.logName)): \(String(describing: format))")
         return format
+    }
+
+    nonisolated private static func makeTranscriber(
+        engine: TranscriptionEngine,
+        locale: Locale
+    ) -> TranscriberModule {
+        switch engine {
+        case .modernSpeech:
+            return .speech(
+                SpeechTranscriber(
+                    locale: locale,
+                    transcriptionOptions: [.etiquetteReplacements],
+                    reportingOptions: [.volatileResults],
+                    attributeOptions: []
+                )
+            )
+        case .classicDictation:
+            return .dictation(
+                DictationTranscriber(
+                    locale: locale,
+                    contentHints: [.shortForm],
+                    transcriptionOptions: [.punctuation],
+                    reportingOptions: [.volatileResults],
+                    attributeOptions: []
+                )
+            )
+        }
     }
 
     private func setupAudioSession() throws {
@@ -433,30 +569,33 @@ final class VoiceInputManager {
         }
     }
 
-    private func startResultsHandler(transcriber: DictationTranscriber) {
+    private func startResultsHandler(transcriber: TranscriberModule) {
         let recordingStartTime = ContinuousClock.now
         var firstResultReceived = false
 
         resultsTask = Task {
             do {
-                for try await result in transcriber.results {
-                    guard !Task.isCancelled else { break }
-
-                    if !firstResultReceived {
-                        firstResultReceived = true
-                        let ms = elapsedMs(since: recordingStartTime)
-                        logger.error("Voice latency: first result in \(ms)ms (type: \(result.isFinal ? "final" : "volatile"))")
+                switch transcriber {
+                case .dictation(let module):
+                    for try await result in module.results {
+                        guard !Task.isCancelled else { break }
+                        handleResult(
+                            text: String(result.text.characters),
+                            isFinal: result.isFinal,
+                            firstResultReceived: &firstResultReceived,
+                            recordingStartTime: recordingStartTime
+                        )
                     }
 
-                    let text = String(result.text.characters)
-
-                    if result.isFinal {
-                        self.finalizedTranscript += text
-                        self.volatileTranscript = ""
-                        logger.debug("Finalized: \(text)")
-                    } else {
-                        self.volatileTranscript = text
-                        logger.debug("Volatile: \(text)")
+                case .speech(let module):
+                    for try await result in module.results {
+                        guard !Task.isCancelled else { break }
+                        handleResult(
+                            text: String(result.text.characters),
+                            isFinal: result.isFinal,
+                            firstResultReceived: &firstResultReceived,
+                            recordingStartTime: recordingStartTime
+                        )
                     }
                 }
             } catch {
@@ -466,6 +605,28 @@ final class VoiceInputManager {
                     self.scheduleErrorReset()
                 }
             }
+        }
+    }
+
+    private func handleResult(
+        text: String,
+        isFinal: Bool,
+        firstResultReceived: inout Bool,
+        recordingStartTime: ContinuousClock.Instant
+    ) {
+        if !firstResultReceived {
+            firstResultReceived = true
+            let ms = elapsedMs(since: recordingStartTime)
+            logger.error("Voice latency: first result in \(ms)ms (type: \(isFinal ? "final" : "volatile"))")
+        }
+
+        if isFinal {
+            finalizedTranscript += text
+            volatileTranscript = ""
+            logger.debug("Finalized: \(text)")
+        } else {
+            volatileTranscript = text
+            logger.debug("Volatile: \(text)")
         }
     }
 
@@ -499,6 +660,12 @@ final class VoiceInputManager {
         case "ja": return "あ"
         case "ko": return "한"
         default: return langCode.uppercased().prefix(2).description
+        }
+    }
+
+    private func ensureStartRequestActive(_ requestID: Int) throws {
+        guard activeStartRequestID == requestID, state == .preparingModel else {
+            throw CancellationError()
         }
     }
 

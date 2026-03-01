@@ -253,6 +253,33 @@ struct ServerMessageTests {
         #expect(dict["exitCode"] == .number(127))
     }
 
+    @Test func decodesQueueState() throws {
+        let json = #"{"type":"queue_state","queue":{"version":4,"steering":[{"id":"q1","message":"steer one","createdAt":1}],"followUp":[{"id":"q2","message":"follow one","createdAt":2}]}}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .queueState(let queue) = msg else {
+            Issue.record("Expected .queueState")
+            return
+        }
+        #expect(queue.version == 4)
+        #expect(queue.steering.count == 1)
+        #expect(queue.steering.first?.id == "q1")
+        #expect(queue.followUp.count == 1)
+        #expect(queue.followUp.first?.message == "follow one")
+    }
+
+    @Test func decodesQueueItemStarted() throws {
+        let json = #"{"type":"queue_item_started","kind":"follow_up","item":{"id":"q3","message":"continue","createdAt":3},"queueVersion":5}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .queueItemStarted(let kind, let item, let queueVersion) = msg else {
+            Issue.record("Expected .queueItemStarted")
+            return
+        }
+        #expect(kind == .followUp)
+        #expect(item.id == "q3")
+        #expect(item.message == "continue")
+        #expect(queueVersion == 5)
+    }
+
     @Test func decodesTurnAck() throws {
         let json = #"{"type":"turn_ack","command":"prompt","clientTurnId":"turn-1","stage":"dispatched","requestId":"req-1","duplicate":false}"#
         let msg = try ServerMessage.decode(from: json)

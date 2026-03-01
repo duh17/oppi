@@ -327,6 +327,20 @@ final class VoiceInputManagerTests: XCTestCase {
             forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
     }
 
+    func testResolvedLocaleIgnoresPseudoKeyboardLanguage() {
+        KeyboardLanguageStore.save("en-US")
+
+        let dictationLocale = VoiceInputManager.resolvedLocale(keyboardLanguage: "dictation")
+        XCTAssertEqual(dictationLocale.language.languageCode?.identifier, "en",
+                       "Dictation pseudo-language should fall back to persisted keyboard")
+
+        let emojiLocale = VoiceInputManager.resolvedLocale(keyboardLanguage: "emoji")
+        XCTAssertEqual(emojiLocale.language.languageCode?.identifier, "en",
+                       "Emoji pseudo-language should fall back to persisted keyboard")
+
+        UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
+    }
+
     func testResolvedLocaleActiveKeyboardTakesPriorityOverPersisted() {
         // Persisted is Chinese, but active keyboard is English
         KeyboardLanguageStore.save("zh-Hans")
@@ -342,6 +356,17 @@ final class VoiceInputManagerTests: XCTestCase {
     func testResolvedLocaleWithKoreanKeyboard() {
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "ko-KR")
         XCTAssertEqual(locale.language.languageCode?.identifier, "ko")
+    }
+
+    func testPreferredEngineUsesModernForEnglish() {
+        let engine = VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US"))
+        XCTAssertEqual(engine, .modernSpeech)
+    }
+
+    func testPreferredEngineUsesClassicForCJK() {
+        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")), .classicDictation)
+        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")), .classicDictation)
+        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")), .classicDictation)
     }
 
     // MARK: - Language Label
@@ -404,6 +429,30 @@ final class VoiceInputManagerTests: XCTestCase {
         XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
 
         UserDefaults.standard.removeObject(forKey: testKey)
+    }
+
+    func testKeyboardLanguageStoreIgnoresPseudoLanguages() {
+        UserDefaults.standard.removeObject(forKey: testKey)
+        KeyboardLanguageStore.save("en-US")
+
+        KeyboardLanguageStore.save("dictation")
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+
+        KeyboardLanguageStore.save("emoji")
+        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+
+        UserDefaults.standard.removeObject(forKey: testKey)
+    }
+
+    func testKeyboardLanguageNormalizeRejectsMalformedValues() {
+        XCTAssertNil(KeyboardLanguageStore.normalize(nil))
+        XCTAssertNil(KeyboardLanguageStore.normalize(""))
+        XCTAssertNil(KeyboardLanguageStore.normalize(" "))
+        XCTAssertNil(KeyboardLanguageStore.normalize("1"))
+        XCTAssertNil(KeyboardLanguageStore.normalize("x"))
+        XCTAssertNil(KeyboardLanguageStore.normalize("emoji"))
+        XCTAssertEqual(KeyboardLanguageStore.normalize("en-US"), "en-US")
+        XCTAssertEqual(KeyboardLanguageStore.normalize("zh-Hans"), "zh-Hans")
     }
 
     // MARK: - Full Fallback Chain

@@ -317,6 +317,28 @@ export interface ImageAttachment {
   mimeType: string; // image/jpeg, image/png, etc.
 }
 
+export type MessageQueueKind = "steer" | "follow_up";
+
+export interface MessageQueueItem {
+  id: string;
+  message: string;
+  images?: ImageAttachment[];
+  createdAt: number;
+}
+
+export interface MessageQueueState {
+  version: number;
+  steering: MessageQueueItem[];
+  followUp: MessageQueueItem[];
+}
+
+export interface MessageQueueDraftItem {
+  id?: string;
+  message: string;
+  images?: ImageAttachment[];
+  createdAt?: number;
+}
+
 export type TurnCommand = "prompt" | "steer" | "follow_up";
 export type TurnAckStage = "accepted" | "dispatched" | "started";
 
@@ -371,6 +393,15 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "get_state"; requestId?: string }
     | { type: "get_messages"; requestId?: string }
     | { type: "get_session_stats"; requestId?: string }
+    // ── Message queue ──
+    | { type: "get_queue"; requestId?: string }
+    | {
+        type: "set_queue";
+        baseVersion: number;
+        steering: MessageQueueDraftItem[];
+        followUp: MessageQueueDraftItem[];
+        requestId?: string;
+      }
     // ── Model ──
     | { type: "set_model"; provider: string; modelId: string; requestId?: string }
     | { type: "cycle_model"; requestId?: string }
@@ -462,6 +493,14 @@ export type ServerMessage = // ── Connection ──
         details?: unknown;
         isError?: boolean;
         resultSegments?: StyledSegment[];
+      }
+    // ── Message queue ──
+    | { type: "queue_state"; queue: MessageQueueState }
+    | {
+        type: "queue_item_started";
+        kind: MessageQueueKind;
+        item: MessageQueueItem;
+        queueVersion: number;
       }
     // ── Turn delivery acknowledgements (idempotent send contract) ──
     | {

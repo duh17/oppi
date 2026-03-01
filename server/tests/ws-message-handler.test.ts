@@ -11,6 +11,8 @@ interface HandlerHarness {
     sendPrompt: ReturnType<typeof vi.fn>;
     sendSteer: ReturnType<typeof vi.fn>;
     sendFollowUp: ReturnType<typeof vi.fn>;
+    getMessageQueue: ReturnType<typeof vi.fn>;
+    setMessageQueue: ReturnType<typeof vi.fn>;
     sendAbort: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
     getActiveSession: ReturnType<typeof vi.fn>;
@@ -45,6 +47,8 @@ function makeHarness(): HandlerHarness {
     sendPrompt: vi.fn(async () => {}),
     sendSteer: vi.fn(async () => {}),
     sendFollowUp: vi.fn(async () => {}),
+    getMessageQueue: vi.fn(() => ({ version: 0, steering: [], followUp: [] })),
+    setMessageQueue: vi.fn(async () => ({ version: 0, steering: [], followUp: [] })),
     sendAbort: vi.fn(async () => {}),
     stopSession: vi.fn(async () => {}),
     getActiveSession: vi.fn(() => undefined as Session | undefined),
@@ -189,6 +193,67 @@ describe("WsMessageHandler", () => {
       {
         type: "state",
         session: normalizedSession,
+      },
+    ]);
+  });
+
+  it("returns queue_state and command_result for get_queue", async () => {
+    const harness = makeHarness();
+    const queue = {
+      version: 3,
+      steering: [{ id: "q1", message: "steer", createdAt: 1 }],
+      followUp: [{ id: "q2", message: "follow", createdAt: 2 }],
+    };
+    harness.sessions.getMessageQueue.mockReturnValue(queue);
+
+    await dispatch(harness, {
+      type: "get_queue",
+      requestId: "req-queue-1",
+    });
+
+    expect(harness.sessions.getMessageQueue).toHaveBeenCalledWith("s1");
+    expect(harness.sent).toEqual([
+      { type: "queue_state", queue },
+      {
+        type: "command_result",
+        command: "get_queue",
+        requestId: "req-queue-1",
+        success: true,
+        data: queue,
+      },
+    ]);
+  });
+
+  it("forwards set_queue and emits command_result", async () => {
+    const harness = makeHarness();
+    const queue = {
+      version: 4,
+      steering: [{ id: "q1", message: "steer", createdAt: 1 }],
+      followUp: [],
+    };
+    harness.sessions.setMessageQueue.mockResolvedValue(queue);
+
+    await dispatch(harness, {
+      type: "set_queue",
+      baseVersion: 3,
+      steering: [{ id: "q1", message: "steer" }],
+      followUp: [],
+      requestId: "req-queue-2",
+    });
+
+    expect(harness.sessions.setMessageQueue).toHaveBeenCalledWith("s1", {
+      baseVersion: 3,
+      steering: [{ id: "q1", message: "steer" }],
+      followUp: [],
+    });
+
+    expect(harness.sent).toEqual([
+      {
+        type: "command_result",
+        command: "set_queue",
+        requestId: "req-queue-2",
+        success: true,
+        data: queue,
       },
     ]);
   });

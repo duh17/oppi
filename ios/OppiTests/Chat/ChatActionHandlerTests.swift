@@ -358,14 +358,35 @@ struct ChatActionHandlerTests {
     }
 
     @MainActor
-    @Test func sendPromptInBusyModeCreatesSystemEvent() async {
+    @Test func sendPromptInBusyModeDefaultsToSteer() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
-        connection._sendMessageForTesting = { _ in }
-        connection._sendAckTimeoutForTesting = .seconds(2)
+        connection._setActiveSessionIdForTesting("s1")
 
-        let result = handler.sendPrompt(
+        var sawSteer = false
+
+        connection._sendMessageForTesting = { message in
+            guard case .steer(_, _, let requestId, let clientTurnId) = message,
+                  let requestId,
+                  let clientTurnId else {
+                return
+            }
+
+            sawSteer = true
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "steer",
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+        }
+
+        _ = handler.sendPrompt(
             text: "steer this way",
             images: [],
             isBusy: true,
@@ -373,16 +394,215 @@ struct ChatActionHandlerTests {
             reducer: reducer,
             sessionId: "s1"
         )
-        #expect(result.isEmpty)
 
-        _ = await waitForTestCondition { await MainActor.run { !reducer.items.isEmpty } }
-        #expect(reducer.items.count == 1)
-
-        guard case .systemEvent(_, let msg) = reducer.items[0] else {
-            Issue.record("Expected systemEvent for steer, got \(reducer.items[0])")
-            return
+        _ = await waitForTestCondition(timeoutMs: 600) {
+            await MainActor.run { !handler.isSending }
         }
-        #expect(msg.contains("steer this way"))
+        #expect(sawSteer)
+
+        let hasUserRow = reducer.items.contains {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(!hasUserRow)
+
+        let hasQueuedSystemEvent = reducer.items.contains { item in
+            guard case .systemEvent(_, let text) = item else { return false }
+            return text.contains("Message Queue")
+                && text.contains("Steering")
+                && text.contains("queued")
+        }
+        #expect(hasQueuedSystemEvent)
+    }
+
+    @MainActor
+    @Test func sendPromptInBusyModeCanQueueFollowUp() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+
+        var sawFollowUp = false
+
+        connection._sendMessageForTesting = { message in
+            guard case .followUp(_, _, let requestId, let clientTurnId) = message,
+                  let requestId,
+                  let clientTurnId else {
+                return
+            }
+
+            sawFollowUp = true
+            connection.handleServerMessage(
+                .turnAck(
+                    command: "follow_up",
+                    clientTurnId: clientTurnId,
+                    stage: .dispatched,
+                    requestId: requestId,
+                    duplicate: false
+                ),
+                sessionId: "s1"
+            )
+        }
+
+        _ = handler.sendPrompt(
+            text: "continue this",
+            images: [],
+            isBusy: true,
+            busyStreamingBehavior: .followUp,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        _ = await waitForTestCondition(timeoutMs: 600) {
+            await MainActor.run { !handler.isSending }
+        }
+        #expect(sawFollowUp)
+
+        let hasUserRow = reducer.items.contains {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        #expect(!hasUserRow)
+
+        let hasQueuedSystemEvent = reducer.items.contains { item in
+            guard case .systemEvent(_, let text) = item else { return false }
+            return text.contains("Message Queue")
+                && text.contains("Follow-up")
+                && text.contains("queued")
+        }
+        #expect(hasQueuedSystemEvent)
+    }
+
+    @MainActor
+    @Test func sendPromptInBusyModeQueuesOptimisticallyBeforeTaskRuns() {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+
+        var queuedOperation: (@MainActor () async -> Void)?
+        handler._launchTaskForTesting = { operation in
+            queuedOperation = operation
+        }
+
+        _ = handler.sendPrompt(
+            text: "steer this way",
+            images: [],
+            isBusy: true,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        let queue = connection.messageQueueStore.queue(for: "s1")
+        #expect(queue.steering.count == 1)
+        #expect(queue.steering.first?.message == "steer this way")
+        #expect(queue.followUp.isEmpty)
+        #expect(queuedOperation != nil)
+        #expect(reducer.items.isEmpty)
+    }
+
+    @MainActor
+    @Test func sendPromptInBusyModeFailureRollsBackOptimisticQueue() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+
+        connection._sendMessageForTesting = { _ in
+            throw WebSocketError.notConnected
+        }
+
+        _ = handler.sendPrompt(
+            text: "steer this way",
+            images: [],
+            isBusy: true,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        #expect(connection.messageQueueStore.queue(for: "s1").steering.count == 1)
+
+        _ = await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { !handler.isSending }
+        }
+
+        let queue = connection.messageQueueStore.queue(for: "s1")
+        #expect(queue.steering.isEmpty)
+    }
+
+    @MainActor
+    @Test func sendPromptInBusyModeRefreshesQueueAfterSteer() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._setActiveSessionIdForTesting("s1")
+
+        var sawSteer = false
+        var sawQueueRefresh = false
+
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .steer(_, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                sawSteer = true
+                connection.handleServerMessage(
+                    .turnAck(
+                        command: "steer",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+
+            case .getQueue(let requestId):
+                sawQueueRefresh = true
+                connection.handleServerMessage(
+                    .commandResult(
+                        command: "get_queue",
+                        requestId: requestId,
+                        success: true,
+                        data: [
+                            "version": 3,
+                            "steering": [
+                                [
+                                    "id": "q1",
+                                    "message": "steer this way",
+                                    "createdAt": 1,
+                                ],
+                            ],
+                            "followUp": [],
+                        ],
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "steer this way",
+            images: [],
+            isBusy: true,
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1"
+        )
+
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { sawSteer && sawQueueRefresh }
+        })
+
+        let queue = connection.messageQueueStore.queue(for: "s1")
+        #expect(queue.version == 3)
+        #expect(queue.steering.count == 1)
     }
 
     @MainActor

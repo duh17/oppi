@@ -26,6 +26,7 @@ final class ServerConnection {
     let permissionStore = PermissionStore()
     let workspaceStore = WorkspaceStore()
     let gitStatusStore = GitStatusStore()
+    let messageQueueStore = MessageQueueStore()
 
     // Audio
     let audioPlayer = AudioPlayerService()
@@ -695,6 +696,12 @@ final class ServerConnection {
             logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
 
+        do {
+            try await requestMessageQueue()
+        } catch {
+            logger.debug("Initial queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+
         syncNotificationSubscriptions()
 
         return perSessionStream
@@ -728,6 +735,7 @@ final class ServerConnection {
 
         if let activeSessionId {
             unsubscribeSession(activeSessionId)
+            messageQueueStore.clear(sessionId: activeSessionId)
         }
 
         activeSessionId = nil
@@ -876,6 +884,29 @@ final class ServerConnection {
     /// Request current state from server.
     func requestState() async throws {
         try await send(.getState())
+    }
+
+    /// Request latest message queue snapshot for the active session.
+    func requestMessageQueue() async throws {
+        _ = try await sendCommandAwaitingResult(command: "get_queue") { requestId in
+            .getQueue(requestId: requestId)
+        }
+    }
+
+    /// Replace message queue using optimistic version locking.
+    func setMessageQueue(
+        baseVersion: Int,
+        steering: [MessageQueueDraftItem],
+        followUp: [MessageQueueDraftItem]
+    ) async throws {
+        _ = try await sendCommandAwaitingResult(command: "set_queue") { requestId in
+            .setQueue(
+                baseVersion: baseVersion,
+                steering: steering,
+                followUp: followUp,
+                requestId: requestId
+            )
+        }
     }
 
     /// Send any client message.

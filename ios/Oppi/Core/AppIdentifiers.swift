@@ -69,15 +69,43 @@ enum NativePlotPreferences {
 enum KeyboardLanguageStore {
     private static let key = "\(AppIdentifiers.subsystem).keyboardLanguage"
 
+    /// Keyboard pseudo-languages reported by UIKit that should not be persisted
+    /// or used for speech model routing.
+    private static let unsupportedLanguageIDs: Set<String> = ["dictation", "emoji"]
+
     /// The last-known keyboard language (BCP 47), or nil if never recorded.
     static var lastLanguage: String? {
-        UserDefaults.standard.string(forKey: key)
+        normalize(UserDefaults.standard.string(forKey: key))
     }
 
-    /// Persist a new keyboard language. No-ops on nil or unchanged values.
+    /// Persist a new keyboard language. No-ops on nil/unsupported/unchanged values.
     static func save(_ language: String?) {
-        guard let language, language != lastLanguage else { return }
-        UserDefaults.standard.set(language, forKey: key)
+        guard let normalized = normalize(language), normalized != lastLanguage else { return }
+        UserDefaults.standard.set(normalized, forKey: key)
+    }
+
+    /// Normalize keyboard language identifiers for locale routing.
+    /// Returns nil for pseudo-languages (emoji/dictation) and malformed values.
+    static func normalize(_ language: String?) -> String? {
+        guard let raw = language?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+
+        let lowered = raw.lowercased()
+        guard !unsupportedLanguageIDs.contains(lowered) else {
+            return nil
+        }
+
+        let primary = raw.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true).first
+            .map(String.init) ?? raw
+        guard (2...3).contains(primary.count) else {
+            return nil
+        }
+        guard primary.unicodeScalars.allSatisfy({ $0.properties.isAlphabetic }) else {
+            return nil
+        }
+
+        return raw
     }
 }
 

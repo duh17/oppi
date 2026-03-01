@@ -25,6 +25,13 @@ export interface SessionInputCoordinatorDeps {
     requestId?: string,
   ) => void;
   sendCommand: (key: string, command: Record<string, unknown>) => void;
+  enqueueQueuedMessage?: (
+    key: string,
+    kind: "steer" | "follow_up",
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    idHint?: string,
+  ) => void;
 }
 
 export class SessionInputCoordinator {
@@ -90,6 +97,11 @@ export class SessionInputCoordinator {
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);
+
+    if (active.session.status === "busy" && opts?.streamingBehavior) {
+      const kind = opts.streamingBehavior === "steer" ? "steer" : "follow_up";
+      this.deps.enqueueQueuedMessage?.(key, kind, message, opts.images, turn.clientTurnId);
+    }
   }
 
   async sendSteer(
@@ -133,6 +145,7 @@ export class SessionInputCoordinator {
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "steer", turn, opts?.requestId);
+    this.deps.enqueueQueuedMessage?.(key, "steer", message, opts?.images, turn.clientTurnId);
   }
 
   async sendFollowUp(
@@ -176,5 +189,6 @@ export class SessionInputCoordinator {
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "follow_up", turn, opts?.requestId);
+    this.deps.enqueueQueuedMessage?.(key, "follow_up", message, opts?.images, turn.clientTurnId);
   }
 }

@@ -27,6 +27,10 @@ enum ServerMessage: Sendable, Equatable {
     case toolOutput(output: String, isError: Bool, toolCallId: String?)
     case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?)
 
+    // Message queue
+    case queueState(queue: MessageQueueState)
+    case queueItemStarted(kind: MessageQueueKind, item: MessageQueueItem, queueVersion: Int)
+
     // Turn delivery acknowledgements
     case turnAck(command: String, clientTurnId: String, stage: TurnAckStage, requestId: String?, duplicate: Bool)
 
@@ -123,6 +127,8 @@ extension ServerMessage: Decodable {
         case notifyType, statusKey, statusText
         // command_result
         case command, requestId, success, data
+        // message queue
+        case queue, kind, item, queueVersion
         // compaction
         case aborted, willRetry, summary, tokensBefore
         // retry
@@ -210,6 +216,16 @@ extension ServerMessage: Decodable {
             let isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
             let resultSegs = try c.decodeIfPresent([StyledSegment].self, forKey: .resultSegments)
             self = .toolEnd(tool: tool, toolCallId: tcId, details: details, isError: isError, resultSegments: resultSegs)
+
+        case "queue_state":
+            let queue = try c.decode(MessageQueueState.self, forKey: .queue)
+            self = .queueState(queue: queue)
+
+        case "queue_item_started":
+            let kind = try c.decode(MessageQueueKind.self, forKey: .kind)
+            let item = try c.decode(MessageQueueItem.self, forKey: .item)
+            let queueVersion = try c.decode(Int.self, forKey: .queueVersion)
+            self = .queueItemStarted(kind: kind, item: item, queueVersion: queueVersion)
 
         case "turn_ack":
             let command = try c.decode(String.self, forKey: .command)
@@ -377,6 +393,8 @@ extension ServerMessage {
         case .toolStart: "toolStart"
         case .toolOutput: "toolOutput"
         case .toolEnd: "toolEnd"
+        case .queueState: "queueState"
+        case .queueItemStarted: "queueItemStarted"
         case .turnAck: "turnAck"
         case .commandResult: "commandResult"
         case .compactionStart: "compactionStart"

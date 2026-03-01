@@ -22,6 +22,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @Binding var text: String
     @Binding var pendingImages: [PendingImage]
     let isBusy: Bool
+    @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
     let sendProgressText: String?
     let isStopping: Bool
@@ -44,9 +45,6 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Text in the field before voice recording started.
     /// Used to prepend existing text when streaming transcription.
     @State private var textBeforeRecording: String?
-
-    /// Bumped to trigger haptic when voice recording starts.
-    @State private var voiceHapticTrigger = 0
 
     /// Bumped to programmatically focus the text field.
     @State private var focusRequestID = 0
@@ -84,6 +82,11 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var accentColor: Color { .themeBlue }
+
+    private var composerPlaceholder: String {
+        guard isBusy else { return "Message…" }
+        return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
+    }
 
     private var sendActionFillColor: Color {
         if isSending {
@@ -131,7 +134,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Slack-style inline controls row: hidden until composer is active.
     private var showsComposerActionRow: Bool {
-        isInputFocused || !pendingImages.isEmpty
+        isBusy || isInputFocused || !pendingImages.isEmpty
     }
 
     /// Text binding for the input field.
@@ -195,6 +198,13 @@ struct ChatInputBar<ActionRow: View>: View {
             guard let prefix = textBeforeRecording, let transcript = newTranscript else { return }
             text = prefix + transcript
         }
+        .onChange(of: keyboardLanguage) { _, newLanguage in
+            guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
+            guard KeyboardLanguageStore.normalize(newLanguage) != nil else { return }
+            Task {
+                await manager.prewarm(keyboardLanguage: newLanguage)
+            }
+        }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(
                 onCapture: { image in
@@ -230,7 +240,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
                 ZStack(alignment: .leading) {
                     if text.isEmpty {
-                        Text(isBusy ? "Steer agent…" : "Message…")
+                        Text(composerPlaceholder)
                             .font(composerPlaceholderFont)
                             .foregroundStyle(.themeComment)
                             .padding(.vertical, 4)
@@ -272,6 +282,11 @@ struct ChatInputBar<ActionRow: View>: View {
             if showsComposerActionRow {
                 HStack(spacing: 6) {
                     attachButton
+
+                    if isBusy {
+                        busyModeSelector
+                    }
+
                     actionRow()
                 }
                 .padding(.horizontal, composerHorizontalPadding)
@@ -320,6 +335,45 @@ struct ChatInputBar<ActionRow: View>: View {
             maxSelectionCount: 5,
             matching: .images
         )
+    }
+
+    private var busyModeSelector: some View {
+        Menu {
+            Button {
+                busyStreamingBehavior = .steer
+            } label: {
+                HStack {
+                    Text("Steering")
+                    if busyStreamingBehavior == .steer {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Button {
+                busyStreamingBehavior = .followUp
+            } label: {
+                HStack {
+                    Text("Follow-up")
+                    if busyStreamingBehavior == .followUp {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
+                    .font(.caption.weight(.semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.themeFg)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: Capsule())
+        }
+        .accessibilityIdentifier("chat.busyMode")
+        .accessibilityLabel("Busy send mode")
     }
 
     private var imageStrip: some View {
@@ -403,19 +457,22 @@ struct ChatInputBar<ActionRow: View>: View {
     /// (idle or busy) so you can mix typing and dictation freely.
     private func inlineMicButton(manager: VoiceInputManager) -> some View {
         let isRecording = manager.isRecording
-        let isProcessing = manager.isProcessing || manager.isPreparing
+        let isPreparing = manager.isPreparing
+        let isProcessing = manager.isProcessing
 
         return Button {
-            if !isRecording, manager.state == .idle {
-                voiceHapticTrigger += 1
-            }
             Task {
-                if isRecording {
+                switch manager.state {
+                case .recording:
                     await manager.stopRecording()
                     textBeforeRecording = nil
                     // Keep keyboard suppressed — user tapping the text field
                     // will restore it via handleKeyboardRestore()
-                } else if manager.state == .idle {
+                case .preparingModel:
+                    await manager.cancelRecording()
+                    textBeforeRecording = nil
+                    suppressKeyboard = false
+                case .idle:
                     // Capture text prefix — add space if there's existing content
                     let current = text
                     if current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") {
@@ -432,12 +489,14 @@ struct ChatInputBar<ActionRow: View>: View {
                         textBeforeRecording = nil
                         suppressKeyboard = false
                     }
+                case .processing, .error:
+                    break
                 }
             }
         } label: {
             MicButtonLabel(
                 isRecording: isRecording,
-                isProcessing: isProcessing,
+                isProcessing: isPreparing || isProcessing,
                 audioLevel: manager.audioLevel,
                 languageLabel: manager.activeLanguageLabel,
                 accentColor: accentColor,
@@ -446,9 +505,8 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .buttonStyle(.plain)
         .disabled(isProcessing)
-        .sensoryFeedback(.impact(flexibility: .solid, intensity: 0.6), trigger: voiceHapticTrigger)
         .accessibilityIdentifier("chat.voiceInput")
-        .accessibilityLabel(isRecording ? "Stop recording" : "Start voice input")
+        .accessibilityLabel(accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
     }
 
     private var stopActionButton: some View {
@@ -504,15 +562,31 @@ struct ChatInputBar<ActionRow: View>: View {
         isInputFocused = isFocused
     }
 
+    private func accessibilityLabel(isRecording: Bool, isPreparing: Bool) -> String {
+        if isRecording {
+            return "Stop recording"
+        }
+        if isPreparing {
+            return "Cancel voice input"
+        }
+        return "Start voice input"
+    }
+
     private func handleSend() {
         guard !isSending else { return }
 
-        // Stop voice recording before sending so the transcript onChange
-        // doesn't repopulate the text field after it's cleared.
-        if let manager = voiceInputManager, manager.isRecording {
+        // Stop voice recording setup/session before sending so transcript updates
+        // don't repopulate the text field after it's cleared.
+        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
             textBeforeRecording = nil
             suppressKeyboard = false
-            Task { await manager.stopRecording() }
+            Task {
+                if manager.isRecording {
+                    await manager.stopRecording()
+                } else {
+                    await manager.cancelRecording()
+                }
+            }
         }
 
         onSend()
@@ -523,8 +597,14 @@ struct ChatInputBar<ActionRow: View>: View {
     private func handleKeyboardRestore() {
         suppressKeyboard = false
         textBeforeRecording = nil
-        if let manager = voiceInputManager, manager.isRecording {
-            Task { await manager.stopRecording() }
+        if let manager = voiceInputManager, manager.isRecording || manager.isPreparing {
+            Task {
+                if manager.isRecording {
+                    await manager.stopRecording()
+                } else {
+                    await manager.cancelRecording()
+                }
+            }
         }
     }
 

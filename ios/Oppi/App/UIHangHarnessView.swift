@@ -11,12 +11,14 @@ enum UIHangHarnessConfig {
         let streamDisabled: Bool
         let includeVisualFixtures: Bool
         let mixedContentFixtures: Bool
+        let queueHarnessEnabled: Bool
     }
 
     private struct StickyState {
         let noStream: Bool
         let includeVisualFixtures: Bool
         let mixedContentFixtures: Bool
+        let queueHarnessEnabled: Bool
     }
 
     // XCTest repeat mode can transiently reinstall/relaunch the app without
@@ -26,6 +28,7 @@ enum UIHangHarnessConfig {
     private static let stickyNoStreamKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.noStream"
     private static let stickyVisualFixturesKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.visualFixtures"
     private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
+    private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
     private static let stickyTTLSeconds: TimeInterval = 180
 
     private static let launchContext = resolveLaunchContext()
@@ -78,6 +81,14 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    static var queueHarnessEnabled: Bool {
+#if DEBUG
+        launchContext.queueHarnessEnabled
+#else
+        false
+#endif
+    }
+
 #if DEBUG
 #if targetEnvironment(simulator)
     private static func resolveLaunchContext() -> LaunchContext {
@@ -89,18 +100,21 @@ enum UIHangHarnessConfig {
         let explicitNoStream = environment["PI_UI_HANG_NO_STREAM"] == "1"
         let explicitVisualFixtures = environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
         let explicitMixedContent = environment["PI_UI_HANG_MIXED_CONTENT"] == "1"
+        let explicitQueueHarness = environment["PI_UI_HANG_QUEUE_HARNESS"] == "1"
 
         if explicitHarness {
             persistStickyState(
                 noStream: explicitNoStream,
                 includeVisualFixtures: explicitVisualFixtures,
-                mixedContentFixtures: explicitMixedContent
+                mixedContentFixtures: explicitMixedContent,
+                queueHarnessEnabled: explicitQueueHarness
             )
             return LaunchContext(
                 isEnabled: true,
                 streamDisabled: explicitNoStream,
                 includeVisualFixtures: explicitVisualFixtures,
-                mixedContentFixtures: explicitMixedContent
+                mixedContentFixtures: explicitMixedContent,
+                queueHarnessEnabled: explicitQueueHarness
             )
         }
 
@@ -110,7 +124,8 @@ enum UIHangHarnessConfig {
                 isEnabled: true,
                 streamDisabled: stickyState.noStream,
                 includeVisualFixtures: stickyState.includeVisualFixtures,
-                mixedContentFixtures: stickyState.mixedContentFixtures
+                mixedContentFixtures: stickyState.mixedContentFixtures,
+                queueHarnessEnabled: stickyState.queueHarnessEnabled
             )
         }
 
@@ -122,7 +137,8 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: explicitNoStream,
             includeVisualFixtures: explicitVisualFixtures,
-            mixedContentFixtures: explicitMixedContent
+            mixedContentFixtures: explicitMixedContent,
+            queueHarnessEnabled: explicitQueueHarness
         )
     }
 
@@ -143,13 +159,15 @@ enum UIHangHarnessConfig {
     private static func persistStickyState(
         noStream: Bool,
         includeVisualFixtures: Bool,
-        mixedContentFixtures: Bool
+        mixedContentFixtures: Bool,
+        queueHarnessEnabled: Bool
     ) {
         let now = Date().timeIntervalSince1970
         stickyDefaults.set(now, forKey: stickyTimestampKey)
         stickyDefaults.set(noStream, forKey: stickyNoStreamKey)
         stickyDefaults.set(includeVisualFixtures, forKey: stickyVisualFixturesKey)
         stickyDefaults.set(mixedContentFixtures, forKey: stickyMixedContentKey)
+        stickyDefaults.set(queueHarnessEnabled, forKey: stickyQueueHarnessKey)
     }
 
     private static func loadStickyState(now: Date = Date()) -> StickyState? {
@@ -166,7 +184,8 @@ enum UIHangHarnessConfig {
         return StickyState(
             noStream: defaults.bool(forKey: stickyNoStreamKey),
             includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey),
-            mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey)
+            mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey),
+            queueHarnessEnabled: defaults.bool(forKey: stickyQueueHarnessKey)
         )
     }
 
@@ -176,6 +195,7 @@ enum UIHangHarnessConfig {
         defaults.removeObject(forKey: stickyNoStreamKey)
         defaults.removeObject(forKey: stickyVisualFixturesKey)
         defaults.removeObject(forKey: stickyMixedContentKey)
+        defaults.removeObject(forKey: stickyQueueHarnessKey)
     }
 #else
     private static func resolveLaunchContext() -> LaunchContext {
@@ -183,7 +203,8 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: true,
             includeVisualFixtures: false,
-            mixedContentFixtures: false
+            mixedContentFixtures: false,
+            queueHarnessEnabled: false
         )
     }
 #endif
@@ -193,7 +214,8 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: true,
             includeVisualFixtures: false,
-            mixedContentFixtures: false
+            mixedContentFixtures: false,
+            queueHarnessEnabled: false
         )
     }
 #endif
@@ -478,8 +500,47 @@ struct UIHangHarnessView: View {
     @State private var inputText = ""
     @State private var frameIntervalMonitor = HarnessFrameIntervalMonitor()
 
+    @State private var queueStates: [HarnessSession: MessageQueueState] = [:]
+    @State private var queueBusyStreamingBehavior: StreamingBehavior = .steer
+    @State private var queueSystemEventSerial = 0
+
     private var currentItems: [ChatItem] {
         sessionItems[selectedSession] ?? []
+    }
+
+    private var currentQueueState: MessageQueueState {
+        queueStates[selectedSession] ?? .empty
+    }
+
+    private var showsQueueContainer: Bool {
+        !currentQueueState.steering.isEmpty || !currentQueueState.followUp.isEmpty
+    }
+
+    private var queueVisibleValue: Int {
+        showsQueueContainer ? 1 : 0
+    }
+
+    private var queueSteeringCount: Int {
+        currentQueueState.steering.count
+    }
+
+    private var queueFollowUpCount: Int {
+        currentQueueState.followUp.count
+    }
+
+    private var queueVersionValue: Int {
+        currentQueueState.version
+    }
+
+    private var queueStartedEventCount: Int {
+        currentItems.reduce(into: 0) { partial, item in
+            guard case .systemEvent(_, let message) = item,
+                  message.hasPrefix("Message Queue •"),
+                  message.contains("started") else {
+                return
+            }
+            partial += 1
+        }
     }
 
     private var visibleItems: [ChatItem] {
@@ -582,6 +643,18 @@ struct UIHangHarnessView: View {
                 .accessibilityIdentifier("harness.ready")
 
             controlsBar
+
+            if UIHangHarnessConfig.queueHarnessEnabled, showsQueueContainer {
+                MessageQueueContainer(
+                    queue: currentQueueState,
+                    busyStreamingBehavior: $queueBusyStreamingBehavior,
+                    onApply: { baseVersion, steering, followUp in
+                        try applyQueueDraft(baseVersion: baseVersion, steering: steering, followUp: followUp)
+                    },
+                    onRefresh: {}
+                )
+                .accessibilityIdentifier("harness.queue.container")
+            }
 
             ChatTimelineCollectionHost(
                 configuration: .init(
@@ -743,6 +816,40 @@ struct UIHangHarnessView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.metrics.reset")
             }
+
+            if UIHangHarnessConfig.queueHarnessEnabled {
+                HStack(spacing: 8) {
+                    Button("Queue Steer") {
+                        enqueueQueueItem(kind: .steer)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.queue.enqueueSteer")
+
+                    Button("Queue Follow") {
+                        enqueueQueueItem(kind: .followUp)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.queue.enqueueFollow")
+
+                    Button("Start Steer") {
+                        startQueueItem(kind: .steer)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.queue.startSteer")
+
+                    Button("Start Follow") {
+                        startQueueItem(kind: .followUp)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.queue.startFollow")
+
+                    Button("Clear Queue") {
+                        clearQueueItems()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.queue.clear")
+                }
+            }
         }
     }
 
@@ -783,6 +890,11 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.frameOver34Pct", value: frame.over34MsPercent)
             diagnosticValue(id: "diag.frameOver50Pct", value: frame.over50MsPercent)
             diagnosticValue(id: "diag.frameOver50", value: frame.over50MsCount)
+            diagnosticValue(id: "diag.queueVisible", value: queueVisibleValue)
+            diagnosticValue(id: "diag.queueSteeringCount", value: queueSteeringCount)
+            diagnosticValue(id: "diag.queueFollowUpCount", value: queueFollowUpCount)
+            diagnosticValue(id: "diag.queueVersion", value: queueVersionValue)
+            diagnosticValue(id: "diag.queueStartedEvents", value: queueStartedEventCount)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1021,6 +1133,110 @@ struct UIHangHarnessView: View {
         issueScrollCommand(id: itemID, anchor: .top, animated: animated)
     }
 
+    private func setCurrentQueueState(_ state: MessageQueueState) {
+        queueStates[selectedSession] = state
+    }
+
+    private func applyQueueDraft(
+        baseVersion: Int,
+        steering: [MessageQueueDraftItem],
+        followUp: [MessageQueueDraftItem]
+    ) throws {
+        let current = currentQueueState
+        guard baseVersion == current.version else {
+            throw QueueHarnessError.versionMismatch
+        }
+
+        let steeringItems = steering.map {
+            MessageQueueItem(
+                id: $0.id ?? UUID().uuidString,
+                message: $0.message,
+                images: $0.images,
+                createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
+            )
+        }
+
+        let followUpItems = followUp.map {
+            MessageQueueItem(
+                id: $0.id ?? UUID().uuidString,
+                message: $0.message,
+                images: $0.images,
+                createdAt: $0.createdAt ?? Int(Date().timeIntervalSince1970 * 1_000)
+            )
+        }
+
+        setCurrentQueueState(
+            MessageQueueState(
+                version: current.version + 1,
+                steering: steeringItems,
+                followUp: followUpItems
+            )
+        )
+    }
+
+    private func enqueueQueueItem(kind: MessageQueueKind) {
+        let now = Int(Date().timeIntervalSince1970 * 1_000)
+        let item = MessageQueueItem(
+            id: UUID().uuidString,
+            message: kind == .steer
+                ? "Harness steer message \(streamTick + 1)"
+                : "Harness follow-up message \(streamTick + 1)",
+            images: nil,
+            createdAt: now
+        )
+
+        var next = currentQueueState
+        switch kind {
+        case .steer:
+            next.steering.append(item)
+        case .followUp:
+            next.followUp.append(item)
+        }
+
+        next.version += 1
+        setCurrentQueueState(next)
+        heartbeat &+= 1
+    }
+
+    private func startQueueItem(kind: MessageQueueKind) {
+        var next = currentQueueState
+        let startedItem: MessageQueueItem
+
+        switch kind {
+        case .steer:
+            guard !next.steering.isEmpty else { return }
+            startedItem = next.steering.removeFirst()
+        case .followUp:
+            guard !next.followUp.isEmpty else { return }
+            startedItem = next.followUp.removeFirst()
+        }
+
+        next.version += 1
+        setCurrentQueueState(next)
+
+        queueSystemEventSerial &+= 1
+        let label = kind == .steer ? "Steering" : "Follow-up"
+        let message = "Message Queue • \(label) started: \(startedItem.message)"
+
+        var items = currentItems
+        items.append(.systemEvent(
+            id: "\(selectedSession.rawValue)-queue-started-\(queueSystemEventSerial)",
+            message: message
+        ))
+        sessionItems[selectedSession] = items
+
+        heartbeat &+= 1
+    }
+
+    private func clearQueueItems() {
+        var next = currentQueueState
+        next.steering = []
+        next.followUp = []
+        next.version += 1
+        setCurrentQueueState(next)
+        heartbeat &+= 1
+    }
+
     private func toggleTheme() {
         switch themeID {
         case .dark:
@@ -1060,6 +1276,17 @@ struct UIHangHarnessView: View {
             .accessibilityIdentifier(id)
             .accessibilityLabel("\(value)")
             .accessibilityValue("\(value)")
+    }
+}
+
+private enum QueueHarnessError: LocalizedError {
+    case versionMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .versionMismatch:
+            return "Queue version mismatch"
+        }
     }
 }
 
