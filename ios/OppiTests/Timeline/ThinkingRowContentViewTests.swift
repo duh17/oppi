@@ -22,7 +22,7 @@ struct ThinkingRowContentViewTests {
         #expect(scrollView.contentOffset.y > 0, "Streaming overflow should tail-follow inside capped bubble")
     }
 
-    @Test func overflowShowsFloatingFullScreenButton() throws {
+    @Test func overflowDoesNotShowFloatingFullScreenButton() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
@@ -34,7 +34,7 @@ struct ThinkingRowContentViewTests {
         _ = fittedTimelineSize(for: view, width: 360)
 
         let button = try #require(fullScreenButton(in: view))
-        #expect(!button.isHidden)
+        #expect(button.isHidden)
     }
 
     @Test func shortThinkingHidesFloatingFullScreenButton() throws {
@@ -69,7 +69,7 @@ struct ThinkingRowContentViewTests {
         #expect(timelineActionTitles(in: menu) == ["Open Full Screen", "Copy"])
     }
 
-    @Test func overflowRegistersPinchAndDoubleTapGestures() {
+    @Test func overflowRegistersPinchAndSingleTapGestures() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "",
@@ -82,13 +82,13 @@ struct ThinkingRowContentViewTests {
 
         let recognizers = timelineAllGestureRecognizers(in: view)
         let hasPinch = recognizers.contains { $0 is UIPinchGestureRecognizer }
-        let hasDoubleTap = recognizers.contains {
+        let hasSingleTap = recognizers.contains {
             guard let tap = $0 as? UITapGestureRecognizer else { return false }
-            return tap.numberOfTapsRequired == 2
+            return tap.numberOfTapsRequired == 1
         }
 
         #expect(hasPinch)
-        #expect(hasDoubleTap)
+        #expect(hasSingleTap)
     }
 }
 

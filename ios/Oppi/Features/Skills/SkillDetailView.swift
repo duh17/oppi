@@ -76,6 +76,7 @@ struct SkillDetailView: View {
         if !content.isEmpty {
             Divider()
             MarkdownText(content)
+                .allowsFullScreenExpansion(false)
         }
     }
 

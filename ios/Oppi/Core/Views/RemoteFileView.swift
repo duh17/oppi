@@ -9,6 +9,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Remo
 /// Reuses `FileContentView` for rendering — same syntax highlighting,
 /// markdown, JSON, images as inline tool output.
 struct RemoteFileView: View {
+    static let contentPresentation: FileContentPresentation = .document
+    static let allowsNestedFullScreenExpansion = false
+
     let workspaceId: String
     let sessionId: String
     let path: String
@@ -55,9 +58,8 @@ struct RemoteFileView: View {
                             .padding()
                     }
                 } else if let content {
-                    FileContentView(content: content, filePath: path)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                    FileContentView(content: content, filePath: path, presentation: Self.contentPresentation)
+                        .allowsFullScreenExpansion(Self.allowsNestedFullScreenExpansion)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }

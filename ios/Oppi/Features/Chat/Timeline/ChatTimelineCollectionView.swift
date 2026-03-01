@@ -1090,6 +1090,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             switch item {
             case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
+                if presentReadImagePreviewInsteadOfExpanding(
+                    itemID: itemID,
+                    item: item,
+                    indexPath: indexPath,
+                    in: collectionView
+                ) {
+                    if reducer.expandedItemIDs.contains(itemID) {
+                        reducer.expandedItemIDs.remove(itemID)
+                        reconfigureToolRow(itemID: itemID, in: collectionView)
+                    }
+                    return
+                }
+
                 // Do not gate on current cell.contentConfiguration type.
                 // During high-frequency streaming updates the visible cell can be
                 // transiently reconfigured while still representing the same
@@ -1123,6 +1136,35 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        private func presentReadImagePreviewInsteadOfExpanding(
+            itemID: String,
+            item: ChatItem,
+            indexPath: IndexPath,
+            in collectionView: UICollectionView
+        ) -> Bool {
+            guard let config = toolRowConfiguration(itemID: itemID, item: item),
+                  config.collapsedImageBase64 != nil else {
+                return false
+            }
+
+            guard let cell = collectionView.cellForItem(at: indexPath),
+                  let toolRowView = Self.firstSubview(ofType: ToolTimelineRowContentView.self, in: cell.contentView) else {
+                return false
+            }
+
+            return toolRowView.presentCollapsedImagePreviewIfAvailable()
+        }
+
+        private static func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
+            if let match = root as? T { return match }
+            for child in root.subviews {
+                if let match = firstSubview(ofType: type, in: child) {
+                    return match
+                }
+            }
+            return nil
         }
 
         // MARK: - Row Configuration Builders

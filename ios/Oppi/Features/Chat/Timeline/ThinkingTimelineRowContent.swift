@@ -9,10 +9,10 @@ import UIKit
 /// - Streaming overflow auto-follows tail programmatically for deterministic
 ///   readability while preserving outer follow semantics.
 ///
-/// Long-form/full-screen policy (aligned with tool rows):
-/// - Floating expand button appears only when content overflows bubble cap.
-/// - Context menu exposes "Open Full Screen" and "Copy".
-/// - Pinch-out or double-tap also opens full screen.
+/// Long-form/full-screen policy:
+/// - No floating expand icon in thinking bubbles.
+/// - Context menu exposes "Open Full Screen" and "Copy" when overflowed.
+/// - Pinch-out, double-tap, or single-tap opens full screen.
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
@@ -69,6 +69,14 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTap))
         recognizer.numberOfTapsRequired = 2
         recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+
+    private lazy var bubbleSingleTapGesture: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleSingleTap))
+        recognizer.numberOfTapsRequired = 1
+        recognizer.cancelsTouchesInView = false
+        recognizer.require(toFail: bubbleDoubleTapGesture)
         return recognizer
     }()
 
@@ -149,6 +157,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         bubbleView.layer.cornerRadius = 10
         bubbleView.clipsToBounds = true
         bubbleView.addGestureRecognizer(bubbleDoubleTapGesture)
+        bubbleView.addGestureRecognizer(bubbleSingleTapGesture)
         bubbleView.addGestureRecognizer(bubblePinchGesture)
         bubbleView.addInteraction(UIContextMenuInteraction(delegate: self))
 
@@ -445,10 +454,16 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     }
 
     private func updateFullScreenAffordances() {
-        expandFloatingButton.isHidden = !canShowFullScreen
+        // Thinking rows intentionally avoid the floating expand affordance.
+        // Bubble tap/pinch and context menu remain the entry points.
+        expandFloatingButton.isHidden = true
     }
 
     @objc private func handleExpandFloatingButtonTap() {
+        showFullScreen()
+    }
+
+    @objc private func handleBubbleSingleTap() {
         showFullScreen()
     }
 

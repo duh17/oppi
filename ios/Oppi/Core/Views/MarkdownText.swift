@@ -760,6 +760,7 @@ struct CodeBlockView: View {
     let language: String?
     let code: String
 
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @State private var highlighted: AttributedString?
     @State private var showFullScreen = false
 
@@ -767,7 +768,7 @@ struct CodeBlockView: View {
         CodeBlockChrome(
             language: language,
             code: code,
-            onExpand: { showFullScreen = true },
+            onExpand: allowsFullScreenExpansion ? { showFullScreen = true } : nil,
             content: {
                 if let highlighted {
                     Text(highlighted)

@@ -293,6 +293,27 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func shortExpandedExtensionTextHidesFullScreenFloatingButton() throws {
+        for width in [280.0, 320.0, 370.0] {
+            let config = makeTimelineToolConfiguration(
+                expandedContent: .text(text: "Saved to journal: 2026-02-28-mac-studio.md", language: nil),
+                toolNamePrefix: "remember",
+                isExpanded: true,
+                isDone: true
+            )
+            let view = ToolTimelineRowContentView(configuration: config)
+
+            _ = fittedTimelineSize(for: view, width: width)
+
+            let expandButton = try #require(timelineAllViews(in: view)
+                .compactMap { $0 as? UIButton }
+                .first { $0.accessibilityIdentifier == "tool.expand-full-screen" })
+
+            #expect(expandButton.isHidden, "Expected hidden full-screen button at width \(width)")
+        }
+    }
+
+    @MainActor
     @Test func overflowingExpandedReadMarkdownShowsFullScreenFloatingButton() throws {
         let markdown = "# Notes\n\n" + Array(repeating: "- item", count: 900).joined(separator: "\n")
         let config = makeTimelineToolConfiguration(
@@ -429,10 +450,29 @@ struct ToolTimelineRowContentViewTests {
         }
         #expect(hosted == nil)
 
-        let mediaLabel = try #require(timelineAllLabels(in: view).first {
-            timelineRenderedText(of: $0).contains("Images (1)")
+        let hint = try #require(timelineAllLabels(in: view).first {
+            timelineRenderedText(of: $0).contains("image attachment")
         })
-        #expect(!timelineRenderedText(of: mediaLabel).isEmpty)
+        #expect(timelineRenderedText(of: hint).contains("collapsed preview"))
+    }
+
+    @MainActor
+    @Test func expandedReadMediaDoesNotRenderDuplicateImageCards() {
+        let output = "Read image file [image/png]\n\ndata:image/png;base64,\(Self.testPNGBase64)"
+
+        let config = makeTimelineToolConfiguration(
+            expandedContent: .readMedia(output: output, filePath: "fixtures/image.png", startLine: 1),
+            toolNamePrefix: "read",
+            isExpanded: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 370)
+
+        let hasExpandedImageCard = timelineAllViews(in: view).contains {
+            String(describing: type(of: $0)).contains("TappableImageCard")
+        }
+        #expect(!hasExpandedImageCard)
     }
 
     @MainActor

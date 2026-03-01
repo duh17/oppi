@@ -32,6 +32,9 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
         }
+        guard !isWithinFullScreenModalContext(presenter) else {
+            return
+        }
 
         let controller = FullScreenCodeViewController(content: content)
         // .pageSheet keeps the presenting VC in the window hierarchy (unlike
@@ -49,6 +52,7 @@ enum ToolTimelineRowPresentationHelpers {
 
     static func presentFullScreenImage(_ image: UIImage, from sourceView: UIView) {
         guard let presenter = nearestViewController(from: sourceView) else { return }
+        guard !isWithinFullScreenModalContext(presenter) else { return }
 
         let controller = FullScreenImageViewController(image: image)
         // .pageSheet — see presentFullScreenContent() comment.
@@ -69,6 +73,36 @@ enum ToolTimelineRowPresentationHelpers {
             responder = current.next
         }
         return nil
+    }
+
+    private static func isWithinFullScreenModalContext(_ presenter: UIViewController) -> Bool {
+        var current: UIViewController? = presenter
+        while let node = current {
+            if node is FullScreenCodeViewController || node is FullScreenImageViewController {
+                return true
+            }
+            current = node.parent
+        }
+
+        var ancestor: UIViewController? = presenter.presentingViewController
+        while let node = ancestor {
+            if node is FullScreenCodeViewController || node is FullScreenImageViewController {
+                return true
+            }
+            ancestor = node.presentingViewController
+        }
+
+        if let presented = presenter.presentedViewController {
+            if presented is FullScreenCodeViewController || presented is FullScreenImageViewController {
+                return true
+            }
+            if let nav = presented as? UINavigationController,
+               nav.viewControllers.contains(where: { $0 is FullScreenCodeViewController || $0 is FullScreenImageViewController }) {
+                return true
+            }
+        }
+
+        return false
     }
 
     /// Walk up the view hierarchy to find the enclosing UICollectionView and

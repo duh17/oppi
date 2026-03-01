@@ -11,9 +11,15 @@ enum FileType: Equatable {
     case audio
     case plain
 
-    /// Detect from file path extension (or well-known filenames).
-    static func detect(from path: String?) -> Self {
-        guard let path else { return .plain }
+    /// Detect from file path extension (or well-known filenames), with
+    /// optional shebang fallback for extensionless scripts.
+    static func detect(from path: String?, content: String? = nil) -> Self {
+        guard let path else {
+            if let lang = shebangLanguage(from: content) {
+                return .code(language: lang)
+            }
+            return .plain
+        }
 
         let filename = (path as NSString).lastPathComponent.lowercased()
         let ext = (path as NSString).pathExtension.lowercased()
@@ -26,7 +32,12 @@ enum FileType: Equatable {
             break
         }
 
-        guard !ext.isEmpty else { return .plain }
+        if ext.isEmpty {
+            if let lang = shebangLanguage(from: content) {
+                return .code(language: lang)
+            }
+            return .plain
+        }
 
         switch ext {
         case "md", "mdx", "markdown":
@@ -40,6 +51,49 @@ enum FileType: Equatable {
             if lang == .json { return .json }
             if lang != .unknown { return .code(language: lang) }
             return .plain
+        }
+    }
+
+    private static func shebangLanguage(from content: String?) -> SyntaxLanguage? {
+        guard let content, !content.isEmpty else { return nil }
+        guard let firstLine = content.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first else {
+            return nil
+        }
+
+        let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("#!") else { return nil }
+
+        let shebang = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
+        guard !shebang.isEmpty else { return nil }
+
+        let tokens = shebang.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return nil }
+
+        let command: String
+        let interpreter = (tokens[0] as NSString).lastPathComponent.lowercased()
+
+        if interpreter == "env" {
+            var index = 1
+            while index < tokens.count, tokens[index].hasPrefix("-") {
+                index += 1
+            }
+            guard index < tokens.count else { return nil }
+            command = (tokens[index] as NSString).lastPathComponent.lowercased()
+        } else {
+            command = interpreter
+        }
+
+        switch command {
+        case "sh", "bash", "zsh", "fish", "ksh", "dash", "ash":
+            return .shell
+        case "python", "python2", "python3", "pypy", "pypy3":
+            return .python
+        case "ruby", "jruby":
+            return .ruby
+        case "node", "nodejs", "bun", "deno":
+            return .javascript
+        default:
+            return nil
         }
     }
 
@@ -57,6 +111,25 @@ enum FileType: Equatable {
 
 // MARK: - FileContentView
 
+enum FileContentPresentation {
+    /// Compact card-style rendering used inside timeline/list rows.
+    case inline
+    /// Native full-page rendering for dedicated file viewers.
+    case document
+
+    var usesInlineChrome: Bool {
+        self == .inline
+    }
+
+    var viewportMaxHeight: CGFloat? {
+        usesInlineChrome ? 500 : nil
+    }
+
+    var allowsExpansionAffordance: Bool {
+        usesInlineChrome
+    }
+}
+
 /// Renders file content with type-appropriate formatting.
 ///
 /// Dispatches to specialized sub-views based on detected file type:
@@ -71,15 +144,23 @@ struct FileContentView: View {
     let filePath: String?
     let startLine: Int
     let isError: Bool
+    let presentation: FileContentPresentation
 
     /// Maximum lines to render (performance bound).
-    static let maxDisplayLines = 300
+    nonisolated static let maxDisplayLines = 300
 
-    init(content: String, filePath: String? = nil, startLine: Int = 1, isError: Bool = false) {
+    init(
+        content: String,
+        filePath: String? = nil,
+        startLine: Int = 1,
+        isError: Bool = false,
+        presentation: FileContentPresentation = .inline
+    ) {
         self.content = content
         self.filePath = filePath
         self.startLine = max(1, startLine)
         self.isError = isError
+        self.presentation = presentation
     }
 
     var body: some View {
@@ -88,7 +169,7 @@ struct FileContentView: View {
         } else if content.isEmpty {
             emptyView
         } else {
-            contentView(for: FileType.detect(from: filePath))
+            contentView(for: FileType.detect(from: filePath, content: content))
         }
     }
 
@@ -96,17 +177,17 @@ struct FileContentView: View {
     private func contentView(for fileType: FileType) -> some View {
         switch fileType {
         case .markdown:
-            MarkdownFileView(content: content, filePath: filePath)
+            MarkdownFileView(content: content, filePath: filePath, presentation: presentation)
         case .code(let language):
-            CodeFileView(content: content, language: language, startLine: startLine)
+            CodeFileView(content: content, language: language, startLine: startLine, presentation: presentation)
         case .json:
-            JSONFileView(content: content, startLine: startLine)
+            JSONFileView(content: content, startLine: startLine, presentation: presentation)
         case .image:
             ImageOutputView(content: content)
         case .audio:
             AudioOutputView(content: content)
         case .plain:
-            PlainTextView(content: content, startLine: startLine)
+            PlainTextView(content: content, startLine: startLine, presentation: presentation)
         }
     }
 
@@ -135,7 +216,9 @@ private struct CodeFileView: View {
     let content: String
     let language: SyntaxLanguage
     let startLine: Int
+    let presentation: FileContentPresentation
 
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @State private var highlighted: AttributedString?
     @State private var showFullScreen = false
 
@@ -150,26 +233,41 @@ private struct CodeFileView: View {
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let isTruncated = lines.count > FileContentView.maxDisplayLines
 
-        VStack(alignment: .leading, spacing: 0) {
-            FileHeader(
-                label: language.displayName,
-                lineCount: lines.count,
-                copyContent: content,
-                showCopy: false,
-                onExpand: { showFullScreen = true }
-            )
+        let codeBody = codeArea(
+            highlighted: highlighted ?? AttributedString(displayContent),
+            lineCount: lineCount,
+            startLine: startLine,
+            maxHeight: presentation.viewportMaxHeight
+        )
 
-            codeArea(
-                highlighted: highlighted ?? AttributedString(displayContent),
-                lineCount: lineCount,
-                startLine: startLine
-            )
+        Group {
+            if presentation.usesInlineChrome {
+                VStack(alignment: .leading, spacing: 0) {
+                    FileHeader(
+                        label: language.displayName,
+                        lineCount: lines.count,
+                        copyContent: content,
+                        showCopy: false,
+                        onExpand: (presentation.allowsExpansionAffordance && allowsFullScreenExpansion) ? { showFullScreen = true } : nil
+                    )
 
-            if isTruncated {
-                TruncationNotice(showing: lineCount, total: lines.count)
+                    codeBody
+
+                    if isTruncated {
+                        TruncationNotice(showing: lineCount, total: lines.count)
+                    }
+                }
+                .codeBlockChrome(showBorder: false)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    codeBody
+
+                    if isTruncated {
+                        TruncationNotice(showing: lineCount, total: lines.count)
+                    }
+                }
             }
         }
-        .codeBlockChrome(showBorder: false)
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: content, language: language.displayName, filePath: nil, startLine: startLine
@@ -192,7 +290,9 @@ private struct CodeFileView: View {
 private struct MarkdownFileView: View {
     let content: String
     let filePath: String?
+    let presentation: FileContentPresentation
 
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @State private var showRaw = false
     @State private var showFullScreen = false
 
@@ -201,6 +301,19 @@ private struct MarkdownFileView: View {
     }
 
     var body: some View {
+        Group {
+            if presentation.usesInlineChrome {
+                inlineBody
+            } else {
+                documentBody
+            }
+        }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenMarkdownView(content: content, filePath: filePath, showSource: showRaw)
+        }
+    }
+
+    private var inlineBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
@@ -225,14 +338,16 @@ private struct MarkdownFileView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    showFullScreen = true
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption2)
-                        .foregroundStyle(.themeFgDim)
+                if allowsFullScreenExpansion {
+                    Button {
+                        showFullScreen = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.caption2)
+                            .foregroundStyle(.themeFgDim)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 CopyButton(content: content)
             }
@@ -255,19 +370,37 @@ private struct MarkdownFileView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 500)
+            .frame(maxHeight: presentation.viewportMaxHeight)
         }
         .codeBlockChrome()
         .contextMenu {
-            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
-                showFullScreen = true
+            if allowsFullScreenExpansion {
+                Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
+                    showFullScreen = true
+                }
             }
             Button("Copy", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = content
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
-            FullScreenMarkdownView(content: content, filePath: filePath, showSource: showRaw)
+    }
+
+    private var documentBody: some View {
+        ScrollView(.vertical) {
+            Group {
+                if showRaw {
+                    Text(content)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.themeFg)
+                } else {
+                    MarkdownText(content)
+                        .allowsFullScreenExpansion(false)
+                }
+            }
+            .textSelection(.enabled)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -306,6 +439,7 @@ private struct FullScreenMarkdownView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color.themeBg)
+            .allowsFullScreenExpansion(false)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -356,6 +490,9 @@ private struct FullScreenMarkdownView: View {
 private struct JSONFileView: View {
     let content: String
     let startLine: Int
+    let presentation: FileContentPresentation
+
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
 
     /// Combined pretty-print + highlight result, computed off main thread.
     @State private var prepared: JSONPrepared?
@@ -365,28 +502,46 @@ private struct JSONFileView: View {
         let info = prepared ?? JSONPrepared.placeholder(from: content)
         let isTruncated = info.totalLines > FileContentView.maxDisplayLines
 
-        VStack(alignment: .leading, spacing: 0) {
-            FileHeader(
-                label: "JSON",
-                lineCount: info.totalLines,
-                copyContent: content,
-                onExpand: { showFullScreen = true }
-            )
+        Group {
+            if presentation.usesInlineChrome {
+                VStack(alignment: .leading, spacing: 0) {
+                    FileHeader(
+                        label: "JSON",
+                        lineCount: info.totalLines,
+                        copyContent: content,
+                        onExpand: (presentation.allowsExpansionAffordance && allowsFullScreenExpansion) ? { showFullScreen = true } : nil
+                    )
 
-            codeArea(
-                highlighted: info.highlighted ?? AttributedString(info.displayText),
-                lineCount: info.displayLineCount,
-                startLine: startLine
-            )
+                    codeArea(
+                        highlighted: info.highlighted ?? AttributedString(info.displayText),
+                        lineCount: info.displayLineCount,
+                        startLine: startLine,
+                        maxHeight: presentation.viewportMaxHeight
+                    )
 
-            if isTruncated {
-                TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
-            }
-        }
-        .codeBlockChrome()
-        .contextMenu {
-            Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = content
+                    if isTruncated {
+                        TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
+                    }
+                }
+                .codeBlockChrome()
+                .contextMenu {
+                    Button("Copy", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = content
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    codeArea(
+                        highlighted: info.highlighted ?? AttributedString(info.displayText),
+                        lineCount: info.displayLineCount,
+                        startLine: startLine,
+                        maxHeight: nil
+                    )
+
+                    if isTruncated {
+                        TruncationNotice(showing: info.displayLineCount, total: info.totalLines)
+                    }
+                }
             }
         }
         .fullScreenCover(isPresented: $showFullScreen) {
@@ -445,7 +600,9 @@ private struct JSONPrepared: Sendable {
 private struct PlainTextView: View {
     let content: String
     let startLine: Int
+    let presentation: FileContentPresentation
 
+    @Environment(\.allowsFullScreenExpansion) private var allowsFullScreenExpansion
     @State private var showFullScreen = false
 
     var body: some View {
@@ -454,24 +611,44 @@ private struct PlainTextView: View {
         let displayText = lines.prefix(lineCount).joined(separator: "\n")
         let isTruncated = lines.count > FileContentView.maxDisplayLines
 
-        VStack(alignment: .leading, spacing: 0) {
-            codeArea(
-                text: displayText,
-                lineCount: lineCount,
-                startLine: startLine
-            )
+        Group {
+            if presentation.usesInlineChrome {
+                VStack(alignment: .leading, spacing: 0) {
+                    codeArea(
+                        text: displayText,
+                        lineCount: lineCount,
+                        startLine: startLine,
+                        maxHeight: presentation.viewportMaxHeight
+                    )
 
-            if isTruncated {
-                TruncationNotice(showing: lineCount, total: lines.count)
-            }
-        }
-        .codeBlockChrome()
-        .contextMenu {
-            Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
-                showFullScreen = true
-            }
-            Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = content
+                    if isTruncated {
+                        TruncationNotice(showing: lineCount, total: lines.count)
+                    }
+                }
+                .codeBlockChrome()
+                .contextMenu {
+                    if allowsFullScreenExpansion {
+                        Button("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
+                            showFullScreen = true
+                        }
+                    }
+                    Button("Copy", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = content
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    codeArea(
+                        text: displayText,
+                        lineCount: lineCount,
+                        startLine: startLine,
+                        maxHeight: nil
+                    )
+
+                    if isTruncated {
+                        TruncationNotice(showing: lineCount, total: lines.count)
+                    }
+                }
             }
         }
         .fullScreenCover(isPresented: $showFullScreen) {
@@ -658,8 +835,20 @@ private struct CodeArea: View {
     let lineNumbers: String
     let gutterWidth: CGFloat
     let codeContent: AnyView
+    let maxHeight: CGFloat?
 
     var body: some View {
+        Group {
+            if let maxHeight {
+                codeScrollView
+                    .frame(maxHeight: maxHeight)
+            } else {
+                codeScrollView
+            }
+        }
+    }
+
+    private var codeScrollView: some View {
         ScrollView(.vertical) {
             HStack(alignment: .top, spacing: 0) {
                 // Gutter
@@ -684,7 +873,6 @@ private struct CodeArea: View {
                 }
             }
         }
-        .frame(maxHeight: 500)
     }
 }
 
@@ -693,7 +881,8 @@ private struct CodeArea: View {
 private func codeArea(
     highlighted: AttributedString,
     lineCount: Int,
-    startLine: Int
+    startLine: Int,
+    maxHeight: CGFloat?
 ) -> some View {
     let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
     CodeArea(
@@ -704,7 +893,8 @@ private func codeArea(
                 .font(.system(size: 11, design: .monospaced))
                 .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
-        )
+        ),
+        maxHeight: maxHeight
     )
 }
 
@@ -713,7 +903,8 @@ private func codeArea(
 private func codeArea(
     text: String,
     lineCount: Int,
-    startLine: Int
+    startLine: Int,
+    maxHeight: CGFloat?
 ) -> some View {
     let (numbers, width) = lineNumberInfo(lineCount: lineCount, startLine: startLine)
     CodeArea(
@@ -725,7 +916,8 @@ private func codeArea(
                 .foregroundStyle(.themeFg)
                 .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
-        )
+        ),
+        maxHeight: maxHeight
     )
 }
 
