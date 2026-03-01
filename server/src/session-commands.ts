@@ -24,6 +24,59 @@ function readCompactInstructions(command: Record<string, unknown>): string | und
   return undefined;
 }
 
+function toCommandLocation(value: string | undefined): "user" | "project" | "path" | undefined {
+  if (value === "user" || value === "project" || value === "path") {
+    return value;
+  }
+  return undefined;
+}
+
+interface SessionCommandDescriptor {
+  name: string;
+  description?: string;
+  source: "extension" | "prompt" | "skill";
+  location?: "user" | "project" | "path";
+  path?: string;
+}
+
+function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
+  const commands: SessionCommandDescriptor[] = [];
+
+  for (const {
+    command,
+    extensionPath,
+  } of session.extensionRunner?.getRegisteredCommandsWithPaths() ?? []) {
+    commands.push({
+      name: command.name,
+      description: command.description,
+      source: "extension",
+      path: extensionPath,
+    });
+  }
+
+  for (const template of session.promptTemplates) {
+    commands.push({
+      name: template.name,
+      description: template.description,
+      source: "prompt",
+      location: toCommandLocation(template.source),
+      path: template.filePath,
+    });
+  }
+
+  for (const skill of session.resourceLoader.getSkills().skills) {
+    commands.push({
+      name: `skill:${skill.name}`,
+      description: skill.description,
+      source: "skill",
+      location: toCommandLocation(skill.source),
+      path: skill.filePath,
+    });
+  }
+
+  return { commands };
+}
+
 export interface CommandSessionState extends SessionStateActiveSession {
   session: Session;
   sdkBackend: SdkBackend;
@@ -121,6 +174,7 @@ export class SessionCommandCoordinator {
     ["get_messages", (session) => session.messages],
     ["get_session_stats", (session) => session.getSessionStats()],
     ["get_available_models", () => []],
+    ["get_commands", (session) => collectSessionCommands(session)],
 
     ["compact", (session, cmd) => session.compact(readCompactInstructions(cmd))],
 
