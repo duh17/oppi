@@ -239,8 +239,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
         private var lastObservedContentOffsetY: CGFloat?
+        private var lastObservedContentHeight: CGFloat?
         private var detachedProgrammaticTargetOffsetY: CGFloat?
         private var isApplyingDetachedProgrammaticCorrection = false
+        private var isTimelineBusy = false
         private var lastDistanceFromBottom: CGFloat = 0
         private let toolOutputLoader = ExpandedToolOutputLoader()
 
@@ -850,10 +852,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             hiddenCount = configuration.hiddenCount
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
+            isTimelineBusy = configuration.isBusy
 
             if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
                 cancelAllToolOutputLoadTasks()
                 lastObservedContentOffsetY = nil
+                lastObservedContentHeight = nil
                 detachedProgrammaticTargetOffsetY = nil
                 isApplyingDetachedProgrammaticCorrection = false
                 configuration.scrollController.setUserInteracting(false)
@@ -984,14 +988,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
 
+            defer {
+                lastObservedContentHeight = scrollView.contentSize.height
+            }
+
+            let previousContentHeight = lastObservedContentHeight ?? scrollView.contentSize.height
+            let contentHeightDelta = scrollView.contentSize.height - previousContentHeight
+
             // Always track distance for hint visibility, even when
             // updateScrollState is skipped.
-            let insets = scrollView.adjustedContentInset
-            let visH = scrollView.bounds.height - insets.top - insets.bottom
-            if visH > 0 {
-                let botY = scrollView.contentOffset.y + insets.top + visH
-                lastDistanceFromBottom = max(0, scrollView.contentSize.height - botY)
-            }
+            updateLastDistanceFromBottom(scrollView)
 
             let isUserDriven = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
             let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
@@ -1018,12 +1024,26 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 detachedProgrammaticTargetOffsetY = nil
             } else if !alreadyAttached,
                       !(collectionView is AnchoredCollectionView) {
-                // Detached + programmatic offset changes can trigger a second
-                // UIKit correction pass (estimated -> actual heights). Keep the
-                // large jump target and ignore a single small follow-up snap.
-                //
-                // Limit this to plain UICollectionView hosts. AnchoredCollectionView
-                // has its own anchoring behavior and should not be double-corrected.
+                // Detached + programmatic offset changes can trigger UIKit
+                // offset jumps while self-sizing settles. For detached users,
+                // preserve viewport stability across large passive jumps caused
+                // by busy timeline growth (append/reflow), but still allow
+                // intentional programmatic navigation jumps.
+                if isTimelineBusy,
+                   abs(contentHeightDelta) > 0.5,
+                   abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
+                    isApplyingDetachedProgrammaticCorrection = true
+                    scrollView.contentOffset.y = previousOffset
+                    isApplyingDetachedProgrammaticCorrection = false
+                    detachedProgrammaticTargetOffsetY = nil
+                    lastObservedContentOffsetY = previousOffset
+                    updateLastDistanceFromBottom(scrollView)
+                    updateDetachedStreamingHintVisibility()
+                    return
+                }
+
+                // Keep the large jump target and ignore a single small
+                // follow-up snap (estimated -> actual heights).
                 if let targetOffsetY = detachedProgrammaticTargetOffsetY,
                    abs(deltaY) > 0.5,
                    abs(deltaY) < detachedProgrammaticCorrectionMaxDelta {
@@ -1032,6 +1052,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     isApplyingDetachedProgrammaticCorrection = false
                     detachedProgrammaticTargetOffsetY = nil
                     lastObservedContentOffsetY = targetOffsetY
+                    updateLastDistanceFromBottom(scrollView)
                     updateDetachedStreamingHintVisibility()
                     return
                 }
@@ -1043,6 +1064,25 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             } else {
                 detachedProgrammaticTargetOffsetY = nil
+            }
+
+            if !isUserDriven,
+               !isTimelineBusy,
+               streamingAssistantID == nil,
+               alreadyAttached,
+               contentHeightDelta > 0.5,
+               abs(deltaY) < 2 {
+                let insets = scrollView.adjustedContentInset
+                let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
+                if visibleHeight > 0 {
+                    // Keep the viewport pinned to the bottom for passive,
+                    // idle layout growth (e.g. post-stream markdown reflow).
+                    let desiredBottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
+                    if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
+                        scrollView.contentOffset.y = desiredBottomOffsetY
+                        lastDistanceFromBottom = 0
+                    }
+                }
             }
 
             lastObservedContentOffsetY = scrollView.contentOffset.y
@@ -1501,6 +1541,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// Minimum distance from bottom before showing the jump-to-bottom
         /// button. One viewport height prevents flash from bounce/small scrolls.
         private let jumpToBottomMinDistance: CGFloat = 500
+
+        private func updateLastDistanceFromBottom(_ scrollView: UIScrollView) {
+            let insets = scrollView.adjustedContentInset
+            let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
+            guard visibleHeight > 0 else { return }
+
+            let bottomY = scrollView.contentOffset.y + insets.top + visibleHeight
+            lastDistanceFromBottom = max(0, scrollView.contentSize.height - bottomY)
+        }
 
         private func updateDetachedStreamingHintVisibility() {
             TimelineScrollCoordinator.updateDetachedStreamingHintVisibility(
