@@ -11,6 +11,7 @@ set -euo pipefail
 #   ios/scripts/install.sh --no-launch         # build + install only
 #   ios/scripts/install.sh --release           # release build + install + launch
 #   ios/scripts/install.sh -d "Duh Ifone"      # target specific device
+#   ios/scripts/install.sh --allow-empty-sentry # allow Debug install without Sentry DSN
 # ──────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +21,8 @@ CONFIGURATION="Debug"
 DEVICE_QUERY=""
 LAUNCH=1
 SKIP_GENERATE=0
+ALLOW_EMPTY_SENTRY=0
+SENTRY_DSN_FILE_DEFAULT="$HOME/.config/pios/sentry-dsn"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --no-launch)    LAUNCH=0; shift ;;
     --release)      CONFIGURATION="Release"; shift ;;
     --skip-generate) SKIP_GENERATE=1; shift ;;
+    --allow-empty-sentry) ALLOW_EMPTY_SENTRY=1; shift ;;
     -h|--help)
       sed -n '3,13p' "$0"
       exit 0
@@ -80,6 +84,30 @@ cd "$IOS_DIR"
 
 if [[ "$SKIP_GENERATE" -eq 0 ]]; then
   xcodegen generate >/dev/null
+fi
+
+ensure_debug_sentry_dsn() {
+  if [[ -n "${SENTRY_DSN:-}" ]]; then
+    return
+  fi
+
+  local sentry_dsn_file="${SENTRY_DSN_FILE:-$SENTRY_DSN_FILE_DEFAULT}"
+  if [[ -f "$sentry_dsn_file" ]]; then
+    SENTRY_DSN="$(<"$sentry_dsn_file")"
+    export SENTRY_DSN
+  fi
+
+  if [[ "$ALLOW_EMPTY_SENTRY" -eq 0 && -z "${SENTRY_DSN:-}" ]]; then
+    echo "error: SENTRY_DSN is required for Debug installs." >&2
+    echo "hint: export SENTRY_DSN='https://<key>@o<org>.ingest.sentry.io/<project>'" >&2
+    echo "hint: or create $SENTRY_DSN_FILE_DEFAULT" >&2
+    echo "hint: use --allow-empty-sentry to bypass intentionally" >&2
+    exit 1
+  fi
+}
+
+if [[ "$CONFIGURATION" == "Debug" ]]; then
+  ensure_debug_sentry_dsn
 fi
 
 # ─── Resolve build paths ─────────────────────────────────────────
