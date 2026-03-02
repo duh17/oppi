@@ -7,9 +7,9 @@ set -euo pipefail
 # Auto-detects the first paired device unless --device is given.
 #
 # Usage:
-#   ios/scripts/install.sh                     # build + install
-#   ios/scripts/install.sh --launch            # build + install + launch
-#   ios/scripts/install.sh --release --launch  # release build + install + launch
+#   ios/scripts/install.sh                     # build + install + launch
+#   ios/scripts/install.sh --no-launch         # build + install only
+#   ios/scripts/install.sh --release           # release build + install + launch
 #   ios/scripts/install.sh -d "Duh Ifone"      # target specific device
 # ──────────────────────────────────────────────────────────────────
 
@@ -18,13 +18,14 @@ IOS_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SCHEME="Oppi"
 CONFIGURATION="Debug"
 DEVICE_QUERY=""
-LAUNCH=0
+LAUNCH=1
 SKIP_GENERATE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--device)    DEVICE_QUERY="${2:-}"; shift 2 ;;
     --launch)       LAUNCH=1; shift ;;
+    --no-launch)    LAUNCH=0; shift ;;
     --release)      CONFIGURATION="Release"; shift ;;
     --skip-generate) SKIP_GENERATE=1; shift ;;
     -h|--help)
