@@ -257,8 +257,10 @@ export class UserStreamMux {
       try {
         let hydratedSession = this.ctx.ensureSessionContextWindow(session);
         if (level === "full") {
+          const subStartMs = Date.now();
           const workspace = this.ctx.resolveWorkspaceForSession(session);
           const started = await this.ctx.sessions.startSession(sessionId, workspace);
+          const startSessionMs = Date.now() - subStartMs;
           hydratedSession = this.ctx.ensureSessionContextWindow(started);
           fullSessionId = sessionId;
 
@@ -267,6 +269,11 @@ export class UserStreamMux {
             session: hydratedSession,
             currentSeq: this.ctx.sessions.getCurrentSeq(sessionId),
           });
+
+          const connectedSentMs = Date.now() - subStartMs;
+          console.log(
+            `${ts()} [stream] subscribe(${sessionId}): startSession=${startSessionMs}ms, connectedSent=${connectedSentMs}ms`,
+          );
         }
 
         const callback = (msg: ServerMessage): void => {

@@ -135,6 +135,7 @@ export class SdkBackend {
   }
 
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
+    const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
     const cwd = resolveSdkSessionCwd(workspace);
     const agentDir = getAgentDir();
@@ -211,6 +212,7 @@ export class SdkBackend {
 
     const backend = new SdkBackend(piSession, unsub, onEvent, modelRegistry);
 
+    const preBindMs = Date.now() - createStartMs;
     await piSession.bindExtensions({
       uiContext: backend.createExtensionUIContext(),
       onError: (error) => {
@@ -224,8 +226,9 @@ export class SdkBackend {
       },
     });
 
+    const totalMs = Date.now() - createStartMs;
     console.log(
-      `${ts()} [sdk] Session created: model=${piSession.model?.id ?? piSession.model?.name}, thinking=${piSession.thinkingLevel}`,
+      `${ts()} [sdk] Session created: model=${piSession.model?.id ?? piSession.model?.name}, thinking=${piSession.thinkingLevel}, setup=${preBindMs}ms, bindExt=${totalMs - preBindMs}ms, total=${totalMs}ms`,
     );
 
     return backend;
