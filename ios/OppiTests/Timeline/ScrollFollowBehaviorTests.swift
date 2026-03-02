@@ -28,6 +28,29 @@ struct ScrollFollowBehaviorTests {
     }
 
     @MainActor
+    @Test func attachedIdleLayoutGrowthPinsViewportToBottom() {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.testContentSize = CGSize(width: 390, height: 1_100)
+
+        harness.scrollController.updateNearBottom(true)
+
+        // Start exactly at bottom.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 0, in: metricsView))
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        // Simulate post-stream markdown reflow that increases content height
+        // without any user scroll movement.
+        metricsView.testContentSize = CGSize(width: 390, height: 1_400)
+        harness.coordinator.scrollViewDidScroll(metricsView)
+
+        let expectedBottomOffsetY = timelineOffsetY(forDistanceFromBottom: 0, in: metricsView)
+        #expect(abs(metricsView.contentOffset.y - expectedBottomOffsetY) < 0.5)
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+    }
+
+    @MainActor
     @Test func upwardUserScrollDetachesFollowBeforeExitThreshold() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))

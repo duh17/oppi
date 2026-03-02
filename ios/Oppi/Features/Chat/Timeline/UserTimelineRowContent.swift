@@ -28,10 +28,15 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
     private static let thumbnailSize: CGFloat = 80
     private static let thumbnailCornerRadius: CGFloat = 8
+    private static let maxDisplayCharacters = 12_000
+    private static let maxDisplayLines = 220
+    private static let truncatedDisplaySuffix = "\n… message truncated for display. Use Copy for full content."
+    private static let slowApplyThresholdMs = 120
 
     private var currentConfiguration: UserTimelineRowConfiguration
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
+    private var hasAppliedConfiguration = false
 
     private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTapCopy))
@@ -137,6 +142,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     // MARK: - Apply
 
     private func apply(configuration: UserTimelineRowConfiguration) {
+        let applyStartNs = ChatTimelinePerf.timestampNs()
+        let previousConfiguration = currentConfiguration
         currentConfiguration = configuration
 
         let palette = configuration.themeID.palette
@@ -147,19 +154,98 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         // used by thinking traces and tool rows.
         bubbleContainer.backgroundColor = UIColor(palette.blue).withAlphaComponent(0.08)
 
-        let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        messageLabel.text = trimmedText
-        messageLabel.isHidden = trimmedText.isEmpty
-        bubbleContainer.isHidden = trimmedText.isEmpty && configuration.images.isEmpty
-        iconLabel.isHidden = trimmedText.isEmpty && configuration.images.isEmpty
+        let displayText = Self.displayText(for: configuration.text)
+        messageLabel.text = displayText.text
+        messageLabel.isHidden = displayText.text.isEmpty
+        bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
+        iconLabel.isHidden = displayText.text.isEmpty && configuration.images.isEmpty
+        textRow.isHidden = false
 
         // If text is empty but images exist, show just the ❯ prompt.
-        if trimmedText.isEmpty && !configuration.images.isEmpty {
+        if displayText.text.isEmpty && !configuration.images.isEmpty {
             iconLabel.isHidden = false
-            textRow.isHidden = false
         }
 
-        updateImageStrip(images: configuration.images, palette: palette)
+        let imagesChanged = previousConfiguration.images != configuration.images
+        let paletteChanged = previousConfiguration.themeID != configuration.themeID
+        let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || paletteChanged
+        if shouldRefreshImages {
+            updateImageStrip(images: configuration.images, palette: palette)
+        }
+
+        hasAppliedConfiguration = true
+
+        let durationMs = ChatTimelinePerf.elapsedMs(since: applyStartNs)
+        if durationMs >= Self.slowApplyThresholdMs {
+            ClientLog.error(
+                "ChatPerf",
+                "Slow user row apply",
+                metadata: [
+                    "durationMs": String(durationMs),
+                    "textChars": String(configuration.text.count),
+                    "displayChars": String(displayText.text.count),
+                    "displayTruncated": displayText.wasTruncated ? "true" : "false",
+                    "imageCount": String(configuration.images.count),
+                    "imageBase64Chars": String(Self.totalBase64CharacterCount(for: configuration.images)),
+                    "imagesChanged": imagesChanged ? "true" : "false",
+                    "paletteChanged": paletteChanged ? "true" : "false",
+                ]
+            )
+        }
+    }
+
+    private static func displayText(for rawText: String) -> (text: String, wasTruncated: Bool) {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ("", false)
+        }
+
+        var text = trimmed
+        var wasTruncated = false
+
+        if text.count > Self.maxDisplayCharacters {
+            text = String(text.prefix(Self.maxDisplayCharacters))
+            wasTruncated = true
+        }
+
+        if let lineTrimmed = truncatedToMaxLines(text, maxLines: Self.maxDisplayLines) {
+            text = lineTrimmed
+            wasTruncated = true
+        }
+
+        guard wasTruncated else {
+            return (text, false)
+        }
+
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (normalized + Self.truncatedDisplaySuffix, true)
+    }
+
+    private static func truncatedToMaxLines(_ text: String, maxLines: Int) -> String? {
+        guard maxLines > 0 else {
+            return ""
+        }
+
+        var lineCount = 1
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index].isNewline {
+                lineCount += 1
+                if lineCount > maxLines {
+                    return String(text[..<index])
+                }
+            }
+            index = text.index(after: index)
+        }
+
+        return nil
+    }
+
+    private static func totalBase64CharacterCount(for images: [ImageAttachment]) -> Int {
+        images.reduce(into: 0) { partialResult, image in
+            partialResult += image.data.count
+        }
     }
 
     // MARK: - Image strip

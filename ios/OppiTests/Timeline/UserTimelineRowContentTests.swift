@@ -103,7 +103,8 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("tool timeline image presentation uses page-sheet swipe dismiss")
     func toolTimelineImagePresentationUsesPageSheet() throws {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = UIWindow()
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         let host = UIViewController()
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -126,6 +127,69 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row truncates oversized text for display")
+    func userRowTruncatesOversizedTextForDisplay() throws {
+        let longText = String(repeating: "0123456789abcdef", count: 1_000)
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: longText,
+                images: [],
+                canFork: false,
+                onFork: nil,
+                themeID: .dark
+            )
+        )
+
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let labels = allSubviews(ofType: UILabel.self, in: view)
+        let renderedLabel = try #require(
+            labels.first(where: { $0.text?.contains("message truncated for display") == true })
+        )
+        let renderedText = try #require(renderedLabel.text)
+
+        #expect(renderedText.contains("message truncated for display"))
+        #expect(renderedText.count < longText.count)
+
+        let menu = try #require(view.contextMenu())
+        #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    @MainActor
+    @Test("user row reconfigure keeps thumbnail view identity for same images")
+    func userRowReconfigureKeepsThumbnailViewIdentityForSameImages() throws {
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let configuration = UserTimelineRowConfiguration(
+            text: "",
+            images: [image],
+            canFork: false,
+            onFork: nil,
+            themeID: .dark
+        )
+
+        let view = UserTimelineRowContentView(configuration: configuration)
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let firstThumbnail = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view)
+        )
+
+        view.configuration = configuration
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let secondThumbnail = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view)
+        )
+
+        #expect(firstThumbnail === secondThumbnail)
+    }
+
+    @MainActor
     private func makeTestImage() -> UIImage {
         let size = CGSize(width: 120, height: 80)
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -136,6 +200,7 @@ struct UserTimelineRowContentTests {
     }
 }
 
+@MainActor
 private func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
     if let typed = root as? T {
         return typed
@@ -150,6 +215,36 @@ private func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T?
     return nil
 }
 
+@MainActor
+private func allSubviews<T: UIView>(ofType type: T.Type, in root: UIView) -> [T] {
+    var matches: [T] = []
+    if let typed = root as? T {
+        matches.append(typed)
+    }
+
+    for child in root.subviews {
+        matches.append(contentsOf: allSubviews(ofType: type, in: child))
+    }
+
+    return matches
+}
+
+@MainActor
+private func firstSubview(withAccessibilityIdentifier identifier: String, in root: UIView) -> UIView? {
+    if root.accessibilityIdentifier == identifier {
+        return root
+    }
+
+    for child in root.subviews {
+        if let match = firstSubview(withAccessibilityIdentifier: identifier, in: child) {
+            return match
+        }
+    }
+
+    return nil
+}
+
+@MainActor
 private func hasConstraint(
     in constraints: [NSLayoutConstraint],
     between firstItem: AnyObject,

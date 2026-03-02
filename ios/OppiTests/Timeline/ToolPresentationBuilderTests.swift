@@ -307,6 +307,127 @@ struct ToolPresentationBuilderTests {
         #expect(filePath == "file.txt")
     }
 
+    @Test("content-based mode routing stays aligned across read/write/extension")
+    func contentBasedModeRoutingParityAcrossToolFamilies() {
+        let readMarkdown = ToolPresentationBuilder.build(
+            itemID: "read-md", tool: "read",
+            argsSummary: "path: README.md",
+            outputPreview: "# Header",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("README.md")],
+                expanded: ["read-md"],
+                fullOutput: "# Header\n\nBody"
+            )
+        )
+
+        let writeMarkdown = ToolPresentationBuilder.build(
+            itemID: "write-md", tool: "write",
+            argsSummary: "path: README.md",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("README.md"),
+                    "content": .string("# Header\n\nBody"),
+                ],
+                expanded: ["write-md"],
+                fullOutput: "ok"
+            )
+        )
+
+        let extensionMarkdown = ToolPresentationBuilder.build(
+            itemID: "ext-md", tool: "extensions.notes",
+            argsSummary: "",
+            outputPreview: "# Header\n\nBody",
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["ext-md"],
+                fullOutput: "# Header\n\nBody"
+            )
+        )
+
+        #expect(modeName(readMarkdown.expandedContent) == "markdown")
+        #expect(modeName(writeMarkdown.expandedContent) == "markdown")
+        #expect(modeName(extensionMarkdown.expandedContent) == "markdown")
+
+        let readCode = ToolPresentationBuilder.build(
+            itemID: "read-code", tool: "read",
+            argsSummary: "path: App.swift",
+            outputPreview: "func app() {}",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("App.swift")],
+                expanded: ["read-code"],
+                fullOutput: "func app() {}"
+            )
+        )
+
+        let writeCode = ToolPresentationBuilder.build(
+            itemID: "write-code", tool: "write",
+            argsSummary: "path: App.swift",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("App.swift"),
+                    "content": .string("func app() {}"),
+                ],
+                expanded: ["write-code"],
+                fullOutput: "ok"
+            )
+        )
+
+        let extensionCode = ToolPresentationBuilder.build(
+            itemID: "ext-code", tool: "extensions.codegen",
+            argsSummary: "",
+            outputPreview: "func app() {}",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "presentationFormat": .string("code"),
+                    "language": .string("swift"),
+                ]),
+                expanded: ["ext-code"],
+                fullOutput: "func app() {}"
+            )
+        )
+
+        #expect(modeName(readCode.expandedContent) == "code")
+        #expect(modeName(writeCode.expandedContent) == "code")
+        #expect(modeName(extensionCode.expandedContent) == "code")
+
+        let editDiff = ToolPresentationBuilder.build(
+            itemID: "edit-diff", tool: "edit",
+            argsSummary: "path: App.swift",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("App.swift"),
+                    "old_text": .string("let value = 1"),
+                    "new_text": .string("let value = 2"),
+                ],
+                expanded: ["edit-diff"]
+            )
+        )
+
+        let extensionDiff = ToolPresentationBuilder.build(
+            itemID: "ext-diff", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("diff")]),
+                expanded: ["ext-diff"],
+                fullOutput: "--- a/App.swift\n+++ b/App.swift\n@@ -1 +1 @@\n-let value = 1\n+let value = 2"
+            )
+        )
+
+        #expect(modeName(editDiff.expandedContent) == "diff")
+        #expect(modeName(extensionDiff.expandedContent) == "diff")
+    }
+
     // MARK: - Extension tools
 
     @Test("extension collapsed uses segments when available")
@@ -422,28 +543,101 @@ struct ToolPresentationBuilderTests {
         #expect(trailing.string == "✓ Saved → journal")
     }
 
-    @Test("extension markdown expanded uses generic text output")
+    @Test("extension markdown expanded auto-detects markdown content")
     func extensionMarkdownExpanded() {
+        let markdown = """
+        # Discovery
+
+        - item one
+        - item two
+        """
+
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "extensions.notes",
             argsSummary: "",
-            outputPreview: "Saved to journal",
+            outputPreview: markdown,
             isError: false, isDone: true,
             context: emptyContext(
                 args: [
                     "text": .string("Full discovery text"),
                     "tags": .array([.string("tag1")]),
                 ],
-                expanded: ["t1"]
+                expanded: ["t1"],
+                fullOutput: markdown
             )
         )
 
-        guard case .text(let text, let language) = config.expandedContent else {
-            Issue.record("Expected .text content for extension markdown tool")
+        guard case .markdown(let text) = config.expandedContent else {
+            Issue.record("Expected .markdown content for extension markdown tool")
             return
         }
-        #expect(language == nil)
-        #expect(text == "Saved to journal")
+        #expect(text == markdown)
+    }
+
+    @Test("extension expanded honors code presentation hints")
+    func extensionExpandedCodeHint() {
+        let code = "func extensionMode() -> String {\n    \"ok\"\n}"
+        let config = ToolPresentationBuilder.build(
+            itemID: "ext-code", tool: "extensions.codegen",
+            argsSummary: "",
+            outputPreview: code,
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "presentationFormat": .string("code"),
+                    "language": .string("swift"),
+                    "filePath": .string("Sources/ExtensionMode.swift"),
+                    "startLine": .number(42),
+                ]),
+                expanded: ["ext-code"],
+                fullOutput: code
+            )
+        )
+
+        guard case .code(let text, let language, let startLine, let filePath) = config.expandedContent else {
+            Issue.record("Expected .code content for extension code hint")
+            return
+        }
+
+        #expect(text == code)
+        #expect(language == .swift)
+        #expect(startLine == 42)
+        #expect(filePath == "Sources/ExtensionMode.swift")
+    }
+
+    @Test("extension expanded honors diff presentation hints")
+    func extensionExpandedDiffHint() {
+        let diffText = """
+        --- a/Sources/App.swift
+        +++ b/Sources/App.swift
+        @@ -1,2 +1,2 @@
+        -let value = 1
+        +let value = 2
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ext-diff", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: diffText,
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "presentationFormat": .string("diff"),
+                    "filePath": .string("Sources/App.swift"),
+                ]),
+                expanded: ["ext-diff"],
+                fullOutput: diffText
+            )
+        )
+
+        guard case .diff(let lines, let path) = config.expandedContent else {
+            Issue.record("Expected .diff content for extension diff hint")
+            return
+        }
+
+        #expect(path == "Sources/App.swift")
+        #expect(lines.contains { $0.kind == .removed && $0.text == "let value = 1" })
+        #expect(lines.contains { $0.kind == .added && $0.text == "let value = 2" })
     }
 
     @Test("extension expanded mode routing uses visual/json/markdown/text deterministically")
@@ -1029,5 +1223,26 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.collapsedImageBase64 == nil)
+    }
+}
+
+private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -> String {
+    switch content {
+    case .bash:
+        return "bash"
+    case .diff:
+        return "diff"
+    case .code:
+        return "code"
+    case .markdown:
+        return "markdown"
+    case .plot:
+        return "plot"
+    case .readMedia:
+        return "readMedia"
+    case .text:
+        return "text"
+    case nil:
+        return "nil"
     }
 }
