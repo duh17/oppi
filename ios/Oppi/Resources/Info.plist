@@ -67,8 +67,6 @@
 	<string>Oppi uses on-device speech recognition to convert your voice into text.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
-	<key>OPPIDisableMetricKitUpload</key>
-	<string>$(OPPI_DISABLE_METRICKIT_UPLOAD)</string>
 	<key>OPPITelemetryMode</key>
 	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>SentryDSN</key>

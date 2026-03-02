@@ -48,6 +48,40 @@ function chatMetricRetentionDaysFromEnv(): number {
   return 14;
 }
 
+function telemetryUploadsEnabledFromEnv(): boolean {
+  const raw = process.env.OPPI_TELEMETRY_MODE?.trim().toLowerCase() ?? "";
+  if (!raw) {
+    return true;
+  }
+
+  switch (raw) {
+    case "internal":
+    case "debug":
+    case "test":
+    case "qa":
+    case "staging":
+    case "dev":
+    case "development":
+    case "enabled":
+    case "on":
+    case "true":
+    case "1":
+      return true;
+    case "public":
+    case "release":
+    case "prod":
+    case "production":
+    case "off":
+    case "disabled":
+    case "none":
+    case "false":
+    case "0":
+      return false;
+    default:
+      return false;
+  }
+}
+
 function isString(value: unknown): value is string {
   return typeof value === "string";
 }
@@ -296,6 +330,9 @@ const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>([
   "chat.cache_load_ms",
   "chat.reducer_load_ms",
   "chat.ws_connect_ms",
+  "chat.voice_prewarm_ms",
+  "chat.voice_setup_ms",
+  "chat.voice_first_result_ms",
 ]);
 
 const CHAT_METRIC_UNITS = new Set<ChatMetricSample["unit"]>(["ms", "count", "ratio"]);
@@ -439,6 +476,11 @@ function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequ
 
 export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   async function handleUploadMetricKit(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!telemetryUploadsEnabledFromEnv()) {
+      helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
+      return;
+    }
+
     const rawBody = await helpers.parseBody<MetricKitUploadRequest>(req);
     const request = parseRequest(rawBody);
     if (!request) {
@@ -461,6 +503,11 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   async function handleUploadChatMetrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!telemetryUploadsEnabledFromEnv()) {
+      helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
+      return;
+    }
+
     const rawBody = await helpers.parseBody<ChatMetricUploadRequest>(req);
     const request = parseChatMetricRequest(rawBody);
     if (!request) {
