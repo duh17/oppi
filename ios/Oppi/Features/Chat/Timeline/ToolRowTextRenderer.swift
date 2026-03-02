@@ -14,7 +14,7 @@ enum ToolRowTextRenderer {
     static let maxRenderedDiffLines = 400
     static let maxRenderedDiffLineCharacters = 800
     static let maxRenderedCommandCharacters = 6_000
-    static let maxRenderedOutputCharacters = 2_000
+    static let maxRenderedOutputCharacters = 100_000
     static let maxShellHighlightBytes = 64 * 1024
 
     // MARK: - Types
