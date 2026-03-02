@@ -60,6 +60,7 @@
     "dead-code": "knip",
     "check:testing-policy": "node ./scripts/check-testing-policy.mjs",
     "check:docs": "node ./scripts/check-doc-freshness.mjs",
+    "review": "node ./scripts/ai-review.mjs --staged",
     "check": "tsc --noEmit && eslint src/ && prettier --check src/ && npm run check:testing-policy && npm run check:docs"
   },
   "dependencies": {
