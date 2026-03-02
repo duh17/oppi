@@ -17,12 +17,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { StyledSegment } from "./types.js";
+
 // ─── Types ───
 
-export interface StyledSegment {
-  text: string;
-  style?: "bold" | "muted" | "dim" | "accent" | "success" | "warning" | "error";
-}
+export type { StyledSegment } from "./types.js";
 
 export interface MobileToolRenderer {
   renderCall(args: Record<string, unknown>): StyledSegment[];

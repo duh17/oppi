@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import ts from "typescript";
+
+import {
+  findServerLayerViolations,
+  normalizeRepoPath,
+  readImportsFromFile,
+} from "./architecture-layer-rules.mjs";
 
 const PROTOCOL_FILES = [
   "server/src/types.ts",
@@ -83,10 +88,6 @@ function getRepoRoot() {
   }
 
   return result.stdout.trim();
-}
-
-function normalizeRepoPath(filePath) {
-  return filePath.split(path.sep).join("/");
 }
 
 function getDiffAndFiles(repoRoot, options) {
@@ -168,160 +169,7 @@ function getReviewContext(repoRoot) {
   };
 }
 
-export function readImportsFromFile(filePath) {
-  const source = readFileSync(filePath, "utf8");
-  const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true);
-  const imports = [];
-
-  function visit(node) {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-      if (ts.isStringLiteralLike(node.moduleSpecifier)) {
-        imports.push(node.moduleSpecifier.text);
-      }
-    }
-
-    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-      const expression = node.moduleReference.expression;
-      if (expression && ts.isStringLiteralLike(expression)) {
-        imports.push(expression.text);
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return imports;
-}
-
-function resolveRelativeModule(repoRoot, importerRelativePath, specifier) {
-  if (!specifier.startsWith(".")) {
-    return null;
-  }
-
-  const importerAbsolutePath = path.join(repoRoot, importerRelativePath);
-  const rawResolved = path.resolve(path.dirname(importerAbsolutePath), specifier);
-
-  const ext = path.extname(rawResolved);
-  const candidates = [];
-
-  if (ext.length > 0) {
-    candidates.push(rawResolved);
-
-    if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
-      candidates.push(rawResolved.slice(0, -ext.length) + ".ts");
-      candidates.push(rawResolved.slice(0, -ext.length) + ".tsx");
-      candidates.push(rawResolved.slice(0, -ext.length) + ".mts");
-    }
-  } else {
-    candidates.push(rawResolved);
-    candidates.push(`${rawResolved}.ts`);
-    candidates.push(`${rawResolved}.tsx`);
-    candidates.push(`${rawResolved}.mts`);
-    candidates.push(`${rawResolved}.js`);
-    candidates.push(`${rawResolved}.mjs`);
-    candidates.push(path.join(rawResolved, "index.ts"));
-    candidates.push(path.join(rawResolved, "index.tsx"));
-    candidates.push(path.join(rawResolved, "index.js"));
-  }
-
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) {
-      continue;
-    }
-
-    return normalizeRepoPath(path.relative(repoRoot, candidate));
-  }
-
-  return normalizeRepoPath(path.relative(repoRoot, rawResolved));
-}
-
-function findLayerViolations(repoRoot, changedFiles) {
-  const changedTsFiles = changedFiles.filter(
-    (file) => file.startsWith("server/src/") && file.endsWith(".ts"),
-  );
-
-  const violations = [];
-
-  for (const relativePath of changedTsFiles) {
-    const absolutePath = path.join(repoRoot, relativePath);
-    if (!existsSync(absolutePath)) {
-      continue;
-    }
-
-    const imports = readImportsFromFile(absolutePath);
-    const resolvedImports = imports
-      .map((specifier) => ({
-        specifier,
-        target: resolveRelativeModule(repoRoot, relativePath, specifier),
-      }))
-      .filter((entry) => entry.target !== null);
-
-    for (const entry of resolvedImports) {
-      const importer = normalizeRepoPath(relativePath);
-      const target = entry.target;
-
-      if (importer !== "server/src/server.ts" && target === "server/src/server.ts") {
-        violations.push({
-          rule: "single-composition-root",
-          importer,
-          target,
-          reason: "Only server/src/server.ts should be the composition root.",
-        });
-      }
-
-      if (
-        importer !== "server/src/server.ts" &&
-        !importer.startsWith("server/src/routes/") &&
-        target.startsWith("server/src/routes/")
-      ) {
-        violations.push({
-          rule: "route-boundary",
-          importer,
-          target,
-          reason: "Non-route modules should not import route handlers.",
-        });
-      }
-
-      const importerBase = path.basename(importer);
-      if (importerBase.startsWith("session-") && target === "server/src/sessions.ts") {
-        violations.push({
-          rule: "session-facade-direction",
-          importer,
-          target,
-          reason: "session-* modules should not import sessions.ts facade.",
-        });
-      }
-
-      if (importer === "server/src/policy.ts" && target === "server/src/gate.ts") {
-        violations.push({
-          rule: "policy-flow-one-way",
-          importer,
-          target,
-          reason: "policy.ts must not import gate.ts.",
-        });
-      }
-
-      if (importer.startsWith("server/src/storage/")) {
-        const importsRouteModule = target.startsWith("server/src/routes/");
-        const importsStreamModule = target === "server/src/stream.ts";
-        const importsSessionModule =
-          target === "server/src/sessions.ts" || /server\/src\/session-.*\.ts$/.test(target);
-
-        if (importsRouteModule || importsStreamModule || importsSessionModule) {
-          violations.push({
-            rule: "storage-leaf-layer",
-            importer,
-            target,
-            reason: "storage/* modules should remain infrastructure leaf modules.",
-          });
-        }
-      }
-    }
-  }
-
-  return violations;
-}
+export { readImportsFromFile };
 
 export function extractFileDiff(diffText, relativePath) {
   const header = `diff --git a/${relativePath} b/${relativePath}`;
@@ -560,7 +408,7 @@ export function main() {
   const normalizedFiles = diffData.changedFiles.map(normalizeRepoPath);
 
   const context = getReviewContext(repoRoot);
-  const layerViolations = findLayerViolations(repoRoot, normalizedFiles);
+  const layerViolations = findServerLayerViolations(repoRoot, normalizedFiles);
   const checks = buildChecks(normalizedFiles, layerViolations, diffData.diff);
   const status = deriveOverallStatus(checks);
 
