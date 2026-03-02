@@ -2,7 +2,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import ts from "typescript";
 
 const PROTOCOL_FILES = [
   "server/src/types.ts",
@@ -10,7 +12,7 @@ const PROTOCOL_FILES = [
   "ios/Oppi/Core/Models/ClientMessage.swift",
 ];
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     staged: false,
     commits: null,
@@ -150,10 +152,7 @@ function extractSection(markdown, headingText) {
 
 function getReviewContext(repoRoot) {
   const architecture = readFileSync(path.join(repoRoot, "ARCHITECTURE.md"), "utf8");
-  const goldenPrinciples = readFileSync(
-    path.join(repoRoot, "docs/golden-principles.md"),
-    "utf8",
-  );
+  const goldenPrinciples = readFileSync(path.join(repoRoot, "docs/golden-principles.md"), "utf8");
   const agentsGuide = readFileSync(path.join(repoRoot, "AGENTS.md"), "utf8");
 
   const architectureRules = extractSection(
@@ -169,15 +168,29 @@ function getReviewContext(repoRoot) {
   };
 }
 
-function readImportsFromFile(filePath) {
+export function readImportsFromFile(filePath) {
   const source = readFileSync(filePath, "utf8");
+  const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true);
   const imports = [];
-  const importRegex = /\b(?:import|export)\s+(?:[^\"']*?\sfrom\s*)?[\"']([^\"']+)[\"']/g;
 
-  for (const match of source.matchAll(importRegex)) {
-    imports.push(match[1]);
+  function visit(node) {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+      if (ts.isStringLiteralLike(node.moduleSpecifier)) {
+        imports.push(node.moduleSpecifier.text);
+      }
+    }
+
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const expression = node.moduleReference.expression;
+      if (expression && ts.isStringLiteralLike(expression)) {
+        imports.push(expression.text);
+      }
+    }
+
+    ts.forEachChild(node, visit);
   }
 
+  visit(sourceFile);
   return imports;
 }
 
@@ -310,7 +323,54 @@ function findLayerViolations(repoRoot, changedFiles) {
   return violations;
 }
 
-function buildChecks(changedFiles, layerViolations) {
+export function extractFileDiff(diffText, relativePath) {
+  const header = `diff --git a/${relativePath} b/${relativePath}`;
+  const lines = diffText.split("\n");
+  const startIndex = lines.findIndex((line) => line === header);
+
+  if (startIndex === -1) {
+    return "";
+  }
+
+  let endIndex = lines.length;
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    if (lines[index].startsWith("diff --git ")) {
+      endIndex = index;
+      break;
+    }
+  }
+
+  return lines.slice(startIndex, endIndex).join("\n");
+}
+
+export function isPackageJsonCiTestingChange(packageJsonDiff) {
+  if (packageJsonDiff.trim().length === 0) {
+    return false;
+  }
+
+  const ciScriptPrefixes = ["test", "check", "review"];
+
+  return packageJsonDiff.split("\n").some((line) => {
+    if (!(line.startsWith("+") || line.startsWith("-"))) {
+      return false;
+    }
+
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return false;
+    }
+
+    const withoutSign = line.slice(1).trimStart();
+    const match = withoutSign.match(/^"([^\"]+)"\s*:/);
+    if (!match) {
+      return false;
+    }
+
+    const key = match[1];
+    return ciScriptPrefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`));
+  });
+}
+
+export function buildChecks(changedFiles, layerViolations, diffText) {
   const checks = [];
 
   if (changedFiles.length === 0) {
@@ -389,9 +449,15 @@ function buildChecks(changedFiles, layerViolations) {
       file.startsWith(".github/workflows/") ||
       file.startsWith("docs/testing/") ||
       file === "server/testing-policy.json" ||
-      file.startsWith("server/scripts/testing-") ||
-      file === "server/package.json",
+      file.startsWith("server/scripts/testing-"),
   );
+
+  if (changedFiles.includes("server/package.json")) {
+    const packageJsonDiff = extractFileDiff(diffText, "server/package.json");
+    if (isPackageJsonCiTestingChange(packageJsonDiff)) {
+      ciTestingInfraTouched.push("server/package.json");
+    }
+  }
   if (ciTestingInfraTouched.length > 0) {
     checks.push({
       id: "ci-testing-infra-review",
@@ -455,7 +521,8 @@ function buildReviewPrompt({ mode, changedFiles, diff, context, checks }) {
     .map((check) => `- [${check.status.toUpperCase()}] ${check.id}: ${check.reason}`)
     .join("\n");
 
-  const changedFileList = changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none)";
+  const changedFileList =
+    changedFiles.length > 0 ? changedFiles.map((file) => `- ${file}`).join("\n") : "- (none)";
 
   return [
     "You are reviewing a code change for Oppi.",
@@ -486,7 +553,7 @@ function buildReviewPrompt({ mode, changedFiles, diff, context, checks }) {
   ].join("\n");
 }
 
-function main() {
+export function main() {
   const options = parseArgs(process.argv.slice(2));
   const repoRoot = getRepoRoot();
   const diffData = getDiffAndFiles(repoRoot, options);
@@ -494,7 +561,7 @@ function main() {
 
   const context = getReviewContext(repoRoot);
   const layerViolations = findLayerViolations(repoRoot, normalizedFiles);
-  const checks = buildChecks(normalizedFiles, layerViolations);
+  const checks = buildChecks(normalizedFiles, layerViolations, diffData.diff);
   const status = deriveOverallStatus(checks);
 
   const summary = {
@@ -523,9 +590,14 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`ai-review error: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
+const isDirectExecution =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`ai-review error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }
