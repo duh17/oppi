@@ -642,6 +642,10 @@ struct UIHangHarnessView: View {
         writeMarkdownToolItemID(for: selectedSession)
     }
 
+    private var readMarkdownToolID: String {
+        readMarkdownToolItemID(for: selectedSession)
+    }
+
     private var extensionMarkdownIsExpandedValue: Int {
         connection.reducer.expandedItemIDs.contains(extensionMarkdownToolID) ? 1 : 0
     }
@@ -656,6 +660,10 @@ struct UIHangHarnessView: View {
 
     private var writeMarkdownIsExpandedValue: Int {
         connection.reducer.expandedItemIDs.contains(writeMarkdownToolID) ? 1 : 0
+    }
+
+    private var readMarkdownIsExpandedValue: Int {
+        connection.reducer.expandedItemIDs.contains(readMarkdownToolID) ? 1 : 0
     }
 
     private var offsetYValue: Int {
@@ -731,11 +739,7 @@ struct UIHangHarnessView: View {
             resetRuntimeMetrics()
             frameIntervalMonitor.start()
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
-            seedExtensionMarkdownFixtures()
-            seedExtensionTextFixtures()
-            if UIHangHarnessConfig.includeWriteMarkdownFixture {
-                seedWriteMarkdownFixtures()
-            }
+            seedVisualToolFixtures()
             startDiagnosticsLoop()
             restartStreamingLoop()
 
@@ -753,11 +757,7 @@ struct UIHangHarnessView: View {
         }
         .onChange(of: selectedSession) { _, _ in
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
-            seedExtensionMarkdownFixtures()
-            seedExtensionTextFixtures()
-            if UIHangHarnessConfig.includeWriteMarkdownFixture {
-                seedWriteMarkdownFixtures()
-            }
+            seedVisualToolFixtures()
             heartbeat &+= 1
             restartStreamingLoop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -825,6 +825,12 @@ struct UIHangHarnessView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.writeMarkdown.focus")
+
+                Button("Read Markdown") {
+                    focusReadMarkdownTool()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.readMarkdown.focus")
 
                 Button("Visual Image") {
                     scrollToVisualUserImage(animated: false)
@@ -916,6 +922,7 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.extensionExpanded", value: extensionMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.extensionTextExpanded", value: extensionTextIsExpandedValue)
             diagnosticValue(id: "diag.writeMarkdownExpanded", value: writeMarkdownIsExpandedValue)
+            diagnosticValue(id: "diag.readMarkdownExpanded", value: readMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.extensionTop", value: extensionMarkdownIsTopVisibleValue)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
@@ -1085,6 +1092,10 @@ struct UIHangHarnessView: View {
         "\(session.rawValue)-visual-tool-write"
     }
 
+    private func readMarkdownToolItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-tool-read"
+    }
+
     private func visualExtensionMarkdown(for session: HarnessSession) -> String {
         var sections: [String] = ["# Extension harness notes — \(session.title)"]
         for index in 1...22 {
@@ -1128,6 +1139,33 @@ struct UIHangHarnessView: View {
         return sections.joined(separator: "\n\n")
     }
 
+    private func visualReadMarkdownContent(for session: HarnessSession) -> String {
+        var sections: [String] = [
+            "# Read Harness Markdown — \(session.title)",
+            "This fixture mirrors long markdown loaded via the read tool on a .md path.",
+        ]
+
+        for index in 1...36 {
+            sections.append("## Read section \(index)")
+            sections.append("- reducer path\n- markdown layout pass\n- viewport height\n- scroll ownership")
+            sections.append(
+                "Explanation \(index): verify expanded read markdown rows do not induce stagger, snapback, or offset oscillation under drag stress."
+            )
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func seedVisualToolFixtures() {
+        seedExtensionMarkdownFixtures()
+        seedExtensionTextFixtures()
+        seedReadMarkdownFixtures()
+
+        if UIHangHarnessConfig.includeWriteMarkdownFixture {
+            seedWriteMarkdownFixtures()
+        }
+    }
+
     private func seedExtensionMarkdownFixtures() {
         let extensionIDs = Set(HarnessSession.allCases.map(extensionMarkdownToolItemID(for:)))
         connection.reducer.toolOutputStore.clear(itemIDs: extensionIDs)
@@ -1156,6 +1194,24 @@ struct UIHangHarnessView: View {
             let extensionID = extensionTextToolItemID(for: session)
             let output = visualExtensionTextOutput(for: session)
             _ = connection.reducer.toolOutputStore.append(output, to: extensionID)
+        }
+    }
+
+    private func seedReadMarkdownFixtures() {
+        let readIDs = Set(HarnessSession.allCases.map(readMarkdownToolItemID(for:)))
+        connection.reducer.toolOutputStore.clear(itemIDs: readIDs)
+
+        for session in HarnessSession.allCases {
+            let readID = readMarkdownToolItemID(for: session)
+            let markdown = visualReadMarkdownContent(for: session)
+
+            connection.reducer.toolArgsStore.set([
+                "path": .string("design/read-harness-markdown.md"),
+                "offset": .number(1),
+                "limit": .number(800),
+            ], for: readID)
+
+            _ = connection.reducer.toolOutputStore.append(markdown, to: readID)
         }
     }
 
@@ -1190,33 +1246,28 @@ struct UIHangHarnessView: View {
     }
 
     private func focusExtensionMarkdownTool() {
-        let extensionID = extensionMarkdownToolItemID(for: selectedSession)
-        guard currentItems.contains(where: { $0.id == extensionID }) else { return }
-
-        renderWindow = currentItems.count
-        connection.reducer.expandedItemIDs.insert(extensionID)
-        heartbeat &+= 1
-        issueScrollCommand(id: extensionID, anchor: .top, animated: false)
+        focusTool(itemID: extensionMarkdownToolItemID(for: selectedSession))
     }
 
     private func focusExtensionTextTool() {
-        let extensionID = extensionTextToolItemID(for: selectedSession)
-        guard currentItems.contains(where: { $0.id == extensionID }) else { return }
-
-        renderWindow = currentItems.count
-        connection.reducer.expandedItemIDs.insert(extensionID)
-        heartbeat &+= 1
-        issueScrollCommand(id: extensionID, anchor: .top, animated: false)
+        focusTool(itemID: extensionTextToolItemID(for: selectedSession))
     }
 
     private func focusWriteMarkdownTool() {
-        let writeID = writeMarkdownToolItemID(for: selectedSession)
-        guard currentItems.contains(where: { $0.id == writeID }) else { return }
+        focusTool(itemID: writeMarkdownToolItemID(for: selectedSession))
+    }
+
+    private func focusReadMarkdownTool() {
+        focusTool(itemID: readMarkdownToolItemID(for: selectedSession))
+    }
+
+    private func focusTool(itemID: String) {
+        guard currentItems.contains(where: { $0.id == itemID }) else { return }
 
         renderWindow = currentItems.count
-        connection.reducer.expandedItemIDs.insert(writeID)
+        connection.reducer.expandedItemIDs.insert(itemID)
         heartbeat &+= 1
-        issueScrollCommand(id: writeID, anchor: .top, animated: false)
+        issueScrollCommand(id: itemID, anchor: .top, animated: false)
     }
 
     private func scrollToVisualUserImage(animated: Bool) {

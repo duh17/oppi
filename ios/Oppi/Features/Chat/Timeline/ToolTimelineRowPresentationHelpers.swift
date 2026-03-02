@@ -110,14 +110,33 @@ enum ToolTimelineRowPresentationHelpers {
     static func invalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
         var view: UIView? = sourceView.superview
         while let current = view {
-            if let collectionView = current as? UICollectionView {
-                UIView.performWithoutAnimation {
-                    collectionView.collectionViewLayout.invalidateLayout()
-                    collectionView.layoutIfNeeded()
+            guard let collectionView = current as? UICollectionView else {
+                view = current.superview
+                continue
+            }
+
+            if isUserInteracting(with: collectionView) {
+                DispatchQueue.main.async { [weak collectionView] in
+                    guard let collectionView else { return }
+                    guard !isUserInteracting(with: collectionView) else { return }
+                    invalidateCollectionViewLayout(collectionView)
                 }
                 return
             }
-            view = current.superview
+
+            invalidateCollectionViewLayout(collectionView)
+            return
+        }
+    }
+
+    private static func isUserInteracting(with collectionView: UICollectionView) -> Bool {
+        collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    }
+
+    private static func invalidateCollectionViewLayout(_ collectionView: UICollectionView) {
+        UIView.performWithoutAnimation {
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
         }
     }
 }

@@ -335,28 +335,51 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     }
 
     func testExpandedWriteMarkdownScrollNoStagger() throws {
+        try assertExpandedMarkdownScrollNoStagger(
+            focusButtonID: "harness.writeMarkdown.focus",
+            expandedDiagnosticID: "diag.writeMarkdownExpanded",
+            includeWriteMarkdownFixture: true,
+            markdownLabel: "write markdown"
+        )
+    }
+
+    func testExpandedReadMarkdownScrollNoStagger() throws {
+        try assertExpandedMarkdownScrollNoStagger(
+            focusButtonID: "harness.readMarkdown.focus",
+            expandedDiagnosticID: "diag.readMarkdownExpanded",
+            includeWriteMarkdownFixture: false,
+            markdownLabel: "read markdown"
+        )
+    }
+
+    private func assertExpandedMarkdownScrollNoStagger(
+        focusButtonID: String,
+        expandedDiagnosticID: String,
+        includeWriteMarkdownFixture: Bool,
+        markdownLabel: String
+    ) throws {
         launchHarness(
             noStream: true,
             includeVisualFixtures: true,
-            includeWriteMarkdownFixture: true
+            includeWriteMarkdownFixture: includeWriteMarkdownFixture
         )
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
         XCTAssertGreaterThanOrEqual(visualTools, 8)
 
-        let writeFocus = app.descendants(matching: .any)["harness.writeMarkdown.focus"]
+        let focusButton = app.descendants(matching: .any)[focusButtonID]
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
 
-        XCTAssertTrue(writeFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(focusButton.waitForExistence(timeout: 4))
         XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
         let frameP95Before = pollDiagnostic("diag.frameP95", timeout: 4)
 
-        writeFocus.tap()
-        XCTAssertEqual(waitForDiagnostic("diag.writeMarkdownExpanded", equals: 1, timeout: 4), 1)
+        focusButton.tap()
+        XCTAssertEqual(waitForDiagnostic(expandedDiagnosticID, equals: 1, timeout: 4), 1)
 
         diagTick.tap()
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
@@ -367,7 +390,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             baseline: baselineOffset,
             minimumDelta: 30,
             direction: .increasing,
-            context: "upward drag inside expanded write markdown"
+            context: "upward drag inside expanded \(markdownLabel)"
         )
 
         let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
@@ -376,25 +399,25 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             baseline: offsetAfterUpDrag,
             minimumDelta: 30,
             direction: .decreasing,
-            context: "downward drag inside expanded write markdown"
+            context: "downward drag inside expanded \(markdownLabel)"
         )
 
-        let offsetAfterPastWriteDrag = dragTimelineUntilOffsetMoves(
+        let offsetAfterPastExpandedDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
             baseline: offsetAfterDownDrag,
             minimumDelta: 56,
             direction: .increasing,
-            context: "scrolling past expanded write markdown"
+            context: "scrolling past expanded \(markdownLabel)"
         )
 
         let offsetAfterReturnDown = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
-            baseline: offsetAfterPastWriteDrag,
+            baseline: offsetAfterPastExpandedDrag,
             minimumDelta: 30,
             direction: .decreasing,
-            context: "downward drag after passing expanded write markdown"
+            context: "downward drag after passing expanded \(markdownLabel)"
         )
 
         Thread.sleep(forTimeInterval: 0.35)
@@ -404,7 +427,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(
             abs(settledOffset - offsetAfterReturnDown),
             16,
-            "Offset snapped back after downward drag past expanded write markdown (down=\(offsetAfterReturnDown), settled=\(settledOffset))"
+            "Offset snapped back after downward drag past expanded \(markdownLabel) (down=\(offsetAfterReturnDown), settled=\(settledOffset))"
         )
 
         let frameP95After = pollDiagnostic("diag.frameP95", timeout: 4)
