@@ -28,14 +28,6 @@ struct ContextInspectorView: View {
         var id: String { label }
     }
 
-    private struct TokenBreakdownSegment: Identifiable {
-        let label: String
-        let tokens: Int
-        let color: Color
-
-        var id: String { label }
-    }
-
     private var contextSnapshot: ContextUsageSnapshot {
         let fallbackWindow: Int?
         if let model = session?.model {
@@ -92,67 +84,39 @@ struct ContextInspectorView: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    private var estimatedSkillMetadataTotal: Int {
-        workspaceSkillEstimates.reduce(0) { $0 + $1.estimatedTokens }
-    }
-
-    private var configuredSystemPromptEstimate: Int {
-        guard let prompt = workspace?.systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !prompt.isEmpty else {
-            return 0
-        }
-        return max(1, Int(ceil(Double(prompt.count) / 4.0)))
-    }
-
     private var compositionSegments: [CompositionSegment] {
         guard let total = contextSnapshot.tokens, total > 0 else { return [] }
+        guard let composition = loadedStats?.contextComposition else { return [] }
 
-        let skills = min(estimatedSkillMetadataTotal, total)
-
-        let knownSystemPrompt = min(configuredSystemPromptEstimate, max(total - skills, 0))
-        let remaining = max(total - skills - knownSystemPrompt, 0)
-
-        // Heuristic split of unknown remainder: message-heavy as sessions grow.
-        let messageWeight = min(max(Double(session?.messageCount ?? 0) / 24.0, 0.25), 0.85)
-        let messages = min(remaining, Int((Double(remaining) * messageWeight).rounded()))
-        let systemAndAgents = max(total - skills - messages, 0)
+        let system = min(max(composition.piSystemPromptTokens, 0), total)
+        let messages = max(total - system, 0)
 
         return [
             CompositionSegment(
-                label: "System + AGENTS",
-                detail: "Includes configured system prompt and agent instruction files.",
-                tokens: systemAndAgents,
+                label: "Pi system prompt (actual)",
+                detail: "Exact current prompt text loaded by pi (includes AGENTS and instructions).",
+                tokens: system,
                 color: .themePurple
             ),
             CompositionSegment(
-                label: "Skills metadata",
-                detail: "Workspace skill metadata available to the assistant.",
-                tokens: skills,
-                color: .themeBlue
-            ),
-            CompositionSegment(
                 label: "Messages + runtime",
-                detail: "Conversation content and dynamic runtime context.",
+                detail: "Everything else currently in context beyond the system prompt.",
                 tokens: messages,
                 color: .themeGreen
             ),
         ]
     }
 
-    private var sessionBreakdownSegments: [TokenBreakdownSegment] {
-        [
-            TokenBreakdownSegment(label: "Input", tokens: sessionTokenStats.input, color: .themeBlue),
-            TokenBreakdownSegment(label: "Output", tokens: sessionTokenStats.output, color: .themePurple),
-            TokenBreakdownSegment(label: "Cache read", tokens: sessionTokenStats.cacheRead, color: .themeGreen),
-            TokenBreakdownSegment(label: "Cache write", tokens: sessionTokenStats.cacheWrite, color: .themeOrange),
-        ]
-        .filter { $0.tokens > 0 }
+    private var contextUsedTokens: Int {
+        max(contextSnapshot.tokens ?? 0, 0)
     }
 
-    private var sessionBreakdownTotal: Int {
-        let explicitTotal = sessionTokenStats.total
-        let computedTotal = sessionBreakdownSegments.reduce(0) { $0 + $1.tokens }
-        return max(explicitTotal, computedTotal)
+    private var contextWindowTokens: Int {
+        max(contextSnapshot.window ?? 0, 0)
+    }
+
+    private var contextRemainingTokens: Int {
+        max(contextWindowTokens - contextUsedTokens, 0)
     }
 
     var body: some View {
@@ -163,7 +127,7 @@ struct ContextInspectorView: View {
 
             Section("Context Composition") {
                 if compositionSegments.isEmpty {
-                    Text("Composition appears after context usage is available.")
+                    Text("Composition appears after detailed stats load.")
                         .font(.subheadline)
                         .foregroundStyle(.themeComment)
                 } else {
@@ -171,20 +135,16 @@ struct ContextInspectorView: View {
                         compositionLegendRow(segment)
                     }
 
-                    Text("Composition values are best-effort estimates from available data.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
+                    if let composition = loadedStats?.contextComposition {
+                        Text("AGENTS files loaded: \(composition.agentsFiles.count) (~\(formatTokenCount(composition.agentsTokens))).")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
+                    }
                 }
             }
 
             Section("Session Activity") {
-                if !sessionBreakdownSegments.isEmpty {
-                    sessionBreakdownBar
-
-                    ForEach(sessionBreakdownSegments) { segment in
-                        sessionBreakdownLegendRow(segment)
-                    }
-                }
+                contextUsageBar
 
                 metricChipRow(
                     MetricChip(title: "Input", value: formatTokenCount(sessionTokenStats.input)),
@@ -337,55 +297,46 @@ struct ContextInspectorView: View {
     }
 
     @ViewBuilder
-    private var sessionBreakdownBar: some View {
-        GeometryReader { proxy in
-            let totalWidth = proxy.size.width
-            let gap: CGFloat = 4
-            let gaps = gap * CGFloat(max(sessionBreakdownSegments.count - 1, 0))
-            let contentWidth = max(totalWidth - gaps, 0)
+    private var contextUsageBar: some View {
+        if let progress = contextSnapshot.progress,
+           contextWindowTokens > 0 {
+            GeometryReader { proxy in
+                let totalWidth = max(proxy.size.width, 0)
+                let usedWidth = totalWidth * CGFloat(progress)
+                let remainingWidth = max(totalWidth - usedWidth, 0)
 
-            HStack(spacing: gap) {
-                ForEach(sessionBreakdownSegments) { segment in
-                    let ratio = sessionBreakdownTotal > 0 ? Double(segment.tokens) / Double(sessionBreakdownTotal) : 0
-                    let width = max(12, contentWidth * ratio)
-
+                HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(segment.color)
-                        .frame(width: width)
+                        .fill(progressTint(progress))
+                        .frame(width: usedWidth)
+
+                    if remainingWidth > 0 {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(.themeComment.opacity(0.25))
+                            .frame(width: remainingWidth)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(height: 14)
-        .padding(.vertical, 2)
-    }
+            .frame(height: 14)
+            .padding(.vertical, 2)
 
-    private func sessionBreakdownLegendRow(_ segment: TokenBreakdownSegment) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(segment.color)
-                .frame(width: 8, height: 8)
+            HStack(spacing: 10) {
+                Text("Used: \(formatTokenCount(contextUsedTokens))")
+                    .font(.caption)
+                    .foregroundStyle(.themeFg)
 
-            Text(segment.label)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.themeFg)
+                Spacer(minLength: 8)
 
-            Spacer(minLength: 8)
-
-            Text("\(String(format: "%.1f%%", segmentPercentage(segment.tokens, of: sessionBreakdownTotal) * 100))")
-                .font(.caption.weight(.semibold))
+                Text("Remaining: \(formatTokenCount(contextRemainingTokens))")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+        } else {
+            Text("Context usage unavailable.")
+                .font(.caption)
                 .foregroundStyle(.themeComment)
-
-            Text(formatTokenCount(segment.tokens))
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.themeFg)
         }
-        .padding(.vertical, 1)
-    }
-
-    private func segmentPercentage(_ tokens: Int, of total: Int) -> Double {
-        guard total > 0 else { return 0 }
-        return min(max(Double(tokens) / Double(total), 0), 1)
     }
 
     private struct MetricChip {

@@ -34,22 +34,12 @@ struct ContextUsageSnapshot: Sendable, Equatable {
 
 struct ContextUsageRingBadge: View {
     let usage: ContextUsageSnapshot
-    var syncState: RuntimeStatusBadge.SyncState = .live
 
     private var strokeColor: Color {
         guard let progress = usage.progress else { return .themeComment }
         if progress > 0.9 { return .themeRed }
         if progress > 0.7 { return .themeOrange }
         return .themeGreen
-    }
-
-    private var syncDotColor: Color {
-        switch syncState {
-        case .live: return .themeGreen
-        case .syncing: return .themeBlue
-        case .offline: return .themeRed
-        case .stale: return .themeOrange
-        }
     }
 
     var body: some View {
@@ -82,16 +72,6 @@ struct ContextUsageRingBadge: View {
                 .lineLimit(1)
         }
         .frame(width: 24, height: 24)
-        .overlay(alignment: .bottomTrailing) {
-            Circle()
-                .fill(syncDotColor)
-                .frame(width: 6, height: 6)
-                .overlay(
-                    Circle()
-                        .stroke(.themeBg, lineWidth: 1)
-                )
-                .offset(x: 1, y: 1)
-        }
         .accessibilityLabel(usage.accessibilityLabel)
     }
 }
