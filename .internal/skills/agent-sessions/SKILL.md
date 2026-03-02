@@ -29,9 +29,19 @@ node {baseDir}/scripts/agent-sessions.mjs <command> [flags]
 
 ## Output Contract
 
-Return JSON by default (compact, agent-friendly).
+Return compact human output by default (mobile-first, ANSI color enabled).
 
-Use `--human` for pretty-printed JSON.
+Use JSON as escape hatch:
+- `--json` — machine-readable output
+
+Automation pattern:
+```bash
+node {baseDir}/scripts/agent-sessions.mjs list --workspace oppi --json
+```
+
+Optional display flags:
+- `--color` — force ANSI colors
+- `--no-color` — disable ANSI colors
 
 ## Dispatch Flags
 
