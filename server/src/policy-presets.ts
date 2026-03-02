@@ -424,14 +424,22 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         decision: "ask",
         label: "Send iMessage",
         reason: "Sending messages on your behalf is irreversible",
-        match: { tool: "bash", executable: "osascript", commandMatches: '*application "Messages"*send*' },
+        match: {
+          tool: "bash",
+          executable: "osascript",
+          commandMatches: '*application "Messages"*send*',
+        },
       },
       {
         id: "ask-email-osascript",
         decision: "ask",
         label: "Send email",
         reason: "Sending email on your behalf is irreversible",
-        match: { tool: "bash", executable: "osascript", commandMatches: '*application "Mail"*send*' },
+        match: {
+          tool: "bash",
+          executable: "osascript",
+          commandMatches: '*application "Mail"*send*',
+        },
       },
       {
         id: "ask-imessage-script",
