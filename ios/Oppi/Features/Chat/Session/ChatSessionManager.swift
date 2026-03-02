@@ -32,10 +32,6 @@ final class ChatSessionManager {
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
 
-    /// Set from restored scroll state — one-shot, consumed after first use.
-    /// When non-nil, the chat scrolls to this item instead of the bottom.
-    var restorationScrollItemId: String?
-
     private var reconcileTask: Task<Void, Never>?
     private var historyReloadTask: Task<Void, Never>?
     private var stateSyncTask: Task<Void, Never>?
@@ -45,6 +41,10 @@ final class ChatSessionManager {
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
     private var lastSeenSeq: Int
+    private var pendingTTFTStartMs: Int64?
+    private var freshContentLagStartMs: Int64?
+    private var freshContentLagRecorded = false
+    private var loadedFromCacheAtConnect = false
 
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
@@ -155,6 +155,37 @@ final class ChatSessionManager {
         lastSyncFailed = true
     }
 
+    private func beginFreshContentLagMeasurement(hadCache: Bool) {
+        freshContentLagStartMs = ChatMetricsService.nowMs()
+        freshContentLagRecorded = false
+        loadedFromCacheAtConnect = hadCache
+    }
+
+    private func recordFreshContentLagIfNeeded(reason: String, workspaceId: String? = nil) {
+        guard !freshContentLagRecorded,
+              let startedAt = freshContentLagStartMs else { return }
+
+        freshContentLagRecorded = true
+        let durationMs = max(0, ChatMetricsService.nowMs() - startedAt)
+        let metricSessionId = sessionId
+        let cachedTag = loadedFromCacheAtConnect ? "1" : "0"
+        let metricWorkspaceId = workspaceId
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .freshContentLagMs,
+                value: Double(durationMs),
+                unit: .ms,
+                sessionId: metricSessionId,
+                workspaceId: metricWorkspaceId,
+                tags: [
+                    "reason": reason,
+                    "cache": cachedTag,
+                ]
+            )
+        }
+    }
+
     // MARK: - Lifecycle
 
     func markAppeared() {
@@ -198,7 +229,11 @@ final class ChatSessionManager {
         }
 
         sessionStore.activeSessionId = sessionId
+        pendingTTFTStartMs = nil
         markSyncStarted()
+
+        // Measure stale-cache window: from session entry until first confirmed fresh content.
+        beginFreshContentLagMeasurement(hadCache: false)
 
         // Show cached timeline immediately (before network).
         let cached = await TimelineCache.shared.loadTrace(sessionId)
@@ -209,6 +244,7 @@ final class ChatSessionManager {
         }
 
         if let cached, !cached.events.isEmpty {
+            loadedFromCacheAtConnect = true
             reducer.loadSession(cached.events)
             let footprint = SentryService.currentFootprintMB()
             ClientLog.info("Memory", "Session loaded (cache)", metadata: [
@@ -218,21 +254,9 @@ final class ChatSessionManager {
                 "sessionId": sessionId,
             ])
 
-            // Check for scroll position restoration (one-shot from RestorationState).
-            // If the user was scrolled up when the app backgrounded, attempt to restore
-            // an anchor; otherwise start at the bottom.
-            let savedAnchor = connection.scrollAnchorItemId
-            let wasNearBottom = connection.scrollWasNearBottom
-            connection.scrollAnchorItemId = nil
-
-            if let savedAnchor,
-               !wasNearBottom,
-               connection.sessionStore.activeSessionId == sessionId {
-                restorationScrollItemId = savedAnchor
-                log.info("Restoring scroll to \(savedAnchor) for \(self.sessionId)")
-            } else {
-                needsInitialScroll = wasNearBottom
-            }
+            // Always start at the latest message when entering a session.
+            // This keeps chat behavior consistent with terminal agent workflows.
+            needsInitialScroll = true
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
         }
 
@@ -259,14 +283,21 @@ final class ChatSessionManager {
             return
         }
 
-        // Fetch fresh history in background — only rebuilds if changed.
-        scheduleHistoryReload(
-            generation: generation,
-            connection: connection,
-            reducer: reducer,
-            sessionStore: sessionStore,
-            cachedSignature: latestTraceSignature
-        )
+        // Freshness-first: if we already rendered cached history, prioritize
+        // stream + catch-up and avoid eager full trace reload on enter.
+        // Keep full reload fallback for ring miss / seq regression / fetch errors.
+        let hasCachedHistory = cached?.events.isEmpty == false
+        if !hasCachedHistory {
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: latestTraceSignature
+            )
+        } else {
+            log.info("Skipping initial history reload for \(self.sessionId) — cache present")
+        }
 
         guard !Task.isCancelled else {
             cancelHistoryReload()
@@ -319,8 +350,12 @@ final class ChatSessionManager {
                         switch catchUpOutcome {
                         case .fullReloadScheduled:
                             log.info("WS reconnected — scheduled full history reload for \(self.sessionId)")
-                        case .noGap, .applied:
+                        case .noGap:
                             log.info("WS reconnected — catch-up complete for \(self.sessionId), skipping full history reload")
+                            recordFreshContentLagIfNeeded(reason: "catchup_no_gap")
+                        case .applied:
+                            log.info("WS reconnected — catch-up complete for \(self.sessionId), skipping full history reload")
+                            recordFreshContentLagIfNeeded(reason: "catchup_applied")
                         }
                     } else {
                         log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
@@ -341,7 +376,35 @@ final class ChatSessionManager {
                 if seq <= lastSeenSeq {
                     continue
                 }
+                recordFreshContentLagIfNeeded(reason: "stream_seq")
                 updateLastSeenSeq(seq)
+            }
+
+            if case .turnAck(let command, _, let stage, _, _) = message,
+               stage == .dispatched,
+               command == "prompt" || command == "steer" || command == "follow_up",
+               pendingTTFTStartMs == nil {
+                pendingTTFTStartMs = ChatMetricsService.nowMs()
+            }
+
+            if case .agentEnd = message {
+                pendingTTFTStartMs = nil
+            }
+
+            if case .textDelta = message,
+               let startedAt = pendingTTFTStartMs {
+                pendingTTFTStartMs = nil
+                let nowMs = ChatMetricsService.nowMs()
+                let ttftMs = max(0, nowMs - startedAt)
+                let metricSessionId = sessionId
+                Task.detached(priority: .utility) {
+                    await ChatMetricsService.shared.record(
+                        metric: .ttftMs,
+                        value: Double(ttftMs),
+                        unit: .ms,
+                        sessionId: metricSessionId
+                    )
+                }
             }
 
             connection.handleServerMessage(message, sessionId: sessionId)
@@ -488,6 +551,9 @@ final class ChatSessionManager {
     ) async -> CatchUpOutcome {
         guard generation == connectionGeneration else { return .noGap }
 
+        let catchupStartMs = ChatMetricsService.nowMs()
+        let metricSessionId = sessionId
+
         if currentSeq < lastSeenSeq {
             log.warning("Connected currentSeq \(currentSeq) behind lastSeenSeq \(self.lastSeenSeq) — forcing full history reload")
             lastSeenSeq = currentSeq
@@ -499,10 +565,32 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
+            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .catchupMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: ["result": "seq_regression"]
+                )
+            }
             return .fullReloadScheduled
         }
 
-        guard currentSeq > lastSeenSeq else { return .noGap }
+        guard currentSeq > lastSeenSeq else {
+            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .catchupMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: ["result": "no_gap"]
+                )
+            }
+            return .noGap
+        }
 
         let since = lastSeenSeq
         let response: APIClient.SessionEventsResponse?
@@ -534,6 +622,16 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
+            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .catchupMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: ["result": "fetch_failed"]
+                )
+            }
             return .fullReloadScheduled
         }
 
@@ -551,7 +649,32 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: nil
             )
+            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .catchupRingMiss,
+                    value: 1,
+                    unit: .count,
+                    sessionId: self.sessionId
+                )
+                await ChatMetricsService.shared.record(
+                    metric: .catchupMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: ["result": "ring_miss"]
+                )
+            }
             return .fullReloadScheduled
+        }
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .catchupRingMiss,
+                value: 0,
+                unit: .count,
+                sessionId: self.sessionId
+            )
         }
 
         var appliedCatchUp = false
@@ -565,6 +688,17 @@ final class ChatSessionManager {
         if response.currentSeq > lastSeenSeq {
             updateLastSeenSeq(response.currentSeq)
             appliedCatchUp = true
+        }
+
+        let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .catchupMs,
+                value: Double(durationMs),
+                unit: .ms,
+                sessionId: metricSessionId,
+                tags: ["result": appliedCatchUp ? "applied" : "no_gap"]
+            )
         }
 
         return appliedCatchUp ? .applied : .noGap
@@ -596,6 +730,9 @@ final class ChatSessionManager {
             return nil
         }
 
+        let loadStartedMs = ChatMetricsService.nowMs()
+        let metricSessionId = sessionId
+
         do {
             let session: Session
             let trace: [TraceEvent]
@@ -614,6 +751,7 @@ final class ChatSessionManager {
             markSyncSucceeded()
 
             let freshSignature = TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
+            var freshnessReason = "history_empty"
 
             if !trace.isEmpty {
                 // Skip rebuild if trace hasn't changed since cached version
@@ -621,6 +759,7 @@ final class ChatSessionManager {
                    cachedCount == freshSignature.eventCount,
                    cachedLastEventId == freshSignature.lastEventId {
                     log.info("Trace unchanged for \(self.sessionId) — skipping rebuild")
+                    freshnessReason = "history_unchanged"
                 } else {
                     // Avoid clobbering in-flight streaming rows (thinking/tool calls)
                     // with a stale trace snapshot while the session is still running.
@@ -630,6 +769,7 @@ final class ChatSessionManager {
 
                     if shouldDeferRebuild {
                         log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
+                        freshnessReason = "history_deferred"
                     } else {
                         reducer.loadSession(trace)
                         needsInitialScroll = true
@@ -641,13 +781,28 @@ final class ChatSessionManager {
                             "timelineItems": String(reducer.items.count),
                             "sessionId": self.sessionId,
                         ])
+                        freshnessReason = "history_applied"
                     }
                 }
             }
 
+            recordFreshContentLagIfNeeded(reason: freshnessReason, workspaceId: workspaceId)
+
             // Always update cache with fresh data
             Task.detached {
                 await TimelineCache.shared.saveTrace(self.sessionId, events: trace)
+            }
+
+            let durationMs = max(0, ChatMetricsService.nowMs() - loadStartedMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .fullReloadMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    workspaceId: workspaceId,
+                    tags: ["traceEvents": String(trace.count)]
+                )
             }
 
             return freshSignature

@@ -238,6 +238,18 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .timelineApplyMs,
+                value: Double(durationMs),
+                unit: .ms,
+                tags: [
+                    "items": String(token.itemCount),
+                    "changed": String(token.changedCount),
+                ]
+            )
+        }
+
         guard durationMs >= slowApplyThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
 
@@ -292,6 +304,15 @@ enum ChatTimelinePerf {
 
         if durationMs >= guardrailLayoutThresholdMs {
             hardGuardrailBreachCount &+= 1
+        }
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .timelineLayoutMs,
+                value: Double(durationMs),
+                unit: .ms,
+                tags: ["items": String(token.itemCount)]
+            )
         }
 
         guard durationMs >= slowLayoutThresholdMs else { return }

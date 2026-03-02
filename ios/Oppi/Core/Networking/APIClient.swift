@@ -657,6 +657,11 @@ actor APIClient {
         _ = try await post("/telemetry/metrickit", body: body)
     }
 
+    /// Upload chat performance metric samples for baseline tracking.
+    func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
+        _ = try await post("/telemetry/chat-metrics", body: body)
+    }
+
     // MARK: - Private
 
     private func get(_ path: String) async throws -> Data {

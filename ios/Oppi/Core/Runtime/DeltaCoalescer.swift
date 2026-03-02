@@ -70,9 +70,23 @@ final class DeltaCoalescer {
     private func deliverBuffer() {
         guard !buffer.isEmpty else { return }
         let events = buffer
+        let flushedBytes = bufferedBytes
         buffer.removeAll(keepingCapacity: true)
         bufferedBytes = 0
         onFlush?(events)
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .coalescerFlushEvents,
+                value: Double(events.count),
+                unit: .count
+            )
+            await ChatMetricsService.shared.record(
+                metric: .coalescerFlushBytes,
+                value: Double(flushedBytes),
+                unit: .count
+            )
+        }
     }
 
     private func appendBuffered(_ event: AgentEvent) {

@@ -119,6 +119,7 @@ struct ExpandedComposerView: View {
                     autocorrectionEnabled: composerAutocorrectionEnabled,
                     onPasteImages: handlePastedImages,
                     onCommandEnter: handleSend,
+                    onAlternateEnter: handleSend,
                     autoFocusOnAppear: false
                 )
 

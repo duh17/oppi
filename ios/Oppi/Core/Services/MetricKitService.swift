@@ -27,6 +27,10 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
     }
 
     func setUploadClient(_ client: APIClient?) {
+        Task {
+            await ChatMetricsService.shared.setUploadClient(client)
+        }
+
         guard Self.metricKitUploadEnabled else { return }
 
         Task {
@@ -97,7 +101,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         return false
     }
 
-    private static func makeMetadata() -> MetricKitUploadMetadata {
+    fileprivate static func makeMetadata() -> MetricKitUploadMetadata {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -382,5 +386,150 @@ private enum MetricKitPayloadSerializer {
         }
 
         return String(describing: value)
+    }
+}
+
+actor ChatMetricsService {
+    static let shared = ChatMetricsService()
+
+    private var apiClient: APIClient?
+    private var metadata: MetricKitUploadMetadata?
+    private var backlog: [ChatMetricSample] = []
+    private var flushing = false
+    private var flushTask: Task<Void, Never>?
+
+    private let maxPending = 1_000
+    private let maxBatchSize = 50
+    private let flushInterval: Duration = .seconds(10)
+
+    private init() {}
+
+    func setUploadClient(_ client: APIClient?) {
+        apiClient = client
+        if metadata == nil {
+            metadata = MetricKitService.makeMetadata()
+        }
+
+        guard client != nil else {
+            return
+        }
+
+        flushIfNeeded()
+    }
+
+    func record(
+        metric: ChatMetricName,
+        value: Double,
+        unit: ChatMetricUnit,
+        sessionId: String? = nil,
+        workspaceId: String? = nil,
+        tags: [String: String] = [:],
+        timestampMs: Int64 = ChatMetricsService.nowMs()
+    ) {
+        guard value.isFinite else { return }
+
+        var trimmedTags: [String: String]? = nil
+        if !tags.isEmpty {
+            var out: [String: String] = [:]
+            out.reserveCapacity(min(tags.count, 16))
+            for (key, tagValue) in tags {
+                if out.count >= 16 { break }
+                let cleanKey = String(key.prefix(96))
+                guard !cleanKey.isEmpty else { continue }
+                out[cleanKey] = String(tagValue.prefix(256))
+            }
+            if !out.isEmpty {
+                trimmedTags = out
+            }
+        }
+
+        let sample = ChatMetricSample(
+            ts: timestampMs,
+            metric: metric,
+            value: value,
+            unit: unit,
+            sessionId: sessionId.flatMap { $0.isEmpty ? nil : String($0.prefix(96)) },
+            workspaceId: workspaceId.flatMap { $0.isEmpty ? nil : String($0.prefix(96)) },
+            tags: trimmedTags
+        )
+
+        backlog.append(sample)
+        if backlog.count > maxPending {
+            backlog.removeFirst(backlog.count - maxPending)
+        }
+
+        if backlog.count >= maxBatchSize {
+            flushIfNeeded()
+        } else {
+            scheduleFlushTimerIfNeeded()
+        }
+    }
+
+    func flushIfNeeded() {
+        guard !flushing else { return }
+        guard !backlog.isEmpty else { return }
+
+        Task { [weak self] in
+            await self?.flushLoop()
+        }
+    }
+
+    private func flushLoop() async {
+        guard !flushing else { return }
+        flushing = true
+        defer { flushing = false }
+
+        flushTask?.cancel()
+        flushTask = nil
+
+        guard let metadata else {
+            return
+        }
+
+        guard let apiClient else {
+            scheduleFlushTimerIfNeeded()
+            return
+        }
+
+        while !backlog.isEmpty {
+            let batch = Array(backlog.prefix(maxBatchSize))
+            backlog.removeFirst(min(maxBatchSize, backlog.count))
+
+            let request = ChatMetricUploadRequest(
+                generatedAt: ChatMetricsService.nowMs(),
+                appVersion: metadata.appVersion,
+                buildNumber: metadata.buildNumber,
+                osVersion: metadata.osVersion,
+                deviceModel: metadata.deviceModel,
+                samples: batch
+            )
+
+            do {
+                try await apiClient.uploadChatMetrics(request: request)
+            } catch {
+                backlog = batch + backlog
+                scheduleFlushTimerIfNeeded()
+                return
+            }
+        }
+    }
+
+    private func scheduleFlushTimerIfNeeded() {
+        guard flushTask == nil else { return }
+
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.flushInterval ?? .seconds(10))
+            guard !Task.isCancelled else { return }
+            await self?.flushTaskFired()
+        }
+    }
+
+    private func flushTaskFired() {
+        flushTask = nil
+        flushIfNeeded()
+    }
+
+    nonisolated static func nowMs() -> Int64 {
+        Int64((Date().timeIntervalSince1970 * 1_000).rounded())
     }
 }

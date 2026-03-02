@@ -73,7 +73,7 @@ struct ServerConnectionRoutingTests {
     }
 
     @MainActor
-    @Test func routeQueueItemStartedRemovesItemAndAppendsSystemEvent() {
+    @Test func routeQueueItemStartedRemovesItemAndAppendsUserMessage() {
         let conn = makeTestConnection()
         let initial = MessageQueueState(
             version: 2,
@@ -96,12 +96,12 @@ struct ServerConnectionRoutingTests {
         #expect(stored.followUp.isEmpty)
 
         guard let first = conn.reducer.items.first,
-              case .systemEvent(_, let text) = first else {
-            Issue.record("Expected queue started system event")
+              case .userMessage(_, let text, let images, _) = first else {
+            Issue.record("Expected queue started user message")
             return
         }
-        #expect(text.contains("Message Queue"))
-        #expect(text.contains("Follow-up"))
+        #expect(text == "follow one")
+        #expect(images.isEmpty)
     }
 
     @MainActor

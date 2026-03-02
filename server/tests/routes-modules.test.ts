@@ -732,6 +732,80 @@ describe("routes modules", () => {
       }
     });
 
+    it("stores normalized chat metric payloads in daily JSONL files", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            appVersion: "1.0.0",
+            samples: [
+              {
+                ts: generatedAt - 250,
+                metric: "chat.ttft_ms",
+                value: 812,
+                unit: "ms",
+                sessionId: "session-1",
+                workspaceId: "workspace-1",
+                tags: { phase: "baseline" },
+              },
+              {
+                ts: generatedAt,
+                metric: "chat.catchup_ring_miss",
+                value: 1,
+                unit: "count",
+              },
+              {
+                ts: generatedAt + 15,
+                metric: "chat.fresh_content_lag_ms",
+                value: 420,
+                unit: "ms",
+                tags: { reason: "history_applied", cache: "1" },
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const dayFile = join(
+          dataDir,
+          "diagnostics",
+          "telemetry",
+          `chat-metrics-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+        );
+        const lines = readFileSync(dayFile, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(1);
+
+        const record = JSON.parse(lines[0]) as {
+          appVersion?: string;
+          sampleCount: number;
+          samples: Array<{ metric: string; value: number }>;
+        };
+        expect(record.appVersion).toBe("1.0.0");
+        expect(record.sampleCount).toBe(3);
+        expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
+        expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("prunes old telemetry files based on retention window", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-telemetry-prune-"));
       const previousRetention = process.env.OPPI_METRICKIT_RETENTION_DAYS;
@@ -787,6 +861,65 @@ describe("routes modules", () => {
           delete process.env.OPPI_METRICKIT_RETENTION_DAYS;
         } else {
           process.env.OPPI_METRICKIT_RETENTION_DAYS = previousRetention;
+        }
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("prunes old chat metrics files based on retention window", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-prune-"));
+      const previousRetention = process.env.OPPI_CHAT_METRICS_RETENTION_DAYS;
+      process.env.OPPI_CHAT_METRICS_RETENTION_DAYS = "1";
+
+      try {
+        const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+        mkdirSync(telemetryDir, { recursive: true });
+
+        const oldDate = new Date(Date.now() - 12 * 24 * 60 * 60 * 1_000);
+        const oldPath = join(
+          telemetryDir,
+          `chat-metrics-${oldDate.toISOString().slice(0, 10)}.jsonl`,
+        );
+        writeFileSync(oldPath, '{"legacy":true}\n');
+
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt: Date.now(),
+            samples: [
+              {
+                ts: Date.now(),
+                metric: "chat.timeline_apply_ms",
+                value: 32,
+                unit: "ms",
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const files = readdirSync(telemetryDir);
+        expect(files.length).toBe(1);
+        expect(files[0]).not.toContain(oldDate.toISOString().slice(0, 10));
+      } finally {
+        if (previousRetention === undefined) {
+          delete process.env.OPPI_CHAT_METRICS_RETENTION_DAYS;
+        } else {
+          process.env.OPPI_CHAT_METRICS_RETENTION_DAYS = previousRetention;
         }
         rmSync(dataDir, { recursive: true, force: true });
       }

@@ -10,6 +10,7 @@ enum UIHangHarnessConfig {
         let isEnabled: Bool
         let streamDisabled: Bool
         let includeVisualFixtures: Bool
+        let includeWriteMarkdownFixture: Bool
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
     }
@@ -17,6 +18,7 @@ enum UIHangHarnessConfig {
     private struct StickyState {
         let noStream: Bool
         let includeVisualFixtures: Bool
+        let includeWriteMarkdownFixture: Bool
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
     }
@@ -27,6 +29,7 @@ enum UIHangHarnessConfig {
     private static let stickyTimestampKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.timestamp"
     private static let stickyNoStreamKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.noStream"
     private static let stickyVisualFixturesKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.visualFixtures"
+    private static let stickyWriteMarkdownFixtureKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.writeMarkdownFixture"
     private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
     private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
     private static let stickyTTLSeconds: TimeInterval = 180
@@ -73,6 +76,14 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    static var includeWriteMarkdownFixture: Bool {
+#if DEBUG
+        launchContext.includeWriteMarkdownFixture
+#else
+        false
+#endif
+    }
+
     static var mixedContentFixtures: Bool {
 #if DEBUG
         launchContext.mixedContentFixtures
@@ -99,6 +110,7 @@ enum UIHangHarnessConfig {
             || environment["PI_UI_HANG_HARNESS"] == "1"
         let explicitNoStream = environment["PI_UI_HANG_NO_STREAM"] == "1"
         let explicitVisualFixtures = environment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] == "1"
+        let explicitWriteMarkdownFixture = environment["PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE"] == "1"
         let explicitMixedContent = environment["PI_UI_HANG_MIXED_CONTENT"] == "1"
         let explicitQueueHarness = environment["PI_UI_HANG_QUEUE_HARNESS"] == "1"
 
@@ -106,6 +118,7 @@ enum UIHangHarnessConfig {
             persistStickyState(
                 noStream: explicitNoStream,
                 includeVisualFixtures: explicitVisualFixtures,
+                includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
                 queueHarnessEnabled: explicitQueueHarness
             )
@@ -113,6 +126,7 @@ enum UIHangHarnessConfig {
                 isEnabled: true,
                 streamDisabled: explicitNoStream,
                 includeVisualFixtures: explicitVisualFixtures,
+                includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
                 queueHarnessEnabled: explicitQueueHarness
             )
@@ -124,6 +138,7 @@ enum UIHangHarnessConfig {
                 isEnabled: true,
                 streamDisabled: stickyState.noStream,
                 includeVisualFixtures: stickyState.includeVisualFixtures,
+                includeWriteMarkdownFixture: stickyState.includeWriteMarkdownFixture,
                 mixedContentFixtures: stickyState.mixedContentFixtures,
                 queueHarnessEnabled: stickyState.queueHarnessEnabled
             )
@@ -137,6 +152,7 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: explicitNoStream,
             includeVisualFixtures: explicitVisualFixtures,
+            includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
             mixedContentFixtures: explicitMixedContent,
             queueHarnessEnabled: explicitQueueHarness
         )
@@ -159,6 +175,7 @@ enum UIHangHarnessConfig {
     private static func persistStickyState(
         noStream: Bool,
         includeVisualFixtures: Bool,
+        includeWriteMarkdownFixture: Bool,
         mixedContentFixtures: Bool,
         queueHarnessEnabled: Bool
     ) {
@@ -166,6 +183,7 @@ enum UIHangHarnessConfig {
         stickyDefaults.set(now, forKey: stickyTimestampKey)
         stickyDefaults.set(noStream, forKey: stickyNoStreamKey)
         stickyDefaults.set(includeVisualFixtures, forKey: stickyVisualFixturesKey)
+        stickyDefaults.set(includeWriteMarkdownFixture, forKey: stickyWriteMarkdownFixtureKey)
         stickyDefaults.set(mixedContentFixtures, forKey: stickyMixedContentKey)
         stickyDefaults.set(queueHarnessEnabled, forKey: stickyQueueHarnessKey)
     }
@@ -184,6 +202,7 @@ enum UIHangHarnessConfig {
         return StickyState(
             noStream: defaults.bool(forKey: stickyNoStreamKey),
             includeVisualFixtures: defaults.bool(forKey: stickyVisualFixturesKey),
+            includeWriteMarkdownFixture: defaults.bool(forKey: stickyWriteMarkdownFixtureKey),
             mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey),
             queueHarnessEnabled: defaults.bool(forKey: stickyQueueHarnessKey)
         )
@@ -194,6 +213,7 @@ enum UIHangHarnessConfig {
         defaults.removeObject(forKey: stickyTimestampKey)
         defaults.removeObject(forKey: stickyNoStreamKey)
         defaults.removeObject(forKey: stickyVisualFixturesKey)
+        defaults.removeObject(forKey: stickyWriteMarkdownFixtureKey)
         defaults.removeObject(forKey: stickyMixedContentKey)
         defaults.removeObject(forKey: stickyQueueHarnessKey)
     }
@@ -203,6 +223,7 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: true,
             includeVisualFixtures: false,
+            includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
             queueHarnessEnabled: false
         )
@@ -214,6 +235,7 @@ enum UIHangHarnessConfig {
             isEnabled: false,
             streamDisabled: true,
             includeVisualFixtures: false,
+            includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
             queueHarnessEnabled: false
         )
@@ -616,6 +638,10 @@ struct UIHangHarnessView: View {
         extensionTextToolItemID(for: selectedSession)
     }
 
+    private var writeMarkdownToolID: String {
+        writeMarkdownToolItemID(for: selectedSession)
+    }
+
     private var extensionMarkdownIsExpandedValue: Int {
         connection.reducer.expandedItemIDs.contains(extensionMarkdownToolID) ? 1 : 0
     }
@@ -626,6 +652,10 @@ struct UIHangHarnessView: View {
 
     private var extensionMarkdownIsTopVisibleValue: Int {
         scrollController.currentTopVisibleItemId == extensionMarkdownToolID ? 1 : 0
+    }
+
+    private var writeMarkdownIsExpandedValue: Int {
+        connection.reducer.expandedItemIDs.contains(writeMarkdownToolID) ? 1 : 0
     }
 
     private var offsetYValue: Int {
@@ -703,6 +733,9 @@ struct UIHangHarnessView: View {
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
             seedExtensionMarkdownFixtures()
             seedExtensionTextFixtures()
+            if UIHangHarnessConfig.includeWriteMarkdownFixture {
+                seedWriteMarkdownFixtures()
+            }
             startDiagnosticsLoop()
             restartStreamingLoop()
 
@@ -722,6 +755,9 @@ struct UIHangHarnessView: View {
             renderWindow = min(Self.initialRenderWindow, currentItems.count)
             seedExtensionMarkdownFixtures()
             seedExtensionTextFixtures()
+            if UIHangHarnessConfig.includeWriteMarkdownFixture {
+                seedWriteMarkdownFixtures()
+            }
             heartbeat &+= 1
             restartStreamingLoop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -783,6 +819,12 @@ struct UIHangHarnessView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("harness.extensionText.focus")
+
+                Button("Write Markdown") {
+                    focusWriteMarkdownTool()
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("harness.writeMarkdown.focus")
 
                 Button("Visual Image") {
                     scrollToVisualUserImage(animated: false)
@@ -873,6 +915,7 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.visualTools", value: visualToolCount)
             diagnosticValue(id: "diag.extensionExpanded", value: extensionMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.extensionTextExpanded", value: extensionTextIsExpandedValue)
+            diagnosticValue(id: "diag.writeMarkdownExpanded", value: writeMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.extensionTop", value: extensionMarkdownIsTopVisibleValue)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
@@ -1038,6 +1081,10 @@ struct UIHangHarnessView: View {
         "\(session.rawValue)-visual-tool-extension-a"
     }
 
+    private func writeMarkdownToolItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-tool-write"
+    }
+
     private func visualExtensionMarkdown(for session: HarnessSession) -> String {
         var sections: [String] = ["# Extension harness notes — \(session.title)"]
         for index in 1...22 {
@@ -1058,6 +1105,27 @@ struct UIHangHarnessView: View {
             "extension lookup result — \(session.title)",
             "status: in_progress",
         ] + bodySections).joined(separator: "\n")
+    }
+
+    private func visualWriteMarkdownContent(for session: HarnessSession) -> String {
+        var sections: [String] = [
+            "# Chat Timeline Code Paths (Streaming + Normal Output)",
+            "Status: current as of 2026-03-01.",
+            "",
+            "This fixture mirrors a long-form write payload that tends to trigger scroll staggering when expanded.",
+        ]
+
+        for index in 1...32 {
+            sections.append("## Section \(index)")
+            sections.append(
+                "1. live streaming output\n2. finalized output\n3. reconnect catch-up\n4. fallback reload"
+            )
+            sections.append(
+                "Detailed paragraph \(index): explain reducer, coalescer, and collection-view self-sizing interactions for markdown-heavy rows."
+            )
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 
     private func seedExtensionMarkdownFixtures() {
@@ -1088,6 +1156,20 @@ struct UIHangHarnessView: View {
             let extensionID = extensionTextToolItemID(for: session)
             let output = visualExtensionTextOutput(for: session)
             _ = connection.reducer.toolOutputStore.append(output, to: extensionID)
+        }
+    }
+
+    private func seedWriteMarkdownFixtures() {
+        for session in HarnessSession.allCases {
+            let writeID = writeMarkdownToolItemID(for: session)
+            let markdown = visualWriteMarkdownContent(for: session)
+
+            connection.reducer.toolArgsStore.set([
+                "path": .string("design/chat-timeline-code-paths.md"),
+                "content": .string(markdown),
+            ], for: writeID)
+
+            connection.reducer.toolOutputStore.clear(itemIDs: Set([writeID]))
         }
     }
 
@@ -1125,6 +1207,16 @@ struct UIHangHarnessView: View {
         connection.reducer.expandedItemIDs.insert(extensionID)
         heartbeat &+= 1
         issueScrollCommand(id: extensionID, anchor: .top, animated: false)
+    }
+
+    private func focusWriteMarkdownTool() {
+        let writeID = writeMarkdownToolItemID(for: selectedSession)
+        guard currentItems.contains(where: { $0.id == writeID }) else { return }
+
+        renderWindow = currentItems.count
+        connection.reducer.expandedItemIDs.insert(writeID)
+        heartbeat &+= 1
+        issueScrollCommand(id: writeID, anchor: .top, animated: false)
     }
 
     private func scrollToVisualUserImage(animated: Bool) {

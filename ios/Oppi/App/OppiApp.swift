@@ -593,13 +593,11 @@ struct OppiApp: App {
 
         // Security profile is server-config managed and no longer required for launch.
 
-        // 2. Restore UI state (tab, active session, draft, scroll position)
+        // 2. Restore UI state (tab, active session, draft)
         if let restored {
             navigation.selectedTab = AppTab(rawString: restored.selectedTab)
             connection.sessionStore.activeSessionId = restored.activeSessionId
             connection.composerDraft = restored.composerDraft
-            connection.scrollAnchorItemId = restored.scrollAnchorItemId
-            connection.scrollWasNearBottom = restored.wasNearBottom ?? true
         }
 
         // 3. Show cached data immediately (before any network calls)

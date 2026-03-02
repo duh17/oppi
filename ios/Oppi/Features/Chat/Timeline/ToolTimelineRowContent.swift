@@ -160,6 +160,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var imagePreviewDecodeTask: Task<Void, Never>?
     private var expandedViewportMode: ExpandedViewportMode = .none
     private var expandedRenderedText: String?
+    private var expandedMarkdownHeightCacheSignature: Int?
+    private var expandedMarkdownHeightCacheWidth: Int?
+    private var expandedMarkdownHeightCacheValue: CGFloat?
     private var expandedPinchDidTriggerFullScreen = false
     private let expandFloatingButton = UIButton(type: .system)
 
@@ -290,11 +293,29 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 expandedContentView = expandedLabel
             }
 
-            expandedViewportHeightConstraint.constant = preferredViewportHeight(
-                for: expandedContentView,
-                in: expandedContainer,
-                mode: mode
-            )
+            let widthBucket = Int(expandedContainer.bounds.width.rounded())
+            let signature = expandedRenderSignature
+
+            let preferredHeight: CGFloat
+            if expandedUsesMarkdownLayout,
+               signature == expandedMarkdownHeightCacheSignature,
+               widthBucket == expandedMarkdownHeightCacheWidth,
+               let cachedHeight = expandedMarkdownHeightCacheValue {
+                preferredHeight = cachedHeight
+            } else {
+                preferredHeight = preferredViewportHeight(
+                    for: expandedContentView,
+                    in: expandedContainer,
+                    mode: mode
+                )
+                if expandedUsesMarkdownLayout {
+                    expandedMarkdownHeightCacheSignature = signature
+                    expandedMarkdownHeightCacheWidth = widthBucket
+                    expandedMarkdownHeightCacheValue = preferredHeight
+                }
+            }
+
+            expandedViewportHeightConstraint.constant = preferredHeight
         }
     }
 
@@ -632,6 +653,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     /// Reset expanded container to hidden/default state.
     private func hideExpandedContainer(outputColor: UIColor) {
+        expandedMarkdownHeightCacheSignature = nil
+        expandedMarkdownHeightCacheWidth = nil
+        expandedMarkdownHeightCacheValue = nil
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
         expandedLabel.textColor = outputColor
@@ -1333,24 +1357,25 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard viewportHeight > 1 else {
             return false
         }
-
         if !expandedUsesMarkdownLayout && !expandedUsesReadMediaLayout {
             return expandedLabelOverflowsViewport(viewportHeight)
         }
-
-        let overflowY = expandedScrollView.contentSize.height - viewportHeight
-        return overflowY > Self.fullScreenOverflowThreshold
+        let resolvedContentHeight: CGFloat
+        if expandedUsesMarkdownLayout,
+           expandedScrollView.contentSize.height <= 1 {
+            let cellWidth = bounds.width > 10 ? bounds.width : (window?.bounds.width ?? 375)
+            let containerWidth = max(expandedContainer.bounds.width, max(100, cellWidth - 16))
+            resolvedContentHeight = measuredExpandedContentHeight(for: expandedMarkdownView, width: max(1, containerWidth - 12))
+        } else {
+            resolvedContentHeight = expandedScrollView.contentSize.height
+        }
+        return resolvedContentHeight - viewportHeight > Self.fullScreenOverflowThreshold
     }
-
     private func expandedLabelOverflowsViewport(_ viewportHeight: CGFloat) -> Bool {
-        let cellWidth = bounds.width > 10
-            ? bounds.width
-            : (window?.bounds.width ?? 375)
-        let fallbackContainerWidth = max(100, cellWidth - 16)
-        let measuredContainerWidth = max(expandedContainer.bounds.width, fallbackContainerWidth)
-
+        let cellWidth = bounds.width > 10 ? bounds.width : (window?.bounds.width ?? 375)
+        let measuredContainerWidth = max(expandedContainer.bounds.width, max(100, cellWidth - 16))
         let width: CGFloat
-        if (expandedViewportMode == .diff || expandedViewportMode == .code),
+        if expandedViewportMode == .diff || expandedViewportMode == .code,
            let widthConstraint = expandedLabelWidthConstraint,
            widthConstraint.constant > 1 {
             let frameWidth = expandedScrollView.bounds.width > 10
@@ -1360,7 +1385,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         } else {
             width = max(1, measuredContainerWidth - 12)
         }
-
         let contentHeight = measuredExpandedContentHeight(for: expandedLabel, width: width)
         let overflowY = contentHeight - viewportHeight
         return overflowY > Self.fullScreenOverflowThreshold

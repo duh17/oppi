@@ -261,7 +261,6 @@ struct ChatView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
-                saveScrollState()
                 Task {
                     await sessionManager.flushSnapshotIfNeeded(connection: connection)
                 }
@@ -274,7 +273,6 @@ struct ChatView: View {
             audioPlayer.stop()
             let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             connection.composerDraft = draft.isEmpty ? nil : draft
-            saveScrollState()
             Task {
                 await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
             }
@@ -528,12 +526,6 @@ struct ChatView: View {
             sessionStore: sessionStore,
             sessionId: sessionId
         )
-    }
-
-    private func saveScrollState() {
-        let nearBottom = scrollController.isCurrentlyNearBottom
-        connection.scrollWasNearBottom = nearBottom
-        connection.scrollAnchorItemId = nearBottom ? nil : scrollController.currentTopVisibleItemId
     }
 
     private func copySessionID() {
