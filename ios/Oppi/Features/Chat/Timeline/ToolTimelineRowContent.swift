@@ -24,6 +24,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     /// Base64-encoded image data for collapsed inline thumbnail (read tool, image files).
     let collapsedImageBase64: String?
     let collapsedImageMimeType: String?
+    let inlineExpansionLevel: ToolTimelineInlineExpansionLevel
+    let onToggleInlineExpansion: (() -> Void)?
     let isExpanded: Bool
     let isDone: Bool
     let isError: Bool
@@ -164,6 +166,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedMarkdownHeightCacheWidth: Int?
     private var expandedMarkdownHeightCacheValue: CGFloat?
     private var expandedPinchDidTriggerFullScreen = false
+    private let inlineExpansionButton = UIButton(type: .system)
     private let expandFloatingButton = UIButton(type: .system)
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
@@ -327,9 +330,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputLabelWidthConstraint.priority = .required
             outputLabelWidthConstraint.constant = outputLabelWidthConstant(for: outputRenderedText)
         } else {
-            // First self-sizing pass can see frameLayoutGuide width=0.
-            // Keep wrapped-text width at high (not required) priority so
-            // systemLayoutSizeFitting can inject a temporary fitting width.
             outputLabelWidthConstraint.priority = .defaultHigh
             outputLabelWidthConstraint.constant = -12
         }
@@ -354,8 +354,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedLabelWidthConstraint.constant = expandedLabelWidthConstant(for: expandedRenderedText)
 
         case .text, .none:
-            // Wrapped text modes can arrive before frameLayoutGuide has a real
-            // width. Keep this at high priority so fitting width can win.
             expandedLabelWidthConstraint.priority = .defaultHigh
             expandedLabelWidthConstraint.constant = -12
         }
@@ -392,19 +390,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         in container: UIView,
         mode: ViewportMode
     ) -> CGFloat {
-        // Use the best width available: container > cell > window > 375.
-        // Before the first layout pass bounds can be zero, which causes
-        // text measurement at width 1px and wildly inflated heights.
         let cellWidth = bounds.width > 10
             ? bounds.width
             : (window?.bounds.width ?? 375)
         let fallbackContainerWidth = max(100, cellWidth - 16)
         let measuredContainerWidth = max(container.bounds.width, fallbackContainerWidth)
 
-        // For diff/horizontal-scroll modes, measure at the label's actual
-        // width (lines don't wrap). Using the container width would cause
-        // text wrapping in the measurement, producing a height much taller
-        // than the real rendered content.
         let width: CGFloat
         if mode == .expandedDiff || mode == .expandedCode,
            let widthConstraint = expandedLabelWidthConstraint,
@@ -412,7 +403,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             let frameWidth = expandedScrollView.bounds.width > 10
                 ? expandedScrollView.bounds.width
                 : measuredContainerWidth
-            // Width constraint is relative to frameLayoutGuide width.
             width = max(1, frameWidth + widthConstraint.constant)
         } else if mode == .output,
                   outputUsesUnwrappedLayout,
@@ -525,8 +515,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         expandedReadMediaContentView = view
 
-        // Ensure first-pass sizing converges before the collection view's next
-        // self-sizing cycle (important for hosted + async media paths).
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.setNeedsLayout()
@@ -538,7 +526,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     // MARK: - Collapsed Image Preview
 
     private func applyImagePreview(configuration: ToolTimelineRowConfiguration) {
-        // Show only when collapsed and base64 data is available.
         guard !configuration.isExpanded,
               let base64 = configuration.collapsedImageBase64,
               !base64.isEmpty else {
@@ -552,15 +539,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         imagePreviewContainer.isHidden = false
 
-        // Stable key uses both prefix and suffix to avoid collisions.
         let key = ImageDecodeCache.decodeKey(for: base64, maxPixelSize: 720)
         guard key != imagePreviewDecodedKey else { return }
         imagePreviewDecodedKey = key
 
-        // Fixed container height prevents secondary cell-size jumps when image decode finishes.
         imagePreviewHeightConstraint?.constant = Self.collapsedImagePreviewHeight
 
-        // Cancel previous decode task if still running.
         imagePreviewDecodeTask?.cancel()
         imagePreviewImageView.image = nil
 
@@ -579,20 +563,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaContentView = nil
     }
 
-    /// Reset the markdown view so it no longer contributes intrinsic size.
-    ///
-    /// Called when switching away from markdown mode. The markdown view's
-    /// constraints still bind to the scroll view's content layout guide,
-    /// so stale content would conflict with the active view's constraints.
-    /// Uses `clearContent()` instead of `apply(configuration:)` to bypass
-    /// the equality guard and cache pipeline for guaranteed cleanup.
     private func clearExpandedMarkdownContent() {
         expandedMarkdownView.clearContent()
     }
 
     // MARK: - Expanded Content Helpers
 
-    /// Prepare for label-based expanded content (diff, code, plain text).
     private func showExpandedLabel() {
         expandedMarkdownView.isHidden = true
         expandedLabel.isHidden = false
@@ -600,15 +576,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
-        // Clear stale markdown content to prevent constraint conflicts.
-        // All three expanded subviews pin to the same contentLayoutGuide
-        // edges at required priority. If the markdown view retains content
-        // from a previous cell reuse cycle, its intrinsic height conflicts
-        // with the label's, and Auto Layout may zero out the label frame.
         clearExpandedMarkdownContent()
     }
 
-    /// Prepare for markdown expanded content.
     private func showExpandedMarkdown() {
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
@@ -618,16 +588,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = true
         expandedUsesReadMediaLayout = false
         clearExpandedReadMediaView()
-        // Reset the label width constraint from code/diff mode (required priority,
-        // large constant) to the default wrapped-text state. The hidden label's
-        // constraints still participate in layout and can force the shared
-        // contentLayoutGuide wider than the markdown view expects, enabling
-        // unintended horizontal scrolling and scroll-gesture conflicts.
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
     }
 
-    /// Prepare for embedded expanded content (UIKit-first, optional SwiftUI fallback).
     private func showExpandedHostedView() {
         expandedLabel.attributedText = nil
         expandedLabel.text = nil
@@ -637,15 +601,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedUsesMarkdownLayout = false
         expandedUsesReadMediaLayout = true
         clearExpandedMarkdownContent()
-        // Reset the label width constraint from code/diff mode to prevent
-        // the hidden label from dominating contentLayoutGuide width.
         expandedLabelWidthConstraint?.priority = .defaultHigh
         expandedLabelWidthConstraint?.constant = -12
         updateExpandedReadMediaWidthIfNeeded()
         setExpandedContainerGestureInterceptionEnabled(false)
     }
 
-    /// Activate the expanded viewport height constraint.
     private func showExpandedViewport() {
         expandedViewportHeightConstraint?.isActive = true
         expandedUsesViewport = true
@@ -727,6 +688,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         imagePreviewContainer.addInteraction(UIContextMenuInteraction(delegate: self))
         imagePreviewContainer.addSubview(imagePreviewImageView)
 
+        ToolTimelineRowViewStyler.styleInlineExpansionButton(inlineExpansionButton)
+        inlineExpansionButton.addTarget(self, action: #selector(handleInlineExpansionButtonTap), for: .touchUpInside)
+
         ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
         expandFloatingButton.addTarget(self, action: #selector(handleExpandFloatingButtonTap), for: .touchUpInside)
 
@@ -756,6 +720,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bodyStack.addArrangedSubview(commandContainer)
         bodyStack.addArrangedSubview(outputContainer)
         bodyStack.addArrangedSubview(expandedContainer)
+        bodyStack.addArrangedSubview(inlineExpansionButton)
 
         commandContainer.isUserInteractionEnabled = true
         outputContainer.isUserInteractionEnabled = true
@@ -820,10 +785,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         outputViewportHeightConstraint = layout.outputViewportHeight
         expandedViewportHeightConstraint = layout.expandedViewportHeight
 
-        // During the first self-sizing measurement pass, scroll view frame
-        // layout guides can still report width=0. Keep markdown/hosted width
-        // constraints below required priority so systemLayoutSizeFitting can
-        // provide a temporary fitting width instead of measuring at 0px.
         expandedMarkdownWidthConstraint?.priority = .defaultHigh
         expandedReadMediaWidthConstraint?.priority = .defaultHigh
 
@@ -870,7 +831,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             previewLabel: previewLabel
         )
 
-        // Collapsed image thumbnail for read tool image files
         applyImagePreview(configuration: configuration)
 
         let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
@@ -885,6 +845,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         var showExpandedContainer = false
         var showCommandContainer = false
         var showOutputContainer = false
+        var inlineToggleTitle: String?
 
         if configuration.isExpanded, let rawExpandedContent = configuration.expandedContent {
             let expandedContent = normalizedExpandedContentForHotPath(rawExpandedContent)
@@ -894,9 +855,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             let visibility = ToolTimelineRowExpandedModeRouter.route(
                 expandedContent: expandedContent,
                 renderBash: { command, output, unwrapped in
-                    self.renderExpandedBashMode(
+                    let resolvedOutput = output.map {
+                        self.inlineExpansionResolution(for: $0, mode: .bashOutput)
+                    }
+                    inlineToggleTitle = resolvedOutput?.toggleTitle
+
+                    return self.renderExpandedBashMode(
                         command: command,
-                        output: output,
+                        output: resolvedOutput?.text,
                         unwrapped: unwrapped,
                         configuration: configuration,
                         outputColor: outputColor,
@@ -907,15 +873,21 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     self.renderExpandedDiffMode(lines: lines, path: path)
                 },
                 renderCode: { text, language, startLine in
-                    self.renderExpandedCodeMode(
-                        text: text,
+                    let resolved = self.inlineExpansionResolution(for: text, mode: .code)
+                    inlineToggleTitle = resolved.toggleTitle
+
+                    return self.renderExpandedCodeMode(
+                        text: resolved.text,
                         language: language,
                         startLine: startLine
                     )
                 },
                 renderMarkdown: { text in
-                    self.renderExpandedMarkdownMode(
-                        text: text,
+                    let resolved = self.inlineExpansionResolution(for: text, mode: .markdown)
+                    inlineToggleTitle = resolved.toggleTitle
+
+                    return self.renderExpandedMarkdownMode(
+                        text: resolved.text,
                         wasExpandedVisible: wasExpandedVisible,
                         isDone: configuration.isDone
                     )
@@ -932,8 +904,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     )
                 },
                 renderText: { text, language in
-                    self.renderExpandedTextMode(
-                        text: text,
+                    let resolved = self.inlineExpansionResolution(for: text, mode: .text)
+                    inlineToggleTitle = resolved.toggleTitle
+
+                    return self.renderExpandedTextMode(
+                        text: resolved.text,
                         language: language,
                         configuration: configuration,
                         outputColor: outputColor,
@@ -947,7 +922,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             showOutputContainer = visibility.showOutputContainer
         }
 
-        // Hide containers that aren't needed by the active content
         if !showExpandedContainer {
             hideExpandedContainer(outputColor: outputColor)
         }
@@ -972,10 +946,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
 
         if !showOutputContainer {
-            // Do not pass stored properties by `inout` directly here.
-            // resetOutputState() programmatically updates contentOffset, which
-            // synchronously triggers scrollViewDidScroll and can re-enter
-            // outputShouldAutoFollow mutation while inout access is active.
             var localOutputUsesUnwrappedLayout = outputUsesUnwrappedLayout
             var localOutputRenderedText = outputRenderedText
             var localOutputRenderSignature = outputRenderSignature
@@ -1020,18 +990,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             outputScrollView.isScrollEnabled = false
         }
 
+        applyInlineExpansionButton(
+            title: inlineToggleTitle,
+            hasExpandedSurface: showExpandedContainer || showOutputContainer
+        )
+
         let showImagePreview = !imagePreviewContainer.isHidden
-        let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer
+        let showInlineToggle = !inlineExpansionButton.isHidden
+        let showBody = showPreview || showImagePreview || showExpandedContainer || showCommandContainer || showOutputContainer || showInlineToggle
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
         updateViewportHeightsIfNeeded()
         updateExpandFloatingButtonVisibility()
 
         if isExpandingTransition {
-            // Reuse path: an expanded code/diff row can leave stack-view layout
-            // caches with stale large fitting heights until the next layout pass.
-            // Force one synchronous layout on expand so first self-sizing uses
-            // current constraints/content instead of stale cached geometry.
             setNeedsLayout()
             layoutIfNeeded()
         }
@@ -1208,11 +1180,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let didRerenderMarkdown = localExpandedRenderSignature != previousExpandedRenderSignature
         let didEnterMarkdownLayout = !wasUsingMarkdownLayout && expandedUsesMarkdownLayout
 
-        // Markdown subviews are added synchronously but Auto Layout hasn't
-        // measured them yet when preferredViewportHeight runs in the same
-        // cycle. Defer one layout invalidation only when markdown content
-        // actually changed (or mode switched into markdown). Re-invalidating
-        // every apply causes avoidable mid-gesture reflows and scroll snapback.
         if didRerenderMarkdown || didEnterMarkdownLayout {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -1332,6 +1299,30 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return visibility
     }
 
+    private func inlineExpansionResolution(
+        for text: String,
+        mode: ToolTimelineInlineExpansionMode
+    ) -> ToolTimelineInlineExpansionResolution {
+        ToolTimelineInlineExpansion.resolve(
+            text: text,
+            mode: mode,
+            level: currentConfiguration.inlineExpansionLevel
+        )
+    }
+
+    private func applyInlineExpansionButton(title: String?, hasExpandedSurface: Bool) {
+        guard hasExpandedSurface,
+              let title,
+              currentConfiguration.onToggleInlineExpansion != nil else {
+            inlineExpansionButton.isHidden = true
+            inlineExpansionButton.setTitle(nil, for: .normal)
+            return
+        }
+
+        inlineExpansionButton.isHidden = false
+        inlineExpansionButton.setTitle(title, for: .normal)
+    }
+
     private func updateExpandFloatingButtonVisibility() {
         let shouldShow = !expandedContainer.isHidden
             && fullScreenContent != nil
@@ -1393,8 +1384,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func normalizedExpandedContentForHotPath(
         _ content: ToolPresentationBuilder.ToolExpandedContent
     ) -> ToolPresentationBuilder.ToolExpandedContent {
-        // Expanded tool content is now UIKit-first for timeline hot paths.
-        // SwiftUI is preserved behind per-view install gates as a fallback.
         content
     }
 
@@ -1436,10 +1425,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
     #endif
 
-    @objc private func ignoreTap() {
-        // Intentionally empty: consumes single taps inside copy-target areas so
-        // collection-view row selection does not interfere with copy gestures.
-    }
+    @objc private func ignoreTap() {}
 
     @objc private func handleCommandDoubleTap() {
         guard let text = commandCopyText else { return }
@@ -1461,6 +1447,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         copy(text: text, feedbackView: expandedContainer)
     }
 
+    @objc private func handleInlineExpansionButtonTap() {
+        currentConfiguration.onToggleInlineExpansion?()
+    }
+
     @objc private func handleExpandFloatingButtonTap() {
         showFullScreenContent()
     }
@@ -1471,9 +1461,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     @discardableResult
     func presentCollapsedImagePreviewIfAvailable() -> Bool {
-        // Requires a presenter in the responder chain. UI test harnesses that
-        // attach collection views directly to windows may intentionally skip
-        // modal presentation and fall back to default row expansion behavior.
         guard ToolTimelineRowPresentationHelpers.nearestViewController(from: self) != nil else {
             return false
         }
