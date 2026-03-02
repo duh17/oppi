@@ -77,40 +77,6 @@ struct ChatView: View {
     /// Show toolbar when composing (keyboard up) or at bottom of chat.
     /// Hide when scrolled up to read history.
 
-    private var runtimeSyncState: RuntimeStatusBadge.SyncState {
-        guard let wsClient = connection.wsClient else {
-            return .offline
-        }
-
-        let ownsSession = connection.activeSessionId == sessionId
-
-        let isWsSyncing: Bool
-        let isWsDisconnected: Bool
-        switch wsClient.status {
-        case .connecting, .reconnecting:
-            isWsSyncing = true
-            isWsDisconnected = false
-        case .connected:
-            isWsSyncing = false
-            isWsDisconnected = false
-        case .disconnected:
-            isWsSyncing = false
-            isWsDisconnected = true
-        }
-
-        let isSyncing = ownsSession && (isWsSyncing || sessionManager.isSyncing)
-        let lastSyncFailed = !ownsSession || isWsDisconnected || sessionManager.lastSyncFailed
-
-        let freshness = FreshnessState.derive(
-            lastSuccessfulSyncAt: sessionManager.lastSuccessfulSyncAt,
-            isSyncing: isSyncing,
-            lastSyncFailed: lastSyncFailed,
-            staleAfter: 120
-        )
-
-        return .init(freshness)
-    }
-
     private var contextUsageSnapshot: ContextUsageSnapshot {
         let fallbackWindow: Int?
         if let model = session?.model {
@@ -409,8 +375,7 @@ struct ChatView: View {
                 showContextInspector = true
             } label: {
                 ContextUsageRingBadge(
-                    usage: contextUsageSnapshot,
-                    syncState: runtimeSyncState
+                    usage: contextUsageSnapshot
                 )
                 .padding(.horizontal, 4)
                 .padding(.trailing, 4)

@@ -135,7 +135,40 @@ extension ServerConnection {
                 cacheWrite: cacheWrite,
                 total: total
             ),
-            cost: cost
+            cost: cost,
+            contextComposition: parseContextComposition(root["contextComposition"])
+        )
+    }
+
+    private static func parseContextComposition(_ value: JSONValue?) -> SessionContextCompositionSnapshot? {
+        guard let object = value?.objectValue else {
+            return nil
+        }
+
+        let piSystemPromptChars = parseInt(object["piSystemPromptChars"]) ?? 0
+        let piSystemPromptTokens = parseInt(object["piSystemPromptTokens"]) ?? 0
+        let agentsChars = parseInt(object["agentsChars"]) ?? 0
+        let agentsTokens = parseInt(object["agentsTokens"]) ?? 0
+
+        let agentsFiles: [ContextFileTokenSnapshot] = object["agentsFiles"]?.arrayValue?.compactMap { item in
+            guard let file = item.objectValue,
+                  let path = file["path"]?.stringValue else {
+                return nil
+            }
+
+            return ContextFileTokenSnapshot(
+                path: path,
+                chars: parseInt(file["chars"]) ?? 0,
+                tokens: parseInt(file["tokens"]) ?? 0
+            )
+        } ?? []
+
+        return SessionContextCompositionSnapshot(
+            piSystemPromptChars: piSystemPromptChars,
+            piSystemPromptTokens: piSystemPromptTokens,
+            agentsChars: agentsChars,
+            agentsTokens: agentsTokens,
+            agentsFiles: agentsFiles
         )
     }
 

@@ -17,9 +17,24 @@ struct SessionTokenStats: Equatable, Sendable {
     let total: Int
 }
 
+struct ContextFileTokenSnapshot: Equatable, Sendable {
+    let path: String
+    let chars: Int
+    let tokens: Int
+}
+
+struct SessionContextCompositionSnapshot: Equatable, Sendable {
+    let piSystemPromptChars: Int
+    let piSystemPromptTokens: Int
+    let agentsChars: Int
+    let agentsTokens: Int
+    let agentsFiles: [ContextFileTokenSnapshot]
+}
+
 struct SessionStatsSnapshot: Equatable, Sendable {
     let tokens: SessionTokenStats
     let cost: Double
+    let contextComposition: SessionContextCompositionSnapshot?
 }
 
 // MARK: - Error Types
