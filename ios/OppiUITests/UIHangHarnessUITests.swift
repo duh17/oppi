@@ -7,6 +7,18 @@ import XCTest
 @MainActor
 final class UIHangHarnessUITests: UIHarnessTestCase {
 
+    private var stressModeEnabled: Bool {
+        ProcessInfo.processInfo.environment["PI_UI_HANG_STRESS"] == "1"
+    }
+
+    private func requireStressMode(_ testName: String) throws {
+        guard stressModeEnabled else {
+            throw XCTSkip(
+                "\(testName) disabled by default for fast UI runs; set PI_UI_HANG_STRESS=1 to enable"
+            )
+        }
+    }
+
     func testSessionSwitchNoStalls() throws {
         launchHarness(noStream: true)
 
@@ -438,6 +450,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     }
 
     func testExpandedToolRowsReconfigureStressNoStalls() throws {
+        try requireStressMode("testExpandedToolRowsReconfigureStressNoStalls")
+
         launchHarness(noStream: true, includeVisualFixtures: true)
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)
@@ -491,6 +505,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     }
 
     func testChatScrollSmoothnessPerfGuardMixedContent() throws {
+        try requireStressMode("testChatScrollSmoothnessPerfGuardMixedContent")
+
         launchHarness(noStream: true, includeVisualFixtures: true, mixedContent: true)
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)

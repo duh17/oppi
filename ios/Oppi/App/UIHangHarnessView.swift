@@ -32,7 +32,9 @@ enum UIHangHarnessConfig {
     private static let stickyWriteMarkdownFixtureKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.writeMarkdownFixture"
     private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
     private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
-    private static let stickyTTLSeconds: TimeInterval = 180
+    // Keep sticky harness launch knobs alive long enough for long-running UI
+    // suites where CoreSimulator may relaunch the app mid-run.
+    private static let stickyTTLSeconds: TimeInterval = 900
 
     private static let launchContext = resolveLaunchContext()
 

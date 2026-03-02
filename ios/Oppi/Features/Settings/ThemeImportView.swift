@@ -26,7 +26,7 @@ struct ThemeImportView: View {
                 ContentUnavailableView(
                     "No Custom Themes",
                     systemImage: "paintbrush",
-                    description: Text("No themes found on server.\nAsk the agent to create one!")
+                    description: Text("No themes found on server.\nAsk the agent to create one.")
                 )
             } else {
                 themeList
