@@ -34,6 +34,9 @@ enum ChatMetricName: String, Codable, Sendable {
     case inboundQueueDepth = "chat.inbound_queue_depth"
     case fullReloadMs = "chat.full_reload_ms"
     case freshContentLagMs = "chat.fresh_content_lag_ms"
+    case cacheLoadMs = "chat.cache_load_ms"
+    case reducerLoadMs = "chat.reducer_load_ms"
+    case wsConnectMs = "chat.ws_connect_ms"
 }
 
 enum ChatMetricUnit: String, Codable, Sendable {
