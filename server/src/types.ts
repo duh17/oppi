@@ -2,9 +2,6 @@
  * Core types for oppi-server.
  */
 
-import type { StyledSegment } from "./mobile-renderer.js";
-import type { GitStatus } from "./git-status.js";
-
 // ─── Workspaces ───
 
 export interface Workspace {
@@ -216,6 +213,59 @@ export interface ServerConfig {
 export interface ApiError {
   error: string;
   code?: string;
+}
+
+// ─── Shared UI payload types ───
+
+export interface StyledSegment {
+  text: string;
+  style?: "bold" | "muted" | "dim" | "accent" | "success" | "warning" | "error";
+}
+
+// ─── Git status ───
+
+export interface GitFileStatus {
+  /** Two-char status code from `git status --porcelain` (e.g. " M", "??", "A ") */
+  status: string;
+  /** File path relative to repo root */
+  path: string;
+  /** Lines added vs HEAD (null for binary/untracked) */
+  addedLines: number | null;
+  /** Lines removed vs HEAD (null for binary/untracked) */
+  removedLines: number | null;
+}
+
+export interface GitStatus {
+  /** Whether the directory is a git repo */
+  isGitRepo: boolean;
+  /** Current branch name (null if detached HEAD) */
+  branch: string | null;
+  /** Short SHA of HEAD */
+  headSha: string | null;
+  /** Commits ahead of upstream (null if no upstream) */
+  ahead: number | null;
+  /** Commits behind upstream (null if no upstream) */
+  behind: number | null;
+  /** Number of dirty (uncommitted) files */
+  dirtyCount: number;
+  /** Number of untracked files */
+  untrackedCount: number;
+  /** Number of staged files */
+  stagedCount: number;
+  /** Individual file statuses (capped to first 500) */
+  files: GitFileStatus[];
+  /** Total file count if capped */
+  totalFiles: number;
+  /** Total lines added vs HEAD (tracked files only) */
+  addedLines: number;
+  /** Total lines removed vs HEAD (tracked files only) */
+  removedLines: number;
+  /** Number of stash entries */
+  stashCount: number;
+  /** Most recent commit subject line */
+  lastCommitMessage: string | null;
+  /** ISO timestamp of most recent commit */
+  lastCommitDate: string | null;
 }
 
 // ─── Local Sessions ───

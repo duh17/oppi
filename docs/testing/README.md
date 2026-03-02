@@ -19,6 +19,12 @@ Coherence enforcement:
 - `server/scripts/check-testing-policy.mjs`
 - `cd server && npm run check:testing-policy`
 
+Architecture boundary enforcement:
+
+- `server/scripts/check-architecture-boundaries.mjs`
+- `cd server && npm run check:architecture`
+- `cd ios && xcodebuild ... build` also runs the iOS architecture boundary script in the Oppi pre-build phase.
+
 ## Required gate commands
 
 PR fast gate:

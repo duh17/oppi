@@ -9,54 +9,10 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
-// ─── Types ───
-
-export interface GitFileStatus {
-  /** Two-char status code from `git status --porcelain` (e.g. " M", "??", "A ") */
-  status: string;
-  /** File path relative to repo root */
-  path: string;
-  /** Lines added vs HEAD (null for binary/untracked) */
-  addedLines: number | null;
-  /** Lines removed vs HEAD (null for binary/untracked) */
-  removedLines: number | null;
-}
-
-export interface GitStatus {
-  /** Whether the directory is a git repo */
-  isGitRepo: boolean;
-  /** Current branch name (null if detached HEAD) */
-  branch: string | null;
-  /** Short SHA of HEAD */
-  headSha: string | null;
-  /** Commits ahead of upstream (null if no upstream) */
-  ahead: number | null;
-  /** Commits behind upstream (null if no upstream) */
-  behind: number | null;
-  /** Number of dirty (uncommitted) files */
-  dirtyCount: number;
-  /** Number of untracked files */
-  untrackedCount: number;
-  /** Number of staged files */
-  stagedCount: number;
-  /** Individual file statuses (capped to first 500) */
-  files: GitFileStatus[];
-  /** Total file count if capped */
-  totalFiles: number;
-  /** Total lines added vs HEAD (tracked files only) */
-  addedLines: number;
-  /** Total lines removed vs HEAD (tracked files only) */
-  removedLines: number;
-  /** Number of stash entries */
-  stashCount: number;
-  /** Most recent commit subject line */
-  lastCommitMessage: string | null;
-  /** ISO timestamp of most recent commit */
-  lastCommitDate: string | null;
-}
+import type { GitFileStatus, GitStatus } from "./types.js";
 
 const FILE_CAP = 500;
 const GIT_TIMEOUT_MS = 5000;

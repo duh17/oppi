@@ -1,8 +1,19 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 
+import {
+  findServerLayerViolations,
+  normalizeRepoPath,
+} from "./scripts/architecture-layer-rules.mjs";
+
 const FILE_SIZE_LIMIT = 500;
+
+const serverRoot = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(serverRoot, "..");
 
 function isConsoleLogCall(node) {
   const callee =
@@ -120,6 +131,49 @@ const localPlugin = {
         };
       },
     },
+    "architecture-layer-boundaries": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Enforce server dependency directions from ARCHITECTURE.md",
+        },
+        schema: [],
+      },
+      create(context) {
+        return {
+          Program(node) {
+            if (!context.physicalFilename || context.physicalFilename === "<input>") {
+              return;
+            }
+
+            const relativePath = normalizeRepoPath(path.relative(repoRoot, context.physicalFilename));
+            if (!relativePath.startsWith("server/src/") || !relativePath.endsWith(".ts")) {
+              return;
+            }
+
+            const violations = findServerLayerViolations(repoRoot, [relativePath]);
+
+            for (const violation of violations) {
+              const line = violation.line ?? 1;
+              const column = Math.max(0, (violation.column ?? 1) - 1);
+              const edge =
+                violation.importer && violation.target
+                  ? ` Edge: ${violation.importer} -> ${violation.target}.`
+                  : "";
+
+              context.report({
+                node,
+                loc: {
+                  start: { line, column },
+                  end: { line, column },
+                },
+                message: `${violation.reason} ${violation.remediation} See ${violation.guide}.${edge}`,
+              });
+            }
+          },
+        };
+      },
+    },
   },
 };
 
@@ -163,6 +217,7 @@ export default tseslint.config(
       "no-return-await": "error",
       "local/file-size-limit": "warn",
       "local/structured-log-format": "warn",
+      "local/architecture-layer-boundaries": "error",
 
       // TypeScript-specific
       "@typescript-eslint/no-explicit-any": "warn",
