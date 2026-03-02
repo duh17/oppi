@@ -124,6 +124,7 @@ struct PastableTextView: UIViewRepresentable {
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
+    let onAlternateEnter: (() -> Void)?
     let onOverflowChange: ((Bool) -> Void)?
     let onLineCountChange: ((Int) -> Void)?
     let onFocusChange: ((Bool) -> Void)?
@@ -144,6 +145,7 @@ struct PastableTextView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
+        textView.onAlternateEnter = onAlternateEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -188,6 +190,7 @@ struct PastableTextView: UIViewRepresentable {
         }
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
+        textView.onAlternateEnter = onAlternateEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -466,6 +469,7 @@ struct FullSizeTextView: UIViewRepresentable {
     let autocorrectionEnabled: Bool
     let onPasteImages: ([UIImage]) -> Void
     let onCommandEnter: (() -> Void)?
+    let onAlternateEnter: (() -> Void)?
     let autoFocusOnAppear: Bool
 
     func makeUIView(context: Context) -> PastableUITextView {
@@ -473,6 +477,7 @@ struct FullSizeTextView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
+        textView.onAlternateEnter = onAlternateEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -511,6 +516,7 @@ struct FullSizeTextView: UIViewRepresentable {
         }
         textView.onPasteImages = onPasteImages
         textView.onCommandEnter = onCommandEnter
+        textView.onAlternateEnter = onAlternateEnter
         textView.font = font
         textView.textColor = textColor
         textView.tintColor = tintColor
@@ -586,6 +592,7 @@ struct FullSizeTextView: UIViewRepresentable {
 final class PastableUITextView: UITextView {
     var onPasteImages: (([UIImage]) -> Void)?
     var onCommandEnter: (() -> Void)?
+    var onAlternateEnter: (() -> Void)?
     var onKeyboardRestoreRequest: (() -> Void)?
 
     /// When true, keyboard is hidden but cursor remains visible via empty `inputView`.
@@ -619,11 +626,21 @@ final class PastableUITextView: UITextView {
                 action: #selector(handleCommandReturn),
                 discoverabilityTitle: "Send"
             ),
+            UIKeyCommand(
+                input: "\r",
+                modifierFlags: .alternate,
+                action: #selector(handleAlternateReturn),
+                discoverabilityTitle: "Queue Follow-up"
+            ),
         ]
     }
 
     @objc private func handleCommandReturn() {
         onCommandEnter?()
+    }
+
+    @objc private func handleAlternateReturn() {
+        onAlternateEnter?()
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {

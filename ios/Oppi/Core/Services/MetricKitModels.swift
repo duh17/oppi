@@ -21,3 +21,42 @@ struct MetricKitUploadRequest: Codable, Sendable {
     let deviceModel: String
     let payloads: [MetricKitPayloadItem]
 }
+
+enum ChatMetricName: String, Codable, Sendable {
+    case ttftMs = "chat.ttft_ms"
+    case catchupMs = "chat.catchup_ms"
+    case catchupRingMiss = "chat.catchup_ring_miss"
+    case timelineApplyMs = "chat.timeline_apply_ms"
+    case timelineLayoutMs = "chat.timeline_layout_ms"
+    case wsDecodeMs = "chat.ws_decode_ms"
+    case coalescerFlushEvents = "chat.coalescer_flush_events"
+    case coalescerFlushBytes = "chat.coalescer_flush_bytes"
+    case inboundQueueDepth = "chat.inbound_queue_depth"
+    case fullReloadMs = "chat.full_reload_ms"
+    case freshContentLagMs = "chat.fresh_content_lag_ms"
+}
+
+enum ChatMetricUnit: String, Codable, Sendable {
+    case ms
+    case count
+    case ratio
+}
+
+struct ChatMetricSample: Codable, Sendable {
+    let ts: Int64
+    let metric: ChatMetricName
+    let value: Double
+    let unit: ChatMetricUnit
+    let sessionId: String?
+    let workspaceId: String?
+    let tags: [String: String]?
+}
+
+struct ChatMetricUploadRequest: Codable, Sendable {
+    let generatedAt: Int64
+    let appVersion: String
+    let buildNumber: String
+    let osVersion: String
+    let deviceModel: String
+    let samples: [ChatMetricSample]
+}

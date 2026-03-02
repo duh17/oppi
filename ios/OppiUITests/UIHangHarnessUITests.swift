@@ -334,6 +334,86 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
     }
 
+    func testExpandedWriteMarkdownScrollNoStagger() throws {
+        launchHarness(
+            noStream: true,
+            includeVisualFixtures: true,
+            includeWriteMarkdownFixture: true
+        )
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 8)
+
+        let writeFocus = app.descendants(matching: .any)["harness.writeMarkdown.focus"]
+        let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+
+        XCTAssertTrue(writeFocus.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+        let frameP95Before = pollDiagnostic("diag.frameP95", timeout: 4)
+
+        writeFocus.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.writeMarkdownExpanded", equals: 1, timeout: 4), 1)
+
+        diagTick.tap()
+        let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+
+        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: baselineOffset,
+            minimumDelta: 30,
+            direction: .increasing,
+            context: "upward drag inside expanded write markdown"
+        )
+
+        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: offsetAfterUpDrag,
+            minimumDelta: 30,
+            direction: .decreasing,
+            context: "downward drag inside expanded write markdown"
+        )
+
+        let offsetAfterPastWriteDrag = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: offsetAfterDownDrag,
+            minimumDelta: 56,
+            direction: .increasing,
+            context: "scrolling past expanded write markdown"
+        )
+
+        let offsetAfterReturnDown = dragTimelineUntilOffsetMoves(
+            timeline,
+            diagTick: diagTick,
+            baseline: offsetAfterPastWriteDrag,
+            minimumDelta: 30,
+            direction: .decreasing,
+            context: "downward drag after passing expanded write markdown"
+        )
+
+        Thread.sleep(forTimeInterval: 0.35)
+        diagTick.tap()
+
+        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        XCTAssertLessThanOrEqual(
+            abs(settledOffset - offsetAfterReturnDown),
+            16,
+            "Offset snapped back after downward drag past expanded write markdown (down=\(offsetAfterReturnDown), settled=\(settledOffset))"
+        )
+
+        let frameP95After = pollDiagnostic("diag.frameP95", timeout: 4)
+        let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+
+        XCTAssertLessThanOrEqual(frameP95After, max(55, frameP95Before + 18))
+        XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 0)
+    }
+
     func testExpandedToolRowsReconfigureStressNoStalls() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 

@@ -40,7 +40,7 @@ extension ServerConnection {
                 item: item,
                 queueVersion: queueVersion
             )
-            reducer.appendSystemEvent(queueStartedMessage(kind: kind, item: item))
+            reducer.appendUserMessage(item.message, images: item.images ?? [])
 
         case .extensionUIRequest(let request):
             extensionTimeoutTask?.cancel()
@@ -235,19 +235,6 @@ extension ServerConnection {
         }
 
         syncLiveActivityPermissions()
-    }
-
-    func queueStartedMessage(kind: MessageQueueKind, item: MessageQueueItem) -> String {
-        let trimmed = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snippet = trimmed.isEmpty ? "(attachment)" : trimmed
-        let preview: String
-        if snippet.count > 120 {
-            preview = String(snippet.prefix(117)) + "…"
-        } else {
-            preview = snippet
-        }
-        let label = kind == .steer ? "Steering" : "Follow-up"
-        return "Message Queue • \(label) started: \(preview)"
     }
 
     func decodeQueueStateFromCommandData(_ data: JSONValue?) -> MessageQueueState? {

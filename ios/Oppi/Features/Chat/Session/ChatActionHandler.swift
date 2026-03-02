@@ -124,13 +124,6 @@ final class ChatActionHandler {
                             self.updateSendAckStage(stage)
                         })
                     }
-                    reducer.appendSystemEvent(
-                        self.busyQueuedMessage(
-                            behavior: busyStreamingBehavior,
-                            text: trimmed,
-                            imageCount: attachments.count
-                        )
-                    )
                     self.scheduleSendStageClear()
                     Task { @MainActor in
                         try? await connection.requestMessageQueue()
@@ -205,25 +198,6 @@ final class ChatActionHandler {
         }
 
         return ""
-    }
-
-    private func busyQueuedMessage(
-        behavior: StreamingBehavior,
-        text: String,
-        imageCount: Int
-    ) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snippet = trimmed.isEmpty ? "(attachment)" : trimmed
-        let preview: String
-        if snippet.count > 120 {
-            preview = String(snippet.prefix(117)) + "…"
-        } else {
-            preview = snippet
-        }
-
-        let label = behavior == .steer ? "Steering" : "Follow-up"
-        let imageSuffix = imageCount > 0 ? " [\(imageCount) image\(imageCount == 1 ? "" : "s")]" : ""
-        return "Message Queue • \(label) queued: \(preview)\(imageSuffix)"
     }
 
     // MARK: - Bash

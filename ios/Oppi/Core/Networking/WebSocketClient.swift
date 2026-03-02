@@ -37,6 +37,7 @@ final class WebSocketClient {
     private var reconnectTask: Task<Void, Never>?
     private var continuation: AsyncStream<StreamMessage>.Continuation?
     private var inboundMetaQueueBySessionID: [String: [InboundMeta]] = [:]
+    private var inboundMetaQueueHighWaterBySessionID: [String: Int] = [:]
     private var lastReceiveErrorFingerprint: String?
     private var lastReceiveErrorLogNs: UInt64 = 0
 
@@ -187,9 +188,11 @@ final class WebSocketClient {
         case .subscribe(let sessionId, let level, _, _):
             activeSubscriptions[sessionId] = level
             inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
+            inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
         case .unsubscribe(let sessionId, _):
             activeSubscriptions.removeValue(forKey: sessionId)
             inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
+            inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
         default:
             break
         }
@@ -288,6 +291,7 @@ final class WebSocketClient {
         continuation?.finish()
         continuation = nil
         inboundMetaQueueBySessionID.removeAll(keepingCapacity: false)
+        inboundMetaQueueHighWaterBySessionID.removeAll(keepingCapacity: false)
         activeSubscriptions.removeAll()
         lastReceiveErrorFingerprint = nil
         lastReceiveErrorLogNs = 0
@@ -370,6 +374,7 @@ final class WebSocketClient {
                         continue
                     }
 
+                    let decodeStartNs = DispatchTime.now().uptimeNanoseconds
                     let streamMessage: StreamMessage
                     do {
                         streamMessage = try StreamMessage.decode(from: text)
@@ -383,6 +388,19 @@ final class WebSocketClient {
                             ]
                         )
                         continue
+                    }
+
+                    let decodeDurationMs = Double((DispatchTime.now().uptimeNanoseconds &- decodeStartNs) / 1_000_000)
+                    Task.detached(priority: .utility) {
+                        await ChatMetricsService.shared.record(
+                            metric: .wsDecodeMs,
+                            value: decodeDurationMs,
+                            unit: .ms,
+                            sessionId: streamMessage.sessionId,
+                            tags: [
+                                "type": streamMessage.message.typeLabel,
+                            ]
+                        )
                     }
 
                     let inboundMeta = InboundMeta(seq: streamMessage.seq, currentSeq: streamMessage.currentSeq)
@@ -402,6 +420,20 @@ final class WebSocketClient {
                             queue.removeFirst(queue.count - 100)
                         }
                         self.inboundMetaQueueBySessionID[sessionId] = queue
+
+                        let depth = queue.count
+                        let previousHighWater = self.inboundMetaQueueHighWaterBySessionID[sessionId] ?? 0
+                        if depth > previousHighWater {
+                            self.inboundMetaQueueHighWaterBySessionID[sessionId] = depth
+                            Task.detached(priority: .utility) {
+                                await ChatMetricsService.shared.record(
+                                    metric: .inboundQueueDepth,
+                                    value: Double(depth),
+                                    unit: .count,
+                                    sessionId: sessionId
+                                )
+                            }
+                        }
                     }
 
                     // First successful message = connected
