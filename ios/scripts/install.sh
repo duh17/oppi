@@ -106,8 +106,26 @@ ensure_debug_sentry_dsn() {
   fi
 }
 
+telemetry_mode_allows_remote_diagnostics() {
+  local mode="${OPPI_TELEMETRY_MODE:-internal}"
+  mode="$(echo "$mode" | tr '[:upper:]' '[:lower:]' | xargs)"
+
+  case "$mode" in
+    public|release|prod|production|off|disabled|none|false|0)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 if [[ "$CONFIGURATION" == "Debug" ]]; then
-  ensure_debug_sentry_dsn
+  if telemetry_mode_allows_remote_diagnostics; then
+    ensure_debug_sentry_dsn
+  else
+    echo "==> Telemetry mode disables remote diagnostics; skipping SENTRY_DSN requirement"
+  fi
 fi
 
 # ─── Resolve build paths ─────────────────────────────────────────

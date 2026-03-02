@@ -22,6 +22,12 @@ actor SentryService {
         guard !hasConfigured else { return }
         hasConfigured = true
 
+        let mode = TelemetrySettings.mode
+        guard mode.allowsRemoteDiagnosticsUpload else {
+            sentryLog.info("Sentry disabled (mode=\(mode.label, privacy: .public))")
+            return
+        }
+
         let rawValue = (Bundle.main.object(forInfoDictionaryKey: "SentryDSN") as? String) ?? ""
         let dsn = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -31,7 +37,7 @@ actor SentryService {
         }
 
 #if canImport(Sentry)
-        let environment = Self.environmentName()
+        let environment = TelemetrySettings.sentryEnvironmentName
         let releaseName = Self.releaseName()
 
         SentrySDK.start { options in
@@ -175,24 +181,6 @@ actor SentryService {
         }
         guard result == KERN_SUCCESS else { return nil }
         return Int(info.phys_footprint / 1_048_576)
-    }
-
-    private static func environmentName() -> String {
-#if DEBUG
-        return "debug"
-#else
-        let configuredMode = Bundle.main.object(forInfoDictionaryKey: "OPPITelemetryMode") as? String
-        let configured = configuredMode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        switch configured {
-        case "public", "release", "prod", "production":
-            return "release"
-        case "test", "staging", "qa", "internal":
-            return "test"
-        default:
-            return configured ?? "release"
-        }
-#endif
     }
 
     private static func releaseName() -> String {

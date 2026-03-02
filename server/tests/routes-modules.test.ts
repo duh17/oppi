@@ -573,6 +573,46 @@ describe("routes modules", () => {
       expect(JSON.parse(res.body)).toEqual({ error: "since must be a non-negative integer" });
     });
 
+    it("rejects client-log uploads when OPPI_TELEMETRY_MODE disables telemetry", async () => {
+      const previousMode = process.env.OPPI_TELEMETRY_MODE;
+      process.env.OPPI_TELEMETRY_MODE = "public";
+
+      try {
+        const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
+        const res = makeResponse();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/workspaces/ws-1/sessions/s1/client-logs",
+          url: new URL("http://localhost/workspaces/ws-1/sessions/s1/client-logs"),
+          req: makeRequest({
+            generatedAt: Date.now(),
+            entries: [
+              {
+                timestamp: Date.now(),
+                level: "info",
+                category: "Test",
+                message: "hello",
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "telemetry uploads disabled by OPPI_TELEMETRY_MODE",
+        });
+      } finally {
+        if (previousMode === undefined) {
+          delete process.env.OPPI_TELEMETRY_MODE;
+        } else {
+          process.env.OPPI_TELEMETRY_MODE = previousMode;
+        }
+      }
+    });
+
     it("returns false for unrelated routes", async () => {
       const dispatch = createSessionRoutes({} as RouteContext, createRouteHelpers());
 
@@ -802,6 +842,81 @@ describe("routes modules", () => {
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
       } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects telemetry uploads when OPPI_TELEMETRY_MODE disables telemetry", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-telemetry-gate-"));
+      const previousMode = process.env.OPPI_TELEMETRY_MODE;
+      process.env.OPPI_TELEMETRY_MODE = "public";
+
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const generatedAt = Date.now();
+
+        const metrickitRes = makeResponse();
+        const metrickitHandled = await dispatch({
+          method: "POST",
+          path: "/telemetry/metrickit",
+          url: new URL("http://localhost/telemetry/metrickit"),
+          req: makeRequest({
+            generatedAt,
+            payloads: [
+              {
+                kind: "metric",
+                windowStartMs: generatedAt - 100,
+                windowEndMs: generatedAt,
+                summary: { key: "value" },
+                raw: { payload: "{}" },
+              },
+            ],
+          }) as never,
+          res: metrickitRes as never,
+        });
+
+        expect(metrickitHandled).toBe(true);
+        expect(metrickitRes.statusCode).toBe(403);
+        expect(JSON.parse(metrickitRes.body)).toEqual({
+          error: "telemetry uploads disabled by OPPI_TELEMETRY_MODE",
+        });
+
+        const chatRes = makeResponse();
+        const chatHandled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            samples: [
+              {
+                ts: generatedAt,
+                metric: "chat.ttft_ms",
+                value: 200,
+                unit: "ms",
+              },
+            ],
+          }) as never,
+          res: chatRes as never,
+        });
+
+        expect(chatHandled).toBe(true);
+        expect(chatRes.statusCode).toBe(403);
+        expect(JSON.parse(chatRes.body)).toEqual({
+          error: "telemetry uploads disabled by OPPI_TELEMETRY_MODE",
+        });
+      } finally {
+        if (previousMode === undefined) {
+          delete process.env.OPPI_TELEMETRY_MODE;
+        } else {
+          process.env.OPPI_TELEMETRY_MODE = previousMode;
+        }
         rmSync(dataDir, { recursive: true, force: true });
       }
     });

@@ -17,8 +17,8 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         guard !configured else { return }
         configured = true
 
-        guard Self.metricKitUploadEnabled else {
-            metricKitLog.info("MetricKit upload disabled (OPPIDisableMetricKitUpload=1)")
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            metricKitLog.info("MetricKit upload disabled (mode=\(TelemetrySettings.mode.label, privacy: .public))")
             return
         }
 
@@ -31,7 +31,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             await ChatMetricsService.shared.setUploadClient(client)
         }
 
-        guard Self.metricKitUploadEnabled else { return }
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
 
         Task {
             await uploader.setClient(client)
@@ -70,35 +70,11 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
     private func upload(_ items: [MetricKitPayloadItem]) {
         guard !items.isEmpty else { return }
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+
         Task {
             await uploader.enqueue(payloads: items)
         }
-    }
-
-    private static var metricKitUploadEnabled: Bool {
-        !metricKitUploadDisabled
-    }
-
-    private static var metricKitUploadDisabled: Bool {
-        let raw = Bundle.main.object(forInfoDictionaryKey: "OPPIDisableMetricKitUpload")
-        return boolValue(fromInfoValue: raw)
-    }
-
-    private static func boolValue(fromInfoValue value: Any?) -> Bool {
-        if let number = value as? NSNumber {
-            return number.boolValue
-        }
-
-        if let string = value as? String {
-            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            case "1", "true", "yes", "on":
-                return true
-            default:
-                return false
-            }
-        }
-
-        return false
     }
 
     fileprivate static func makeMetadata() -> MetricKitUploadMetadata {
@@ -405,6 +381,14 @@ actor ChatMetricsService {
     private init() {}
 
     func setUploadClient(_ client: APIClient?) {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            apiClient = nil
+            backlog.removeAll(keepingCapacity: true)
+            flushTask?.cancel()
+            flushTask = nil
+            return
+        }
+
         apiClient = client
         if metadata == nil {
             metadata = MetricKitService.makeMetadata()
@@ -427,6 +411,7 @@ actor ChatMetricsService {
         timestampMs: Int64 = ChatMetricsService.nowMs()
     ) {
         guard value.isFinite else { return }
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
 
         var trimmedTags: [String: String]? = nil
         if !tags.isEmpty {
@@ -466,6 +451,7 @@ actor ChatMetricsService {
     }
 
     func flushIfNeeded() {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         guard !flushing else { return }
         guard !backlog.isEmpty else { return }
 
@@ -475,6 +461,11 @@ actor ChatMetricsService {
     }
 
     private func flushLoop() async {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            backlog.removeAll(keepingCapacity: true)
+            return
+        }
+
         guard !flushing else { return }
         flushing = true
         defer { flushing = false }

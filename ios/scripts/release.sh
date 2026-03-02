@@ -107,8 +107,9 @@ Environment:
   REQUIRE_EXPORT_COMPLIANCE      Fail script if compliance update fails (default: 0)
   ASC_COMPLIANCE_WAIT_SECONDS    Wait for uploaded build to appear in ASC (default: 300)
   ASC_COMPLIANCE_POLL_SECONDS    Poll interval while waiting (default: 5)
-  DISABLE_SENTRY_FOR_TESTFLIGHT     Force Sentry DSN empty for public builds (default: 1)
-  DISABLE_METRICKIT_FOR_TESTFLIGHT  Force OPPI_DISABLE_METRICKIT_UPLOAD=1 (default: 1)
+  TESTFLIGHT_TELEMETRY_MODE         Telemetry mode for archive (default: internal)
+                                    internal => enable diagnostics uploads
+                                    public => disable all remote diagnostics uploads
 
 Local config file (optional, gitignored):
   ios/.env.testflight.local
@@ -137,17 +138,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Public/TestFlight builds should ship without third-party crash telemetry.
-if [[ "${DISABLE_SENTRY_FOR_TESTFLIGHT:-1}" == "1" ]]; then
-  export SENTRY_DSN=""
-  echo "── Sentry DSN: disabled for TestFlight build"
-fi
+# Single telemetry gate for release archives.
+# Internal/TestFlight defaults to diagnostics uploads enabled.
+TESTFLIGHT_TELEMETRY_MODE="${TESTFLIGHT_TELEMETRY_MODE:-internal}"
+export OPPI_TELEMETRY_MODE="$TESTFLIGHT_TELEMETRY_MODE"
+echo "── Telemetry mode: $OPPI_TELEMETRY_MODE"
 
-# Public/TestFlight builds should disable MetricKit upload by default.
-if [[ "${DISABLE_METRICKIT_FOR_TESTFLIGHT:-1}" == "1" ]]; then
-  export OPPI_DISABLE_METRICKIT_UPLOAD="1"
-  echo "── MetricKit upload: disabled for TestFlight build (OPPI_DISABLE_METRICKIT_UPLOAD=1)"
-fi
+case "${OPPI_TELEMETRY_MODE,,}" in
+  public|release|prod|production|off|disabled|none|false|0)
+    export SENTRY_DSN=""
+    echo "── Sentry DSN: cleared for public telemetry mode"
+    ;;
+esac
 
 # ─── Changelog ───────────────────────────────────────────────────
 
@@ -1030,8 +1032,7 @@ xcodebuild archive \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   SENTRY_DSN="${SENTRY_DSN:-}" \
-  OPPI_TELEMETRY_MODE="${OPPI_TELEMETRY_MODE:-public}" \
-  OPPI_DISABLE_METRICKIT_UPLOAD="${OPPI_DISABLE_METRICKIT_UPLOAD:-0}" \
+  OPPI_TELEMETRY_MODE="${OPPI_TELEMETRY_MODE:-internal}" \
   "${AUTH_FLAGS[@]}" \
   2>&1 | tee "$ARCHIVE_LOG" | tail -5
 
