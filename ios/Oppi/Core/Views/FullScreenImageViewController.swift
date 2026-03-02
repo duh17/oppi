@@ -7,12 +7,13 @@ import UIKit
 /// share and save-to-photos actions.
 final class FullScreenImageViewController: UIViewController {
     private let image: UIImage
-    private var scrollView: UIScrollView!
-    private var imageView: UIImageView!
+    private let scrollView = UIScrollView()
+    private let imageView: UIImageView
     private var savedFeedbackLabel: UILabel?
 
     init(image: UIImage) {
         self.image = image
+        self.imageView = UIImageView(image: image)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -34,7 +35,6 @@ final class FullScreenImageViewController: UIViewController {
     // MARK: - Setup
 
     private func setupScrollView() {
-        scrollView = UIScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.minimumZoomScale = 1.0
         scrollView.maximumZoomScale = 5.0
@@ -45,7 +45,6 @@ final class FullScreenImageViewController: UIViewController {
     }
 
     private func setupImageView() {
-        imageView = UIImageView(image: image)
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFit
         scrollView.addSubview(imageView)
@@ -159,7 +158,7 @@ final class FullScreenImageViewController: UIViewController {
         savedFeedbackLabel?.removeFromSuperview()
 
         let label = UILabel()
-        label.text = "Saved!"
+        label.text = "Saved"
         label.font = .systemFont(ofSize: 14, weight: .medium)
         label.textColor = .white
         label.textAlignment = .center

@@ -75,7 +75,7 @@ struct OnboardingView: View {
                     ProgressView("Testing connection…")
 
                 case .success:
-                    Label("Connected!", systemImage: "checkmark.circle.fill")
+                    Label("Connected", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.themeGreen)
                         .font(.headline)
 
