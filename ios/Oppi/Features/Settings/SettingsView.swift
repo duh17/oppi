@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var autoSessionTitleEnabled = UserDefaults.standard.object(
         forKey: ChatActionHandler.autoTitleEnabledDefaultsKey
     ) as? Bool ?? false
+    @State private var screenAwakePreset = ScreenAwakePreferences.timeoutPreset
     @State private var showAddServer = false
     @State private var renameServerId: String?
     @State private var renameServerText = ""
@@ -104,6 +105,22 @@ struct SettingsView: View {
                     "Uses the on-device model to generate a short title from the first prompt. "
                         + "When off, the first message is shown instead."
                 )
+            }
+
+            Section {
+                Picker("Keep screen awake", selection: $screenAwakePreset) {
+                    ForEach(ScreenAwakePreferences.TimeoutPreset.allCases) { preset in
+                        Text(preset.label).tag(preset)
+                    }
+                }
+                .onChange(of: screenAwakePreset) { _, newValue in
+                    ScreenAwakePreferences.setTimeoutPreset(newValue)
+                    ScreenAwakeController.shared.refreshFromPreferences()
+                }
+            } header: {
+                Text("Display")
+            } footer: {
+                Text(screenAwakeFooter)
             }
 
             if ReleaseFeatures.liveActivitiesEnabled || ReleaseFeatures.nativePlotRenderingEnabled {
@@ -200,6 +217,15 @@ struct SettingsView: View {
                 NativePlotPreferences.setEnabled(newValue)
             }
         )
+    }
+
+    private var screenAwakeFooter: String {
+        switch screenAwakePreset {
+        case .off:
+            return "Prevents auto-lock only while voice input is active or the agent is working. Screen sleep returns immediately when activity ends."
+        default:
+            return "Prevents auto-lock while voice input is active or the agent is working. After activity ends, keeps the screen awake for \(screenAwakePreset.label)."
+        }
     }
 
     // MARK: - Biometric Section
