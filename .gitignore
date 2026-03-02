@@ -34,8 +34,6 @@ server/coverage/
 # Screen recordings (large, accidental commits)
 ScreenRecording_*.mov
 
-# Internal design/research docs (not for repo)
-docs/design/
 docs/research/
 docs/review/
 server/extensions/
