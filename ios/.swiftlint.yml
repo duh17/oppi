@@ -74,3 +74,20 @@ empty_count:
 enum_case_associated_values_count:
   warning: 7
   error: 10
+
+custom_rules:
+  no_force_unwrap_production:
+    name: "No force unwrap in production code"
+    included: "Oppi|Shared"
+    excluded: "OppiTests"
+    regex: "(?:\\)|\\]|\\b[A-Za-z_][A-Za-z0-9_\\.]*)!(?![=])"
+    message: "Force unwraps are banned in production code. See docs/golden-principles.md#concurrency"
+    severity: error
+
+  main_actor_observable:
+    name: "@Observable classes should be @MainActor"
+    included: "Oppi|Shared"
+    excluded: "OppiTests"
+    regex: "^\\s*@Observable\\s*(?:\\n\\s*@[^\\n]+\\s*)*\\n\\s*(?:final\\s+)?class\\b"
+    message: "Annotate @Observable classes with @MainActor. See docs/golden-principles.md#concurrency"
+    severity: warning
