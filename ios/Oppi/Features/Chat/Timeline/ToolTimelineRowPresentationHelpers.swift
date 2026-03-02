@@ -116,16 +116,55 @@ enum ToolTimelineRowPresentationHelpers {
             }
 
             if isUserInteracting(with: collectionView) {
-                DispatchQueue.main.async { [weak collectionView] in
-                    guard let collectionView else { return }
-                    guard !isUserInteracting(with: collectionView) else { return }
-                    invalidateCollectionViewLayout(collectionView)
-                }
+                scheduleInvalidationWhenInteractionEnds(for: collectionView)
                 return
             }
 
             invalidateCollectionViewLayout(collectionView)
             return
+        }
+    }
+
+    private static var pendingInteractionInvalidations: Set<ObjectIdentifier> = []
+
+    private static func scheduleInvalidationWhenInteractionEnds(for collectionView: UICollectionView) {
+        let identifier = ObjectIdentifier(collectionView)
+        guard pendingInteractionInvalidations.insert(identifier).inserted else {
+            return
+        }
+        recheckInteractionAndInvalidateWhenIdle(
+            collectionView: collectionView,
+            identifier: identifier,
+            retriesRemaining: 180
+        )
+    }
+
+    private static func recheckInteractionAndInvalidateWhenIdle(
+        collectionView: UICollectionView,
+        identifier: ObjectIdentifier,
+        retriesRemaining: Int
+    ) {
+        guard retriesRemaining > 0 else {
+            pendingInteractionInvalidations.remove(identifier)
+            return
+        }
+
+        guard isUserInteracting(with: collectionView) else {
+            pendingInteractionInvalidations.remove(identifier)
+            invalidateCollectionViewLayout(collectionView)
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak collectionView] in
+            guard let collectionView else {
+                pendingInteractionInvalidations.remove(identifier)
+                return
+            }
+            recheckInteractionAndInvalidateWhenIdle(
+                collectionView: collectionView,
+                identifier: identifier,
+                retriesRemaining: retriesRemaining - 1
+            )
         }
     }
 
