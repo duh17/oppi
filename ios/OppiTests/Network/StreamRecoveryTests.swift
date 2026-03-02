@@ -267,9 +267,9 @@ struct StreamRecoveryTests {
     // MARK: - Ping Watchdog
 
     @Test func reconnectDelayFirstAttempt() {
-        // Just verify the reconnect delay calculation still works
+        // Fast tier: 500ms base with ±25% jitter
         let delay = WebSocketClient.reconnectDelay(attempt: 1)
-        #expect(delay >= 0.75 && delay <= 1.25)
+        #expect(delay >= 0.375 && delay <= 0.625)
     }
 
     // MARK: - Edge: rapid agentStart without agentEnd
