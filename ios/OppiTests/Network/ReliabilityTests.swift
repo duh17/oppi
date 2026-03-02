@@ -17,36 +17,39 @@ struct ReliabilityTests {
     // MARK: - Fix 1: Reconnect Jitter
 
     @Test func reconnectDelayBoundsWithJitter() {
-        // Attempt 1: base=1, with ±25% jitter → [0.75, 1.25]
-        // Attempt 3: base=4, with ±25% jitter → [3.0, 5.0]
-        // Attempt 10: base=512→capped at 30, with ±25% → [22.5, 37.5]
+        // Fast tier (1-3): base=0.5, with ±25% jitter → [0.375, 0.625]
+        // Moderate tier (5): base=4, with ±25% jitter → [3.0, 5.0]
+        // Slow tier (10): base=15 cap, with ±25% → [11.25, 18.75]
         for _ in 0..<50 {
             let d1 = WebSocketClient.reconnectDelay(attempt: 1)
-            #expect(d1 >= 0.75 && d1 <= 1.25, "Attempt 1 delay out of range: \(d1)")
+            #expect(d1 >= 0.375 && d1 <= 0.625, "Attempt 1 delay out of range: \(d1)")
 
             let d3 = WebSocketClient.reconnectDelay(attempt: 3)
-            #expect(d3 >= 3.0 && d3 <= 5.0, "Attempt 3 delay out of range: \(d3)")
+            #expect(d3 >= 0.375 && d3 <= 0.625, "Attempt 3 (fast tier) delay out of range: \(d3)")
+
+            let d5 = WebSocketClient.reconnectDelay(attempt: 5)
+            #expect(d5 >= 3.0 && d5 <= 5.0, "Attempt 5 delay out of range: \(d5)")
 
             let d10 = WebSocketClient.reconnectDelay(attempt: 10)
-            #expect(d10 >= 22.5 && d10 <= 37.5, "Attempt 10 (capped) delay out of range: \(d10)")
+            #expect(d10 >= 11.25 && d10 <= 18.75, "Attempt 10 (capped) delay out of range: \(d10)")
         }
     }
 
     @Test func reconnectDelayHasVariance() {
         var delays = Set<Int>()
         for _ in 0..<100 {
-            let d = WebSocketClient.reconnectDelay(attempt: 3)
+            let d = WebSocketClient.reconnectDelay(attempt: 5)
             delays.insert(Int(d * 1000)) // millisecond precision
         }
         #expect(delays.count > 1, "Delays should have variance from jitter")
     }
 
-    @Test func reconnectDelayCapsAt30() {
-        // Very high attempt numbers should still be bounded
+    @Test func reconnectDelayCapsAt15() {
+        // Very high attempt numbers should be bounded at 15s base
         for _ in 0..<20 {
             let d = WebSocketClient.reconnectDelay(attempt: 100)
-            #expect(d <= 37.5, "Delay should be capped: \(d)") // 30 * 1.25
-            #expect(d >= 22.5, "Delay should have minimum: \(d)") // 30 * 0.75
+            #expect(d <= 18.75, "Delay should be capped: \(d)") // 15 * 1.25
+            #expect(d >= 11.25, "Delay should have minimum: \(d)") // 15 * 0.75
         }
     }
 

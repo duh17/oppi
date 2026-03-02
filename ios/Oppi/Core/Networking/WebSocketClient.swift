@@ -61,7 +61,7 @@ final class WebSocketClient {
 
     init(
         credentials: ServerCredentials,
-        waitForConnectionTimeout: Duration = .seconds(3),
+        waitForConnectionTimeout: Duration = .seconds(8),
         waitPollInterval: Duration = .milliseconds(100),
         sendTimeout: Duration = .seconds(5)
     ) {
@@ -95,20 +95,26 @@ final class WebSocketClient {
     /// uses this as the signal to re-subscribe to sessions.
     func connect() -> AsyncStream<StreamMessage> {
         // Disconnect previous connection
+        let oldConn = connectionID
         disconnect()
 
         connectionID &+= 1
         let thisConnection = connectionID
         status = .connecting
-        wsLogInfo("Connect requested to /stream")
+        wsLogInfo("Connect requested to /stream (old=\(oldConn) new=\(thisConnection))")
 
         return AsyncStream { [weak self] continuation in
             self?.continuation = continuation
             self?.openStreamWebSocket(continuation: continuation)
 
-            continuation.onTermination = { [weak self] _ in
+            continuation.onTermination = { [weak self] termination in
                 Task { @MainActor in
-                    guard let self, self.connectionID == thisConnection else { return }
+                    guard let self else { return }
+                    if self.connectionID != thisConnection {
+                        self.wsLogInfo("onTermination skipped (stale: conn=\(thisConnection) current=\(self.connectionID) reason=\(termination))")
+                        return
+                    }
+                    self.wsLogInfo("onTermination disconnect (conn=\(thisConnection) reason=\(termination))")
                     self.disconnect()
                 }
             }
@@ -587,9 +593,22 @@ final class WebSocketClient {
         return meta
     }
 
-    /// Exponential backoff with jitter: 2^(attempt-1) seconds, capped at 30s, ±25% jitter.
+    /// Reconnect delay curve tuned for mobile networking:
+    ///
+    /// - Attempts 1-3: 500ms (transient — suspension wake, network handoff)
+    /// - Attempts 4-6: 2s, 4s, 8s (moderate — server restart, Tailscale reconnect)
+    /// - Attempts 7+:  15s cap (real problems — server down)
+    ///
+    /// ±25% jitter prevents synchronized retries if multiple connections exist.
     nonisolated static func reconnectDelay(attempt: Int) -> TimeInterval {
-        let base = min(pow(2, Double(attempt - 1)), 30)
+        let base: Double
+        switch attempt {
+        case 1...3: base = 0.5
+        case 4:     base = 2
+        case 5:     base = 4
+        case 6:     base = 8
+        default:    base = 15
+        }
         let jitterFactor = Double.random(in: 0.75...1.25)
         return base * jitterFactor
     }

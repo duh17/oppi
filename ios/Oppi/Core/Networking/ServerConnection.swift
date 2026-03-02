@@ -650,6 +650,8 @@ final class ServerConnection {
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<ServerMessage>? {
         guard wsClient != nil else { return nil }
 
+        let streamStart = ContinuousClock.now
+
         // Unsubscribe previous full session (if any)
         if let previousSessionId = activeSessionId, previousSessionId != sessionId {
             unsubscribeSession(previousSessionId)
@@ -670,7 +672,9 @@ final class ServerConnection {
         }
 
         // Ensure /stream is connected
+        let wsStatus = wsClient?.status
         connectStream()
+        let connectMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
 
         // Create per-session stream
         let perSessionStream = AsyncStream<ServerMessage> { continuation in
@@ -695,12 +699,22 @@ final class ServerConnection {
         } catch {
             logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
+        let subscribeMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
 
         do {
             try await requestMessageQueue()
         } catch {
             logger.debug("Initial queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
+        let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
+
+        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) connect=\(connectMs)ms subscribe=\(subscribeMs)ms total=\(totalMs)ms")
+        ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
+            "wsStatus": String(describing: wsStatus),
+            "connectMs": String(connectMs),
+            "subscribeMs": String(subscribeMs),
+            "totalMs": String(totalMs),
+        ])
 
         syncNotificationSubscriptions()
 
