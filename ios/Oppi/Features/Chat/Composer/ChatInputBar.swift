@@ -202,7 +202,10 @@ struct ChatInputBar<ActionRow: View>: View {
             guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
             guard KeyboardLanguageStore.normalize(newLanguage) != nil else { return }
             Task {
-                await manager.prewarm(keyboardLanguage: newLanguage)
+                await manager.prewarm(
+                    keyboardLanguage: newLanguage,
+                    source: "inline_keyboard_change"
+                )
             }
         }
         .fullScreenCover(isPresented: $showCamera) {
@@ -485,7 +488,10 @@ struct ChatInputBar<ActionRow: View>: View {
                     suppressKeyboard = true
                     focusRequestID += 1
                     do {
-                        try await manager.startRecording(keyboardLanguage: keyboardLanguage)
+                        try await manager.startRecording(
+                            keyboardLanguage: keyboardLanguage,
+                            source: "inline_mic_tap"
+                        )
                     } catch {
                         textBeforeRecording = nil
                         suppressKeyboard = false

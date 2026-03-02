@@ -649,16 +649,19 @@ actor APIClient {
 
     /// Upload in-app client logs for a specific session (dev/debug triage).
     func uploadClientLogs(workspaceId: String, sessionId: String, request body: ClientLogUploadRequest) async throws {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         _ = try await post("/workspaces/\(workspaceId)/sessions/\(sessionId)/client-logs", body: body)
     }
 
     /// Upload raw MetricKit payloads for backend trend dashboards.
     func uploadMetricKitPayload(request body: MetricKitUploadRequest) async throws {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         _ = try await post("/telemetry/metrickit", body: body)
     }
 
     /// Upload chat performance metric samples for baseline tracking.
     func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
         _ = try await post("/telemetry/chat-metrics", body: body)
     }
 
