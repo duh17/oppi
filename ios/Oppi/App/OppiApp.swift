@@ -83,6 +83,7 @@ struct OppiApp: App {
 #endif
     @State private var inviteBootstrapInFlight = false
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
+    @State private var backgroundKeepAlive = BackgroundKeepAlive()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -309,6 +310,8 @@ struct OppiApp: App {
                 LiveActivityManager.shared.recoverIfNeeded()
             }
 
+            backgroundKeepAlive.end()
+
             if shouldReconnect {
                 Task {
                     // Active server: full reconnect (WS, session metadata, lists)
@@ -327,6 +330,17 @@ struct OppiApp: App {
                 conn.flushAndSuspend()
             }
             RestorationState.save(from: connection, coordinator: coordinator, navigation: navigation)
+
+            // Keep the WS alive while agents are working so we receive
+            // permission requests and status updates without reconnecting.
+            let hasActiveAgent = connection.sessionStore.sessions.contains {
+                $0.status == .busy || $0.status == .starting
+            }
+            if hasActiveAgent {
+                backgroundKeepAlive.begin(sessionStore: connection.sessionStore)
+            } else {
+                backgroundKeepAlive.end()
+            }
 
         case .inactive:
             break

@@ -265,6 +265,30 @@ final class WebSocketClient {
         return false
     }
 
+    /// Cancel an in-progress reconnect backoff so a fresh connection can start immediately.
+    ///
+    /// Called on foreground recovery: reconnect attempts that accumulated during
+    /// background suspension reflect process suspension failures, not real server
+    /// errors. Resetting here lets `connectStream()` start a fresh connection
+    /// without waiting for the stale backoff timer.
+    ///
+    /// Unlike `disconnect()`, this preserves active subscriptions and the
+    /// continuation so `handleStreamReconnected()` can re-subscribe after
+    /// the new connection opens.
+    func cancelReconnectBackoff() {
+        guard case .reconnecting(let attempt) = status else { return }
+        wsLogInfo("Cancelling reconnect backoff (was attempt \(attempt))")
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        pingTask?.cancel()
+        pingTask = nil
+        webSocket?.cancel(with: .goingAway, reason: nil)
+        webSocket = nil
+        status = .disconnected
+    }
+
     /// Disconnect and clean up.
     func disconnect() {
         wsLogInfo(

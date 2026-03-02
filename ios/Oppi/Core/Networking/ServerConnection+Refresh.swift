@@ -236,8 +236,17 @@ extension ServerConnection {
         foregroundRecoveryInFlight = true
         defer { foregroundRecoveryInFlight = false }
 
-        // 0. Ensure /stream WebSocket is alive. If the WS died during background
-        //    (max reconnect attempts exhausted), restart it now.
+        // 0. Ensure /stream WebSocket is alive.
+        //
+        //    If the WS is mid-reconnect, the backoff was accumulated during
+        //    background suspension — those failures are from iOS killing TCP
+        //    before TLS could finish, not real server errors. Cancel the stale
+        //    backoff so connectStream() starts a fresh connection immediately.
+        if case .reconnecting = wsClient?.status {
+            wsClient?.cancelReconnectBackoff()
+            streamConsumptionTask?.cancel()
+            streamConsumptionTask = nil
+        }
         if wsClient?.status == .disconnected || streamConsumptionTask == nil {
             connectStream()
         }
