@@ -39,6 +39,54 @@ interface SessionCommandDescriptor {
   path?: string;
 }
 
+interface ContextFileTokenSnapshot {
+  path: string;
+  chars: number;
+  tokens: number;
+}
+
+interface SessionContextCompositionSnapshot {
+  piSystemPromptChars: number;
+  piSystemPromptTokens: number;
+  agentsChars: number;
+  agentsTokens: number;
+  agentsFiles: ContextFileTokenSnapshot[];
+}
+
+function estimateTokensFromChars(chars: number): number {
+  if (chars <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function collectSessionContextComposition(
+  session: AgentSession,
+): SessionContextCompositionSnapshot {
+  const piSystemPromptChars = session.systemPrompt.length;
+  const piSystemPromptTokens = estimateTokensFromChars(piSystemPromptChars);
+
+  const agentsFiles = session.resourceLoader.getAgentsFiles().agentsFiles.map((file) => {
+    const chars = file.content.length;
+    return {
+      path: file.path,
+      chars,
+      tokens: estimateTokensFromChars(chars),
+    };
+  });
+
+  const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
+  const agentsTokens = agentsFiles.reduce((sum, file) => sum + file.tokens, 0);
+
+  return {
+    piSystemPromptChars,
+    piSystemPromptTokens,
+    agentsChars,
+    agentsTokens,
+    agentsFiles,
+  };
+}
+
 function collectSessionCommands(session: AgentSession): { commands: SessionCommandDescriptor[] } {
   const commands: SessionCommandDescriptor[] = [];
 
@@ -172,7 +220,13 @@ export class SessionCommandCoordinator {
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
     ["get_messages", (session) => session.messages],
-    ["get_session_stats", (session) => session.getSessionStats()],
+    [
+      "get_session_stats",
+      (session) => ({
+        ...session.getSessionStats(),
+        contextComposition: collectSessionContextComposition(session),
+      }),
+    ],
     ["get_available_models", () => []],
     ["get_commands", (session) => collectSessionCommands(session)],
 
