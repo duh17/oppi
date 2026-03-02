@@ -88,14 +88,14 @@ Mechanical invariants that keep Oppi legible, safe, and agent-friendly.
 
 ## Privacy
 
-- **Keep public/TestFlight builds at zero remote telemetry and no behavior analytics by default.**  
-  Why: Default-off telemetry aligns implementation with Oppi’s explicit privacy posture.  
-  Verify: `docs/telemetry.md` (TL;DR + release defaults in `ios/scripts/release.sh`).
+- **Keep behavior analytics off, and make diagnostics mode an explicit build/runtime choice.**  
+  Why: Separating analytics from diagnostics keeps product data private while allowing operational observability when needed.  
+  Verify: `docs/telemetry.md` (TL;DR + mode matrix) and release defaults in `ios/scripts/release.sh`.
 
 - **Never upload prompt text, assistant output, tool arguments, or transcript content as telemetry.**  
   Why: Conversation content is product data, not diagnostics metadata.  
   Verify: `docs/telemetry.md` (Explicit non-goals).
 
-- **Gate diagnostics channels behind explicit operator opt-in configuration.**  
-  Why: Opt-in diagnostics preserve privacy by requiring conscious activation of Sentry or MetricKit upload.  
-  Verify: `docs/telemetry.md` (optional diagnostics channels + configuration summary).
+- **Gate diagnostics channels behind `OPPI_TELEMETRY_MODE` and support explicit public-mode shutdown.**  
+  Why: A single gate keeps diagnostics predictable and allows hard-disable in privacy-sensitive contexts.  
+  Verify: `docs/telemetry.md` (single telemetry gate + channel behavior details).

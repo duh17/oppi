@@ -1,16 +1,34 @@
-# Telemetry and Privacy Policy (Oppi iOS)
+# Telemetry and Privacy Policy (Oppi iOS + Server)
 
-## TL;DR (public/TestFlight builds)
+## TL;DR (internal/TestFlight builds)
 
 - **No usage analytics are collected.**
-- **No feature usage logs are sent to any remote service by default.**
-- Public/TestFlight builds are configured to send **zero remote telemetry** unless an operator explicitly changes build settings.
+- **No feature usage logs are used for product analytics.**
+- Internal/TestFlight builds default to **remote diagnostics uploads enabled**.
 
-Specifically, the release flow defaults to:
-- `SENTRY_DSN=""` (Sentry disabled)
-- `OPPI_DISABLE_METRICKIT_UPLOAD=1` (MetricKit upload disabled)
+The release flow enforces this with one gate:
+- `OPPI_TELEMETRY_MODE=internal`
 
-This is enforced by `ios/scripts/release.sh` unless intentionally overridden.
+`ios/scripts/release.sh` sets this by default for TestFlight archives.
+To disable remote diagnostics uploads, set `OPPI_TELEMETRY_MODE=public`.
+
+## Single telemetry gate
+
+Oppi uses a single mode switch for remote diagnostics behavior:
+
+- `OPPI_TELEMETRY_MODE=public` (or `release/prod/off` aliases)
+  - disables remote diagnostics uploads
+- `OPPI_TELEMETRY_MODE=internal` (or `debug/test/dev` aliases)
+  - enables remote diagnostics uploads
+
+This gate controls all diagnostics transports:
+1. Sentry events/breadcrumbs/traces
+2. MetricKit upload (`POST /telemetry/metrickit`)
+3. Chat metrics upload (`POST /telemetry/chat-metrics`)
+4. Debug client-log upload (`POST /workspaces/:workspaceId/sessions/:sessionId/client-logs`)
+
+For the build-mode matrix, channel inventory, and full metric catalog, see:
+- [`docs/telemetry-catalog.md`](telemetry-catalog.md)
 
 ## Explicit non-goals (what Oppi does not track)
 
@@ -27,83 +45,44 @@ We also do not upload conversation content as telemetry:
 - tool arguments
 - session transcripts
 
-## What exists only for optional internal diagnostics
+## Channel behavior details
 
-Oppi has two diagnostics channels that can be enabled intentionally for internal testing:
+### Sentry
 
-1. **Sentry** (errors/traces/breadcrumbs)
-2. **MetricKit upload** (`POST /telemetry/metrickit`)
+- Requires **both**:
+  - telemetry mode that allows diagnostics (`internal`)
+  - non-empty `SentryDSN` in `Info.plist`
+- In `public` mode, Sentry is disabled even if a DSN is present.
 
-Both are optional and configuration-gated.
+### MetricKit + chat metrics
 
-### 1) Sentry (optional)
+- Require telemetry mode that allows diagnostics (`internal`).
+- In `public` mode, uploads are dropped client-side.
 
-Sentry is active **only** when `SentryDSN` in `Info.plist` is non-empty.
+### Debug client-log upload
 
-If enabled, it adds environment/release tags (e.g. `app_environment`, `app_release`, `session_id`, `workspace_id`) and captures runtime diagnostics. In public/TestFlight release flow this is disabled by default.
+- Used for development triage tooling.
+- Also governed by telemetry mode.
 
-### 2) MetricKit upload (optional)
+## Server ingestion gate
 
-MetricKit upload is active **only** when:
-- `OPPIDisableMetricKitUpload` is false/0 in `Info.plist`
-- and the app has an API client configured
+Server telemetry endpoints also honor `OPPI_TELEMETRY_MODE`:
+- when mode is public/off aliases, diagnostics upload endpoints reject uploads (`/telemetry/metrickit`, `/telemetry/chat-metrics`, `/workspaces/:workspaceId/sessions/:sessionId/client-logs`)
+- when mode is internal aliases, uploads are accepted
 
-In public/TestFlight release flow this is disabled by default (`OPPI_DISABLE_METRICKIT_UPLOAD=1`).
+This provides defense-in-depth if a client is misconfigured.
 
-When enabled, payloads are diagnostic summaries from Apple MetricKit plus metadata:
-- `appVersion`, `buildNumber`, `osVersion`, `deviceModel`
-- payload window times
-- diagnostic summary fields and sanitized raw MetricKit blob
+## Storage and retention (when enabled)
 
-No prompt/session content is sent in MetricKit payloads.
-
-Example payload shape:
-
-```json
-{
-  "generatedAt": 1739901234567,
-  "appVersion": "1.0.0",
-  "buildNumber": "42",
-  "osVersion": "iOS 26.0",
-  "deviceModel": "iPhone16,6",
-  "payloads": [
-    {
-      "kind": "metric",
-      "windowStartMs": 1739900000000,
-      "windowEndMs": 1739901234567,
-      "summary": { "key": "value" },
-      "raw": { "payload": "..." }
-    }
-  ]
-}
-```
-
-Server storage (when enabled):
-- `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`
-- retention via `OPPI_METRICKIT_RETENTION_DAYS` (default `14`)
-
-## Debug-only client log upload
-
-Client-log upload tooling exists for development triage and is not product analytics:
-- manual toolbar upload is `#if DEBUG`
-- watchdog auto-upload is `#if DEBUG`
-
-These paths are not active in normal release builds.
-
-## Configuration summary
-
-- `SENTRY_DSN` / `Info.plist:SentryDSN`
-  - Empty => Sentry off
-- `OPPI_DISABLE_METRICKIT_UPLOAD` / `Info.plist:OPPIDisableMetricKitUpload`
-  - `1` => MetricKit upload off
-  - `0` => MetricKit upload on
-- `OPPI_TELEMETRY_MODE`
-  - environment tagging only (does not force telemetry transport)
+- MetricKit: `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`
+- Chat metrics: `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl`
+- MetricKit retention: `OPPI_METRICKIT_RETENTION_DAYS` (default `14`)
+- Chat metrics retention: `OPPI_CHAT_METRICS_RETENTION_DAYS` (default `14`)
 
 ## Policy statement
 
-For public usage, Oppi’s intended posture is:
+For current internal usage, Oppi’s default posture is:
 
-> **No behavior analytics, no usage tracking, and no remote telemetry by default.**
+> **No behavior analytics, no usage tracking, and internal diagnostics uploads enabled by default.**
 
-Any diagnostics upload requires explicit operator opt-in via build/runtime configuration.
+Set `OPPI_TELEMETRY_MODE=public` to disable diagnostics uploads (Sentry, MetricKit, chat metrics, and client-log upload).
