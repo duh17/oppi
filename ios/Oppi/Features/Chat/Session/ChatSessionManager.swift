@@ -10,9 +10,27 @@ private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "ChatSes
 /// via `connect()`, which runs until cancelled or disconnected.
 @MainActor @Observable
 final class ChatSessionManager {
-    private struct TraceSignature: Equatable {
+    struct TraceSignature: Equatable {
         let eventCount: Int
         let lastEventId: String?
+    }
+
+    enum DisconnectReason: Equatable {
+        case cancelled
+        case generationChanged
+        case fatalError
+        case streamEnded
+    }
+
+    enum SessionEntryState: Equatable {
+        case idle
+        case loadingCache
+        case cached(events: [TraceEvent], signature: TraceSignature)
+        case connecting(workspaceId: String)
+        case awaitingConnected(workspaceId: String, hasCachedHistory: Bool)
+        case streaming
+        case stopped(historyLoaded: Bool)
+        case disconnected(reason: DisconnectReason)
     }
 
     private enum CatchUpOutcome {
@@ -28,6 +46,8 @@ final class ChatSessionManager {
 
     /// True once `onAppear` has fired at least once.
     private(set) var hasAppeared = false
+
+    private(set) var entryState: SessionEntryState = .idle
 
     /// Set after initial history load to trigger scroll-to-bottom.
     var needsInitialScroll = false
@@ -127,6 +147,45 @@ final class ChatSessionManager {
         return nil
     }
 
+    private func workspaceIdForState(from sessionStore: SessionStore) -> String {
+        resolveWorkspaceId(from: sessionStore) ?? ""
+    }
+
+    private struct TransitionOptions: OptionSet {
+        let rawValue: Int
+
+        static let preserveHistoryReload = Self(rawValue: 1 << 0)
+    }
+
+    private func stateOwnsHistoryReload(_ state: SessionEntryState) -> Bool {
+        switch state {
+        case .awaitingConnected,
+             .streaming,
+             .stopped(historyLoaded: false):
+            return true
+        case .idle,
+             .loadingCache,
+             .cached,
+             .connecting,
+             .stopped(historyLoaded: true),
+             .disconnected:
+            return false
+        }
+    }
+
+    private func transitionTo(_ newState: SessionEntryState, options: TransitionOptions = []) {
+        let oldState = entryState
+        guard oldState != newState else { return }
+
+        if stateOwnsHistoryReload(oldState),
+           !options.contains(.preserveHistoryReload) {
+            cancelHistoryReload()
+        }
+
+        log.debug("State transition for \(self.sessionId, privacy: .public): \(oldState.logDescription, privacy: .public) -> \(newState.logDescription, privacy: .public)")
+        entryState = newState
+    }
+
     private func openSessionStream(
         connection: ServerConnection,
         sessionStore: SessionStore
@@ -220,32 +279,72 @@ final class ChatSessionManager {
         let generation = connectionGeneration
         let switchingSessions = sessionStore.activeSessionId != sessionId
 
+        transitionTo(.idle)
         connection.disconnectSession()
         connection.fatalSetupError = false
         cancelAutoReconnect()
-        cancelHistoryAndStateSync()
+        cancelStateSync()
         if switchingSessions {
             reducer.reset()
         }
 
         sessionStore.activeSessionId = sessionId
+        ChatTimelinePerf.activeSessionId = sessionId
         pendingTTFTStartMs = nil
         markSyncStarted()
 
         // Measure stale-cache window: from session entry until first confirmed fresh content.
         beginFreshContentLagMeasurement(hadCache: false)
 
+        transitionTo(.loadingCache)
+
         // Show cached timeline immediately (before network).
+        let cacheLoadStartMs = ChatMetricsService.nowMs()
         let cached = await TimelineCache.shared.loadTrace(sessionId)
+        let cacheLoadDurationMs = max(0, ChatMetricsService.nowMs() - cacheLoadStartMs)
         if let cached {
             latestTraceSignature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
         } else {
             latestTraceSignature = nil
         }
 
+        let metricSessionId = sessionId
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .cacheLoadMs,
+                value: Double(cacheLoadDurationMs),
+                unit: .ms,
+                sessionId: metricSessionId,
+                tags: [
+                    "hit": cached != nil ? "1" : "0",
+                    "events": String(cached?.eventCount ?? 0),
+                ]
+            )
+        }
+
         if let cached, !cached.events.isEmpty {
             loadedFromCacheAtConnect = true
+            let reducerLoadStartMs = ChatMetricsService.nowMs()
             reducer.loadSession(cached.events)
+            let reducerLoadDurationMs = max(0, ChatMetricsService.nowMs() - reducerLoadStartMs)
+
+            let signature = TraceSignature(eventCount: cached.eventCount, lastEventId: cached.lastEventId)
+            transitionTo(.cached(events: cached.events, signature: signature))
+
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .reducerLoadMs,
+                    value: Double(reducerLoadDurationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: [
+                        "source": "cache",
+                        "events": String(cached.eventCount),
+                        "items": String(await MainActor.run { reducer.items.count }),
+                    ]
+                )
+            }
+
             let footprint = SentryService.currentFootprintMB()
             ClientLog.info("Memory", "Session loaded (cache)", metadata: [
                 "footprintMB": footprint.map(String.init) ?? "n/a",
@@ -258,6 +357,8 @@ final class ChatSessionManager {
             // This keeps chat behavior consistent with terminal agent workflows.
             needsInitialScroll = true
             log.info("Loaded \(cached.eventCount) cached events for \(self.sessionId)")
+        } else {
+            transitionTo(.connecting(workspaceId: workspaceIdForState(from: sessionStore)))
         }
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
@@ -265,6 +366,7 @@ final class ChatSessionManager {
         // The user must explicitly tap "Resume" to restart the session.
         let sessionStatus = sessionStore.sessions.first(where: { $0.id == sessionId })?.status
         if sessionStatus == .stopped {
+            transitionTo(.stopped(historyLoaded: false))
             log.info("Session \(self.sessionId) is stopped — loading history only (no WS)")
             scheduleHistoryReload(
                 generation: generation,
@@ -273,12 +375,15 @@ final class ChatSessionManager {
                 sessionStore: sessionStore,
                 cachedSignature: latestTraceSignature
             )
-            // Wait for history to finish, then mark sync done
+            await historyReloadTask?.value
+            transitionTo(.stopped(historyLoaded: true))
             return
         }
 
+        let wsOpenStartMs = ChatMetricsService.nowMs()
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
             markSyncFailed()
+            transitionTo(.disconnected(reason: .fatalError))
             reducer.process(.error(sessionId: sessionId, message: "Missing workspace context"))
             return
         }
@@ -286,7 +391,16 @@ final class ChatSessionManager {
         // Freshness-first: if we already rendered cached history, prioritize
         // stream + catch-up and avoid eager full trace reload on enter.
         // Keep full reload fallback for ring miss / seq regression / fetch errors.
-        let hasCachedHistory = cached?.events.isEmpty == false
+        let hasCachedHistory: Bool
+        switch entryState {
+        case .cached:
+            hasCachedHistory = true
+        case .connecting:
+            hasCachedHistory = false
+        default:
+            hasCachedHistory = cached?.events.isEmpty == false
+        }
+
         if !hasCachedHistory {
             scheduleHistoryReload(
                 generation: generation,
@@ -299,8 +413,15 @@ final class ChatSessionManager {
             log.info("Skipping initial history reload for \(self.sessionId) — cache present")
         }
 
+        transitionTo(
+            .awaitingConnected(
+                workspaceId: workspaceIdForState(from: sessionStore),
+                hasCachedHistory: hasCachedHistory
+            )
+        )
+
         guard !Task.isCancelled else {
-            cancelHistoryReload()
+            transitionTo(.disconnected(reason: .cancelled))
             cancelStateSync()
             disconnectIfCurrent(generation, connection: connection)
             return
@@ -316,36 +437,106 @@ final class ChatSessionManager {
 
         var hasReceivedConnected = false
         for await message in stream {
+            if generation != connectionGeneration {
+                transitionTo(.disconnected(reason: .generationChanged))
+                break
+            }
+
             if Task.isCancelled {
+                transitionTo(.disconnected(reason: .cancelled))
                 break
             }
 
             markSyncSucceeded()
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
 
-            // Detect reconnection: a second `.connected` message means the WS
-            // dropped and recovered. Prefer seq-based catch-up and only
-            // fallback to full history reload when catch-up cannot guarantee
-            // continuity.
-            if case .connected = message {
-                let catchUpOutcome: CatchUpOutcome?
-                if let currentSeq = inboundMeta?.currentSeq {
-                    catchUpOutcome = await performCatchUpIfNeeded(
-                        currentSeq: currentSeq,
-                        generation: generation,
-                        connection: connection,
-                        reducer: reducer,
-                        sessionStore: sessionStore
+            switch entryState {
+            case .awaitingConnected:
+                if case .connected = message {
+                    // Record time from WS open to first .connected message.
+                    if !hasReceivedConnected {
+                        let wsConnectDurationMs = max(0, ChatMetricsService.nowMs() - wsOpenStartMs)
+                        let wsMetricSessionId = sessionId
+                        Task.detached(priority: .utility) {
+                            await ChatMetricsService.shared.record(
+                                metric: .wsConnectMs,
+                                value: Double(wsConnectDurationMs),
+                                unit: .ms,
+                                sessionId: wsMetricSessionId
+                            )
+                        }
+                    }
+
+                    let catchUpOutcome: CatchUpOutcome?
+                    if let currentSeq = inboundMeta?.currentSeq {
+                        log.debug("Performing catch-up (state: \(self.entryState.logDescription, privacy: .public))")
+                        let outcome = await performCatchUpIfNeeded(
+                            currentSeq: currentSeq,
+                            generation: generation,
+                            connection: connection,
+                            reducer: reducer,
+                            sessionStore: sessionStore
+                        )
+                        log.debug("Catch-up outcome: \(String(describing: outcome), privacy: .public) (state: \(self.entryState.logDescription, privacy: .public))")
+                        catchUpOutcome = outcome
+                    } else {
+                        catchUpOutcome = nil
+                    }
+
+                    // Request freshest server session state only once the stream is connected.
+                    // This avoids speculative pre-connect sends that can stall/fail during startup.
+                    scheduleStateSync(generation: generation, connection: connection)
+
+                    var preserveHistoryReloadOnStreamingEntry = true
+                    if let catchUpOutcome {
+                        switch catchUpOutcome {
+                        case .applied:
+                            preserveHistoryReloadOnStreamingEntry = false
+                            log.info("First connect catch-up applied for \(self.sessionId) — cancelled pending history reload")
+                            recordFreshContentLagIfNeeded(reason: "catchup_applied")
+                        case .noGap:
+                            preserveHistoryReloadOnStreamingEntry = false
+                            log.info("First connect no gap for \(self.sessionId) — cancelled pending history reload")
+                            recordFreshContentLagIfNeeded(reason: "catchup_no_gap")
+                        case .fullReloadScheduled:
+                            preserveHistoryReloadOnStreamingEntry = true
+                        }
+                    }
+
+                    hasReceivedConnected = true
+                    unexpectedStreamExitCount = 0
+                    transitionTo(
+                        .streaming,
+                        options: preserveHistoryReloadOnStreamingEntry ? [.preserveHistoryReload] : []
                     )
-                } else {
-                    catchUpOutcome = nil
                 }
 
-                // Request freshest server session state only once the stream is connected.
-                // This avoids speculative pre-connect sends that can stall/fail during startup.
-                scheduleStateSync(generation: generation, connection: connection)
+            case .streaming:
+                // Detect reconnection: a second `.connected` message means the WS
+                // dropped and recovered. Prefer seq-based catch-up and only
+                // fallback to full history reload when catch-up cannot guarantee
+                // continuity.
+                if case .connected = message {
+                    let catchUpOutcome: CatchUpOutcome?
+                    if let currentSeq = inboundMeta?.currentSeq {
+                        log.debug("Performing catch-up (state: \(self.entryState.logDescription, privacy: .public))")
+                        let outcome = await performCatchUpIfNeeded(
+                            currentSeq: currentSeq,
+                            generation: generation,
+                            connection: connection,
+                            reducer: reducer,
+                            sessionStore: sessionStore
+                        )
+                        log.debug("Catch-up outcome: \(String(describing: outcome), privacy: .public) (state: \(self.entryState.logDescription, privacy: .public))")
+                        catchUpOutcome = outcome
+                    } else {
+                        catchUpOutcome = nil
+                    }
 
-                if hasReceivedConnected {
+                    // Request freshest server session state only once the stream is connected.
+                    // This avoids speculative pre-connect sends that can stall/fail during startup.
+                    scheduleStateSync(generation: generation, connection: connection)
+
                     if let catchUpOutcome {
                         switch catchUpOutcome {
                         case .fullReloadScheduled:
@@ -367,57 +558,74 @@ final class ChatSessionManager {
                             cachedSignature: latestTraceSignature
                         )
                     }
+                    hasReceivedConnected = true
+                    unexpectedStreamExitCount = 0
                 }
-                hasReceivedConnected = true
-                unexpectedStreamExitCount = 0
-            }
 
-            if let seq = inboundMeta?.seq {
-                if seq <= lastSeenSeq {
-                    continue
+                if let seq = inboundMeta?.seq {
+                    if seq <= lastSeenSeq {
+                        continue
+                    }
+                    recordFreshContentLagIfNeeded(reason: "stream_seq")
+                    updateLastSeenSeq(seq)
                 }
-                recordFreshContentLagIfNeeded(reason: "stream_seq")
-                updateLastSeenSeq(seq)
-            }
 
-            if case .turnAck(let command, _, let stage, _, _) = message,
-               stage == .dispatched,
-               command == "prompt" || command == "steer" || command == "follow_up",
-               pendingTTFTStartMs == nil {
-                pendingTTFTStartMs = ChatMetricsService.nowMs()
-            }
-
-            if case .agentEnd = message {
-                pendingTTFTStartMs = nil
-            }
-
-            if case .textDelta = message,
-               let startedAt = pendingTTFTStartMs {
-                pendingTTFTStartMs = nil
-                let nowMs = ChatMetricsService.nowMs()
-                let ttftMs = max(0, nowMs - startedAt)
-                let metricSessionId = sessionId
-                Task.detached(priority: .utility) {
-                    await ChatMetricsService.shared.record(
-                        metric: .ttftMs,
-                        value: Double(ttftMs),
-                        unit: .ms,
-                        sessionId: metricSessionId
-                    )
+                if case .turnAck(let command, _, let stage, _, _) = message,
+                   stage == .dispatched,
+                   command == "prompt" || command == "steer" || command == "follow_up",
+                   pendingTTFTStartMs == nil {
+                    pendingTTFTStartMs = ChatMetricsService.nowMs()
                 }
+
+                if case .agentEnd = message {
+                    pendingTTFTStartMs = nil
+                }
+
+                if case .textDelta = message,
+                   let startedAt = pendingTTFTStartMs {
+                    pendingTTFTStartMs = nil
+                    let nowMs = ChatMetricsService.nowMs()
+                    let ttftMs = max(0, nowMs - startedAt)
+                    let metricSessionId = sessionId
+                    Task.detached(priority: .utility) {
+                        await ChatMetricsService.shared.record(
+                            metric: .ttftMs,
+                            value: Double(ttftMs),
+                            unit: .ms,
+                            sessionId: metricSessionId
+                        )
+                    }
+                }
+
+            case .idle, .loadingCache, .cached, .connecting, .stopped, .disconnected:
+                log.warning("Received message in invalid state: \(self.entryState.logDescription, privacy: .public)")
             }
 
             connection.handleServerMessage(message, sessionId: sessionId)
         }
 
-        let wasCancelled = Task.isCancelled
+        if Task.isCancelled {
+            transitionTo(.disconnected(reason: .cancelled))
+        } else {
+            switch entryState {
+            case .disconnected(reason: .cancelled), .disconnected(reason: .generationChanged):
+                break
+            default:
+                transitionTo(.disconnected(reason: .streamEnded))
+            }
+        }
 
-        let shouldAutoReconnect = !wasCancelled
-            && hasReceivedConnected
-            && generation == connectionGeneration
-            && wantsAutoReconnect
-            && !connection.fatalSetupError
-            && sessionStore.sessions.first(where: { $0.id == sessionId })?.status != .stopped
+        let shouldAutoReconnect: Bool
+        switch entryState {
+        case .disconnected(reason: .streamEnded):
+            shouldAutoReconnect = hasReceivedConnected
+                && generation == connectionGeneration
+                && wantsAutoReconnect
+                && !connection.fatalSetupError
+                && sessionStore.sessions.first(where: { $0.id == sessionId })?.status != .stopped
+        default:
+            shouldAutoReconnect = false
+        }
 
         if shouldAutoReconnect {
             unexpectedStreamExitCount += 1
@@ -444,7 +652,6 @@ final class ChatSessionManager {
         }
 
         connection.silenceWatchdog.onReconnect = nil
-        cancelHistoryReload()
         cancelStateSync()
         disconnectIfCurrent(generation, connection: connection)
     }
@@ -538,7 +745,7 @@ final class ChatSessionManager {
         reconcileTask?.cancel()
         reconcileTask = nil
         cancelAutoReconnect()
-        cancelHistoryReload()
+        transitionTo(.disconnected(reason: .cancelled))
         cancelStateSync()
     }
 
@@ -771,7 +978,26 @@ final class ChatSessionManager {
                         log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
                         freshnessReason = "history_deferred"
                     } else {
+                        let reducerStartMs = ChatMetricsService.nowMs()
                         reducer.loadSession(trace)
+                        let reducerDurationMs = max(0, ChatMetricsService.nowMs() - reducerStartMs)
+
+                        let reducerMetricSessionId = self.sessionId
+                        let reducerItemCount = reducer.items.count
+                        Task.detached(priority: .utility) {
+                            await ChatMetricsService.shared.record(
+                                metric: .reducerLoadMs,
+                                value: Double(reducerDurationMs),
+                                unit: .ms,
+                                sessionId: reducerMetricSessionId,
+                                tags: [
+                                    "source": "history",
+                                    "events": String(trace.count),
+                                    "items": String(reducerItemCount),
+                                ]
+                            )
+                        }
+
                         needsInitialScroll = true
                         let footprint = SentryService.currentFootprintMB()
                         log.info("Loaded \(trace.count) fresh trace events for \(self.sessionId) [footprint=\(footprint ?? -1)MB, items=\(reducer.items.count)]")
@@ -883,11 +1109,6 @@ final class ChatSessionManager {
         autoReconnectTask = nil
     }
 
-    private func cancelHistoryAndStateSync() {
-        cancelHistoryReload()
-        cancelStateSync()
-    }
-
     private func cancelStateSync() {
         stateSyncTask?.cancel()
         stateSyncTask = nil
@@ -907,5 +1128,40 @@ final class ChatSessionManager {
         guard connection.activeSessionId == sessionId
               || connection.activeSessionId == nil else { return }
         connection.disconnectSession()
+    }
+}
+
+private extension ChatSessionManager.DisconnectReason {
+    var logDescription: String {
+        switch self {
+        case .cancelled: "cancelled"
+        case .generationChanged: "generation_changed"
+        case .fatalError: "fatal_error"
+        case .streamEnded: "stream_ended"
+        }
+    }
+}
+
+private extension ChatSessionManager.SessionEntryState {
+    var logDescription: String {
+        switch self {
+        case .idle:
+            return "idle"
+        case .loadingCache:
+            return "loading_cache"
+        case .cached(let events, let signature):
+            let lastEventId = signature.lastEventId ?? "nil"
+            return "cached(events=\(events.count), signature=\(signature.eventCount)/\(lastEventId))"
+        case .connecting(let workspaceId):
+            return "connecting(workspace=\(workspaceId))"
+        case .awaitingConnected(let workspaceId, let hasCachedHistory):
+            return "awaiting_connected(workspace=\(workspaceId), cache=\(hasCachedHistory ? "1" : "0"))"
+        case .streaming:
+            return "streaming"
+        case .stopped(let historyLoaded):
+            return "stopped(history_loaded=\(historyLoaded ? "1" : "0"))"
+        case .disconnected(let reason):
+            return "disconnected(\(reason.logDescription))"
+        }
     }
 }
