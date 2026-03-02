@@ -5,8 +5,9 @@ Oppi monorepo — iOS app + self-hosted server for mobile-supervised [pi](https:
 ## First Message
 
 If no concrete task given, read this file and `README.md`, then ask what to work on.
-For context on specific areas, read the relevant README:
-- Root: `README.md` 
+For context on specific areas, read the relevant docs:
+- Root: `README.md`
+- Architecture map: `ARCHITECTURE.md`
 - Server: `server/README.md`
 
 ## Structure
