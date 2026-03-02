@@ -35,7 +35,8 @@ struct BackgroundKeepAlive {
         }
 
         let remaining = UIApplication.shared.backgroundTimeRemaining
-        Self.log.info("Background keep-alive started (remaining: \(Int(remaining))s)")
+        let remainingDesc = remaining > 99_999 ? "unlimited" : "\(Int(remaining))s"
+        Self.log.info("Background keep-alive started (remaining: \(remainingDesc))")
 
         // Poll session status — end when no agents are busy.
         let capturedTaskID = taskID
@@ -55,7 +56,8 @@ struct BackgroundKeepAlive {
                 }
 
                 let left = UIApplication.shared.backgroundTimeRemaining
-                Self.log.debug("Background keep-alive polling (remaining: \(Int(left))s)")
+                let leftDesc = left > 99_999 ? "unlimited" : "\(Int(left))s"
+                Self.log.debug("Background keep-alive polling (remaining: \(leftDesc))")
             }
         }
     }
