@@ -59,7 +59,8 @@
     "format:check": "prettier --check src/",
     "dead-code": "knip",
     "check:testing-policy": "node ./scripts/check-testing-policy.mjs",
-    "check": "tsc --noEmit && eslint src/ && prettier --check src/ && npm run check:testing-policy"
+    "check:docs": "node ./scripts/check-doc-freshness.mjs",
+    "check": "tsc --noEmit && eslint src/ && prettier --check src/ && npm run check:testing-policy && npm run check:docs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.54.0",

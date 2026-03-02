@@ -35,7 +35,7 @@ Status legend:
 ## Using this matrix with gate policy
 
 - Use this matrix to decide **what must be tested** based on impacted invariants.
-- Use [`pr-vs-nightly-gates.md`](./pr-vs-nightly-gates.md) to decide **when each lane must run** (PR vs nightly/release).
+- Use [`README.md`](./README.md) to decide **when each lane must run** (PR vs nightly/release).
 - If a change touches any `RQ-PROTO-*` invariant, run `./scripts/check-protocol.sh` on PR.
 
 ## Bug-bash Traceability

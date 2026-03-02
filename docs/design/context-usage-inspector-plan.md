@@ -1,7 +1,7 @@
 # Context Usage Ring + Inspector Plan
 
-Status: proposed  
-Last updated: 2026-03-01  
+Status: active
+Last updated: 2026-03-01
 Canonical TODO: `TODO-7d592cd4`
 
 ## Goal
