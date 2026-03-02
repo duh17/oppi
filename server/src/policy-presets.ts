@@ -226,6 +226,93 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         match: { tool: "read", pathMatches: "**/.ssh/id_*" },
       },
 
+      // ── Policy self-protection ──
+      // Prevent the agent from modifying its own permission rules without approval.
+      {
+        id: "ask-edit-policy-presets",
+        decision: "ask",
+        label: "Edit policy presets",
+        reason: "Modifying the policy engine changes what the agent is allowed to do",
+        match: { tool: "edit", pathMatches: "**/policy-presets.ts" },
+      },
+      {
+        id: "ask-write-policy-presets",
+        decision: "ask",
+        label: "Overwrite policy presets",
+        reason: "Modifying the policy engine changes what the agent is allowed to do",
+        match: { tool: "write", pathMatches: "**/policy-presets.ts" },
+      },
+      {
+        id: "ask-edit-policy-ts",
+        decision: "ask",
+        label: "Edit policy engine",
+        reason: "Modifying the policy engine changes what the agent is allowed to do",
+        match: { tool: "edit", pathMatches: "**/policy.ts" },
+      },
+      {
+        id: "ask-write-policy-ts",
+        decision: "ask",
+        label: "Overwrite policy engine",
+        reason: "Modifying the policy engine changes what the agent is allowed to do",
+        match: { tool: "write", pathMatches: "**/policy.ts" },
+      },
+      {
+        id: "ask-edit-rules-json",
+        decision: "ask",
+        label: "Edit rules config",
+        reason: "Modifying rules.json changes runtime permission decisions",
+        match: { tool: "edit", pathMatches: "**/oppi/rules.json" },
+      },
+      {
+        id: "ask-write-rules-json",
+        decision: "ask",
+        label: "Overwrite rules config",
+        reason: "Modifying rules.json changes runtime permission decisions",
+        match: { tool: "write", pathMatches: "**/oppi/rules.json" },
+      },
+      {
+        id: "ask-bash-policy-presets",
+        decision: "ask",
+        label: "Bash touches policy presets",
+        reason: "Modifying policy files changes what the agent is allowed to do",
+        match: { tool: "bash", commandMatches: "*policy-presets*" },
+      },
+      {
+        id: "ask-bash-rules-json",
+        decision: "ask",
+        label: "Bash touches rules config",
+        reason: "Modifying rules.json changes runtime permission decisions",
+        match: { tool: "bash", commandMatches: "*rules.json*" },
+      },
+      {
+        id: "ask-edit-gate",
+        decision: "ask",
+        label: "Edit gate module",
+        reason: "Modifying the gate changes permission enforcement behavior",
+        match: { tool: "edit", pathMatches: "**/gate.ts" },
+      },
+      {
+        id: "ask-write-gate",
+        decision: "ask",
+        label: "Overwrite gate module",
+        reason: "Modifying the gate changes permission enforcement behavior",
+        match: { tool: "write", pathMatches: "**/gate.ts" },
+      },
+      {
+        id: "ask-edit-rules-ts",
+        decision: "ask",
+        label: "Edit rule store",
+        reason: "Modifying the rule store changes how permission rules are stored and matched",
+        match: { tool: "edit", pathMatches: "**/rules.ts" },
+      },
+      {
+        id: "ask-write-rules-ts",
+        decision: "ask",
+        label: "Overwrite rule store",
+        reason: "Modifying the rule store changes how permission rules are stored and matched",
+        match: { tool: "write", pathMatches: "**/rules.ts" },
+      },
+
       // ── Catastrophic operations ──
       {
         id: "block-root-rm",
@@ -329,6 +416,36 @@ export function defaultPolicy(): DeclarativePolicyConfig {
         decision: "ask",
         label: "Telnet connection",
         match: { tool: "bash", executable: "telnet" },
+      },
+
+      // ── Communication → ask (irreversible, external) ──
+      {
+        id: "ask-imessage-osascript",
+        decision: "ask",
+        label: "Send iMessage",
+        reason: "Sending messages on your behalf is irreversible",
+        match: { tool: "bash", executable: "osascript", commandMatches: '*application "Messages"*send*' },
+      },
+      {
+        id: "ask-email-osascript",
+        decision: "ask",
+        label: "Send email",
+        reason: "Sending email on your behalf is irreversible",
+        match: { tool: "bash", executable: "osascript", commandMatches: '*application "Mail"*send*' },
+      },
+      {
+        id: "ask-imessage-script",
+        decision: "ask",
+        label: "Send iMessage",
+        reason: "Sending messages on your behalf is irreversible",
+        match: { tool: "bash", commandMatches: "*imessage.sh*" },
+      },
+      {
+        id: "ask-email-script",
+        decision: "ask",
+        label: "Send email",
+        reason: "Sending email on your behalf is irreversible",
+        match: { tool: "bash", commandMatches: "*send-email.sh*" },
       },
 
       // ── Local machine control → ask ──
@@ -590,6 +707,81 @@ const HOST_HARD_DENY: PolicyRule[] = [
 ];
 
 const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
+  // ── Policy self-protection → ask ──
+  // Prevent the agent from modifying its own permission system without approval.
+  {
+    tool: "edit",
+    pattern: "**/policy-presets.ts",
+    action: "ask",
+    label: "Edit policy presets",
+  },
+  {
+    tool: "write",
+    pattern: "**/policy-presets.ts",
+    action: "ask",
+    label: "Overwrite policy presets",
+  },
+  {
+    tool: "edit",
+    pattern: "**/policy.ts",
+    action: "ask",
+    label: "Edit policy engine",
+  },
+  {
+    tool: "write",
+    pattern: "**/policy.ts",
+    action: "ask",
+    label: "Overwrite policy engine",
+  },
+  {
+    tool: "edit",
+    pattern: "**/gate.ts",
+    action: "ask",
+    label: "Edit gate module",
+  },
+  {
+    tool: "write",
+    pattern: "**/gate.ts",
+    action: "ask",
+    label: "Overwrite gate module",
+  },
+  {
+    tool: "edit",
+    pattern: "**/rules.ts",
+    action: "ask",
+    label: "Edit rule store",
+  },
+  {
+    tool: "write",
+    pattern: "**/rules.ts",
+    action: "ask",
+    label: "Overwrite rule store",
+  },
+  {
+    tool: "edit",
+    pattern: "**/oppi/rules.json",
+    action: "ask",
+    label: "Edit rules config",
+  },
+  {
+    tool: "write",
+    pattern: "**/oppi/rules.json",
+    action: "ask",
+    label: "Overwrite rules config",
+  },
+  {
+    tool: "bash",
+    pattern: "*policy-presets*",
+    action: "ask",
+    label: "Bash touches policy presets",
+  },
+  {
+    tool: "bash",
+    pattern: "*rules.json*",
+    action: "ask",
+    label: "Bash touches rules config",
+  },
+
   // ── Destructive local operations → ask ──
   // Irreversible actions that can damage local data.
 
@@ -654,6 +846,34 @@ const HOST_EXTERNAL_ASK_RULES: PolicyRule[] = [
   { tool: "bash", exec: "ncat", action: "ask", label: "Netcat connection" },
   { tool: "bash", exec: "socat", action: "ask", label: "Socket relay" },
   { tool: "bash", exec: "telnet", action: "ask", label: "Telnet connection" },
+
+  // Communication — sending messages/emails on user's behalf (irreversible)
+  {
+    tool: "bash",
+    exec: "osascript",
+    pattern: '*application "Messages"*send*',
+    action: "ask",
+    label: "Send iMessage",
+  },
+  {
+    tool: "bash",
+    exec: "osascript",
+    pattern: '*application "Mail"*send*',
+    action: "ask",
+    label: "Send email",
+  },
+  {
+    tool: "bash",
+    pattern: "*imessage.sh*",
+    action: "ask",
+    label: "Send iMessage",
+  },
+  {
+    tool: "bash",
+    pattern: "*send-email.sh*",
+    action: "ask",
+    label: "Send email",
+  },
 
   // Local machine control flows (explicit approval required)
   {
