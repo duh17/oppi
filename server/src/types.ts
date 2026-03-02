@@ -374,7 +374,10 @@ export type ChatMetricName =
   | "chat.fresh_content_lag_ms"
   | "chat.cache_load_ms"
   | "chat.reducer_load_ms"
-  | "chat.ws_connect_ms";
+  | "chat.ws_connect_ms"
+  | "chat.voice_prewarm_ms"
+  | "chat.voice_setup_ms"
+  | "chat.voice_first_result_ms";
 
 export type ChatMetricUnit = "ms" | "count" | "ratio";
 

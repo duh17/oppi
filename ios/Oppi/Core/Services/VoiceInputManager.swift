@@ -68,6 +68,48 @@ final class VoiceInputManager {
         }
     }
 
+    private enum VoiceMetricPhase: String, Sendable {
+        case prewarm
+        case modelReady = "model_ready"
+        case transcriberCreate = "transcriber_create"
+        case analyzerStart = "analyzer_start"
+        case audioStart = "audio_start"
+        case total
+        case firstResult = "first_result"
+    }
+
+    private struct VoiceMetricAnnotation: Sendable {
+        let engine: String
+        let locale: String
+        let source: String
+
+        func tags(
+            phase: VoiceMetricPhase? = nil,
+            status: String? = nil,
+            extra: [String: String] = [:]
+        ) -> [String: String] {
+            var tags: [String: String] = [
+                "engine": engine,
+                "locale": locale,
+                "source": source,
+            ]
+
+            if let phase {
+                tags["phase"] = phase.rawValue
+            }
+            if let status {
+                tags["status"] = status
+            }
+
+            for (key, value) in extra {
+                guard !key.isEmpty else { continue }
+                tags[key] = value
+            }
+
+            return tags
+        }
+    }
+
     // MARK: - Published State
 
     private(set) var state: State = .idle
@@ -154,14 +196,27 @@ final class VoiceInputManager {
     /// Check model availability and cache audio format in the background.
     /// Call from ChatView's .task {} so the first mic tap is fast.
     /// Safe to call multiple times — no-ops after first success for the same locale+engine.
-    func prewarm(keyboardLanguage: String? = nil) async {
+    func prewarm(keyboardLanguage: String? = nil, source: String = "unknown") async {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
         let engine = Self.preferredEngine(for: locale)
         let key = Self.modelKey(engine: engine, localeID: localeID)
+        let metricAnnotation = VoiceMetricAnnotation(
+            engine: engine.logName,
+            locale: localeID,
+            source: source
+        )
+        let prewarmStart = ContinuousClock.now
 
         guard !modelReady || cachedModelKey != key else { return }
-        guard prewarmTask == nil, state == .idle else { return }
+        guard state == .idle else { return }
+
+        if let inflight = prewarmTask {
+            guard prewarmModelKey != key else { return }
+            inflight.cancel()
+            prewarmTask = nil
+            prewarmModelKey = nil
+        }
 
         let task = Task {
             try await Self.warmModel(engine: engine, locale: locale)
@@ -175,8 +230,35 @@ final class VoiceInputManager {
             cachedFormat = format
             cachedModelKey = key
             modelReady = true
+            let durationMs = elapsedMs(since: prewarmStart)
+            recordVoiceMetric(
+                .voicePrewarmMs,
+                valueMs: durationMs,
+                annotation: metricAnnotation,
+                phase: .prewarm,
+                status: "ok"
+            )
             logger.info("Pre-warmed \(engine.logName) model (locale: \(localeID), format: \(String(describing: format)))")
+        } catch is CancellationError {
+            let durationMs = elapsedMs(since: prewarmStart)
+            recordVoiceMetric(
+                .voicePrewarmMs,
+                valueMs: durationMs,
+                annotation: metricAnnotation,
+                phase: .prewarm,
+                status: "cancelled"
+            )
+            logger.info("Pre-warm cancelled for \(engine.logName) (locale: \(localeID))")
         } catch {
+            let durationMs = elapsedMs(since: prewarmStart)
+            recordVoiceMetric(
+                .voicePrewarmMs,
+                valueMs: durationMs,
+                annotation: metricAnnotation,
+                phase: .prewarm,
+                status: "error",
+                extraTags: ["error": String(describing: type(of: error))]
+            )
             logger.warning("Pre-warm failed: \(error.localizedDescription)")
         }
 
@@ -259,7 +341,7 @@ final class VoiceInputManager {
     /// Start recording and streaming transcription.
     /// Pass `keyboardLanguage` from the text view's `textInputMode?.primaryLanguage`
     /// to match the user's active keyboard. Falls back to device locale when nil.
-    func startRecording(keyboardLanguage: String? = nil) async throws {
+    func startRecording(keyboardLanguage: String? = nil, source: String = "unknown") async throws {
         guard state == .idle else {
             logger.warning("Cannot start: state is \(String(describing: self.state))")
             return
@@ -297,6 +379,12 @@ final class VoiceInputManager {
         let localeID = locale.identifier(.bcp47)
         let engine = Self.preferredEngine(for: locale)
         let key = Self.modelKey(engine: engine, localeID: localeID)
+        let metricAnnotation = VoiceMetricAnnotation(
+            engine: engine.logName,
+            locale: localeID,
+            source: source
+        )
+        var modelPathTag = "warm_cache"
 
         // Invalidate cache if locale or engine changed
         if cachedModelKey != key {
@@ -307,34 +395,71 @@ final class VoiceInputManager {
         do {
             try ensureStartRequestActive(requestID)
 
+            let modelPhaseStart = ContinuousClock.now
+
             // Phase 1: ensure model is ready
-            if let inflight = prewarmTask, prewarmModelKey == key {
-                logger.info("Voice setup: awaiting in-flight \(engine.logName) prewarm")
-                let format = try await inflight.value
-                try ensureStartRequestActive(requestID)
-                cachedFormat = format
-                cachedModelKey = key
-                modelReady = true
-                prewarmTask = nil
-                prewarmModelKey = nil
-                let ms = elapsedMs(since: startTime)
-                logger.error("Voice setup: joined prewarm in \(ms)ms")
-            } else if !modelReady {
-                let format = try await Self.warmModel(engine: engine, locale: locale)
-                try ensureStartRequestActive(requestID)
-                cachedFormat = format
-                cachedModelKey = key
-                modelReady = true
-                let ms = elapsedMs(since: startTime)
-                logger.error("Voice setup: cold \(engine.logName) model check in \(ms)ms")
-            } else {
-                logger.error("Voice setup: \(engine.logName) model ready (0ms)")
+            var joinedMatchingPrewarm = false
+            if let inflight = prewarmTask {
+                if prewarmModelKey == key {
+                    modelPathTag = "join_prewarm"
+                    logger.info("Voice setup: awaiting in-flight \(engine.logName) prewarm")
+                    let format = try await inflight.value
+                    try ensureStartRequestActive(requestID)
+                    cachedFormat = format
+                    cachedModelKey = key
+                    modelReady = true
+                    prewarmTask = nil
+                    prewarmModelKey = nil
+                    joinedMatchingPrewarm = true
+                    let ms = elapsedMs(since: startTime)
+                    logger.error("Voice setup: joined prewarm in \(ms)ms")
+                } else {
+                    inflight.cancel()
+                    prewarmTask = nil
+                    prewarmModelKey = nil
+                }
             }
 
+            if !joinedMatchingPrewarm {
+                if !modelReady {
+                    modelPathTag = "cold"
+                    let format = try await Self.warmModel(engine: engine, locale: locale)
+                    try ensureStartRequestActive(requestID)
+                    cachedFormat = format
+                    cachedModelKey = key
+                    modelReady = true
+                    let ms = elapsedMs(since: startTime)
+                    logger.error("Voice setup: cold \(engine.logName) model check in \(ms)ms")
+                } else {
+                    modelPathTag = "warm_cache"
+                    logger.error("Voice setup: \(engine.logName) model ready (0ms)")
+                }
+            }
+
+            let modelPhaseMs = elapsedMs(since: modelPhaseStart)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: modelPhaseMs,
+                annotation: metricAnnotation,
+                phase: .modelReady,
+                status: "ok",
+                extraTags: ["path": modelPathTag]
+            )
+
             // Phase 2: fresh transcriber for this session
+            let transcriberStart = ContinuousClock.now
             let newTranscriber = Self.makeTranscriber(engine: engine, locale: locale)
             transcriber = newTranscriber
             activeLanguageLabel = Self.languageLabel(for: locale)
+            let transcriberMs = elapsedMs(since: transcriberStart)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: transcriberMs,
+                annotation: metricAnnotation,
+                phase: .transcriberCreate,
+                status: "ok",
+                extraTags: ["path": modelPathTag]
+            )
             logger.info("Voice setup: created \(engine.logName) transcriber (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
 
             // Use cached format, or compute if missing
@@ -350,6 +475,7 @@ final class VoiceInputManager {
             try ensureStartRequestActive(requestID)
 
             // Phase 3: start analyzer session
+            let analyzerStart = ContinuousClock.now
             let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber.speechModule])
             analyzer = newAnalyzer
 
@@ -358,18 +484,54 @@ final class VoiceInputManager {
 
             try await newAnalyzer.start(inputSequence: sequence)
             try ensureStartRequestActive(requestID)
-            startResultsHandler(transcriber: newTranscriber)
+            let analyzerMs = elapsedMs(since: analyzerStart)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: analyzerMs,
+                annotation: metricAnnotation,
+                phase: .analyzerStart,
+                status: "ok",
+                extraTags: ["path": modelPathTag]
+            )
+            startResultsHandler(transcriber: newTranscriber, metricAnnotation: metricAnnotation)
             logger.info("Voice setup: analyzer session started")
 
             // Phase 4: audio engine
+            let audioStart = ContinuousClock.now
             try setupAudioSession()
             try await startAudioEngine(format: format)
             try ensureStartRequestActive(requestID)
+            let audioMs = elapsedMs(since: audioStart)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: audioMs,
+                annotation: metricAnnotation,
+                phase: .audioStart,
+                status: "ok",
+                extraTags: ["path": modelPathTag]
+            )
 
             let totalMs = elapsedMs(since: startTime)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: totalMs,
+                annotation: metricAnnotation,
+                phase: .total,
+                status: "ok",
+                extraTags: ["path": modelPathTag]
+            )
             logger.error("Voice setup: recording started in \(totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
             state = .recording
         } catch is CancellationError {
+            let totalMs = elapsedMs(since: startTime)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: totalMs,
+                annotation: metricAnnotation,
+                phase: .total,
+                status: "cancelled",
+                extraTags: ["path": modelPathTag]
+            )
             logger.info("Voice setup cancelled")
             resultsTask?.cancel()
             resultsTask = nil
@@ -379,6 +541,18 @@ final class VoiceInputManager {
             state = .idle
             return
         } catch {
+            let totalMs = elapsedMs(since: startTime)
+            recordVoiceMetric(
+                .voiceSetupMs,
+                valueMs: totalMs,
+                annotation: metricAnnotation,
+                phase: .total,
+                status: "error",
+                extraTags: [
+                    "path": modelPathTag,
+                    "error": String(describing: type(of: error)),
+                ]
+            )
             logger.error("Voice setup failed: \(error.localizedDescription)")
             resultsTask?.cancel()
             resultsTask = nil
@@ -509,12 +683,11 @@ final class VoiceInputManager {
     ) -> TranscriberModule {
         switch engine {
         case .modernSpeech:
+            // Favor Apple's streaming preset for faster volatile results.
             return .speech(
                 SpeechTranscriber(
                     locale: locale,
-                    transcriptionOptions: [.etiquetteReplacements],
-                    reportingOptions: [.volatileResults],
-                    attributeOptions: []
+                    preset: .progressiveTranscription
                 )
             )
         case .classicDictation:
@@ -569,7 +742,10 @@ final class VoiceInputManager {
         }
     }
 
-    private func startResultsHandler(transcriber: TranscriberModule) {
+    private func startResultsHandler(
+        transcriber: TranscriberModule,
+        metricAnnotation: VoiceMetricAnnotation
+    ) {
         let recordingStartTime = ContinuousClock.now
         var firstResultReceived = false
 
@@ -583,7 +759,8 @@ final class VoiceInputManager {
                             text: String(result.text.characters),
                             isFinal: result.isFinal,
                             firstResultReceived: &firstResultReceived,
-                            recordingStartTime: recordingStartTime
+                            recordingStartTime: recordingStartTime,
+                            metricAnnotation: metricAnnotation
                         )
                     }
 
@@ -594,7 +771,8 @@ final class VoiceInputManager {
                             text: String(result.text.characters),
                             isFinal: result.isFinal,
                             firstResultReceived: &firstResultReceived,
-                            recordingStartTime: recordingStartTime
+                            recordingStartTime: recordingStartTime,
+                            metricAnnotation: metricAnnotation
                         )
                     }
                 }
@@ -612,11 +790,20 @@ final class VoiceInputManager {
         text: String,
         isFinal: Bool,
         firstResultReceived: inout Bool,
-        recordingStartTime: ContinuousClock.Instant
+        recordingStartTime: ContinuousClock.Instant,
+        metricAnnotation: VoiceMetricAnnotation
     ) {
         if !firstResultReceived {
             firstResultReceived = true
             let ms = elapsedMs(since: recordingStartTime)
+            recordVoiceMetric(
+                .voiceFirstResultMs,
+                valueMs: ms,
+                annotation: metricAnnotation,
+                phase: .firstResult,
+                status: "ok",
+                extraTags: ["result_type": isFinal ? "final" : "volatile"]
+            )
             logger.error("Voice latency: first result in \(ms)ms (type: \(isFinal ? "final" : "volatile"))")
         }
 
@@ -660,6 +847,27 @@ final class VoiceInputManager {
         case "ja": return "あ"
         case "ko": return "한"
         default: return langCode.uppercased().prefix(2).description
+        }
+    }
+
+    private func recordVoiceMetric(
+        _ metric: ChatMetricName,
+        valueMs: Int,
+        annotation: VoiceMetricAnnotation,
+        phase: VoiceMetricPhase? = nil,
+        status: String? = nil,
+        extraTags: [String: String] = [:]
+    ) {
+        let tags = annotation.tags(phase: phase, status: status, extra: extraTags)
+        let clampedValue = max(0, valueMs)
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: metric,
+                value: Double(clampedValue),
+                unit: .ms,
+                tags: tags
+            )
         }
     }
 

@@ -188,7 +188,7 @@ struct ChatView: View {
         .task {
             // Pre-warm voice input pipeline in background (model check + transcriber creation)
             if ReleaseFeatures.voiceInputEnabled {
-                await voiceInputManager.prewarm()
+                await voiceInputManager.prewarm(source: "chat_view_task")
             }
         }
         .onAppear {
