@@ -525,8 +525,6 @@ func makeTimelineToolConfiguration(
     toolNameColor: UIColor = .systemGreen,
     collapsedImageBase64: String? = nil,
     collapsedImageMimeType: String? = nil,
-    inlineExpansionLevel: ToolTimelineInlineExpansionLevel = .compact,
-    onToggleInlineExpansion: (() -> Void)? = nil,
     isExpanded: Bool,
     isDone: Bool = true,
     isError: Bool = false
@@ -546,8 +544,6 @@ func makeTimelineToolConfiguration(
         editRemoved: nil,
         collapsedImageBase64: collapsedImageBase64,
         collapsedImageMimeType: collapsedImageMimeType,
-        inlineExpansionLevel: inlineExpansionLevel,
-        onToggleInlineExpansion: onToggleInlineExpansion,
         isExpanded: isExpanded,
         isDone: isDone,
         isError: isError,

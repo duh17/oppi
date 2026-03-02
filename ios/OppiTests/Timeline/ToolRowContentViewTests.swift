@@ -314,94 +314,6 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func inlineExpansionToggleAppearsForLargeExpandedTextAndSwitchesLabels() throws {
-        let longText = (1...260)
-            .map { "line-\($0) extension output" }
-            .joined(separator: "\n")
-
-        let compactConfig = makeTimelineToolConfiguration(
-            expandedContent: .text(text: longText, language: nil),
-            copyOutputText: longText,
-            toolNamePrefix: "remember",
-            inlineExpansionLevel: .compact,
-            onToggleInlineExpansion: {},
-            isExpanded: true,
-            isDone: true
-        )
-        let expandedConfig = makeTimelineToolConfiguration(
-            expandedContent: .text(text: longText, language: nil),
-            copyOutputText: longText,
-            toolNamePrefix: "remember",
-            inlineExpansionLevel: .expanded,
-            onToggleInlineExpansion: {},
-            isExpanded: true,
-            isDone: true
-        )
-
-        let view = ToolTimelineRowContentView(configuration: compactConfig)
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        let toggleButton = try #require(timelineAllViews(in: view)
-            .compactMap { $0 as? UIButton }
-            .first { $0.accessibilityIdentifier == "tool.inline-expansion-toggle" })
-
-        #expect(!toggleButton.isHidden)
-        #expect(toggleButton.currentTitle == "Show more")
-
-        let compactRendered = timelineAllLabels(in: view)
-            .map { timelineRenderedText(of: $0) }
-            .joined(separator: "\n")
-        #expect(compactRendered.contains("Tap Show more."))
-
-        view.configuration = expandedConfig
-        _ = fittedTimelineSize(for: view, width: 370)
-
-        #expect(!toggleButton.isHidden)
-        #expect(toggleButton.currentTitle == "Show less")
-
-        let expandedRendered = timelineAllLabels(in: view)
-            .map { timelineRenderedText(of: $0) }
-            .joined(separator: "\n")
-        #expect(expandedRendered.contains("Open full screen for complete output."))
-    }
-
-    @MainActor
-    @Test func inlinePreviewDoesNotTruncateFullScreenTerminalContent() throws {
-        let longText = (1...260)
-            .map { "line-\($0) extension output" }
-            .joined(separator: "\n")
-
-        let config = makeTimelineToolConfiguration(
-            expandedContent: .text(text: longText, language: nil),
-            copyOutputText: longText,
-            toolNamePrefix: "remember",
-            inlineExpansionLevel: .compact,
-            onToggleInlineExpansion: {},
-            isExpanded: true,
-            isDone: true
-        )
-
-        let expandedContent = try #require(config.expandedContent)
-        let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent)
-        let fullScreen = try #require(
-            ToolTimelineRowFullScreenSupport.fullScreenContent(
-                configuration: config,
-                outputCopyText: config.copyOutputText,
-                interactionPolicy: policy
-            )
-        )
-
-        guard case .terminal(let content, _) = fullScreen else {
-            Issue.record("Expected terminal full-screen content")
-            return
-        }
-
-        #expect(content == longText)
-        #expect(!content.contains("Tap Show more."))
-        #expect(!content.contains("Open full screen for complete output."))
-    }
-
-    @MainActor
     @Test func overflowingExpandedReadMarkdownShowsFullScreenFloatingButton() throws {
         let markdown = "# Notes\n\n" + Array(repeating: "- item", count: 900).joined(separator: "\n")
         let config = makeTimelineToolConfiguration(
@@ -726,8 +638,8 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedOutputDisplayTruncatesVeryLargeSingleLinePayloads() throws {
-        let longOutput = String(repeating: "x", count: 220_000)
+    @Test func expandedOutputDisplayTruncatesLargePayloads() throws {
+        let longOutput = String(repeating: "x", count: 12_000)
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: nil, output: longOutput, unwrapped: true),
             isExpanded: true

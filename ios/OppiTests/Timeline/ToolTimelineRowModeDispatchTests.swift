@@ -1095,8 +1095,6 @@ private func makeToolConfiguration(
         editRemoved: nil,
         collapsedImageBase64: nil,
         collapsedImageMimeType: nil,
-        inlineExpansionLevel: .compact,
-        onToggleInlineExpansion: nil,
         isExpanded: isExpanded,
         isDone: isDone,
         isError: false,

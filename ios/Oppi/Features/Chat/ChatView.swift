@@ -66,10 +66,6 @@ struct ChatView: View {
         session?.status == .stopped
     }
 
-    private var shouldKeepScreenAwake: Bool {
-        isBusy || voiceInputManager.isRecording || voiceInputManager.isPreparing || voiceInputManager.isProcessing
-    }
-
     private var messageQueueState: MessageQueueState {
         connection.messageQueueStore.queue(for: sessionId)
     }
@@ -140,126 +136,117 @@ struct ChatView: View {
     }
 
     private var chatContent: some View {
-        let base = chatTimelineScaffold
+        chatTimelineScaffold
             .background(Color.themeBg.ignoresSafeArea())
+        .navigationTitle(sessionDisplayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $forkedSessionToOpen) { route in
+            Self(sessionId: route.id)
+        }
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .bottomBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                chatPrincipalToolbarItem
+            }
 
-        return base
-            .navigationTitle(sessionDisplayName)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $forkedSessionToOpen) { route in
-                Self(sessionId: route.id)
+            ToolbarItem(placement: .topBarTrailing) {
+                chatTrailingToolbarItem
             }
-            .toolbar(.hidden, for: .tabBar)
-            .toolbar(.hidden, for: .bottomBar)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    chatPrincipalToolbarItem
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    chatTrailingToolbarItem
-                }
+        }
+        .sheet(isPresented: $showOutline) { outlineSheet }
+        .sheet(isPresented: $showModelPicker) { modelPickerSheet }
+        .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
+        .fullScreenCover(isPresented: $showComposer) { composerSheet }
+        .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
+        .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
+            Button("Keep Current", role: .cancel) {
+                pendingModelSwitch = nil
             }
-            .sheet(isPresented: $showOutline) { outlineSheet }
-            .sheet(isPresented: $showModelPicker) { modelPickerSheet }
-            .sheet(isPresented: $showContextInspector) { contextInspectorSheet }
-            .fullScreenCover(isPresented: $showComposer) { composerSheet }
-            .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
-            .alert("Switch model in active session?", isPresented: $showModelSwitchWarning, presenting: pendingModelSwitch) { model in
-                Button("Keep Current", role: .cancel) {
-                    pendingModelSwitch = nil
-                }
-                Button("Switch Anyway") {
-                    applyModelSelection(model)
-                    pendingModelSwitch = nil
-                }
-            } message: { model in
-                Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
+            Button("Switch Anyway") {
+                applyModelSelection(model)
+                pendingModelSwitch = nil
             }
-            .alert("Compact Context", isPresented: $showCompactConfirmation) {
-                Button("Compact", role: .destructive) {
-                    actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
+        } message: { model in
+            Text("Switching to \(shortModelName(ModelSwitchPolicy.fullModelID(for: model))) now invalidates prompt caching for this conversation, which can increase cost and latency. Prefer switching when starting a new session.")
+        }
+        .alert("Compact Context", isPresented: $showCompactConfirmation) {
+            Button("Compact", role: .destructive) {
+                actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
             }
-            .task(id: sessionManager.connectionGeneration) {
-                await sessionManager.connect(
-                    connection: connection,
-                    reducer: reducer,
-                    sessionStore: sessionStore
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will summarize the conversation to free up context window space. The summary replaces earlier messages.")
+        }
+        .task(id: sessionManager.connectionGeneration) {
+            await sessionManager.connect(
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore
+            )
+        }
+        .task {
+            // Pre-warm voice input pipeline in background (model check + transcriber creation)
+            if ReleaseFeatures.voiceInputEnabled {
+                await voiceInputManager.prewarm()
+            }
+        }
+        .onAppear {
+            sessionManager.markAppeared()
+            if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
+                inputText = draft
+                connection.composerDraft = nil
+            }
+            // Load initial git status for the workspace
+            if let wsId = session?.workspaceId, let api = connection.apiClient {
+                let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
+                connection.gitStatusStore.loadInitial(
+                    workspaceId: wsId,
+                    apiClient: api,
+                    gitStatusEnabled: ws?.gitStatusEnabled ?? true
                 )
             }
-            .task {
-                // Pre-warm voice input pipeline in background (model check + transcriber creation)
-                if ReleaseFeatures.voiceInputEnabled {
-                    await voiceInputManager.prewarm()
-                }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
+        .onChange(of: session?.status) { _, newStatus in
+            if newStatus != .stopping {
+                actionHandler.resetStopState()
+                sessionManager.cancelReconciliation()
             }
-            .onAppear {
-                sessionManager.markAppeared()
-                if sessionManager.hasAppeared, let draft = connection.composerDraft, !draft.isEmpty {
-                    inputText = draft
-                    connection.composerDraft = nil
-                }
-                // Load initial git status for the workspace
-                if let wsId = session?.workspaceId, let api = connection.apiClient {
-                    let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
-                    connection.gitStatusStore.loadInitial(
-                        workspaceId: wsId,
-                        apiClient: api,
-                        gitStatusEnabled: ws?.gitStatusEnabled ?? true
-                    )
-                }
-                ScreenAwakeController.shared.setSessionActivity(shouldKeepScreenAwake, sessionId: sessionId)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                isKeyboardVisible = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                isKeyboardVisible = false
-            }
-            .onChange(of: session?.status) { _, newStatus in
-                if newStatus != .stopping {
-                    actionHandler.resetStopState()
-                    sessionManager.cancelReconciliation()
-                }
 
-                if newStatus == .busy {
-                    Task {
-                        try? await connection.requestMessageQueue()
-                    }
-                }
-
-                ScreenAwakeController.shared.setSessionActivity(shouldKeepScreenAwake, sessionId: sessionId)
-            }
-            .onChange(of: voiceInputManager.state) { _, _ in
-                ScreenAwakeController.shared.setSessionActivity(shouldKeepScreenAwake, sessionId: sessionId)
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .background {
-                    Task {
-                        await sessionManager.flushSnapshotIfNeeded(connection: connection)
-                    }
-                }
-            }
-            .onDisappear {
-                actionHandler.cleanup()
-                sessionManager.cleanup()
-                scrollController.cancel()
-                audioPlayer.stop()
-                ScreenAwakeController.shared.clearSessionActivity(sessionId: sessionId)
-                let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                connection.composerDraft = draft.isEmpty ? nil : draft
+            if newStatus == .busy {
                 Task {
-                    await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
-                }
-                if connection.activeSessionId == sessionId
-                    || connection.activeSessionId == nil {
-                    connection.disconnectSession()
+                    try? await connection.requestMessageQueue()
                 }
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                Task {
+                    await sessionManager.flushSnapshotIfNeeded(connection: connection)
+                }
+            }
+        }
+        .onDisappear {
+            actionHandler.cleanup()
+            sessionManager.cleanup()
+            scrollController.cancel()
+            audioPlayer.stop()
+            let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            connection.composerDraft = draft.isEmpty ? nil : draft
+            Task {
+                await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
+            }
+            if connection.activeSessionId == sessionId
+                || connection.activeSessionId == nil {
+                connection.disconnectSession()
+            }
+        }
     }
 
     @ViewBuilder
