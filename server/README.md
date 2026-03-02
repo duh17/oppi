@@ -128,7 +128,8 @@ See [config-schema.md](docs/config-schema.md).
 
 ```bash
 npm test                            # vitest
-npm run check                       # typecheck + lint + format
+npm run check                       # typecheck + lint + iOS architecture boundaries + format
+npm run check:architecture          # run iOS architecture boundary checks directly
 npm run review                      # generate AI review prompt from staged diff
 npm run dev                         # watch mode
 npm run test:e2e:linux              # linux container E2E

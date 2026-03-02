@@ -66,6 +66,14 @@ These are the observed directions in imports/calls today:
    - `storage/*.ts` are used by higher layers.
    - Storage modules do not import session/route/stream modules.
 
+7. **Protocol contract file is a leaf**
+   - `types.ts` is the canonical protocol/domain contract.
+   - `types.ts` does not import from sibling modules.
+
+8. **Permission gate stays out of session runtime**
+   - `gate.ts` may depend on policy/rules/audit layers.
+   - `gate.ts` does not import `sessions.ts` or `session-*.ts` runtime modules.
+
 ### Module inventory (one-line purpose)
 
 #### Composition, transport, and boundaries
@@ -207,6 +215,22 @@ Features/Chat
   ├─ ChatTimelineView (render window + scroll command wiring)
   └─ ChatTimelineCollectionView + TimelineSnapshotApplier (UIKit render host)
 ```
+
+### iOS layers
+
+Mechanically enforced boundaries:
+
+1. **UIKit stays out of runtime reducers/coalescers**
+   - `Core/Runtime/TimelineReducer.swift` and `Core/Runtime/DeltaCoalescer.swift` must not import UIKit.
+   - UIKit-only behavior belongs in `Features/Chat/Timeline/*` host/render files.
+
+2. **View-layer files avoid direct networking primitives**
+   - `Core/Views/*` and `Features/Chat/Timeline/*` must not reference `APIClient` / `WebSocketClient` directly.
+   - Network work should flow through `ServerConnection` / session managers / stores.
+
+3. **Primary stores stay isolated from each other**
+   - `SessionStore`, `WorkspaceStore`, `PermissionStore`, and `MessageQueueStore` must not directly reference each other.
+   - Cross-store orchestration belongs in `ServerConnection` / coordinators.
 
 ### Event pipeline (runtime)
 
