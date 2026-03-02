@@ -28,6 +28,16 @@ const REVIEW_MODEL = "openai-codex/gpt-5.3-codex";
 const REVIEW_THINKING = "high";
 const REVIEW_NAME = "ai-review";
 
+const DISPATCH_VALUE_FLAGS = [
+  "--workspace",
+  "--prompt",
+  "--name",
+  "--model",
+  "--thinking",
+  "--todo",
+  "--context-file",
+];
+
 class CliError extends Error {
   constructor(message, exitCode = 1, details = undefined) {
     super(message);
@@ -49,15 +59,21 @@ class ApiError extends Error {
 function usage() {
   return [
     "Usage:",
-    "  agent-sessions list [--workspace <name>] [--limit N] [--human]",
-    "  agent-sessions status <id> [--workspace <name>] [--human]",
-    "  agent-sessions dispatch --workspace <name> --prompt '...' [--name ...] [--model ...] [--thinking ...] [--todo ...] [--context-file ...] [--human]",
-    "  agent-sessions stop <id> [--workspace <name>] [--human]",
-    "  agent-sessions events <id> [--workspace <name>] [--since N] [--human]",
-    "  agent-sessions messages <id> [--workspace <name>] [--human]",
-    "  agent-sessions trace <id> [--workspace <name>] [--jsonl] [--human]",
-    "  agent-sessions review [--commits N] [--staged] [--dispatch] [--workspace <name>] [--human]",
-    "  agent-sessions latest [--workspace <name>] [--human]",
+    "  agent-sessions list [--workspace <name>] [--limit N] [--json] [--color|--no-color]",
+    "  agent-sessions status <id> [--workspace <name>] [--json] [--color|--no-color]",
+    "  agent-sessions dispatch --workspace <name> --prompt '...' [--name ...] [--model ...] [--thinking ...] [--todo ...] [--context-file ...] [--json] [--color|--no-color]",
+    "  agent-sessions stop <id> [--workspace <name>] [--json] [--color|--no-color]",
+    "  agent-sessions events <id> [--workspace <name>] [--since N] [--json] [--color|--no-color]",
+    "  agent-sessions messages <id> [--workspace <name>] [--json] [--color|--no-color]",
+    "  agent-sessions trace <id> [--workspace <name>] [--jsonl] [--json] [--color|--no-color]",
+    "  agent-sessions review [--commits N] [--staged] [--dispatch] [--workspace <name>] [--json] [--color|--no-color]",
+    "  agent-sessions latest [--workspace <name>] [--json] [--color|--no-color]",
+    "",
+    "Global flags:",
+    "  --json       Machine-readable JSON output (escape hatch)",
+    "  --human      Human output (default)",
+    "  --color      Force ANSI colors",
+    "  --no-color   Disable ANSI colors",
   ].join("\n");
 }
 
@@ -111,6 +127,10 @@ function stripKnownFlagWithValue(args, name) {
     out.push(token);
   }
   return out;
+}
+
+function stripKnownFlagsWithValues(args, names) {
+  return names.reduce((currentArgs, name) => stripKnownFlagWithValue(currentArgs, name), args);
 }
 
 function ensureNoUnknownFlags(args, allowedFlags) {
@@ -351,6 +371,18 @@ async function listSessionsForWorkspace(api, workspace) {
     workspaceId: session.workspaceId || workspace.id,
     workspaceName: session.workspaceName || workspace.name,
   }));
+}
+
+async function listSessionsAcrossWorkspaces(api) {
+  const workspaces = await listWorkspaces(api);
+  const sessions = [];
+
+  for (const workspace of workspaces) {
+    const workspaceSessions = await listSessionsForWorkspace(api, workspace);
+    sessions.push(...workspaceSessions);
+  }
+
+  return sessions;
 }
 
 async function getSessionDetail(api, workspaceId, sessionId, view = undefined) {
@@ -831,11 +863,7 @@ async function cmdList(api, args) {
     sessions = await listSessionsForWorkspace(api, workspace);
     scope = workspace.name || workspace.id;
   } else {
-    const workspaces = await listWorkspaces(api);
-    for (const workspace of workspaces) {
-      const workspaceSessions = await listSessionsForWorkspace(api, workspace);
-      sessions.push(...workspaceSessions);
-    }
+    sessions = await listSessionsAcrossWorkspaces(api);
   }
 
   const sorted = sortSessionsByLastActivity(sessions);
@@ -877,11 +905,7 @@ async function cmdLatest(api, args) {
     const workspace = await resolveWorkspace(api, workspaceArg, { required: true });
     sessions = await listSessionsForWorkspace(api, workspace);
   } else {
-    const workspaces = await listWorkspaces(api);
-    for (const workspace of workspaces) {
-      const workspaceSessions = await listSessionsForWorkspace(api, workspace);
-      sessions.push(...workspaceSessions);
-    }
+    sessions = await listSessionsAcrossWorkspaces(api);
   }
 
   const sorted = sortSessionsByLastActivity(sessions);
@@ -1005,28 +1029,10 @@ async function cmdTrace(api, args) {
 }
 
 async function cmdDispatch(api, config, args) {
-  ensureNoUnknownFlags(
-    stripKnownFlagWithValue(
-      stripKnownFlagWithValue(
-        stripKnownFlagWithValue(
-          stripKnownFlagWithValue(
-            stripKnownFlagWithValue(
-              stripKnownFlagWithValue(
-                stripKnownFlagWithValue(args, "--workspace"),
-                "--prompt",
-              ),
-              "--name",
-            ),
-            "--model",
-          ),
-          "--thinking",
-        ),
-        "--todo",
-      ),
-      "--context-file",
-    ).filter((token) => token.startsWith("--")),
-    new Set(),
+  const unknownFlags = stripKnownFlagsWithValues(args, DISPATCH_VALUE_FLAGS).filter((token) =>
+    token.startsWith("--"),
   );
+  ensureNoUnknownFlags(unknownFlags, new Set());
 
   const workspaceArg = flag(args, "--workspace");
   const prompt = flag(args, "--prompt");
@@ -1121,97 +1127,630 @@ async function cmdReview(api, config, args) {
   };
 }
 
-function emitResult(result, human) {
-  const indent = human ? 2 : 0;
-  console.log(JSON.stringify(result, null, indent));
+function parseGlobalFlags(argv) {
+  let args = [...argv];
+
+  const strippedJson = stripFlag(args, "--json");
+  args = strippedJson.args;
+
+  const strippedHuman = stripFlag(args, "--human");
+  args = strippedHuman.args;
+
+  const strippedColor = stripFlag(args, "--color");
+  args = strippedColor.args;
+
+  const strippedNoColor = stripFlag(args, "--no-color");
+  args = strippedNoColor.args;
+
+  if (strippedJson.found && strippedHuman.found) {
+    throw new CliError("Use either --json or --human, not both");
+  }
+
+  if (strippedColor.found && strippedNoColor.found) {
+    throw new CliError("Use either --color or --no-color, not both");
+  }
+
+  const human = strippedJson.found ? false : true;
+
+  return {
+    args,
+    human,
+    json: !human,
+    forceColor: strippedColor.found,
+    noColor: strippedNoColor.found,
+  };
 }
 
-function emitError(error) {
-  if (error instanceof CliError) {
-    console.error(
-      JSON.stringify(
-        {
-          error: error.message,
-          details: error.details,
+function shouldUseColor({ human, forceColor, noColor }) {
+  if (!human) return false;
+  if (noColor || process.env.NO_COLOR) return false;
+  if (forceColor) return true;
+  return true;
+}
+
+function createPainter(enabled) {
+  const paint = (code) => (value) => {
+    const text = String(value ?? "");
+    if (!enabled) return text;
+    return `${code}${text}\u001b[0m`;
+  };
+
+  return {
+    enabled,
+    bold: paint("\u001b[1m"),
+    dim: paint("\u001b[2m"),
+    red: paint("\u001b[31m"),
+    green: paint("\u001b[32m"),
+    yellow: paint("\u001b[33m"),
+    blue: paint("\u001b[34m"),
+    magenta: paint("\u001b[35m"),
+    cyan: paint("\u001b[36m"),
+  };
+}
+
+function stripAnsi(text) {
+  return String(text ?? "").replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function truncate(text, maxChars) {
+  const input = stripAnsi(text).replace(/\s+/g, " ").trim();
+  if (maxChars <= 0) return "";
+  if (input.length <= maxChars) return input;
+  if (maxChars <= 1) return "…";
+  return `${input.slice(0, maxChars - 1)}…`;
+}
+
+function shortId(id) {
+  const value = String(id ?? "");
+  return value.length <= 8 ? value : value.slice(0, 8);
+}
+
+function shortModel(model) {
+  const value = String(model ?? "");
+  if (!value) return "-";
+  const parts = value.split("/");
+  return parts[parts.length - 1] || value;
+}
+
+function ageLabel(timestamp) {
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || ts <= 0) return "?";
+
+  const delta = Math.max(0, Date.now() - ts);
+  if (delta < 60_000) return "now";
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return `${Math.floor(delta / 86_400_000)}d`;
+}
+
+function formatCost(cost) {
+  const value = Number(cost);
+  if (!Number.isFinite(value)) return "$0.0000";
+  return `$${value.toFixed(4)}`;
+}
+
+function statusLabel(status) {
+  return `[${String(status || "?").toUpperCase()}]`;
+}
+
+function colorStatus(status, paint) {
+  const label = statusLabel(status);
+  switch (status) {
+    case "ready":
+      return paint.green(label);
+    case "busy":
+      return paint.yellow(label);
+    case "starting":
+      return paint.blue(label);
+    case "stopping":
+      return paint.magenta(label);
+    case "error":
+      return paint.red(label);
+    case "stopped":
+      return paint.dim(label);
+    default:
+      return paint.dim(label);
+  }
+}
+
+function compactPath(pathValue, maxChars) {
+  const pathText = String(pathValue ?? "");
+  if (!pathText) return "-";
+  if (pathText.length <= maxChars) return pathText;
+  const tail = Math.max(8, maxChars - 1);
+  return `…${pathText.slice(-tail)}`;
+}
+
+function clipTextBlock(text, width, maxLines = 10) {
+  const sourceLines = String(text ?? "").split("\n");
+  const clippedLines = sourceLines.slice(0, maxLines).map((line) => truncate(line, width));
+  const truncated = sourceLines.length > maxLines;
+  return {
+    lines: clippedLines,
+    truncated,
+  };
+}
+
+function summarizeEvent(event, width) {
+  if (!event || typeof event !== "object") return "event";
+
+  const entry = event;
+  const type = String(entry.type || "event");
+
+  if (type === "text_delta" || type === "thinking_delta") {
+    return `${type}: ${truncate(entry.delta ?? "", width)}`;
+  }
+
+  if (type === "message_end") {
+    const role = String(entry.role || "?");
+    return `${type} ${role}: ${truncate(entry.content ?? "", width)}`;
+  }
+
+  if (type === "tool_start") {
+    const tool = String(entry.tool || "tool");
+    return `${type} ${tool}`;
+  }
+
+  if (type === "tool_output") {
+    return `${type}: ${truncate(entry.output ?? "", width)}`;
+  }
+
+  if (type === "command_result") {
+    const command = String(entry.command || "command");
+    const ok = entry.success === true ? "ok" : "fail";
+    return `${type} ${command} ${ok}`;
+  }
+
+  if (type === "error") {
+    return `${type}: ${truncate(entry.error ?? "", width)}`;
+  }
+
+  return truncate(type, width);
+}
+
+function renderListHuman(result, { paint, width }) {
+  const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+  const lines = [
+    `${paint.bold("list")} ${paint.cyan(result.scope || "all")} ${paint.dim(`${sessions.length}/${result.total}`)}`,
+  ];
+
+  for (const session of sessions) {
+    const id = shortId(session.id);
+    const status = statusLabel(session.status);
+    const age = ageLabel(session.lastActivity);
+    const model = shortModel(session.model);
+    const summary = truncate(session.name || session.lastMessage || "", 28);
+    const plainPrefix = `${id} ${status} ${age} ${model}`;
+    const showSummary = plainPrefix.length + 3 < width && summary.length > 0;
+
+    const row = [paint.cyan(id), colorStatus(session.status, paint), paint.dim(age), paint.dim(model)];
+    if (showSummary) {
+      row.push(paint.dim("-"), summary);
+    }
+
+    lines.push(row.join(" "));
+  }
+
+  return lines.join("\n");
+}
+
+function renderSessionHuman(title, result, { paint, width }) {
+  const session = result?.session || {};
+  const lines = [
+    `${paint.bold(title)} ${paint.cyan(shortId(session.id || ""))} ${colorStatus(session.status, paint)}`,
+    `${paint.dim("ws")} ${result.workspaceName || result.workspaceId || "-"}  ${paint.dim("model")} ${shortModel(session.model)}`,
+    `${paint.dim("msgs")} ${session.messageCount ?? 0}  ${paint.dim("cost")} ${formatCost(session.cost)}  ${paint.dim("age")} ${ageLabel(session.lastActivity)}`,
+  ];
+
+  if (typeof result.traceLength === "number") {
+    lines.push(`${paint.dim("trace")} ${result.traceLength}`);
+  }
+
+  if (session.name) {
+    lines.push(`${paint.dim("name")} ${truncate(session.name, width - 6)}`);
+  }
+
+  if (session.lastMessage) {
+    lines.push(`${paint.dim("last")} ${truncate(session.lastMessage, width - 6)}`);
+  }
+
+  if (session.piSessionFile) {
+    lines.push(`${paint.dim("jsonl")} ${compactPath(session.piSessionFile, width - 7)}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderDispatchHuman(result, { paint, width }) {
+  const lines = [
+    `${paint.bold("dispatch")} ${paint.cyan(shortId(result.sessionId))} ${result.prompted ? paint.green("prompted") : paint.yellow("started")}`,
+    `${paint.dim("ws")} ${result.workspaceName || result.workspaceId || "-"}  ${paint.dim("model")} ${shortModel(result.model)}  ${paint.dim("chars")} ${result.promptChars ?? 0}`,
+  ];
+
+  if (Array.isArray(result.injectedTodos) && result.injectedTodos.length > 0) {
+    lines.push(`${paint.dim("todos")} ${result.injectedTodos.join(", ")}`);
+  }
+
+  if (Array.isArray(result.missingTodos) && result.missingTodos.length > 0) {
+    lines.push(`${paint.yellow("missing")} ${result.missingTodos.join(", ")}`);
+  }
+
+  if (Array.isArray(result.injectedFiles) && result.injectedFiles.length > 0) {
+    lines.push(`${paint.dim("files")} ${truncate(result.injectedFiles.join(", "), width - 7)}`);
+  }
+
+  if (result.warning) {
+    lines.push(paint.yellow(truncate(result.warning, width)));
+  }
+
+  return lines.join("\n");
+}
+
+function renderEventsHuman(result, { paint, width }) {
+  const events = Array.isArray(result.events) ? result.events : [];
+  const lines = [
+    `${paint.bold("events")} ${paint.cyan(shortId(result.session?.id || ""))} ${paint.dim(`since ${result.since}`)} ${paint.dim(`${events.length} events`)}`,
+    `${paint.dim("seq")} ${result.currentSeq ?? "?"}  ${paint.dim("status")} ${colorStatus(result.session?.status, paint)}`,
+  ];
+
+  const tail = events.slice(-6);
+  for (const event of tail) {
+    lines.push(`- ${truncate(summarizeEvent(event, width - 4), width - 2)}`);
+  }
+
+  if (events.length > tail.length) {
+    lines.push(paint.dim(`… ${events.length - tail.length} earlier events`));
+  }
+
+  return lines.join("\n");
+}
+
+function renderMessagesHuman(result, { paint, width }) {
+  const text = result.finalAssistantText || "(no assistant message yet)";
+  const clip = clipTextBlock(text, width, 12);
+  const lines = [
+    `${paint.bold("messages")} ${paint.cyan(shortId(result.sessionId))} ${paint.dim(`${result.assistantMessageCount ?? 0} assistant`)}`,
+    "",
+    ...clip.lines,
+  ];
+
+  if (clip.truncated) {
+    lines.push(paint.dim("(truncated for mobile; use JSON output for full text)"));
+  }
+
+  return lines.join("\n");
+}
+
+function renderTraceHuman(result, { paint, width }) {
+  const lines = [
+    `${paint.bold("trace")} ${paint.cyan(shortId(result.sessionId || ""))}`,
+    `${paint.dim("path")} ${compactPath(result.tracePath, width - 6)}`,
+  ];
+
+  if (typeof result.jsonl === "string") {
+    const raw = result.jsonl;
+    const split = raw.split("\n");
+    const lineCount = split.length > 0 && split[split.length - 1] === "" ? split.length - 1 : split.length;
+    lines.push(`${paint.dim("jsonl")} ${raw.length} bytes, ${lineCount} lines`);
+
+    const preview = split.slice(0, 6).map((line) => truncate(line, width));
+    if (preview.length > 0) {
+      lines.push("");
+      lines.push(...preview);
+    }
+
+    if (lineCount > preview.length) {
+      lines.push(paint.dim("(preview only; use JSON output for full content)"));
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function colorCheckStatus(status, paint) {
+  const label = String(status || "?").toUpperCase();
+  if (status === "pass") return paint.green(label);
+  if (status === "warn") return paint.yellow(label);
+  if (status === "fail") return paint.red(label);
+  return paint.dim(label);
+}
+
+function renderReviewHuman(result, { paint, width }) {
+  const summary = result.summary || {};
+  const checks = Array.isArray(summary.checks) ? summary.checks : [];
+  const lines = [
+    `${paint.bold("review")} ${colorCheckStatus(summary.status, paint)}`,
+    `${paint.dim("scope")} ${summary.mode || "-"}  ${paint.dim("files")} ${summary.changedFileCount ?? 0}`,
+  ];
+
+  for (const check of checks) {
+    const prefix = colorCheckStatus(check.status, paint);
+    const reason = truncate(`${check.id}: ${check.reason}`, width - 10);
+    lines.push(`- ${prefix} ${reason}`);
+  }
+
+  if (result.dispatch?.dispatched) {
+    lines.push(`${paint.green("dispatch")} ${paint.cyan(shortId(result.dispatch.sessionId))} ${result.dispatch.workspaceName || result.dispatch.workspaceId}`);
+  } else if (result.dispatch && result.dispatch.dispatched === false) {
+    lines.push(`${paint.dim("dispatch")} ${result.dispatch.reason}`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderHumanOutput(result, renderOptions) {
+  const { paint, width } = renderOptions;
+
+  switch (result.command) {
+    case "list":
+      return renderListHuman(result, { paint, width });
+    case "status":
+      return renderSessionHuman("status", result, { paint, width });
+    case "latest":
+      return renderSessionHuman("latest", result, { paint, width });
+    case "stop":
+      return renderSessionHuman("stop", result, { paint, width });
+    case "dispatch":
+      return renderDispatchHuman(result, { paint, width });
+    case "events":
+      return renderEventsHuman(result, { paint, width });
+    case "messages":
+      return renderMessagesHuman(result, { paint, width });
+    case "trace":
+      return renderTraceHuman(result, { paint, width });
+    case "review":
+      return renderReviewHuman(result, { paint, width });
+    default:
+      return JSON.stringify(result, null, 2);
+  }
+}
+
+function simplifySessionForJson(session) {
+  if (!session || typeof session !== "object") return undefined;
+
+  const input = session;
+  return {
+    id: input.id,
+    name: input.name,
+    status: input.status,
+    workspaceId: input.workspaceId,
+    workspaceName: input.workspaceName,
+    model: input.model,
+    thinkingLevel: input.thinkingLevel,
+    messageCount: input.messageCount,
+    cost: input.cost,
+    createdAt: input.createdAt,
+    lastActivity: input.lastActivity,
+    firstMessage: input.firstMessage ? truncate(input.firstMessage, 220) : undefined,
+    lastMessage: input.lastMessage ? truncate(input.lastMessage, 220) : undefined,
+    piSessionFile: input.piSessionFile,
+  };
+}
+
+function simplifyResultForJson(result) {
+  if (!result || typeof result !== "object") return result;
+
+  switch (result.command) {
+    case "list": {
+      const sessions = Array.isArray(result.sessions)
+        ? result.sessions.map((session) => simplifySessionForJson(session))
+        : [];
+      return {
+        command: "list",
+        scope: result.scope,
+        total: result.total,
+        limit: result.limit,
+        sessions,
+      };
+    }
+
+    case "status":
+    case "latest":
+    case "stop":
+      return {
+        command: result.command,
+        workspaceId: result.workspaceId,
+        workspaceName: result.workspaceName,
+        ok: result.ok,
+        traceLength: result.traceLength,
+        session: simplifySessionForJson(result.session),
+      };
+
+    case "events":
+      return {
+        command: "events",
+        workspaceId: result.workspaceId,
+        workspaceName: result.workspaceName,
+        since: result.since,
+        currentSeq: result.currentSeq,
+        catchUpComplete: result.catchUpComplete,
+        eventCount: Array.isArray(result.events) ? result.events.length : 0,
+        events: result.events,
+        session: simplifySessionForJson(result.session),
+      };
+
+    case "review": {
+      const summary = result.summary || {};
+      const checks = Array.isArray(summary.checks)
+        ? summary.checks.map((check) => ({
+            id: check.id,
+            status: check.status,
+            reason: truncate(check.reason, 220),
+          }))
+        : [];
+
+      return {
+        command: "review",
+        mechanicalExitCode: result.mechanicalExitCode,
+        summary: {
+          status: summary.status,
+          mode: summary.mode,
+          changedFileCount: summary.changedFileCount,
+          checks,
         },
-        null,
-        0,
-      ),
-    );
+        dispatch: result.dispatch,
+      };
+    }
+
+    case "trace":
+      if (typeof result.jsonl === "string") {
+        return {
+          command: "trace",
+          workspaceId: result.workspaceId,
+          workspaceName: result.workspaceName,
+          sessionId: result.sessionId,
+          tracePath: result.tracePath,
+          jsonl: result.jsonl,
+        };
+      }
+      return {
+        command: "trace",
+        workspaceId: result.workspaceId,
+        workspaceName: result.workspaceName,
+        sessionId: result.sessionId,
+        tracePath: result.tracePath,
+        tracePaths: result.tracePaths,
+      };
+
+    case "dispatch":
+    case "messages":
+      return result;
+
+    default:
+      return result;
+  }
+}
+
+function emitResult(result, renderOptions) {
+  if (renderOptions.human) {
+    console.log(renderHumanOutput(result, renderOptions));
+    return;
+  }
+  console.log(JSON.stringify(simplifyResultForJson(result), null, 0));
+}
+
+function emitError(error, renderOptions) {
+  const paint = renderOptions?.paint || createPainter(false);
+  const useHuman = renderOptions?.human === true;
+
+  if (error instanceof CliError) {
+    if (useHuman) {
+      console.error(`${paint.red("error")} ${error.message}`);
+      if (error.details !== undefined) {
+        console.error(paint.dim(JSON.stringify(error.details, null, 2)));
+      }
+    } else {
+      console.error(
+        JSON.stringify(
+          {
+            error: error.message,
+            details: error.details,
+          },
+          null,
+          0,
+        ),
+      );
+    }
     process.exit(error.exitCode || 1);
   }
 
   if (error instanceof ApiError) {
-    console.error(
-      JSON.stringify(
-        {
-          error: error.message,
-          status: error.status,
-          data: error.data,
-        },
-        null,
-        0,
-      ),
-    );
+    if (useHuman) {
+      console.error(`${paint.red("api")} ${error.message}`);
+    } else {
+      console.error(
+        JSON.stringify(
+          {
+            error: error.message,
+            status: error.status,
+            data: error.data,
+          },
+          null,
+          0,
+        ),
+      );
+    }
     process.exit(2);
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  console.error(JSON.stringify({ error: message }, null, 0));
+  if (useHuman) {
+    console.error(`${paint.red("error")} ${message}`);
+  } else {
+    console.error(JSON.stringify({ error: message }, null, 0));
+  }
   process.exit(1);
 }
 
 async function main() {
-  const strippedHuman = stripFlag(process.argv.slice(2), "--human");
-  const args = strippedHuman.args;
-  const human = strippedHuman.found;
+  let renderOptions = {
+    human: true,
+    paint: createPainter(true),
+    width: 72,
+  };
 
-  if (args.length === 0 || args[0] === "-h" || args[0] === "--help" || args[0] === "help") {
-    console.log(usage());
-    process.exit(0);
+  try {
+    const globals = parseGlobalFlags(process.argv.slice(2));
+    const colorEnabled = shouldUseColor(globals);
+    const width = Math.max(48, Math.min(process.stdout.columns || 80, 72));
+
+    renderOptions = {
+      human: globals.human,
+      paint: createPainter(colorEnabled),
+      width,
+    };
+
+    const args = globals.args;
+
+    if (args.length === 0 || args[0] === "-h" || args[0] === "--help" || args[0] === "help") {
+      console.log(usage());
+      process.exit(0);
+    }
+
+    const command = args[0];
+    const commandArgs = args.slice(1);
+
+    const config = loadConfig();
+    const api = createApiClient(config);
+
+    let result;
+
+    switch (command) {
+      case "list":
+        result = await cmdList(api, commandArgs);
+        break;
+      case "status":
+        result = await cmdStatus(api, commandArgs);
+        break;
+      case "dispatch":
+        result = await cmdDispatch(api, config, commandArgs);
+        break;
+      case "stop":
+        result = await cmdStop(api, commandArgs);
+        break;
+      case "events":
+        result = await cmdEvents(api, commandArgs);
+        break;
+      case "messages":
+        result = await cmdMessages(api, commandArgs);
+        break;
+      case "trace":
+        result = await cmdTrace(api, commandArgs);
+        break;
+      case "review":
+        result = await cmdReview(api, config, commandArgs);
+        break;
+      case "latest":
+        result = await cmdLatest(api, commandArgs);
+        break;
+      default:
+        throw new CliError(`Unknown command: ${command}\n\n${usage()}`);
+    }
+
+    emitResult(result, renderOptions);
+  } catch (error) {
+    emitError(error, renderOptions);
   }
-
-  const command = args[0];
-  const commandArgs = args.slice(1);
-
-  const config = loadConfig();
-  const api = createApiClient(config);
-
-  let result;
-
-  switch (command) {
-    case "list":
-      result = await cmdList(api, commandArgs);
-      break;
-    case "status":
-      result = await cmdStatus(api, commandArgs);
-      break;
-    case "dispatch":
-      result = await cmdDispatch(api, config, commandArgs);
-      break;
-    case "stop":
-      result = await cmdStop(api, commandArgs);
-      break;
-    case "events":
-      result = await cmdEvents(api, commandArgs);
-      break;
-    case "messages":
-      result = await cmdMessages(api, commandArgs);
-      break;
-    case "trace":
-      result = await cmdTrace(api, commandArgs);
-      break;
-    case "review":
-      result = await cmdReview(api, config, commandArgs);
-      break;
-    case "latest":
-      result = await cmdLatest(api, commandArgs);
-      break;
-    default:
-      throw new CliError(`Unknown command: ${command}\n\n${usage()}`);
-  }
-
-  emitResult(result, human);
 }
 
-main().catch(emitError);
+main();
