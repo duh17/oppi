@@ -1,6 +1,6 @@
 # Chat Timeline Code Paths (Streaming + Normal Output)
 
-Status: current as of 2026-03-01.
+Status: active
 
 This doc maps the concrete code paths that build the chat timeline in Oppi, for:
 
@@ -11,7 +11,7 @@ This doc maps the concrete code paths that build the chat timeline in Oppi, for:
 It is written as a debugging/optimization map for freshness and lag issues.
 
 For the product-level behavior contract (what should happen, in what order), see:
-- `docs/chat-freshness-contract.md`
+- `docs/design/chat-freshness-contract.md`
 
 ---
 

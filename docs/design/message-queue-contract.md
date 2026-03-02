@@ -1,6 +1,6 @@
 # Message Queue Contract (Oppi)
 
-Status: **approved behavior contract**
+Status: completed
 Scope: iOS + server queue UX/semantics for busy-session inputs (`steer`, `follow_up`)
 
 ## Upstream pi semantics (reference)
@@ -66,16 +66,13 @@ No timeline-only synthetic rows for canonical user inputs.
 3. **Canonical input visibility**: every user input that reached the model appears as user message in timeline and trace.
 4. **Deterministic dequeue UX**: queue footer removes started item exactly once, even under reconnect/out-of-order delivery.
 
-## Current known gaps vs this contract
+## Implementation status
 
-At time of writing, Oppi still emits timeline system rows for queue enqueue/dequeue feedback. Those rows are explicitly out-of-contract and should be removed in implementation follow-up.
+Implemented in current app/server behavior:
 
-Also, inline composer has busy-mode switching, but full keybinding parity with upstream pi (`Alt+Enter` follow-up enqueue intent) is tracked separately.
+- `queue_state` updates queue footer state only.
+- `queue_item_started` removes queue item and appends a normal user row.
+- No queue lifecycle system rows are emitted in the production timeline path.
+- Dequeued inputs are persisted in trace/session history.
 
-## Acceptance criteria for implementation follow-up
-
-- No `Message Queue • ... queued` timeline system rows.
-- No `Message Queue • ... started` timeline system rows.
-- On dequeue (`queue_item_started`), timeline gets a standard user row with message/images.
-- Dequeued input is present in persisted trace/session history.
-- Existing stale/out-of-order queue version protections remain intact.
+Remaining parity work with upstream pi keybindings (`Alt+Enter` enqueue intent) is tracked separately.

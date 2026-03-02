@@ -1,6 +1,6 @@
 # Chat Freshness Contract (Predictable Timeline Behavior)
 
-Status: proposed direction, intended to be the default behavior standard.
+Status: active
 
 This document defines a **simple, deterministic contract** for chat entry/re-entry behavior so users (and agents changing code) can reason about what happens without guessing.
 
