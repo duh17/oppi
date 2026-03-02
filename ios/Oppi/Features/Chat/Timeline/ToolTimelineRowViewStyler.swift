@@ -170,16 +170,6 @@ enum ToolTimelineRowViewStyler {
         imagePreviewImageView.clipsToBounds = true
     }
 
-    static func styleInlineExpansionButton(_ inlineExpansionButton: UIButton) {
-        inlineExpansionButton.translatesAutoresizingMaskIntoConstraints = false
-        inlineExpansionButton.setTitleColor(UIColor(Color.themeBlue), for: .normal)
-        inlineExpansionButton.titleLabel?.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        inlineExpansionButton.contentHorizontalAlignment = .leading
-        inlineExpansionButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 0, right: 2)
-        inlineExpansionButton.accessibilityIdentifier = "tool.inline-expansion-toggle"
-        inlineExpansionButton.isHidden = true
-    }
-
     static func styleExpandFloatingButton(_ expandFloatingButton: UIButton) {
         expandFloatingButton.translatesAutoresizingMaskIntoConstraints = false
         let expandBtnSymbolConfig = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)

@@ -242,7 +242,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var detachedProgrammaticTargetOffsetY: CGFloat?
         private var isApplyingDetachedProgrammaticCorrection = false
         private var lastDistanceFromBottom: CGFloat = 0
-        private var toolInlineExpansionLevelByID: [String: ToolTimelineInlineExpansionLevel] = [:]
         private let toolOutputLoader = ExpandedToolOutputLoader()
 
         #if DEBUG
@@ -854,7 +853,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             if sessionId != configuration.sessionId || workspaceId != configuration.workspaceId {
                 cancelAllToolOutputLoadTasks()
-                toolInlineExpansionLevelByID.removeAll(keepingCapacity: false)
                 lastObservedContentOffsetY = nil
                 detachedProgrammaticTargetOffsetY = nil
                 isApplyingDetachedProgrammaticCorrection = false
@@ -913,9 +911,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let removedIDs = Set(currentIDs).subtracting(nextIDs)
             if !removedIDs.isEmpty {
                 cancelToolOutputLoadTasks(for: removedIDs)
-                for itemID in removedIDs {
-                    toolInlineExpansionLevelByID.removeValue(forKey: itemID)
-                }
             }
 
             currentIDs = nextIDs
@@ -1052,25 +1047,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             lastObservedContentOffsetY = scrollView.contentOffset.y
 
-            // When a streaming row finalizes, markdown reflow can increase
-            // content height without changing contentOffset. If we're attached
-            // and idle (no active streaming row), keep the viewport pinned to
-            // the true bottom so the final lines stay above the input bar.
-            if !isUserDriven,
-               alreadyAttached,
-               streamingAssistantID == nil,
-               abs(deltaY) <= 0.5,
-               lastDistanceFromBottom > 0.5 {
-                let targetOffsetY = bottomAnchoredOffsetY(for: scrollView)
-                if targetOffsetY > scrollView.contentOffset.y + 0.5 {
-                    scrollView.contentOffset.y = targetOffsetY
-                    lastObservedContentOffsetY = targetOffsetY
-                    updateScrollState(collectionView)
-                    updateDetachedStreamingHintVisibility()
-                    return
-                }
-            }
-
             // For user-driven scrolls (scrolling back down toward bottom),
             // always update state so re-attach can happen.
             //
@@ -1122,7 +1098,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ) {
                     if reducer.expandedItemIDs.contains(itemID) {
                         reducer.expandedItemIDs.remove(itemID)
-                        toolInlineExpansionLevelByID.removeValue(forKey: itemID)
                         reconfigureToolRow(itemID: itemID, in: collectionView)
                     }
                     return
@@ -1135,12 +1110,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 let wasExpanded = reducer.expandedItemIDs.contains(itemID)
                 if wasExpanded {
                     reducer.expandedItemIDs.remove(itemID)
-                    toolInlineExpansionLevelByID.removeValue(forKey: itemID)
                     cancelToolOutputRetryWork(for: itemID)
                     cancelToolOutputLoadTasks(for: [itemID])
                 } else {
                     reducer.expandedItemIDs.insert(itemID)
-                    toolInlineExpansionLevelByID[itemID] = .compact
                     ensureExpandedToolOutputLoaded(
                         itemID: itemID,
                         tool: tool,
@@ -1349,15 +1322,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 resultSegments: toolSegmentStore?.resultSegments(for: itemID)
             )
 
-            let inlineExpansionLevel = toolInlineExpansionLevelByID[itemID] ?? .compact
-            let onToggleInlineExpansion: (() -> Void)? = { [weak self] in
-                guard let self,
-                      let collectionView = self.collectionView else {
-                    return
-                }
-                self.toggleInlineExpansionLevel(for: itemID, in: collectionView)
-            }
-
             return ToolPresentationBuilder.build(
                 itemID: itemID,
                 tool: tool,
@@ -1365,28 +1329,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 outputPreview: outputPreview,
                 isError: isError,
                 isDone: isDone,
-                context: context,
-                inlineExpansionLevel: inlineExpansionLevel,
-                onToggleInlineExpansion: onToggleInlineExpansion
+                context: context
             )
-        }
-
-        private func toggleInlineExpansionLevel(for itemID: String, in collectionView: UICollectionView) {
-            guard reducer?.expandedItemIDs.contains(itemID) == true else {
-                return
-            }
-
-            let current = toolInlineExpansionLevelByID[itemID] ?? .compact
-            let next: ToolTimelineInlineExpansionLevel
-            switch current {
-            case .compact:
-                next = .expanded
-            case .expanded:
-                next = .compact
-            }
-
-            toolInlineExpansionLevelByID[itemID] = next
-            reconfigureItems([itemID], in: collectionView)
         }
 
         // MARK: - Tool Output Loading
@@ -1557,12 +1501,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// Minimum distance from bottom before showing the jump-to-bottom
         /// button. One viewport height prevents flash from bounce/small scrolls.
         private let jumpToBottomMinDistance: CGFloat = 500
-
-        private func bottomAnchoredOffsetY(for scrollView: UIScrollView) -> CGFloat {
-            let insets = scrollView.adjustedContentInset
-            let minOffsetY = -insets.top
-            return max(minOffsetY, scrollView.contentSize.height - scrollView.bounds.height + insets.bottom)
-        }
 
         private func updateDetachedStreamingHintVisibility() {
             TimelineScrollCoordinator.updateDetachedStreamingHintVisibility(
