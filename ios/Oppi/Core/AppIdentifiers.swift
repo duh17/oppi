@@ -38,14 +38,18 @@ enum LiveActivityPreferences {
 
 /// User-facing preference for native chart rendering of `plot` tool output.
 ///
-/// Default is OFF in app builds. When off, plot output falls back to raw
-/// JSON text display. Tests default ON so chart rendering tests remain stable.
+/// Default is ON in DEBUG builds and tests, OFF in release builds.
+/// When off, plot output falls back to raw JSON text display.
 enum NativePlotPreferences {
     private static let enabledDefaultsKey = "\(AppIdentifiers.subsystem).nativePlot.enabled"
 
     private static var defaultEnabled: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || NSClassFromString("XCTestCase") != nil
+        #if DEBUG
+            true
+        #else
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+                || NSClassFromString("XCTestCase") != nil
+        #endif
     }
 
     static var isEnabled: Bool {
@@ -57,6 +61,56 @@ enum NativePlotPreferences {
 
     static func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+    }
+}
+
+/// User-facing preference for keeping the screen awake during active chat work.
+///
+/// Applies while voice input is active and while the current session is busy.
+/// After activity ends, the selected timeout controls how long the idle timer
+/// stays disabled before normal auto-lock behavior resumes.
+enum ScreenAwakePreferences {
+    enum TimeoutPreset: Int, CaseIterable, Identifiable {
+        case off = 0
+        case oneMinute = 60
+        case twoMinutes = 120
+        case fiveMinutes = 300
+        case tenMinutes = 600
+
+        var id: Int { rawValue }
+
+        var duration: Duration? {
+            guard rawValue > 0 else { return nil }
+            return .seconds(rawValue)
+        }
+
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .oneMinute: return "1 minute"
+            case .twoMinutes: return "2 minutes"
+            case .fiveMinutes: return "5 minutes"
+            case .tenMinutes: return "10 minutes"
+            }
+        }
+    }
+
+    private static let presetDefaultsKey = "\(AppIdentifiers.subsystem).screenAwake.timeoutPreset"
+
+    static var timeoutPreset: TimeoutPreset {
+        if let raw = UserDefaults.standard.object(forKey: presetDefaultsKey) as? Int,
+           let preset = TimeoutPreset(rawValue: raw) {
+            return preset
+        }
+        return .twoMinutes
+    }
+
+    static var keepAwakeDuration: Duration? {
+        timeoutPreset.duration
+    }
+
+    static func setTimeoutPreset(_ preset: TimeoutPreset) {
+        UserDefaults.standard.set(preset.rawValue, forKey: presetDefaultsKey)
     }
 }
 
