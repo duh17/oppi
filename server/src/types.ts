@@ -371,7 +371,10 @@ export type ChatMetricName =
   | "chat.coalescer_flush_bytes"
   | "chat.inbound_queue_depth"
   | "chat.full_reload_ms"
-  | "chat.fresh_content_lag_ms";
+  | "chat.fresh_content_lag_ms"
+  | "chat.cache_load_ms"
+  | "chat.reducer_load_ms"
+  | "chat.ws_connect_ms";
 
 export type ChatMetricUnit = "ms" | "count" | "ratio";
 

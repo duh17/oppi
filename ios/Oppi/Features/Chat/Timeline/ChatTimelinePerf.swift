@@ -65,6 +65,9 @@ enum ChatTimelinePerf {
     private static var hardGuardrailBreachCount = 0
     private static var failsafeConfigureCount = 0
 
+    /// Active session ID for metric attribution. Set by ChatSessionManager on connect.
+    static var activeSessionId: String?
+
     private static var lastSlowMetricLogNs: UInt64 = 0
 
     private static var scrollWindowStartNs: UInt64 = DispatchTime.now().uptimeNanoseconds
@@ -82,6 +85,7 @@ enum ChatTimelinePerf {
 #endif
 
     static func reset() {
+        activeSessionId = nil
         applyLastMs = 0
         applyMaxMs = 0
         layoutLastMs = 0
@@ -238,11 +242,13 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
+        let applySid = activeSessionId
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: .timelineApplyMs,
                 value: Double(durationMs),
                 unit: .ms,
+                sessionId: applySid,
                 tags: [
                     "items": String(token.itemCount),
                     "changed": String(token.changedCount),
@@ -306,11 +312,13 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
+        let layoutSid = activeSessionId
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: .timelineLayoutMs,
                 value: Double(durationMs),
                 unit: .ms,
+                sessionId: layoutSid,
                 tags: ["items": String(token.itemCount)]
             )
         }
