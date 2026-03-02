@@ -129,6 +129,7 @@ See [config-schema.md](docs/config-schema.md).
 ```bash
 npm test                            # vitest
 npm run check                       # typecheck + lint + format
+npm run review                      # generate AI review prompt from staged diff
 npm run dev                         # watch mode
 npm run test:e2e:linux              # linux container E2E
 npm run test:e2e:lmstudio:contract  # real model contract tests
