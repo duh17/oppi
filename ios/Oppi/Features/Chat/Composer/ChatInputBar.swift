@@ -257,6 +257,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         autocorrectionEnabled: composerAutocorrectionEnabled,
                         onPasteImages: handlePastedImages,
                         onCommandEnter: handleSend,
+                        onAlternateEnter: handleAlternateSend,
                         onOverflowChange: nil,
                         onLineCountChange: handleInlineLineCountChange,
                         onFocusChange: handleInputFocusChange,
@@ -590,6 +591,16 @@ struct ChatInputBar<ActionRow: View>: View {
         }
 
         onSend()
+    }
+
+    private func handleAlternateSend() {
+        guard !isSending else { return }
+
+        if isBusy {
+            busyStreamingBehavior = .followUp
+        }
+
+        handleSend()
     }
 
     /// User tapped the text field while keyboard was suppressed — stop any

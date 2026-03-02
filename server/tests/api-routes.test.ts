@@ -27,6 +27,7 @@ const ROUTES = {
   policyAudit: /^\/policy\/audit$/,
   policyFallback: /^\/policy\/fallback$/,
   telemetryMetricKit: /^\/telemetry\/metrickit$/,
+  telemetryChatMetrics: /^\/telemetry\/chat-metrics$/,
 };
 
 describe("Workspace-scoped API routes", () => {
@@ -150,5 +151,9 @@ describe("Workspace-scoped API routes", () => {
 
   it("matches telemetry metrickit route", () => {
     expect("/telemetry/metrickit".match(ROUTES.telemetryMetricKit)).toBeTruthy();
+  });
+
+  it("matches telemetry chat metrics route", () => {
+    expect("/telemetry/chat-metrics".match(ROUTES.telemetryChatMetrics)).toBeTruthy();
   });
 });

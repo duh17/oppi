@@ -310,6 +310,40 @@ export interface MetricKitUploadRequest {
   payloads: MetricKitPayloadItem[];
 }
 
+export type ChatMetricName =
+  | "chat.ttft_ms"
+  | "chat.catchup_ms"
+  | "chat.catchup_ring_miss"
+  | "chat.timeline_apply_ms"
+  | "chat.timeline_layout_ms"
+  | "chat.ws_decode_ms"
+  | "chat.coalescer_flush_events"
+  | "chat.coalescer_flush_bytes"
+  | "chat.inbound_queue_depth"
+  | "chat.full_reload_ms"
+  | "chat.fresh_content_lag_ms";
+
+export type ChatMetricUnit = "ms" | "count" | "ratio";
+
+export interface ChatMetricSample {
+  ts: number;
+  metric: ChatMetricName;
+  value: number;
+  unit: ChatMetricUnit;
+  sessionId?: string;
+  workspaceId?: string;
+  tags?: Record<string, string>;
+}
+
+export interface ChatMetricUploadRequest {
+  generatedAt: number;
+  appVersion?: string;
+  buildNumber?: string;
+  osVersion?: string;
+  deviceModel?: string;
+  samples: ChatMetricSample[];
+}
+
 // ─── WebSocket Messages ───
 
 export interface ImageAttachment {

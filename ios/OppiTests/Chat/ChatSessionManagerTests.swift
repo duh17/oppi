@@ -145,6 +145,43 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    @MainActor
+    @Test func initialConnectSkipsEagerHistoryReloadWhenCachePresent() async {
+        let sessionId = "cache-skip-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        var historyReloadCalls = 0
+        manager._loadHistoryForTesting = { _, _ in
+            historyReloadCalls += 1
+            return nil
+        }
+
+        await TimelineCache.shared.saveTrace(sessionId, events: [makeTraceEvent(id: "cached-1")])
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        try? await Task.sleep(for: .milliseconds(120))
+
+        #expect(historyReloadCalls == 0, "Cache-present entry should skip eager history reload")
+
+        streams.finish(index: 0)
+        await connectTask.value
+
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
+
     // MARK: - Lifecycle race harness
 
     @MainActor

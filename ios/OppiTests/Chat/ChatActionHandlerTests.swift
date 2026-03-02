@@ -358,7 +358,7 @@ struct ChatActionHandlerTests {
     }
 
     @MainActor
-    @Test func sendPromptInBusyModeDefaultsToSteer() async {
+    @Test func sendPromptInBusyModeDefaultsToSteerWithoutTimelineQueueNoise() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -406,17 +406,15 @@ struct ChatActionHandlerTests {
         }
         #expect(!hasUserRow)
 
-        let hasQueuedSystemEvent = reducer.items.contains { item in
+        let hasQueueSystemEvent = reducer.items.contains { item in
             guard case .systemEvent(_, let text) = item else { return false }
             return text.contains("Message Queue")
-                && text.contains("Steering")
-                && text.contains("queued")
         }
-        #expect(hasQueuedSystemEvent)
+        #expect(!hasQueueSystemEvent)
     }
 
     @MainActor
-    @Test func sendPromptInBusyModeCanQueueFollowUp() async {
+    @Test func sendPromptInBusyModeCanQueueFollowUpWithoutTimelineQueueNoise() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -465,13 +463,11 @@ struct ChatActionHandlerTests {
         }
         #expect(!hasUserRow)
 
-        let hasQueuedSystemEvent = reducer.items.contains { item in
+        let hasQueueSystemEvent = reducer.items.contains { item in
             guard case .systemEvent(_, let text) = item else { return false }
             return text.contains("Message Queue")
-                && text.contains("Follow-up")
-                && text.contains("queued")
         }
-        #expect(hasQueuedSystemEvent)
+        #expect(!hasQueueSystemEvent)
     }
 
     @MainActor

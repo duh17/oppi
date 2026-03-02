@@ -9,9 +9,6 @@ import SwiftUI
 struct ChatTimelineView: View {
     private static let initialRenderWindow = 80
     private static let renderWindowStep = 60
-    /// Guardrail for exact scroll restoration. Expanding the window to thousands
-    /// of rows in one pass can stall placement on older devices.
-    private static let maxRestorationWindow = 180
 
     let sessionId: String
     let workspaceId: String?
@@ -125,19 +122,6 @@ struct ChatTimelineView: View {
             scrollController.handleScrollTarget { target in
                 issueScrollCommand(id: target, anchor: .top, animated: true)
             }
-        }
-        .onChange(of: sessionManager.restorationScrollItemId) { _, itemId in
-            guard let itemId else { return }
-            sessionManager.restorationScrollItemId = nil
-
-            guard let targetIndex = reducer.items.firstIndex(where: { $0.id == itemId }) else { return }
-            let requiredWindow = reducer.items.count - targetIndex
-            guard requiredWindow <= Self.maxRestorationWindow else { return }
-
-            if !visibleItems.contains(where: { $0.id == itemId }) {
-                renderWindow = max(renderWindow, requiredWindow)
-            }
-            scrollController.scrollTargetID = itemId
         }
         .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
             guard let bottomItemID else { return }

@@ -200,6 +200,38 @@ struct KeyboardSuppressionTests {
         #expect(!textView.isKeyboardSuppressed)
     }
 
+    // MARK: - Keyboard Shortcuts
+
+    @Test("Key commands expose Command+Enter and Alt+Enter")
+    func keyCommandsExposeCommandAndAltEnter() {
+        let textView = PastableUITextView()
+        guard let keyCommands = textView.keyCommands else {
+            Issue.record("Expected key commands")
+            return
+        }
+
+        let hasCommandEnter = keyCommands.contains {
+            $0.input == "\r" && $0.modifierFlags == .command
+        }
+        let hasAltEnter = keyCommands.contains {
+            $0.input == "\r" && $0.modifierFlags == .alternate
+        }
+
+        #expect(hasCommandEnter)
+        #expect(hasAltEnter)
+    }
+
+    @Test("Alt+Enter handler triggers alternate callback")
+    func altEnterTriggersAlternateCallback() {
+        let textView = PastableUITextView()
+        var fired = false
+        textView.onAlternateEnter = { fired = true }
+
+        textView.perform(NSSelectorFromString("handleAlternateReturn"))
+
+        #expect(fired)
+    }
+
     // MARK: - Simultaneous Gesture Recognition
 
     @Test("Restore gesture allows simultaneous recognition to not block text selection")
