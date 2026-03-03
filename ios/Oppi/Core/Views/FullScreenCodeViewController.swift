@@ -181,8 +181,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenDiffBody(oldText: oldText, newText: newText, filePath: filePath, precomputedLines: precomputedLines, palette: palette)
         case .markdown(let text, _):
             return NativeFullScreenMarkdownBody(content: text, palette: palette)
-        case .thinking(let text):
-            return NativeFullScreenMarkdownBody(content: text, palette: palette)
+        case .thinking(let text, let stream):
+            return NativeFullScreenThinkingBody(initialContent: text, stream: stream, palette: palette)
         case .terminal(let text, let command):
             return NativeFullScreenTerminalBody(content: text, command: command, palette: palette)
         }
@@ -200,7 +200,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .code(let t, _, _, _): text = t
         case .diff(_, let newText, _, _): text = newText
         case .markdown(let t, _): text = t
-        case .thinking(let t): text = t
+        case .thinking(let t, let stream): text = stream?.snapshot.text ?? t
         case .terminal(let t, _): text = t
         }
         UIPasteboard.general.string = text
@@ -706,6 +706,181 @@ private final class NativeFullScreenTerminalBody: UIView {
             await MainActor.run {
                 self?.outputView.attributedText = NSAttributedString(attributed)
             }
+        }
+    }
+}
+
+private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
+    private static let nearBottomThreshold: CGFloat = 28
+
+    private let scrollView = UIScrollView()
+    private let markdownView = AssistantMarkdownContentView()
+    private let markdownWidthConstraint: NSLayoutConstraint
+
+    private var latestSnapshot: ThinkingTraceStream.Snapshot
+    private var renderedSnapshot: ThinkingTraceStream.Snapshot?
+    private var shouldAutoFollowTail: Bool
+    private var isApplyingProgrammaticScroll = false
+    private var pendingAutoFollowScroll = false
+
+    init(initialContent: String, stream: ThinkingTraceStream?, palette: ThemePalette) {
+        let initialSnapshot = stream?.snapshot
+            ?? ThinkingTraceStream.Snapshot(text: initialContent, isDone: true)
+        latestSnapshot = initialSnapshot
+        shouldAutoFollowTail = !initialSnapshot.isDone
+
+        markdownWidthConstraint = markdownView.widthAnchor.constraint(
+            equalTo: scrollView.frameLayoutGuide.widthAnchor,
+            constant: -24
+        )
+
+        super.init(frame: .zero)
+
+        backgroundColor = UIColor(palette.bgDark)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.delegate = self
+
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
+        markdownView.backgroundColor = .clear
+
+        addSubview(scrollView)
+        scrollView.addSubview(markdownView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            markdownView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
+            markdownView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
+            markdownView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 10),
+            markdownView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -10),
+            markdownWidthConstraint,
+        ])
+
+        render(snapshot: initialSnapshot)
+
+        stream?.addObserver { [weak self] snapshot in
+            self?.handleStreamUpdate(snapshot)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        if shouldAutoFollowTail {
+            scheduleAutoFollowToBottom()
+        }
+    }
+
+    private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
+        latestSnapshot = snapshot
+        render(snapshot: snapshot)
+    }
+
+    private func render(snapshot: ThinkingTraceStream.Snapshot) {
+        guard snapshot != renderedSnapshot else {
+            if shouldAutoFollowTail {
+                scheduleAutoFollowToBottom()
+            }
+            return
+        }
+
+        renderedSnapshot = snapshot
+        markdownView.apply(configuration: .init(
+            content: snapshot.text,
+            isStreaming: !snapshot.isDone,
+            themeID: ThemeRuntimeState.currentThemeID()
+        ))
+
+        if shouldAutoFollowTail {
+            scheduleAutoFollowToBottom()
+        }
+    }
+
+    private func scheduleAutoFollowToBottom() {
+        guard !pendingAutoFollowScroll else { return }
+        pendingAutoFollowScroll = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingAutoFollowScroll = false
+            self.scrollToBottomIfNeeded()
+        }
+    }
+
+    private func scrollToBottomIfNeeded() {
+        guard scrollView.bounds.height > 0 else { return }
+
+        layoutIfNeeded()
+
+        let targetY = max(
+            -scrollView.adjustedContentInset.top,
+            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
+        )
+        guard targetY.isFinite else { return }
+        guard abs(scrollView.contentOffset.y - targetY) > 0.5 else { return }
+
+        isApplyingProgrammaticScroll = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        CATransaction.commit()
+        isApplyingProgrammaticScroll = false
+    }
+
+    private func isNearBottom() -> Bool {
+        distanceFromBottom() <= Self.nearBottomThreshold
+    }
+
+    private func distanceFromBottom() -> CGFloat {
+        let viewportHeight = scrollView.bounds.height
+            - scrollView.adjustedContentInset.top
+            - scrollView.adjustedContentInset.bottom
+        guard viewportHeight > 0 else { return .greatestFiniteMagnitude }
+
+        let visibleBottom = scrollView.contentOffset.y
+            + scrollView.adjustedContentInset.top
+            + viewportHeight
+
+        return scrollView.contentSize.height - visibleBottom
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if !isNearBottom() {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard !isApplyingProgrammaticScroll else { return }
+        guard scrollView.isDragging || scrollView.isDecelerating else { return }
+
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
+        } else {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard !decelerate else { return }
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
         }
     }
 }
