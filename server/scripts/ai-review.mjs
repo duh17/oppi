@@ -11,11 +11,11 @@ import {
   readImportsFromFile,
 } from "./architecture-layer-rules.mjs";
 
-const PROTOCOL_FILES = [
-  "server/src/types.ts",
-  "ios/Oppi/Core/Models/ServerMessage.swift",
-  "ios/Oppi/Core/Models/ClientMessage.swift",
-];
+const SERVER_TYPES_FILE = "server/src/types.ts";
+const IOS_SERVER_MESSAGE_FILE = "ios/Oppi/Core/Models/ServerMessage.swift";
+const IOS_CLIENT_MESSAGE_FILE = "ios/Oppi/Core/Models/ClientMessage.swift";
+
+const PROTOCOL_FILES = [SERVER_TYPES_FILE, IOS_SERVER_MESSAGE_FILE, IOS_CLIENT_MESSAGE_FILE];
 
 export function parseArgs(argv) {
   const options = {
@@ -103,6 +103,8 @@ function getDiffAndFiles(repoRoot, options) {
       mode: "staged",
       diff,
       changedFiles,
+      compareFromRef: "HEAD",
+      compareToRef: ":",
     };
   }
 
@@ -121,6 +123,8 @@ function getDiffAndFiles(repoRoot, options) {
     mode: `last-${options.commits}-commits`,
     diff,
     changedFiles,
+    compareFromRef: baseRef,
+    compareToRef: "HEAD",
   };
 }
 
@@ -218,7 +222,92 @@ export function isPackageJsonCiTestingChange(packageJsonDiff) {
   });
 }
 
-export function buildChecks(changedFiles, layerViolations, diffText) {
+function readFileAtGitRef(repoRoot, gitRef, relativePath) {
+  const objectExpression = gitRef === ":" ? `:${relativePath}` : `${gitRef}:${relativePath}`;
+  const result = runGit(repoRoot, ["show", objectExpression], { allowFailure: true });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  return result.stdout;
+}
+
+function extractTypeAliasBlock(typeSource, aliasName, endMarkers) {
+  const startMarker = `export type ${aliasName} =`;
+  const startIndex = typeSource.indexOf(startMarker);
+  if (startIndex === -1) {
+    return null;
+  }
+
+  let endIndex = typeSource.length;
+  for (const marker of endMarkers) {
+    const markerIndex = typeSource.indexOf(marker, startIndex + startMarker.length);
+    if (markerIndex !== -1 && markerIndex < endIndex) {
+      endIndex = markerIndex;
+    }
+  }
+
+  return typeSource.slice(startIndex, endIndex).trim();
+}
+
+export function extractWebSocketContractShapes(typeSource) {
+  const clientMessageShape = extractTypeAliasBlock(typeSource, "ClientMessage", [
+    "\n// Server → Client",
+    "\nexport type ServerMessage =",
+  ]);
+  const serverMessageShape = extractTypeAliasBlock(typeSource, "ServerMessage", [
+    "\n// ─── Push ───",
+    "\nexport interface RegisterDeviceTokenRequest",
+  ]);
+
+  if (!clientMessageShape || !serverMessageShape) {
+    return null;
+  }
+
+  return {
+    clientMessageShape,
+    serverMessageShape,
+  };
+}
+
+export function didWebSocketContractChange(previousTypeSource, nextTypeSource) {
+  const previousShapes = extractWebSocketContractShapes(previousTypeSource);
+  const nextShapes = extractWebSocketContractShapes(nextTypeSource);
+
+  // Fail closed: if we cannot parse either revision, keep strict lockstep enforcement.
+  if (!previousShapes || !nextShapes) {
+    return true;
+  }
+
+  return (
+    previousShapes.clientMessageShape !== nextShapes.clientMessageShape ||
+    previousShapes.serverMessageShape !== nextShapes.serverMessageShape
+  );
+}
+
+function analyzeServerTypesContractChange(repoRoot, diffData, changedFiles) {
+  if (!changedFiles.includes(SERVER_TYPES_FILE)) {
+    return {
+      serverTypesWireContractChanged: false,
+    };
+  }
+
+  const previousTypeSource = readFileAtGitRef(repoRoot, diffData.compareFromRef, SERVER_TYPES_FILE);
+  const nextTypeSource = readFileAtGitRef(repoRoot, diffData.compareToRef, SERVER_TYPES_FILE);
+
+  if (previousTypeSource === null || nextTypeSource === null) {
+    return {
+      serverTypesWireContractChanged: true,
+    };
+  }
+
+  return {
+    serverTypesWireContractChanged: didWebSocketContractChange(previousTypeSource, nextTypeSource),
+  };
+}
+
+export function buildChecks(changedFiles, layerViolations, diffText, protocolContext = {}) {
   const checks = [];
 
   if (changedFiles.length === 0) {
@@ -232,15 +321,33 @@ export function buildChecks(changedFiles, layerViolations, diffText) {
   const protocolTouched = PROTOCOL_FILES.filter((file) => changedFiles.includes(file));
   if (protocolTouched.length > 0 && protocolTouched.length < PROTOCOL_FILES.length) {
     const missing = PROTOCOL_FILES.filter((file) => !changedFiles.includes(file));
-    checks.push({
-      id: "protocol-lockstep",
-      status: "fail",
-      reason: "Protocol files changed without full lockstep updates.",
-      details: {
-        touched: protocolTouched,
-        missing,
-      },
-    });
+    const onlyServerTypesTouched =
+      protocolTouched.length === 1 && protocolTouched[0] === SERVER_TYPES_FILE;
+    const isNonWireTypesOnlyChange =
+      onlyServerTypesTouched && protocolContext.serverTypesWireContractChanged === false;
+
+    if (isNonWireTypesOnlyChange) {
+      checks.push({
+        id: "protocol-lockstep",
+        status: "pass",
+        reason:
+          "server/src/types.ts changed outside ClientMessage/ServerMessage wire contract shapes.",
+        details: {
+          touched: protocolTouched,
+          missing,
+        },
+      });
+    } else {
+      checks.push({
+        id: "protocol-lockstep",
+        status: "fail",
+        reason: "Protocol files changed without full lockstep updates.",
+        details: {
+          touched: protocolTouched,
+          missing,
+        },
+      });
+    }
   } else if (protocolTouched.length === PROTOCOL_FILES.length) {
     checks.push({
       id: "protocol-lockstep",
@@ -409,7 +516,8 @@ export function main() {
 
   const context = getReviewContext(repoRoot);
   const layerViolations = findServerLayerViolations(repoRoot, normalizedFiles);
-  const checks = buildChecks(normalizedFiles, layerViolations, diffData.diff);
+  const protocolContext = analyzeServerTypesContractChange(repoRoot, diffData, normalizedFiles);
+  const checks = buildChecks(normalizedFiles, layerViolations, diffData.diff, protocolContext);
   const status = deriveOverallStatus(checks);
 
   const summary = {

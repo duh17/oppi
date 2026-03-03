@@ -1,0 +1,17 @@
+services:
+  grafana-telemetry:
+    container_name: oppi-telemetry-grafana
+    image: grafana/grafana-oss:11.1.4
+    restart: unless-stopped
+    ports:
+      - "${OPPI_GRAFANA_PORT:-13001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${OPPI_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${OPPI_GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ${OPPI_DATA_DIR:-${HOME}/.config/oppi}/diagnostics/telemetry:/var/lib/oppi-telemetry:ro
