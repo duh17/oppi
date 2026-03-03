@@ -51,7 +51,35 @@ export class SessionMessageQueueCoordinator {
     return active.messageQueue;
   }
 
-  private syncFromSdk(active: SessionMessageQueueState): SessionMessageQueueStore {
+  private removedItemsByID(
+    existing: MessageQueueItem[],
+    next: MessageQueueItem[],
+  ): MessageQueueItem[] {
+    const nextIdCounts = new Map<string, number>();
+    for (const item of next) {
+      nextIdCounts.set(item.id, (nextIdCounts.get(item.id) ?? 0) + 1);
+    }
+
+    const removed: MessageQueueItem[] = [];
+    for (const item of existing) {
+      const remaining = nextIdCounts.get(item.id) ?? 0;
+      if (remaining > 0) {
+        nextIdCounts.set(item.id, remaining - 1);
+        continue;
+      }
+
+      removed.push(cloneQueueItem(item));
+    }
+
+    return removed;
+  }
+
+  private syncFromSdkWithDiff(active: SessionMessageQueueState): {
+    queue: SessionMessageQueueStore;
+    changed: boolean;
+    removedSteering: MessageQueueItem[];
+    removedFollowUp: MessageQueueItem[];
+  } {
     const queue = this.ensureQueueStore(active);
 
     const sdkSteering = active.sdkBackend.session.getSteeringMessages();
@@ -65,14 +93,34 @@ export class SessionMessageQueueCoordinator {
       queue.followUp.every((item, idx) => item.message === sdkFollowUp[idx]);
 
     if (steeringMatches && followUpMatches) {
-      return queue;
+      return {
+        queue,
+        changed: false,
+        removedSteering: [],
+        removedFollowUp: [],
+      };
     }
 
-    queue.steering = reconcileItemsWithTextQueue(queue.steering, sdkSteering);
-    queue.followUp = reconcileItemsWithTextQueue(queue.followUp, sdkFollowUp);
+    const nextSteering = reconcileItemsWithTextQueue(queue.steering, sdkSteering);
+    const nextFollowUp = reconcileItemsWithTextQueue(queue.followUp, sdkFollowUp);
+
+    const removedSteering = this.removedItemsByID(queue.steering, nextSteering);
+    const removedFollowUp = this.removedItemsByID(queue.followUp, nextFollowUp);
+
+    queue.steering = nextSteering;
+    queue.followUp = nextFollowUp;
     queue.version += 1;
 
-    return queue;
+    return {
+      queue,
+      changed: true,
+      removedSteering,
+      removedFollowUp,
+    };
+  }
+
+  private syncFromSdk(active: SessionMessageQueueState): SessionMessageQueueStore {
+    return this.syncFromSdkWithDiff(active).queue;
   }
 
   private broadcastQueueState(key: string, queue: SessionMessageQueueStore): void {
@@ -129,14 +177,33 @@ export class SessionMessageQueueCoordinator {
     }
 
     const queue = this.ensureQueueStore(active);
-    const versionBefore = queue.version;
     const text = extractQueuedUserText(message);
 
     const reconcileFromSdkIfNeeded = (): void => {
-      const synced = this.syncFromSdk(active);
-      if (synced.version !== versionBefore) {
-        this.broadcastQueueState(key, synced);
+      const synced = this.syncFromSdkWithDiff(active);
+      if (!synced.changed) {
+        return;
       }
+
+      for (const item of synced.removedSteering) {
+        this.deps.broadcast(key, {
+          type: "queue_item_started",
+          kind: "steer",
+          item: cloneQueueItem(item),
+          queueVersion: synced.queue.version,
+        });
+      }
+
+      for (const item of synced.removedFollowUp) {
+        this.deps.broadcast(key, {
+          type: "queue_item_started",
+          kind: "follow_up",
+          item: cloneQueueItem(item),
+          queueVersion: synced.queue.version,
+        });
+      }
+
+      this.broadcastQueueState(key, synced.queue);
     };
 
     if (!text) {

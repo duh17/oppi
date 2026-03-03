@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildChecks,
+  didWebSocketContractChange,
   extractFileDiff,
   isPackageJsonCiTestingChange,
   readImportsFromFile,
@@ -48,6 +49,110 @@ describe("ai-review script", () => {
     const ciCheck = checks.find((check) => check.id === "ci-testing-infra-review");
     expect(ciCheck?.status).toBe("warn");
     expect(ciCheck?.details).toEqual({ files: ["server/package.json"] });
+  });
+
+  it("passes protocol lockstep for non-wire server/src/types.ts-only edits", () => {
+    const checks = buildChecks(
+      ["server/src/types.ts"],
+      [],
+      "",
+      { serverTypesWireContractChanged: false },
+    );
+
+    const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
+    expect(protocolCheck?.status).toBe("pass");
+    expect(protocolCheck?.reason).toContain("wire contract shapes");
+  });
+
+  it("fails protocol lockstep for wire contract changes without iOS lockstep files", () => {
+    const checks = buildChecks(
+      ["server/src/types.ts"],
+      [],
+      "",
+      { serverTypesWireContractChanged: true },
+    );
+
+    const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
+    expect(protocolCheck?.status).toBe("fail");
+    expect(protocolCheck?.details).toEqual({
+      touched: ["server/src/types.ts"],
+      missing: [
+        "ios/Oppi/Core/Models/ServerMessage.swift",
+        "ios/Oppi/Core/Models/ClientMessage.swift",
+      ],
+    });
+  });
+
+  it("detects websocket contract changes only when ClientMessage/ServerMessage shapes differ", () => {
+    const previous = [
+      'export type ChatMetricName = "chat.ttft_ms";',
+      "",
+      "export type ClientMessage =",
+      '  | { type: "prompt"; message: string }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// Server → Client",
+      "export type ServerMessage =",
+      '  | { type: "connected"; session: Session }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// ─── Push ───",
+      "export interface RegisterDeviceTokenRequest {",
+      "  deviceToken: string;",
+      "}",
+    ].join("\n");
+
+    const nonWireChange = [
+      'export type ChatMetricName = "chat.ttft_ms" | "chat.cache_load_ms";',
+      "",
+      "export type ClientMessage =",
+      '  | { type: "prompt"; message: string }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// Server → Client",
+      "export type ServerMessage =",
+      '  | { type: "connected"; session: Session }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// ─── Push ───",
+      "export interface RegisterDeviceTokenRequest {",
+      "  deviceToken: string;",
+      "}",
+    ].join("\n");
+
+    const wireChange = [
+      'export type ChatMetricName = "chat.ttft_ms";',
+      "",
+      "export type ClientMessage =",
+      '  | { type: "prompt"; message: string }',
+      '  | { type: "abort" }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// Server → Client",
+      "export type ServerMessage =",
+      '  | { type: "connected"; session: Session }',
+      "  & {",
+      "    sessionId?: string;",
+      "  };",
+      "",
+      "// ─── Push ───",
+      "export interface RegisterDeviceTokenRequest {",
+      "  deviceToken: string;",
+      "}",
+    ].join("\n");
+
+    expect(didWebSocketContractChange(previous, nonWireChange)).toBe(false);
+    expect(didWebSocketContractChange(previous, wireChange)).toBe(true);
   });
 
   it("parses imports with AST and ignores comment/string lookalikes", () => {

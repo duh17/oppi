@@ -16,7 +16,11 @@ import { createThemeRoutes } from "../src/routes/themes.js";
 import { createTelemetryRoutes } from "../src/routes/telemetry.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { CHAT_METRIC_NAME_VALUES, telemetryUploadsEnabledFromEnv } from "../src/types.js";
+import {
+  CHAT_METRIC_NAME_VALUES,
+  CHAT_METRIC_REGISTRY,
+  telemetryUploadsEnabledFromEnv,
+} from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -55,6 +59,10 @@ describe("routes modules", () => {
   describe("shared telemetry constants", () => {
     it("keeps chat metric names unique", () => {
       expect(new Set(CHAT_METRIC_NAME_VALUES).size).toBe(CHAT_METRIC_NAME_VALUES.length);
+    });
+
+    it("keeps metric registry in parity with metric names", () => {
+      expect(Object.keys(CHAT_METRIC_REGISTRY).sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());
     });
 
     it("parses OPPI_TELEMETRY_MODE consistently", () => {
@@ -936,6 +944,53 @@ describe("routes modules", () => {
       }
     });
 
+    it("rejects chat metrics payloads when units don't match metric contracts", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-unit-contracts-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            samples: [
+              {
+                ts: generatedAt,
+                metric: "chat.ttft_ms",
+                value: 250,
+                unit: "count",
+              },
+              {
+                ts: generatedAt + 1,
+                metric: "plot.scroll_enabled",
+                value: 1,
+                unit: "count",
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "samples must be a non-empty array of valid metrics",
+        });
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("drops invalid chat metric samples while persisting valid plot metrics", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-mixed-"));
       try {
@@ -1089,10 +1144,7 @@ describe("routes modules", () => {
         mkdirSync(telemetryDir, { recursive: true });
 
         const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1_000);
-        const oldPath = join(
-          telemetryDir,
-          `metrickit-${oldDate.toISOString().slice(0, 10)}.jsonl`,
-        );
+        const oldPath = join(telemetryDir, `metrickit-${oldDate.toISOString().slice(0, 10)}.jsonl`);
         writeFileSync(oldPath, '{"legacy":true}\n');
 
         const ctx = {

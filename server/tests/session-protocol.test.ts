@@ -74,6 +74,45 @@ describe("session-protocol translatePiEvent", () => {
     expect(translatePiEvent({ type: "turn_end" }, ctx)).toEqual([]);
   });
 
+  it("forwards streamed toolcall args as tool_start updates", () => {
+    const ctx = makeCtx();
+
+    const messages = translatePiEvent(
+      {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "tc-write",
+              name: "write",
+              arguments: {
+                path: "README.md",
+                content: "hello",
+              },
+            },
+          ],
+        },
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"content":"hello"}',
+        },
+      } as unknown as AgentSessionEvent,
+      ctx,
+    );
+
+    expect(messages).toEqual([
+      {
+        type: "tool_start",
+        tool: "write",
+        args: { path: "README.md", content: "hello" },
+        toolCallId: "tc-write",
+      },
+    ]);
+  });
+
   it("converts tool partialResult replace semantics into append deltas", () => {
     const ctx = makeCtx();
 
@@ -334,7 +373,6 @@ describe("session-protocol translatePiEvent", () => {
 
     expect(ctx.hasStreamedThinking).toBe(true);
   });
-
 });
 
 describe("session-protocol state mutation helpers", () => {

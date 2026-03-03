@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   CHAT_METRIC_NAME_VALUES,
+  CHAT_METRIC_REGISTRY,
   telemetryUploadsEnabledFromEnv,
   type ChatMetricSample,
   type ChatMetricUploadRequest,
@@ -289,7 +290,13 @@ if (CHAT_METRIC_NAMES.size !== CHAT_METRIC_NAME_VALUES.length) {
   throw new Error("CHAT_METRIC_NAME_VALUES contains duplicate entries");
 }
 
-const CHAT_METRIC_UNITS = new Set<ChatMetricSample["unit"]>(["ms", "count", "ratio"]);
+if (Object.keys(CHAT_METRIC_REGISTRY).length !== CHAT_METRIC_NAME_VALUES.length) {
+  throw new Error("CHAT_METRIC_REGISTRY must stay in parity with CHAT_METRIC_NAME_VALUES");
+}
+
+function isChatMetricName(value: string): value is ChatMetricSample["metric"] {
+  return CHAT_METRIC_NAMES.has(value as ChatMetricSample["metric"]);
+}
 
 function sanitizeChatMetricTags(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object") {
@@ -335,19 +342,17 @@ function normalizeChatMetricSample(value: unknown): ChatMetricSample | null {
     return null;
   }
 
-  const metricRaw = sanitizeString(
-    sample.metric,
-    CHAT_METRIC_MAX_METRIC_CHARS,
-  ) as ChatMetricSample["metric"];
-  if (!CHAT_METRIC_NAMES.has(metricRaw)) {
+  const metricCandidate = sanitizeString(sample.metric, CHAT_METRIC_MAX_METRIC_CHARS);
+  if (!isChatMetricName(metricCandidate)) {
     return null;
   }
+  const metricRaw = metricCandidate;
 
   const unitRaw = sanitizeString(
     sample.unit,
     CHAT_METRIC_MAX_UNIT_CHARS,
   ) as ChatMetricSample["unit"];
-  if (!CHAT_METRIC_UNITS.has(unitRaw)) {
+  if (unitRaw !== CHAT_METRIC_REGISTRY[metricRaw].unit) {
     return null;
   }
 
