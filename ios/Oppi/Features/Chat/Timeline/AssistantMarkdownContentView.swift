@@ -255,6 +255,7 @@ final class AssistantMarkdownContentView: UIView {
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.adjustsFontForContentSizeCategory = true
+        tv.dataDetectorTypes = [.link]
         tv.textColor = UIColor(palette.fg)
         tv.font = .preferredFont(forTextStyle: .body)
         tv.tintColor = UIColor(palette.blue)
@@ -391,6 +392,11 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
 
         if scheme == "pi" || scheme == "oppi" {
             NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            return false
+        }
+
+        if scheme == "http" || scheme == "https" {
+            NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
             return false
         }
 
@@ -974,6 +980,7 @@ final class NativeTableBlockView: UIView {
 /// Show a flash overlay + floating "Copied" pill centered on the given view.
 ///
 /// Used by `NativeCodeBlockView` and `NativeTableBlockView` for long-press copy.
+@MainActor
 private func showCopiedOverlay(on view: UIView) {
     let overlay = UIView()
     overlay.backgroundColor = UIColor.white.withAlphaComponent(0.08)

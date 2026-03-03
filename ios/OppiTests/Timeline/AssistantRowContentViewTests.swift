@@ -23,6 +23,15 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func enablesLinkDataDetectorsForBareUrls() throws {
+        let text = "Visit https://example.com/docs for details"
+        let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
+        let textView = try #require(timelineFirstTextView(in: view))
+
+        #expect(textView.dataDetectorTypes.contains(.link))
+    }
+
+    @MainActor
     @Test func rendersInlineCodeWithMonospacedFont() throws {
         let text = "Use `parseCommonMark()` to parse"
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
@@ -325,28 +334,77 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func allowsHttpLinksToOpenWithSystemDefault() throws {
+    @Test func routesHttpLinksToInAppBrowserNotification() throws {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "https://example.com/docs"))
 
         final class URLCapture: @unchecked Sendable {
             var value: URL?
         }
-        let observed = URLCapture()
+        let inviteObserved = URLCapture()
+        let webObserved = URLCapture()
 
-        let observer = NotificationCenter.default.addObserver(
+        let inviteObserver = NotificationCenter.default.addObserver(
             forName: .inviteDeepLinkTapped,
             object: nil,
             queue: nil
         ) { notification in
-            observed.value = notification.object as? URL
+            inviteObserved.value = notification.object as? URL
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let webObserver = NotificationCenter.default.addObserver(
+            forName: .webLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            webObserved.value = notification.object as? URL
+        }
+        defer {
+            NotificationCenter.default.removeObserver(inviteObserver)
+            NotificationCenter.default.removeObserver(webObserver)
+        }
+
+        let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
+
+        #expect(!shouldOpenExternally)
+        #expect(inviteObserved.value == nil)
+        #expect(webObserved.value == url)
+    }
+
+    @MainActor
+    @Test func allowsCustomAppLinksToUseSystemDefault() throws {
+        let markdownView = makeMarkdownView()
+        let url = try #require(URL(string: "mailto:support@example.com"))
+
+        final class URLCapture: @unchecked Sendable {
+            var value: URL?
+        }
+        let inviteObserved = URLCapture()
+        let webObserved = URLCapture()
+
+        let inviteObserver = NotificationCenter.default.addObserver(
+            forName: .inviteDeepLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            inviteObserved.value = notification.object as? URL
+        }
+        let webObserver = NotificationCenter.default.addObserver(
+            forName: .webLinkTapped,
+            object: nil,
+            queue: nil
+        ) { notification in
+            webObserved.value = notification.object as? URL
+        }
+        defer {
+            NotificationCenter.default.removeObserver(inviteObserver)
+            NotificationCenter.default.removeObserver(webObserver)
+        }
 
         let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
 
         #expect(shouldOpenExternally)
-        #expect(observed.value == nil)
+        #expect(inviteObserved.value == nil)
+        #expect(webObserved.value == nil)
     }
 
     // MARK: - Helpers
