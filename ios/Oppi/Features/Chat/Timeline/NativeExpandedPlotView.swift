@@ -94,18 +94,34 @@ private struct PlotChartContainerView: View {
         .padding(8)
     }
 
-    @ViewBuilder
     private var chartView: some View {
+        GeometryReader { proxy in
+            let viewportWidth = max(proxy.size.width, 1)
+            let renderPolicy = PlotRenderPolicy(spec: spec, viewportWidth: viewportWidth)
+            chartView(renderPolicy: renderPolicy)
+                .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
+        }
+        .frame(height: chartHeight)
+    }
+
+    @ViewBuilder
+    private func chartView(renderPolicy: PlotRenderPolicy) -> some View {
         let base = Chart {
             ForEach(spec.marks) { mark in
                 markContent(mark)
             }
         }
-        .frame(height: chartHeight)
-        .chartLegend(.visible)
+        .chartLegend(renderPolicy.legendVisible ? .visible : .hidden)
         .chartYScale(domain: .automatic(reversed: spec.yAxis.invert ? true : nil))
         .chartXAxisLabel(spec.xAxis.label ?? "")
         .chartYAxisLabel(spec.yAxis.label ?? "")
+        .chartXAxis {
+            xAxisContent(renderPolicy: renderPolicy)
+        }
+        .chartYAxis {
+            yAxisContent(renderPolicy: renderPolicy)
+        }
+        .frame(height: chartHeight)
 
         if spec.interaction.scrollableX {
             if let length = spec.interaction.xVisibleDomainLength,
@@ -120,6 +136,47 @@ private struct PlotChartContainerView: View {
             }
         } else {
             applyXSelectionIfNeeded(base)
+        }
+    }
+
+    @AxisContentBuilder
+    private func xAxisContent(renderPolicy: PlotRenderPolicy) -> some AxisContent {
+        switch renderPolicy.xTickValues {
+        case .automatic:
+            AxisMarks(values: .automatic(desiredCount: renderPolicy.xTickBudget)) { _ in
+                if renderPolicy.showVerticalGridlines {
+                    AxisGridLine()
+                }
+                AxisTick()
+                AxisValueLabel()
+            }
+        case .numeric(let values):
+            AxisMarks(values: values) { _ in
+                if renderPolicy.showVerticalGridlines {
+                    AxisGridLine()
+                }
+                AxisTick()
+                AxisValueLabel()
+            }
+        case .category(let values):
+            AxisMarks(values: values) { _ in
+                if renderPolicy.showVerticalGridlines {
+                    AxisGridLine()
+                }
+                AxisTick()
+                AxisValueLabel()
+            }
+        }
+    }
+
+    @AxisContentBuilder
+    private func yAxisContent(renderPolicy: PlotRenderPolicy) -> some AxisContent {
+        AxisMarks(values: .automatic(desiredCount: renderPolicy.yTickCount)) { _ in
+            if renderPolicy.showHorizontalGridlines {
+                AxisGridLine()
+            }
+            AxisTick()
+            AxisValueLabel()
         }
     }
 
@@ -329,6 +386,176 @@ private struct PlotChartContainerView: View {
             return label
         }
         return mark.id
+    }
+}
+
+struct PlotRenderPolicy: Sendable, Equatable {
+    enum XTickValues: Sendable, Equatable {
+        case automatic
+        case numeric([Double])
+        case category([String])
+    }
+
+    let xTickBudget: Int
+    let yTickCount: Int
+    let xTickValues: XTickValues
+    let showVerticalGridlines: Bool
+    let showHorizontalGridlines: Bool
+    let legendVisible: Bool
+
+    init(spec: PlotChartSpec, viewportWidth: CGFloat) {
+        xTickBudget = Self.tickBudget(for: viewportWidth)
+        yTickCount = viewportWidth < 340 ? 4 : 5
+
+        let decimatedXTicks = Self.decimatedXTickValues(spec: spec, budget: xTickBudget)
+        xTickValues = decimatedXTicks.values
+        showVerticalGridlines = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xTickBudget
+        showHorizontalGridlines = true
+
+        let seriesCount = Self.legendSeriesCount(spec: spec)
+        legendVisible = seriesCount >= 2 && seriesCount <= 3
+    }
+
+    static func tickBudget(for viewportWidth: CGFloat) -> Int {
+        let raw = Int(floor(max(0, viewportWidth) / 56))
+        return max(4, min(6, raw))
+    }
+
+    private static func decimatedXTickValues(spec: PlotChartSpec, budget: Int) -> (values: XTickValues, domainCount: Int) {
+        guard let xKey = primaryXKey(spec: spec) else {
+            return (.automatic, 0)
+        }
+
+        if spec.columnIsNumeric(xKey) {
+            let uniqueValues = orderedUnique(spec.rows.compactMap { $0.number(for: xKey) })
+            let decimated = decimate(uniqueValues, targetCount: budget)
+            guard !decimated.isEmpty else {
+                return (.automatic, 0)
+            }
+            return (.numeric(decimated), uniqueValues.count)
+        }
+
+        let labels: [String] = orderedUnique(
+            spec.rows.compactMap { row -> String? in
+                guard let raw = row.seriesLabel(for: xKey) else {
+                    return nil
+                }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+        )
+
+        let decimated: [String] = decimate(labels, targetCount: budget)
+        guard !decimated.isEmpty else {
+            return (.automatic, 0)
+        }
+        return (.category(decimated), labels.count)
+    }
+
+    private static func primaryXKey(spec: PlotChartSpec) -> String? {
+        for mark in spec.marks {
+            switch mark.type {
+            case .line, .area, .bar, .point:
+                if let x = mark.x, !x.isEmpty {
+                    return x
+                }
+            case .rectangle, .rule, .sector:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private static func legendSeriesCount(spec: PlotChartSpec) -> Int {
+        var seen = Set<String>()
+
+        for mark in spec.marks where markContributesLegend(mark.type) {
+            if let seriesKey = mark.series {
+                for row in spec.rows {
+                    let label = row.seriesLabel(for: seriesKey) ?? legendFallbackLabel(mark)
+                    if seen.insert(label).inserted && seen.count > 3 {
+                        return seen.count
+                    }
+                }
+            } else {
+                let label = legendFallbackLabel(mark)
+                if seen.insert(label).inserted && seen.count > 3 {
+                    return seen.count
+                }
+            }
+        }
+
+        return seen.count
+    }
+
+    private static func markContributesLegend(_ type: PlotChartSpec.MarkType) -> Bool {
+        switch type {
+        case .rule:
+            return false
+        case .line, .area, .bar, .point, .rectangle, .sector:
+            return true
+        }
+    }
+
+    private static func legendFallbackLabel(_ mark: PlotChartSpec.Mark) -> String {
+        if let label = mark.label, !label.isEmpty {
+            return label
+        }
+        return mark.id
+    }
+
+    private static func orderedUnique<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        var ordered: [T] = []
+        ordered.reserveCapacity(values.count)
+
+        for value in values where seen.insert(value).inserted {
+            ordered.append(value)
+        }
+
+        return ordered
+    }
+
+    private static func decimate<T>(_ values: [T], targetCount: Int) -> [T] {
+        guard !values.isEmpty else { return [] }
+        guard targetCount > 0 else { return [] }
+        guard values.count > targetCount else { return values }
+
+        let indices = decimatedIndices(totalCount: values.count, targetCount: targetCount)
+        return indices.map { values[$0] }
+    }
+
+    private static func decimatedIndices(totalCount: Int, targetCount: Int) -> [Int] {
+        guard totalCount > 0 else { return [] }
+        guard targetCount < totalCount else {
+            return Array(0..<totalCount)
+        }
+        guard targetCount > 1 else {
+            return [0]
+        }
+
+        let span = totalCount - 1
+        let steps = targetCount - 1
+        var seen = Set<Int>()
+        var indices: [Int] = []
+        indices.reserveCapacity(targetCount)
+
+        for step in 0...steps {
+            let ratio = Double(step) / Double(steps)
+            let index = Int((ratio * Double(span)).rounded())
+            if seen.insert(index).inserted {
+                indices.append(index)
+            }
+        }
+
+        if indices.first != 0 {
+            indices.insert(0, at: 0)
+        }
+        if indices.last != span {
+            indices.append(span)
+        }
+
+        return indices.sorted()
     }
 }
 
