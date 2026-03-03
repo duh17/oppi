@@ -65,6 +65,24 @@ describe("routes modules", () => {
       expect(Object.keys(CHAT_METRIC_REGISTRY).sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());
     });
 
+    it("keeps iOS metric enum in parity with server metric names", () => {
+      const metricModelsPath = join(
+        process.cwd(),
+        "..",
+        "ios",
+        "Oppi",
+        "Core",
+        "Services",
+        "MetricKitModels.swift",
+      );
+      const source = readFileSync(metricModelsPath, "utf8");
+      const iosMetricNames = [...source.matchAll(/case\s+\w+\s*=\s*"([^"]+)"/g)]
+        .map((match) => match[1])
+        .filter((metric) => metric.startsWith("chat.") || metric.startsWith("plot."));
+
+      expect([...new Set(iosMetricNames)].sort()).toEqual([...CHAT_METRIC_NAME_VALUES].sort());
+    });
+
     it("parses OPPI_TELEMETRY_MODE consistently", () => {
       expect(telemetryUploadsEnabledFromEnv(undefined)).toBe(true);
       expect(telemetryUploadsEnabledFromEnv("internal")).toBe(true);
@@ -839,25 +857,133 @@ describe("routes modules", () => {
               },
               {
                 ts: generatedAt + 20,
+                metric: "chat.stream_open_ms",
+                value: 144,
+                unit: "ms",
+                tags: { transport: "paired", status: "connected" },
+              },
+              {
+                ts: generatedAt + 21,
+                metric: "chat.subscribe_ack_ms",
+                value: 88,
+                unit: "ms",
+                tags: { transport: "paired", status: "ok" },
+              },
+              {
+                ts: generatedAt + 22,
+                metric: "chat.queue_sync_ms",
+                value: 52,
+                unit: "ms",
+                tags: { transport: "paired", status: "ok" },
+              },
+              {
+                ts: generatedAt + 23,
+                metric: "chat.connected_dispatch_ms",
+                value: 24,
+                unit: "ms",
+                tags: { transport: "paired" },
+              },
+              {
+                ts: generatedAt + 24,
+                metric: "chat.session_message_count",
+                value: 10,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 25,
+                metric: "chat.session_input_tokens",
+                value: 1_250,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 26,
+                metric: "chat.session_output_tokens",
+                value: 640,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 27,
+                metric: "chat.session_total_tokens",
+                value: 1_890,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 28,
+                metric: "chat.session_mutating_tool_calls",
+                value: 3,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 29,
+                metric: "chat.session_files_changed",
+                value: 2,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 30,
+                metric: "chat.session_added_lines",
+                value: 48,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 31,
+                metric: "chat.session_removed_lines",
+                value: 13,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 32,
+                metric: "chat.session_context_tokens",
+                value: 3_200,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 33,
+                metric: "chat.session_context_window",
+                value: 200_000,
+                unit: "count",
+                sessionId: "session-1",
+                tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
+              },
+              {
+                ts: generatedAt + 34,
                 metric: "plot.axis_visible_tick_count",
                 value: 5,
                 unit: "count",
                 tags: { tool: "plot" },
               },
               {
-                ts: generatedAt + 25,
+                ts: generatedAt + 31,
                 metric: "plot.legend_item_count",
                 value: 3,
                 unit: "count",
               },
               {
-                ts: generatedAt + 30,
+                ts: generatedAt + 32,
                 metric: "plot.scroll_enabled",
                 value: 1,
                 unit: "ratio",
               },
               {
-                ts: generatedAt + 35,
+                ts: generatedAt + 33,
                 metric: "plot.auto_adjustments",
                 value: 2,
                 unit: "count",
@@ -885,13 +1011,27 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(7);
+        expect(record.sampleCount).toBe(21);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
-        expect(record.samples[3]?.metric).toBe("plot.axis_visible_tick_count");
-        expect(record.samples[4]?.metric).toBe("plot.legend_item_count");
-        expect(record.samples[5]?.metric).toBe("plot.scroll_enabled");
-        expect(record.samples[6]?.metric).toBe("plot.auto_adjustments");
+        expect(record.samples[3]?.metric).toBe("chat.stream_open_ms");
+        expect(record.samples[4]?.metric).toBe("chat.subscribe_ack_ms");
+        expect(record.samples[5]?.metric).toBe("chat.queue_sync_ms");
+        expect(record.samples[6]?.metric).toBe("chat.connected_dispatch_ms");
+        expect(record.samples[7]?.metric).toBe("chat.session_message_count");
+        expect(record.samples[8]?.metric).toBe("chat.session_input_tokens");
+        expect(record.samples[9]?.metric).toBe("chat.session_output_tokens");
+        expect(record.samples[10]?.metric).toBe("chat.session_total_tokens");
+        expect(record.samples[11]?.metric).toBe("chat.session_mutating_tool_calls");
+        expect(record.samples[12]?.metric).toBe("chat.session_files_changed");
+        expect(record.samples[13]?.metric).toBe("chat.session_added_lines");
+        expect(record.samples[14]?.metric).toBe("chat.session_removed_lines");
+        expect(record.samples[15]?.metric).toBe("chat.session_context_tokens");
+        expect(record.samples[16]?.metric).toBe("chat.session_context_window");
+        expect(record.samples[17]?.metric).toBe("plot.axis_visible_tick_count");
+        expect(record.samples[18]?.metric).toBe("plot.legend_item_count");
+        expect(record.samples[19]?.metric).toBe("plot.scroll_enabled");
+        expect(record.samples[20]?.metric).toBe("plot.auto_adjustments");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }
