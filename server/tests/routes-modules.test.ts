@@ -897,6 +897,75 @@ describe("routes modules", () => {
       }
     });
 
+    it("normalizes chat metric tag keys to snake_case", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-tag-normalize-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            samples: [
+              {
+                ts: generatedAt,
+                metric: "chat.voice_setup_ms",
+                value: 210,
+                unit: "ms",
+                tags: {
+                  traceEvents: "120",
+                  trace_events: "999",
+                  "HTTP-Status": "200",
+                  " phase ": "total",
+                  __status__: "ok",
+                  already_snake: "1",
+                  "%%%%": "ignored",
+                },
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const dayFile = join(
+          dataDir,
+          "diagnostics",
+          "telemetry",
+          `chat-metrics-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+        );
+        const lines = readFileSync(dayFile, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(1);
+
+        const record = JSON.parse(lines[0]) as {
+          sampleCount: number;
+          samples: Array<{ tags?: Record<string, string> }>;
+        };
+        expect(record.sampleCount).toBe(1);
+        expect(record.samples[0]?.tags).toEqual({
+          trace_events: "120",
+          http_status: "200",
+          phase: "total",
+          status: "ok",
+          already_snake: "1",
+        });
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("rejects chat metrics payloads when all samples are invalid", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-invalid-"));
       try {
