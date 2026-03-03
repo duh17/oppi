@@ -7,15 +7,25 @@
 
 ## Current conclusion
 
-The dominant 8s reconnect symptom is **application-side scheduling delay**, not server subscribe time.
+The 8s delay is caused by `waitForConnectionTimeout` being set to 8 seconds (commit `8af1aa9`), up from 3s in testflight/19.
 
-Latest confirmed chain:
-1. Server emits `.connected` quickly (0-1ms subscribe path on server).
-2. iOS WebSocket receives/decode happens quickly.
-3. Main thread is intermittently blocked by timeline layout/cell configuration.
-4. `.connected` handling in the session loop is delayed until main-thread work drains.
+**Root cause chain:**
+1. `ChatSessionManager.connect()` calls `streamSession()`.
+2. `streamSession()` calls `connectStream()` which may tear down and re-create the WS.
+3. `streamSession()` then calls `sendCommandAwaitingResult("subscribe")`.
+4. `wsClient.send()` checks `status != .connected` → enters `waitForConnection()`.
+5. `waitForConnection()` polls every 100ms for up to **8 seconds** (was 3s in testflight/19).
+6. The WS handshake completes quickly (~100ms on LAN, ~1s on Tailscale), but `.connected` from the server buffers in the AsyncStream because `streamSession()` hasn't returned yet.
+7. Total delay = `waitForConnectionTimeout` ceiling.
 
-So `ws_connect_ms` can look like "network delay" while most time is actually spent waiting for main-thread availability.
+Server-side subscribe takes 0-1ms. The entire delay is iOS-side polling.
+
+**Regression:** commit `8af1aa9` ("fix(ios): retune websocket reconnect behavior") changed `waitForConnectionTimeout` from `.seconds(3)` to `.seconds(8)`. Sentry breadcrumbs confirm: `connectMs=0`, `subscribeMs=823`, `totalMs=8925` — the 8s gap is `requestMessageQueue()` blocking on `waitForConnection()`.
+
+**Fix options:**
+1. Revert `waitForConnectionTimeout` to 3s (quick fix, same as testflight/19)
+2. Await WS `.connected` status in `streamSession()` before sending subscribe (correct fix — eliminates polling entirely)
+3. Make `connectStream()` return only after WS handshake completes (structural fix)
 
 ## LAN-direct status
 
