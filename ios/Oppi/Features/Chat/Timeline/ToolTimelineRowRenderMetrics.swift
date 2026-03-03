@@ -42,10 +42,11 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
-    static func diffSignature(lines: [DiffLine], path: String?) -> Int {
+    static func diffSignature(lines: [DiffLine], path: String?, isStreaming: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine("diff")
         hasher.combine(path ?? "")
+        hasher.combine(isStreaming)
         hasher.combine(lines.count)
         for line in lines {
             switch line.kind {
@@ -64,13 +65,15 @@ enum ToolTimelineRowRenderMetrics {
     static func codeSignature(
         displayText: String,
         language: SyntaxLanguage?,
-        startLine: Int
+        startLine: Int,
+        isStreaming: Bool
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("code")
         hasher.combine(displayText)
         hasher.combine(language)
         hasher.combine(startLine)
+        hasher.combine(isStreaming)
         return hasher.finalize()
     }
 

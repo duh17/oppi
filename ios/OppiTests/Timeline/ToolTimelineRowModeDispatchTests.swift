@@ -1047,6 +1047,240 @@ struct ToolTimelineRowModeDispatchTests {
             "Remember first-pass expanded sizing should stay compact after reuse; got \(firstPassSize.height)"
         )
     }
+
+    // MARK: - Streaming guard: code mode
+
+    // During streaming, code mode should use plain text (no syntax
+    // highlighting or line numbers) to avoid main-thread hangs.
+    @Test func expandedCodeStreamingUsesPlainText() throws {
+        let code = "struct App {\n    var name: String\n}"
+        let config = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "App.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(rendered.contains("struct App"))
+        // No line number gutter during streaming (cheap path)
+        #expect(!rendered.contains("│"), "Streaming code should not have line number separators")
+    }
+
+    // After completion, code mode should render full syntax-highlighted
+    // attributed text with line numbers.
+    @Test func expandedCodeDoneUsesFullRender() throws {
+        let code = "struct App {\n    var name: String\n}"
+        let config = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "App.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(rendered.contains("struct App"))
+        // Line number gutter present when done (full quality path)
+        #expect(rendered.contains("│"), "Done code should have line number separators")
+    }
+
+    // Streaming -> done transition must re-render (signature includes
+    // isStreaming, so the change triggers a full quality render).
+    @Test func expandedCodeStreamingToDoneTransitionReRenders() throws {
+        let code = "let x = 42\nlet y = 99"
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "F.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+        let done = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "F.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let streamingRendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(!streamingRendered.contains("│"), "Streaming should not have line numbers")
+
+        // Transition to done with identical content
+        view.configuration = done
+        _ = fittedSize(for: view, width: 360)
+
+        let doneRendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(doneRendered.contains("let x = 42"))
+        #expect(doneRendered.contains("│"), "Done should add line number gutter")
+    }
+
+    // MARK: - Streaming guard: diff mode
+
+    // During streaming, diff mode should use plain text markers (no syntax
+    // highlighting, no colored backgrounds, no line numbers).
+    @Test func expandedDiffStreamingUsesPlainText() throws {
+        let config = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: "let old = false"),
+                DiffLine(kind: .added, text: "let old = true"),
+            ], path: "Model.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(rendered.contains("- let old = false"), "Streaming diff should show - prefix")
+        #expect(rendered.contains("+ let old = true"), "Streaming diff should show + prefix")
+        // No rich gutter prefix during streaming (cheap path)
+        #expect(!rendered.contains("▎"), "Streaming diff should not have rich gutter markers")
+    }
+
+    // After completion, diff mode should render full attributed diff with
+    // colored backgrounds and syntax highlighting.
+    @Test func expandedDiffDoneUsesFullRender() throws {
+        let config = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: [
+                DiffLine(kind: .removed, text: "let old = false"),
+                DiffLine(kind: .added, text: "let old = true"),
+            ], path: "Model.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: config)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let rendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(rendered.contains("let old = false"))
+        #expect(rendered.contains("let old = true"))
+        // Full rich gutter when done
+        #expect(rendered.contains("▎"), "Done diff should have rich gutter markers")
+    }
+
+    // Streaming -> done transition for diff mode.
+    @Test func expandedDiffStreamingToDoneTransitionReRenders() throws {
+        let lines = [
+            DiffLine(kind: .context, text: "import Foundation"),
+            DiffLine(kind: .removed, text: "let a = 1"),
+            DiffLine(kind: .added, text: "let a = 2"),
+        ]
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: lines, path: "A.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+        let done = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: lines, path: "A.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+
+        let label = try #require(privateView(named: "expandedLabel", in: view) as? UILabel)
+        let streamingRendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(!streamingRendered.contains("▎"), "Streaming diff should not have gutter markers")
+
+        view.configuration = done
+        _ = fittedSize(for: view, width: 360)
+
+        let doneRendered = label.attributedText?.string ?? label.text ?? ""
+        #expect(doneRendered.contains("let a = 2"))
+        #expect(doneRendered.contains("▎"), "Done diff should add gutter markers")
+    }
+
+    // MARK: - Streaming guard: auto-follow behavior
+
+    // Code mode should auto-follow during streaming and stop on done.
+    @Test func expandedCodeStreamingEnablesAutoFollow() throws {
+        let code = (1...200).map { "let line\($0) = \($0)" }.joined(separator: "\n")
+
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "Big.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
+        #expect(autoFollow, "Streaming code should enable auto-follow")
+    }
+
+    @Test func expandedCodeDoneDisablesAutoFollow() throws {
+        let code = (1...200).map { "let line\($0) = \($0)" }.joined(separator: "\n")
+
+        let done = makeToolConfiguration(
+            toolNamePrefix: "write",
+            expandedContent: .code(text: code, language: .swift, startLine: 1, filePath: "Big.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: done)
+        _ = fittedSize(for: view, width: 360)
+
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
+        #expect(!autoFollow, "Done code should disable auto-follow")
+    }
+
+    // Diff mode should auto-follow during streaming and stop on done.
+    @Test func expandedDiffStreamingEnablesAutoFollow() throws {
+        let lines = (1...200).map { DiffLine(kind: .added, text: "line \($0)") }
+
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: lines, path: "Big.swift"),
+            isExpanded: true,
+            isDone: false
+        )
+
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
+        #expect(autoFollow, "Streaming diff should enable auto-follow")
+    }
+
+    @Test func expandedDiffDoneDisablesAutoFollow() throws {
+        let lines = (1...200).map { DiffLine(kind: .added, text: "line \($0)") }
+
+        let done = makeToolConfiguration(
+            toolNamePrefix: "edit",
+            expandedContent: .diff(lines: lines, path: "Big.swift"),
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: done)
+        _ = fittedSize(for: view, width: 360)
+
+        let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
+        #expect(!autoFollow, "Done diff should disable auto-follow")
+    }
 }
 
 private enum RoutedExpandedMode: Equatable {

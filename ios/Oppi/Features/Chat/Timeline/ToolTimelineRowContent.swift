@@ -916,18 +916,24 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     )
                 },
                 renderDiff: { lines, path in
-                    self.renderExpandedDiffMode(lines: lines, path: path)
+                    self.renderExpandedDiffMode(
+                        lines: lines,
+                        path: path,
+                        isStreaming: !configuration.isDone
+                    )
                 },
                 renderCode: { text, language, startLine in
                     self.renderExpandedCodeMode(
                         text: text,
                         language: language,
-                        startLine: startLine
+                        startLine: startLine,
+                        isStreaming: !configuration.isDone
                     )
                 },
                 renderMarkdown: { text in
                     self.renderExpandedMarkdownMode(
                         text: text,
+                        isStreaming: !configuration.isDone,
                         wasExpandedVisible: wasExpandedVisible,
                         isDone: configuration.isDone
                     )
@@ -1115,7 +1121,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         return visibility
     }
 
-    private func renderExpandedDiffMode(lines: [DiffLine], path: String?) -> ExpandedRenderVisibility {
+    private func renderExpandedDiffMode(
+        lines: [DiffLine],
+        path: String?,
+        isStreaming: Bool
+    ) -> ExpandedRenderVisibility {
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
         var localExpandedShouldAutoFollow = expandedShouldAutoFollow
@@ -1123,6 +1133,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let visibility = ToolTimelineRowExpandedRenderer.renderDiffMode(
             lines: lines,
             path: path,
+            isStreaming: isStreaming,
             expandedLabel: expandedLabel,
             expandedScrollView: expandedScrollView,
             expandedRenderSignature: &localExpandedRenderSignature,
@@ -1150,7 +1161,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func renderExpandedCodeMode(
         text: String,
         language: SyntaxLanguage?,
-        startLine: Int?
+        startLine: Int?,
+        isStreaming: Bool
     ) -> ExpandedRenderVisibility {
         var localExpandedRenderSignature = expandedRenderSignature
         var localExpandedRenderedText = expandedRenderedText
@@ -1160,6 +1172,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             text: text,
             language: language,
             startLine: startLine,
+            isStreaming: isStreaming,
             expandedLabel: expandedLabel,
             expandedScrollView: expandedScrollView,
             expandedRenderSignature: &localExpandedRenderSignature,
@@ -1186,6 +1199,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private func renderExpandedMarkdownMode(
         text: String,
+        isStreaming: Bool,
         wasExpandedVisible: Bool,
         isDone: Bool
     ) -> ExpandedRenderVisibility {
@@ -1198,6 +1212,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         let visibility = ToolTimelineRowExpandedRenderer.renderMarkdownMode(
             text: text,
+            isStreaming: isStreaming,
             expandedMarkdownView: expandedMarkdownView,
             expandedScrollView: expandedScrollView,
             expandedRenderSignature: &localExpandedRenderSignature,
