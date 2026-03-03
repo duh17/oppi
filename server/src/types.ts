@@ -394,33 +394,110 @@ export interface MetricKitUploadRequest {
   payloads: MetricKitPayloadItem[];
 }
 
-export const CHAT_METRIC_NAME_VALUES = [
-  "chat.ttft_ms",
-  "chat.catchup_ms",
-  "chat.catchup_ring_miss",
-  "chat.timeline_apply_ms",
-  "chat.timeline_layout_ms",
-  "chat.ws_decode_ms",
-  "chat.coalescer_flush_events",
-  "chat.coalescer_flush_bytes",
-  "chat.inbound_queue_depth",
-  "chat.full_reload_ms",
-  "chat.fresh_content_lag_ms",
-  "chat.cache_load_ms",
-  "chat.reducer_load_ms",
-  "chat.ws_connect_ms",
-  "chat.voice_prewarm_ms",
-  "chat.voice_setup_ms",
-  "chat.voice_first_result_ms",
-  "plot.axis_visible_tick_count",
-  "plot.legend_item_count",
-  "plot.scroll_enabled",
-  "plot.auto_adjustments",
-] as const;
-
-export type ChatMetricName = (typeof CHAT_METRIC_NAME_VALUES)[number];
-
 export type ChatMetricUnit = "ms" | "count" | "ratio";
+
+export interface ChatMetricDefinition {
+  unit: ChatMetricUnit;
+  description: string;
+}
+
+/**
+ * Single source of truth for chat metric contracts.
+ *
+ * Add new metrics here first, then emit from clients and surface in dashboards.
+ */
+export const CHAT_METRIC_REGISTRY = {
+  "chat.ttft_ms": {
+    unit: "ms",
+    description: "Time-to-first-token latency for a user turn.",
+  },
+  "chat.catchup_ms": {
+    unit: "ms",
+    description: "Catch-up replay latency when (re)subscribing to a session stream.",
+  },
+  "chat.catchup_ring_miss": {
+    unit: "count",
+    description: "Count of catch-up ring misses that required a fallback path.",
+  },
+  "chat.timeline_apply_ms": {
+    unit: "ms",
+    description: "Reducer apply latency for timeline state updates.",
+  },
+  "chat.timeline_layout_ms": {
+    unit: "ms",
+    description: "Timeline layout/render latency after state application.",
+  },
+  "chat.ws_decode_ms": {
+    unit: "ms",
+    description: "WebSocket message decode latency.",
+  },
+  "chat.coalescer_flush_events": {
+    unit: "count",
+    description: "Event count flushed per coalescer batch.",
+  },
+  "chat.coalescer_flush_bytes": {
+    unit: "count",
+    description: "Payload byte count flushed per coalescer batch.",
+  },
+  "chat.inbound_queue_depth": {
+    unit: "count",
+    description: "Inbound queue depth observed while processing stream events.",
+  },
+  "chat.full_reload_ms": {
+    unit: "ms",
+    description: "Latency for full timeline reload fallback path.",
+  },
+  "chat.fresh_content_lag_ms": {
+    unit: "ms",
+    description: "Lag between new content arrival and visible timeline freshness.",
+  },
+  "chat.cache_load_ms": {
+    unit: "ms",
+    description: "Client-side cache load latency.",
+  },
+  "chat.reducer_load_ms": {
+    unit: "ms",
+    description: "Reducer reconstruction/load latency from cached state.",
+  },
+  "chat.ws_connect_ms": {
+    unit: "ms",
+    description: "WebSocket connection establishment latency.",
+  },
+  "chat.voice_prewarm_ms": {
+    unit: "ms",
+    description: "Voice pipeline prewarm latency.",
+  },
+  "chat.voice_setup_ms": {
+    unit: "ms",
+    description: "Voice capture/setup latency.",
+  },
+  "chat.voice_first_result_ms": {
+    unit: "ms",
+    description: "Voice first-result latency.",
+  },
+  "plot.axis_visible_tick_count": {
+    unit: "count",
+    description: "Visible axis tick count after plot normalization.",
+  },
+  "plot.legend_item_count": {
+    unit: "count",
+    description: "Legend item count after plot normalization.",
+  },
+  "plot.scroll_enabled": {
+    unit: "ratio",
+    description: "Whether horizontal plot scrolling was enabled (0 or 1).",
+  },
+  "plot.auto_adjustments": {
+    unit: "count",
+    description: "Count of automatic plot adjustments applied by renderer.",
+  },
+} as const satisfies Readonly<Record<string, ChatMetricDefinition>>;
+
+export type ChatMetricName = keyof typeof CHAT_METRIC_REGISTRY;
+
+export const CHAT_METRIC_NAME_VALUES = Object.freeze(
+  Object.keys(CHAT_METRIC_REGISTRY) as ChatMetricName[],
+);
 
 export interface ChatMetricSample {
   ts: number;

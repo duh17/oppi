@@ -169,6 +169,71 @@ function extractMediaOutputs(contents: unknown[], toolCallId?: string): ServerMe
 }
 
 /**
+ * Extract streamed tool-call arguments from `message_update` events.
+ *
+ * Pi streams tool calls via assistantMessageEvent toolcall_* deltas before
+ * `tool_execution_start`. We forward these as `tool_start` updates so iOS can
+ * render evolving args (notably write.content) in real time.
+ */
+function extractStreamingToolCallUpdate(
+  event: Extract<AgentSessionEvent, { type: "message_update" }>,
+): ServerMessage | null {
+  const evt = event.assistantMessageEvent;
+  if (
+    evt.type !== "toolcall_start" &&
+    evt.type !== "toolcall_delta" &&
+    evt.type !== "toolcall_end"
+  ) {
+    return null;
+  }
+
+  let toolCall = evt.type === "toolcall_end" ? asRecord(evt.toolCall) : null;
+
+  const messageRecord = asRecord(event.message);
+  const messageContent = Array.isArray(messageRecord?.content)
+    ? (messageRecord.content as unknown[])
+    : [];
+
+  if (!toolCall) {
+    const index = typeof evt.contentIndex === "number" ? evt.contentIndex : -1;
+    if (index >= 0 && index < messageContent.length) {
+      const block = asRecord(messageContent[index]);
+      if (block?.type === "toolCall") {
+        toolCall = block;
+      }
+    }
+  }
+
+  if (!toolCall) {
+    for (let i = messageContent.length - 1; i >= 0; i -= 1) {
+      const block = asRecord(messageContent[i]);
+      if (block?.type === "toolCall") {
+        toolCall = block;
+        break;
+      }
+    }
+  }
+
+  if (!toolCall) {
+    return null;
+  }
+
+  const toolCallId = typeof toolCall.id === "string" ? toolCall.id : "";
+  const toolName = typeof toolCall.name === "string" ? toolCall.name : "";
+  if (toolCallId.length === 0 || toolName.length === 0) {
+    return null;
+  }
+
+  const args = asRecord(toolCall.arguments) ?? {};
+  return {
+    type: "tool_start",
+    tool: toolName,
+    args,
+    toolCallId,
+  };
+}
+
+/**
  * Translate a single pi agent event into zero or more ServerMessages.
  *
  * Mutates `ctx.streamedAssistantText` and `ctx.partialResults` as a
@@ -245,9 +310,14 @@ export function translatePiEvent(
             : `Stream ${reason}`;
         return [{ type: "error", error: errorMsg }];
       }
-      // Other sub-events (start, text_start/end, thinking_start/end,
-      // toolcall_start/delta/end, done) are either redundant with
-      // top-level events or bookkeeping. No client action needed.
+
+      const toolCallUpdate = extractStreamingToolCallUpdate(event);
+      if (toolCallUpdate) {
+        return [toolCallUpdate];
+      }
+
+      // Other sub-events (start, text_start/end, thinking_start/end, done)
+      // are redundant with top-level events or pure bookkeeping.
       return [];
     }
 

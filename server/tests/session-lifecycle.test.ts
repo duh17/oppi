@@ -537,7 +537,7 @@ describe("SessionManager message queue", () => {
   });
 
   it("reconciles queue state from SDK when user message starts", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+    const { manager, sdkBackend, events } = makeManagerHarness({ status: "busy" });
 
     await manager.sendSteer("s1", "queued steer", { clientTurnId: "turn-steer-1" });
     const before = manager.getMessageQueue("s1");
@@ -560,10 +560,18 @@ describe("SessionManager message queue", () => {
     expect(after.steering).toHaveLength(0);
     expect(after.followUp).toHaveLength(0);
     expect(after.version).toBeGreaterThan(before.version);
+
+    const started = events.filter((event) => event.type === "queue_item_started");
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({
+      type: "queue_item_started",
+      kind: "steer",
+      item: expect.objectContaining({ message: "queued steer" }),
+    });
   });
 
   it("reconciles queue state from SDK when turn starts without user message_start", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+    const { manager, sdkBackend, events } = makeManagerHarness({ status: "busy" });
 
     await manager.sendSteer("s1", "queued steer", { clientTurnId: "turn-steer-2" });
     const before = manager.getMessageQueue("s1");
@@ -581,6 +589,14 @@ describe("SessionManager message queue", () => {
     expect(after.steering).toHaveLength(0);
     expect(after.followUp).toHaveLength(0);
     expect(after.version).toBeGreaterThan(before.version);
+
+    const started = events.filter((event) => event.type === "queue_item_started");
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({
+      type: "queue_item_started",
+      kind: "steer",
+      item: expect.objectContaining({ message: "queued steer" }),
+    });
   });
 
   it("replaces queue using optimistic version check", async () => {
