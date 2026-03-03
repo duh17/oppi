@@ -190,3 +190,141 @@ struct PlotChartSpecTests {
         #expect(PlotChartSpec.fromToolDetails(details) == nil)
     }
 }
+
+@Suite("PlotRenderPolicy")
+struct PlotRenderPolicyTests {
+    @Test("tick budget clamps to phone-friendly range")
+    func tickBudgetClampsToPhoneRange() {
+        #expect(PlotRenderPolicy.tickBudget(for: 200) == 4)
+        #expect(PlotRenderPolicy.tickBudget(for: 320) == 5)
+        #expect(PlotRenderPolicy.tickBudget(for: 390) == 6)
+        #expect(PlotRenderPolicy.tickBudget(for: 500) == 6)
+    }
+
+    @Test("x-axis decimation keeps first and last category anchors")
+    func categoryXAxisDecimationKeepsAnchors() {
+        let rows: [JSONValue] = (0..<12).map { index in
+            .object([
+                "day": .string("day-\(index)"),
+                "value": .number(Double(index) * 1.5),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("bar"),
+                    "x": .string("day"),
+                    "y": .string("value"),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 320)
+        switch policy.xTickValues {
+        case .category(let labels):
+            #expect(labels.count <= policy.xTickBudget)
+            #expect(labels.first == "day-0")
+            #expect(labels.last == "day-11")
+        default:
+            Issue.record("Expected categorical x tick labels")
+        }
+    }
+
+    @Test("legend auto policy shows only for two or three series")
+    func legendAutoPolicyBySeriesCount() {
+        let singleSeries = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2)]),
+                .object(["x": .number(2), "y": .number(3)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        let threeSeries = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2), "series": .string("A")]),
+                .object(["x": .number(1), "y": .number(3), "series": .string("B")]),
+                .object(["x": .number(1), "y": .number(4), "series": .string("C")]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                    "series": .string("series"),
+                ]),
+            ]
+        )
+
+        let fourSeries = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2), "series": .string("A")]),
+                .object(["x": .number(1), "y": .number(3), "series": .string("B")]),
+                .object(["x": .number(1), "y": .number(4), "series": .string("C")]),
+                .object(["x": .number(1), "y": .number(5), "series": .string("D")]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                    "series": .string("series"),
+                ]),
+            ]
+        )
+
+        #expect(!PlotRenderPolicy(spec: singleSeries, viewportWidth: 390).legendVisible)
+        #expect(PlotRenderPolicy(spec: threeSeries, viewportWidth: 390).legendVisible)
+        #expect(!PlotRenderPolicy(spec: fourSeries, viewportWidth: 390).legendVisible)
+    }
+
+    @Test("vertical gridlines are disabled for dense x domains")
+    func verticalGridlineDensityPolicy() {
+        let sparseRows: [JSONValue] = (0..<4).map { index in
+            .object(["x": .number(Double(index)), "y": .number(Double(index + 1))])
+        }
+        let denseRows: [JSONValue] = (0..<20).map { index in
+            .object(["x": .number(Double(index)), "y": .number(Double(index + 1))])
+        }
+
+        let marks: [JSONValue] = [
+            .object([
+                "type": .string("line"),
+                "x": .string("x"),
+                "y": .string("y"),
+            ]),
+        ]
+
+        let sparseSpec = makeSpec(rows: sparseRows, marks: marks)
+        let denseSpec = makeSpec(rows: denseRows, marks: marks)
+
+        #expect(PlotRenderPolicy(spec: sparseSpec, viewportWidth: 390).showVerticalGridlines)
+        #expect(!PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showVerticalGridlines)
+        #expect(PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showHorizontalGridlines)
+    }
+
+    private func makeSpec(rows: [JSONValue], marks: [JSONValue]) -> PlotChartSpec {
+        let args: [String: JSONValue] = [
+            "spec": .object([
+                "dataset": .object([
+                    "rows": .array(rows),
+                ]),
+                "marks": .array(marks),
+            ]),
+        ]
+
+        guard let spec = PlotChartSpec.fromPlotArgs(args) else {
+            fatalError("Expected PlotChartSpec to parse")
+        }
+
+        return spec
+    }
+}
