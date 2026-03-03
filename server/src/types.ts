@@ -377,7 +377,11 @@ export type ChatMetricName =
   | "chat.ws_connect_ms"
   | "chat.voice_prewarm_ms"
   | "chat.voice_setup_ms"
-  | "chat.voice_first_result_ms";
+  | "chat.voice_first_result_ms"
+  | "plot.axis_visible_tick_count"
+  | "plot.legend_item_count"
+  | "plot.scroll_enabled"
+  | "plot.auto_adjustments";
 
 export type ChatMetricUnit = "ms" | "count" | "ratio";
 

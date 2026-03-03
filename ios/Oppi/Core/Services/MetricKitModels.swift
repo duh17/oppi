@@ -40,6 +40,10 @@ enum ChatMetricName: String, Codable, Sendable {
     case voicePrewarmMs = "chat.voice_prewarm_ms"
     case voiceSetupMs = "chat.voice_setup_ms"
     case voiceFirstResultMs = "chat.voice_first_result_ms"
+    case plotAxisVisibleTickCount = "plot.axis_visible_tick_count"
+    case plotLegendItemCount = "plot.legend_item_count"
+    case plotScrollEnabled = "plot.scroll_enabled"
+    case plotAutoAdjustments = "plot.auto_adjustments"
 }
 
 enum ChatMetricUnit: String, Codable, Sendable {

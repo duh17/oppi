@@ -333,6 +333,10 @@ const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>([
   "chat.voice_prewarm_ms",
   "chat.voice_setup_ms",
   "chat.voice_first_result_ms",
+  "plot.axis_visible_tick_count",
+  "plot.legend_item_count",
+  "plot.scroll_enabled",
+  "plot.auto_adjustments",
 ]);
 
 const CHAT_METRIC_UNITS = new Set<ChatMetricSample["unit"]>(["ms", "count", "ratio"]);
