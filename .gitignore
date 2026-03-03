@@ -36,4 +36,7 @@ ScreenRecording_*.mov
 
 docs/research/
 docs/review/
+
+docs/**/*.md
+
 server/extensions/
