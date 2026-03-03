@@ -461,7 +461,63 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.ws_connect_ms": {
     unit: "ms",
-    description: "WebSocket connection establishment latency.",
+    description: "Legacy WebSocket connect latency bucket (mixed phases).",
+  },
+  "chat.stream_open_ms": {
+    unit: "ms",
+    description: "Time from streamSession start to WebSocket connected state.",
+  },
+  "chat.subscribe_ack_ms": {
+    unit: "ms",
+    description: "Latency from subscribe send to subscribe command acknowledgement.",
+  },
+  "chat.queue_sync_ms": {
+    unit: "ms",
+    description: "Latency for initial queue snapshot refresh (get_queue command).",
+  },
+  "chat.connected_dispatch_ms": {
+    unit: "ms",
+    description: "Delay from connected message receipt to session-loop consumption.",
+  },
+  "chat.session_message_count": {
+    unit: "count",
+    description: "Per-session cumulative message count snapshot.",
+  },
+  "chat.session_input_tokens": {
+    unit: "count",
+    description: "Per-session cumulative input token count snapshot.",
+  },
+  "chat.session_output_tokens": {
+    unit: "count",
+    description: "Per-session cumulative output token count snapshot.",
+  },
+  "chat.session_total_tokens": {
+    unit: "count",
+    description: "Per-session cumulative total token count snapshot.",
+  },
+  "chat.session_mutating_tool_calls": {
+    unit: "count",
+    description: "Per-session cumulative mutating tool call count snapshot.",
+  },
+  "chat.session_files_changed": {
+    unit: "count",
+    description: "Per-session cumulative unique changed file count snapshot.",
+  },
+  "chat.session_added_lines": {
+    unit: "count",
+    description: "Per-session cumulative added line count snapshot.",
+  },
+  "chat.session_removed_lines": {
+    unit: "count",
+    description: "Per-session cumulative removed line count snapshot.",
+  },
+  "chat.session_context_tokens": {
+    unit: "count",
+    description: "Latest session context token usage snapshot.",
+  },
+  "chat.session_context_window": {
+    unit: "count",
+    description: "Latest session context window size snapshot.",
   },
   "chat.voice_prewarm_ms": {
     unit: "ms",
