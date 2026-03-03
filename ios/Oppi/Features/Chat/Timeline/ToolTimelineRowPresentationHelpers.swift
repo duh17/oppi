@@ -54,13 +54,23 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else { return }
         guard !isWithinFullScreenModalContext(presenter) else { return }
 
-        let controller = FullScreenImageViewController(image: image)
-        // .pageSheet — see presentFullScreenContent() comment.
+        let controller = FullScreenImageViewController.makeSlideDownController(image: image)
+        presenter.present(controller, animated: true)
+    }
+
+    static func presentFullScreenPlot(spec: PlotChartSpec, fallbackText: String?, from sourceView: UIView) {
+        guard let presenter = nearestViewController(from: sourceView) else { return }
+        guard !isWithinFullScreenModalContext(presenter) else { return }
+        guard presenter.presentedViewController == nil else { return }
+
+        let controller = FullScreenPlotViewController(spec: spec, fallbackText: fallbackText)
         controller.modalPresentationStyle = .pageSheet
         if let sheet = controller.sheetPresentationController {
             sheet.detents = [.large()]
             sheet.prefersGrabberVisible = true
+            sheet.prefersEdgeAttachedInCompactHeight = true
         }
+        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
     }
 
@@ -78,7 +88,9 @@ enum ToolTimelineRowPresentationHelpers {
     private static func isWithinFullScreenModalContext(_ presenter: UIViewController) -> Bool {
         var current: UIViewController? = presenter
         while let node = current {
-            if node is FullScreenCodeViewController || node is FullScreenImageViewController {
+            if node is FullScreenCodeViewController
+                || node is FullScreenImageViewController
+                || node is FullScreenPlotViewController {
                 return true
             }
             current = node.parent
@@ -86,18 +98,26 @@ enum ToolTimelineRowPresentationHelpers {
 
         var ancestor: UIViewController? = presenter.presentingViewController
         while let node = ancestor {
-            if node is FullScreenCodeViewController || node is FullScreenImageViewController {
+            if node is FullScreenCodeViewController
+                || node is FullScreenImageViewController
+                || node is FullScreenPlotViewController {
                 return true
             }
             ancestor = node.presentingViewController
         }
 
         if let presented = presenter.presentedViewController {
-            if presented is FullScreenCodeViewController || presented is FullScreenImageViewController {
+            if presented is FullScreenCodeViewController
+                || presented is FullScreenImageViewController
+                || presented is FullScreenPlotViewController {
                 return true
             }
             if let nav = presented as? UINavigationController,
-               nav.viewControllers.contains(where: { $0 is FullScreenCodeViewController || $0 is FullScreenImageViewController }) {
+               nav.viewControllers.contains(where: {
+                   $0 is FullScreenCodeViewController
+                       || $0 is FullScreenImageViewController
+                       || $0 is FullScreenPlotViewController
+               }) {
                 return true
             }
         }

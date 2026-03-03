@@ -135,6 +135,7 @@ struct OppiApp: App {
                 configureWatchdogHooks()
                 mainThreadLagWatchdog.start()
 #endif
+                coordinator.startLANDiscovery()
                 await setupNotifications()
                 await reconnectOnLaunch()
             }

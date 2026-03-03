@@ -12,6 +12,7 @@ import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { execFileSync } from "node:child_process";
@@ -42,7 +43,16 @@ import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
 
 import type { Session, Workspace, ServerMessage, ApiError, ServerConfig } from "./types.js";
 import { ts } from "./log-utils.js";
-import { prepareTlsForServer, tlsSchemeForConfig } from "./tls.js";
+import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
+import {
+  BonjourAdvertiser,
+  buildBonjourServiceName,
+  buildBonjourTxtRecord,
+  isBonjourEnabled,
+  OPPI_BONJOUR_SERVICE_TYPE,
+} from "./bonjour-advertiser.js";
+import { DnsSdBonjourPublisher, isDnsSdAvailable } from "./bonjour-dns-sd.js";
+import { prepareTlsForServer, readCertificateFingerprint, tlsSchemeForConfig } from "./tls.js";
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -102,6 +112,41 @@ function isLoopbackBindHost(host: string): boolean {
 
 function isWildcardBindHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::";
+}
+
+function isIPv4Address(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+function firstLanIPv4Address(
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
+): string | null {
+  for (const entries of Object.values(interfaces)) {
+    if (!entries) continue;
+    for (const entry of entries) {
+      if (entry.family !== "IPv4") continue;
+      if (entry.internal) continue;
+      if (entry.address.startsWith("169.254.")) continue;
+      return entry.address;
+    }
+  }
+  return null;
+}
+
+export function resolveBonjourLanHost(
+  bindHost: string,
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
+): string | null {
+  const normalizedHost = normalizeBindHost(bindHost);
+  if (!normalizedHost || isLoopbackBindHost(normalizedHost)) {
+    return null;
+  }
+
+  if (!isWildcardBindHost(normalizedHost) && isIPv4Address(normalizedHost)) {
+    return normalizedHost;
+  }
+
+  return firstLanIPv4Address(interfaces);
 }
 
 /**
@@ -184,9 +229,12 @@ export class Server {
   private push: PushClient;
   private httpServer: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
   private transportScheme: "http" | "https" = "http";
+  private transportCertPath?: string;
   private wss: WebSocketServer;
 
   private readonly piExecutable: string;
+  private readonly identityFingerprint: string;
+  private bonjourAdvertiser: BonjourAdvertiser | null = null;
   private modelRegistry: ModelRegistry;
   private models: ModelCatalog;
 
@@ -215,6 +263,8 @@ export class Server {
 
     const dataDir = storage.getDataDir();
     const config = storage.getConfig();
+    const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
+    this.identityFingerprint = identity.fingerprint;
     const configuredPolicy = config.policy || defaultPolicy();
 
     // Runtime policy engine only handles fallback + heuristics.
@@ -306,6 +356,7 @@ export class Server {
     const transport = this.createTransportServer(config);
     this.httpServer = transport.server;
     this.transportScheme = transport.scheme;
+    this.transportCertPath = transport.certPath;
 
     this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
@@ -353,6 +404,7 @@ export class Server {
   private createTransportServer(config: ServerConfig): {
     server: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
     scheme: "http" | "https";
+    certPath?: string;
   } {
     const handler = (req: IncomingMessage, res: ServerResponse): void => {
       void this.handleHttp(req, res);
@@ -380,6 +432,7 @@ export class Server {
     return {
       server: createHttpsServer({ cert, key, ca }, handler),
       scheme: "https",
+      certPath: tls.certPath,
     };
   }
 
@@ -408,6 +461,14 @@ export class Server {
       this.httpServer.listen(config.port, config.host, () => {
         this.httpServer.removeListener("error", reject);
         console.log(`🚀 oppi listening on ${this.transportScheme}://${config.host}:${this.port}`);
+
+        try {
+          this.startBonjourAdvertisement();
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[bonjour] advertisement disabled: ${message}`);
+        }
+
         resolve();
       });
     });
@@ -425,6 +486,7 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.stopBonjourAdvertisement();
     this.skillRegistry.stopWatching();
     await this.sessions.stopAll();
     await this.gate.shutdown();
@@ -432,6 +494,63 @@ export class Server {
     this.push.shutdown();
     this.wss.close();
     this.httpServer.close();
+  }
+
+  private startBonjourAdvertisement(): void {
+    if (!isBonjourEnabled()) {
+      return;
+    }
+
+    if (!isDnsSdAvailable()) {
+      console.warn("[bonjour] dns-sd command not found; skipping LAN advertisement");
+      return;
+    }
+
+    const config = this.storage.getConfig();
+    const normalizedBindHost = normalizeBindHost(config.host);
+    if (isLoopbackBindHost(normalizedBindHost)) {
+      console.warn(`[bonjour] host=${config.host} is loopback-only; skipping LAN advertisement`);
+      return;
+    }
+
+    const lanHost = resolveBonjourLanHost(config.host);
+    if (!lanHost) {
+      console.warn("[bonjour] no LAN IPv4 address detected; skipping LAN advertisement");
+      return;
+    }
+
+    const serviceName = buildBonjourServiceName(this.identityFingerprint);
+
+    const tlsCertFingerprint = this.transportCertPath
+      ? readCertificateFingerprint(this.transportCertPath)
+      : undefined;
+
+    const txt = buildBonjourTxtRecord({
+      serverFingerprint: this.identityFingerprint,
+      tlsCertFingerprint,
+      lanHost,
+      port: this.port,
+    });
+
+    if (!this.bonjourAdvertiser) {
+      this.bonjourAdvertiser = new BonjourAdvertiser(new DnsSdBonjourPublisher());
+    }
+
+    this.bonjourAdvertiser.start({
+      serviceType: OPPI_BONJOUR_SERVICE_TYPE,
+      serviceName,
+      port: this.port,
+      txt,
+    });
+
+    console.log(
+      `[bonjour] advertising ${serviceName}.${OPPI_BONJOUR_SERVICE_TYPE} (${lanHost}:${this.port})`,
+    );
+  }
+
+  private stopBonjourAdvertisement(): void {
+    this.bonjourAdvertiser?.stop();
+    this.bonjourAdvertiser = null;
   }
 
   // ─── Permission Forwarding ───
