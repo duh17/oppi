@@ -2,6 +2,9 @@
 
 This document is the canonical inventory for Oppi diagnostics telemetry.
 
+For the forward-looking iOS+server observability design and rollout plan, see:
+- [`docs/observability-metrics-spec.md`](observability-metrics-spec.md)
+
 ## Build-mode matrix
 
 | Build mode | How it is set | `OPPI_TELEMETRY_MODE` default | Remote diagnostics upload |
@@ -41,7 +44,7 @@ All chat metrics are emitted from iOS and validated by server allowlists in `ser
 
 | Metric name | Unit | Primary emitter(s) | Typical tags | SLO / use |
 |---|---|---|---|---|
-| `chat.ttft_ms` | `ms` | `ios/Oppi/Features/Chat/Session/ChatSessionManager.swift` | none | Track first-token responsiveness drift |
+| `chat.ttft_ms` | `ms` | `ios/Oppi/Features/Chat/Session/ChatSessionManager.swift` | `provider`,`model` | Track first-response-token responsiveness drift, segmented by model |
 | `chat.catchup_ms` | `ms` | `ChatSessionManager.swift` | `result` (`no_gap`,`applied`,`ring_miss`,`fetch_failed`,`seq_regression`) | Reconnect/catch-up latency budget |
 | `chat.catchup_ring_miss` | `count` | `ChatSessionManager.swift` | none | Ring-buffer miss rate |
 | `chat.timeline_apply_ms` | `ms` | `ios/Oppi/Features/Chat/Timeline/ChatTimelinePerf.swift` | `items`,`changed` | UI apply jank guardrail |
@@ -54,7 +57,21 @@ All chat metrics are emitted from iOS and validated by server allowlists in `ser
 | `chat.fresh_content_lag_ms` | `ms` | `ChatSessionManager.swift` | `reason`,`cache`,`transport` | Time-to-fresh-content after entering session |
 | `chat.cache_load_ms` | `ms` | `ChatSessionManager.swift` | `hit`,`events` | Cache load performance |
 | `chat.reducer_load_ms` | `ms` | `ChatSessionManager.swift` | `source`,`events`,`items` | Timeline reduction/build cost |
-| `chat.ws_connect_ms` | `ms` | `ChatSessionManager.swift` | `transport` | WS connect latency tracking by path |
+| `chat.ws_connect_ms` | `ms` | `ChatSessionManager.swift` | `transport` | Legacy mixed connect/setup bucket (kept for overlap during migration) |
+| `chat.stream_open_ms` | `ms` | `ios/Oppi/Core/Networking/ServerConnection.swift` | `transport`,`status` | Stream open phase latency (`streamSession` start -> WS connected) |
+| `chat.subscribe_ack_ms` | `ms` | `ServerConnection.swift` | `transport`,`status`,`error_kind` | Subscribe command acknowledgement latency |
+| `chat.queue_sync_ms` | `ms` | `ServerConnection.swift` | `transport`,`status`,`error_kind` | Initial queue sync (`get_queue`) latency |
+| `chat.connected_dispatch_ms` | `ms` | `ChatSessionManager.swift` | `transport` | Connected-event dispatch lag into session loop |
+| `chat.session_message_count` | `count` | `ios/Oppi/Core/Networking/ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative message count snapshots |
+| `chat.session_input_tokens` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative input token snapshots |
+| `chat.session_output_tokens` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative output token snapshots |
+| `chat.session_total_tokens` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative total token snapshots |
+| `chat.session_mutating_tool_calls` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative mutating tool call snapshots |
+| `chat.session_files_changed` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative changed-file snapshots |
+| `chat.session_added_lines` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative added-line snapshots |
+| `chat.session_removed_lines` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Per-session cumulative removed-line snapshots |
+| `chat.session_context_tokens` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Latest per-session context token usage snapshot |
+| `chat.session_context_window` | `count` | `ServerConnection+MessageRouter.swift` | `provider`,`model` | Latest per-session context window size snapshot |
 | `chat.voice_prewarm_ms` | `ms` | `ios/Oppi/Core/Services/VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status` | Voice prewarm readiness |
 | `chat.voice_setup_ms` | `ms` | `VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status`,`path` | Voice start pipeline latency |
 | `chat.voice_first_result_ms` | `ms` | `VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status`,`result_type` | Voice first-result latency |
