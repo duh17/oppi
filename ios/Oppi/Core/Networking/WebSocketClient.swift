@@ -226,15 +226,11 @@ final class WebSocketClient {
         try await withCheckedThrowingContinuation { continuation in
             let resolver = SendResolver(continuation: continuation)
 
-            let timeoutWorkItem = DispatchWorkItem {
-                logger.error("WS send hard timeout fired (\(timeoutMs)ms)")
-                ClientLog.error(
-                    "WebSocket",
-                    "WS send hard timeout fired",
-                    metadata: Self.mergeMetadata(baseMetadata, extra: ["timeoutMs": String(timeoutMs)])
-                )
-                resolver.resolve(.failure(WebSocketError.sendTimeout))
-            }
+            let timeoutWorkItem = Self.makeSendTimeoutWorkItem(
+                timeoutMs: timeoutMs,
+                baseMetadata: baseMetadata,
+                resolver: resolver
+            )
             resolver.setTimeoutWorkItem(timeoutWorkItem)
 
             DispatchQueue.global(qos: .userInitiated).asyncAfter(
@@ -242,18 +238,48 @@ final class WebSocketClient {
                 execute: timeoutWorkItem
             )
 
-            ws.send(.string(payload)) { error in
-                if let error {
-                    logger.error("WS send callback error: \(String(describing: error), privacy: .public)")
-                    ClientLog.error(
-                        "WebSocket",
-                        "WS send callback error",
-                        metadata: Self.mergeMetadata(baseMetadata, extra: ["error": String(describing: error)])
-                    )
-                    resolver.resolve(.failure(error))
-                } else {
-                    resolver.resolve(.success(()))
-                }
+            Self.sendPayload(
+                payload,
+                over: ws,
+                baseMetadata: baseMetadata,
+                resolver: resolver
+            )
+        }
+    }
+
+    nonisolated private static func makeSendTimeoutWorkItem(
+        timeoutMs: Int,
+        baseMetadata: [String: String],
+        resolver: SendResolver
+    ) -> DispatchWorkItem {
+        DispatchWorkItem {
+            logger.error("WS send hard timeout fired (\(timeoutMs)ms)")
+            ClientLog.error(
+                "WebSocket",
+                "WS send hard timeout fired",
+                metadata: Self.mergeMetadata(baseMetadata, extra: ["timeoutMs": String(timeoutMs)])
+            )
+            resolver.resolve(.failure(WebSocketError.sendTimeout))
+        }
+    }
+
+    nonisolated private static func sendPayload(
+        _ payload: String,
+        over ws: URLSessionWebSocketTask,
+        baseMetadata: [String: String],
+        resolver: SendResolver
+    ) {
+        ws.send(.string(payload)) { error in
+            if let error {
+                logger.error("WS send callback error: \(String(describing: error), privacy: .public)")
+                ClientLog.error(
+                    "WebSocket",
+                    "WS send callback error",
+                    metadata: Self.mergeMetadata(baseMetadata, extra: ["error": String(describing: error)])
+                )
+                resolver.resolve(.failure(error))
+            } else {
+                resolver.resolve(.success(()))
             }
         }
     }
