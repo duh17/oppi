@@ -52,6 +52,7 @@ private struct PlotChartContainerView: View {
 
     @State private var selectedX: Double?
     @State private var selectedXRange: ClosedRange<Double>?
+    @State private var lastTelemetrySignature: Int?
 
     private var chartHeight: CGFloat {
         let preferred = spec.preferredHeight ?? 220
@@ -98,8 +99,18 @@ private struct PlotChartContainerView: View {
         GeometryReader { proxy in
             let viewportWidth = max(proxy.size.width, 1)
             let renderPolicy = PlotRenderPolicy(spec: spec, viewportWidth: viewportWidth)
+            let telemetrySnapshot = PlotTelemetrySnapshot(
+                xVisibleTickCount: renderPolicy.xVisibleTickCount,
+                legendItemCount: renderPolicy.legendItemCount,
+                scrollEnabled: spec.interaction.scrollableX,
+                autoAdjustmentCount: renderPolicy.autoAdjustmentCount
+            )
+
             chartView(renderPolicy: renderPolicy)
                 .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
+                .task(id: telemetrySnapshot) {
+                    await emitPlotTelemetryIfNeeded(snapshot: telemetrySnapshot)
+                }
         }
         .frame(height: chartHeight)
     }
@@ -191,6 +202,44 @@ private struct PlotChartContainerView: View {
         } else {
             view
         }
+    }
+
+    @MainActor
+    private func emitPlotTelemetryIfNeeded(snapshot: PlotTelemetrySnapshot) async {
+        var hasher = Hasher()
+        hasher.combine(snapshot)
+        hasher.combine(spec.marks.count)
+        hasher.combine(spec.rows.count)
+        let signature = hasher.finalize()
+
+        guard signature != lastTelemetrySignature else {
+            return
+        }
+        lastTelemetrySignature = signature
+
+        await ChatMetricsService.shared.record(
+            metric: .plotAxisVisibleTickCount,
+            value: Double(snapshot.xVisibleTickCount),
+            unit: .count
+        )
+
+        await ChatMetricsService.shared.record(
+            metric: .plotLegendItemCount,
+            value: Double(snapshot.legendItemCount),
+            unit: .count
+        )
+
+        await ChatMetricsService.shared.record(
+            metric: .plotScrollEnabled,
+            value: snapshot.scrollEnabled ? 1 : 0,
+            unit: .ratio
+        )
+
+        await ChatMetricsService.shared.record(
+            metric: .plotAutoAdjustments,
+            value: Double(snapshot.autoAdjustmentCount),
+            unit: .count
+        )
     }
 
     // MARK: - Mark rendering
@@ -389,6 +438,13 @@ private struct PlotChartContainerView: View {
     }
 }
 
+struct PlotTelemetrySnapshot: Sendable, Equatable, Hashable {
+    let xVisibleTickCount: Int
+    let legendItemCount: Int
+    let scrollEnabled: Bool
+    let autoAdjustmentCount: Int
+}
+
 struct PlotRenderPolicy: Sendable, Equatable {
     enum XTickValues: Sendable, Equatable {
         case automatic
@@ -399,9 +455,12 @@ struct PlotRenderPolicy: Sendable, Equatable {
     let xTickBudget: Int
     let yTickCount: Int
     let xTickValues: XTickValues
+    let xVisibleTickCount: Int
     let showVerticalGridlines: Bool
     let showHorizontalGridlines: Bool
     let legendVisible: Bool
+    let legendItemCount: Int
+    let autoAdjustmentCount: Int
 
     init(spec: PlotChartSpec, viewportWidth: CGFloat) {
         let baseXTickBudget = Self.tickBudget(for: viewportWidth)
@@ -416,8 +475,9 @@ struct PlotRenderPolicy: Sendable, Equatable {
             hintedType: spec.renderHints?.xAxis?.type
         )
         xTickValues = decimatedXTicks.values
+        xVisibleTickCount = Self.visibleXTickCount(xTickValues: xTickValues, fallbackBudget: xTickBudget)
 
-        let sparseDomain = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xTickBudget
+        let sparseDomain = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xVisibleTickCount
         if let verticalHint = spec.renderHints?.grid?.vertical {
             showVerticalGridlines = verticalHint == .major && sparseDomain
         } else {
@@ -431,7 +491,16 @@ struct PlotRenderPolicy: Sendable, Equatable {
         }
 
         let seriesCount = Self.legendSeriesCount(spec: spec)
-        legendVisible = Self.resolveLegendVisibility(seriesCount: seriesCount, hints: spec.renderHints?.legend)
+        let legendPolicy = Self.resolveLegendPolicy(seriesCount: seriesCount, hints: spec.renderHints?.legend)
+        legendVisible = legendPolicy.visible
+        legendItemCount = legendPolicy.itemCount
+
+        let xAxisDecimated = decimatedXTicks.domainCount > xVisibleTickCount
+        let verticalGridSuppressedForDensity = !showVerticalGridlines && decimatedXTicks.domainCount > xVisibleTickCount
+        let compactYTicks = yTickCount < 5
+        autoAdjustmentCount = [xAxisDecimated, verticalGridSuppressedForDensity, compactYTicks, legendPolicy.adjusted]
+            .filter { $0 }
+            .count
     }
 
     static func tickBudget(for viewportWidth: CGFloat) -> Int {
@@ -455,20 +524,39 @@ struct PlotRenderPolicy: Sendable, Equatable {
         return min(base, max(2, min(8, hinted)))
     }
 
-    private static func resolveLegendVisibility(
+    private static func visibleXTickCount(xTickValues: XTickValues, fallbackBudget: Int) -> Int {
+        switch xTickValues {
+        case .automatic:
+            return fallbackBudget
+        case .numeric(let values):
+            return values.count
+        case .category(let values):
+            return values.count
+        }
+    }
+
+    private static func resolveLegendPolicy(
         seriesCount: Int,
         hints: PlotChartSpec.RenderHints.Legend?
-    ) -> Bool {
+    ) -> (visible: Bool, itemCount: Int, adjusted: Bool) {
         let safeMaxItems = max(1, min(3, hints?.maxItems ?? 3))
         let mode = hints?.mode ?? .auto
 
         switch mode {
         case .auto:
-            return seriesCount >= 2 && seriesCount <= safeMaxItems
+            if seriesCount >= 2 && seriesCount <= safeMaxItems {
+                return (true, min(seriesCount, safeMaxItems), false)
+            }
+            return (false, 0, seriesCount > 0)
+
         case .show:
-            return seriesCount >= 1 && seriesCount <= safeMaxItems
+            if seriesCount >= 1 && seriesCount <= safeMaxItems {
+                return (true, min(seriesCount, safeMaxItems), false)
+            }
+            return (false, 0, seriesCount > safeMaxItems)
+
         case .hide, .inline:
-            return false
+            return (false, 0, false)
         }
     }
 

@@ -358,6 +358,31 @@ struct PlotRenderPolicyTests {
         }
     }
 
+    @Test("policy exposes visible x tick count for telemetry")
+    func policyExposesVisibleXTickCount() {
+        let rows: [JSONValue] = (0..<30).map { index in
+            .object([
+                "x": .number(Double(index)),
+                "y": .number(Double(index * 2)),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 320)
+        #expect(policy.xVisibleTickCount <= policy.xTickBudget)
+        #expect(policy.autoAdjustmentCount >= 1)
+    }
+
     @Test("x-axis category hint forces categorical tick labels")
     func categoryHintForcesCategoricalTicks() {
         let rows: [JSONValue] = (0..<8).map { index in
@@ -498,6 +523,42 @@ struct PlotRenderPolicyTests {
         )
 
         #expect(PlotRenderPolicy(spec: spec, viewportWidth: 390).legendVisible)
+    }
+
+    @Test("legend item count reflects visible legend entries")
+    func legendItemCountReflectsVisibleEntries() {
+        let threeSeries = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2), "series": .string("A")]),
+                .object(["x": .number(1), "y": .number(3), "series": .string("B")]),
+                .object(["x": .number(1), "y": .number(4), "series": .string("C")]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                    "series": .string("series"),
+                ]),
+            ]
+        )
+
+        let singleSeries = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2)]),
+                .object(["x": .number(2), "y": .number(3)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        #expect(PlotRenderPolicy(spec: threeSeries, viewportWidth: 390).legendItemCount == 3)
+        #expect(PlotRenderPolicy(spec: singleSeries, viewportWidth: 390).legendItemCount == 0)
     }
 
     @Test("vertical gridlines are disabled for dense x domains")
