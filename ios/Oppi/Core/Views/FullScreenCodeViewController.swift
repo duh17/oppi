@@ -160,7 +160,7 @@ final class FullScreenCodeViewController: UIViewController {
             typeLabel.textColor = UIColor(palette.comment)
             stack.addArrangedSubview(typeLabel)
 
-        case .terminal(_, let command):
+        case .terminal(_, let command, _):
             let typeLabel = UILabel()
             typeLabel.text = command == nil ? String(localized: "Terminal") : String(localized: "Terminal output")
             typeLabel.font = .systemFont(ofSize: 11)
@@ -183,8 +183,8 @@ final class FullScreenCodeViewController: UIViewController {
             return NativeFullScreenMarkdownBody(content: text, palette: palette)
         case .thinking(let text, let stream):
             return NativeFullScreenThinkingBody(initialContent: text, stream: stream, palette: palette)
-        case .terminal(let text, let command):
-            return NativeFullScreenTerminalBody(content: text, command: command, palette: palette)
+        case .terminal(let text, let command, let stream):
+            return NativeFullScreenTerminalBody(content: text, command: command, stream: stream, palette: palette)
         }
     }
 
@@ -201,7 +201,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(_, let newText, _, _): text = newText
         case .markdown(let t, _): text = t
         case .thinking(let t, let stream): text = stream?.snapshot.text ?? t
-        case .terminal(let t, _): text = t
+        case .terminal(let t, _, let stream): text = stream?.snapshot.output ?? t
         }
         UIPasteboard.general.string = text
         copyButton?.image = UIImage(systemName: "checkmark")
@@ -605,31 +605,64 @@ private final class DiffRowView: UIView {
 
 // MARK: - Terminal Body
 
-private final class NativeFullScreenTerminalBody: UIView {
+private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private static let maxSynchronousANSIBytes = 64 * 1024
+    private static let nearBottomThreshold: CGFloat = 28
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
     private let commandView = UITextView()
     private let outputView = UITextView()
-    private let content: String
-    private let command: String?
     private let palette: ThemePalette
-    private var renderTask: Task<Void, Never>?
+    private let stream: TerminalTraceStream?
 
-    init(content: String, command: String?, palette: ThemePalette) {
-        self.content = content
-        self.command = command
+    private var latestSnapshot: TerminalTraceStream.Snapshot
+    private var renderedSnapshot: TerminalTraceStream.Snapshot?
+    private var shouldAutoFollowTail: Bool
+    private var isApplyingProgrammaticScroll = false
+    private var pendingAutoFollowScroll = false
+
+    private var renderTask: Task<Void, Never>?
+    private var streamObserverID: UUID?
+
+    init(content: String, command: String?, stream: TerminalTraceStream?, palette: ThemePalette) {
         self.palette = palette
+        self.stream = stream
+
+        let initialSnapshot = stream?.snapshot
+            ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
+        latestSnapshot = initialSnapshot
+        shouldAutoFollowTail = !initialSnapshot.isDone
+
         super.init(frame: .zero)
         setup()
-        renderTerminalOutput()
+        render(snapshot: initialSnapshot)
+
+        streamObserverID = stream?.addObserver { [weak self] snapshot in
+            self?.handleStreamUpdate(snapshot)
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit { renderTask?.cancel() }
+    deinit {
+        renderTask?.cancel()
+        if let streamObserverID {
+            let stream = stream
+            Task { @MainActor in
+                stream?.removeObserver(streamObserverID)
+            }
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        if shouldAutoFollowTail {
+            scheduleAutoFollowToBottom()
+        }
+    }
 
     private func setup() {
         backgroundColor = UIColor(palette.bgDark)
@@ -637,6 +670,7 @@ private final class NativeFullScreenTerminalBody: UIView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.showsVerticalScrollIndicator = true
+        scrollView.delegate = self
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -663,13 +697,7 @@ private final class NativeFullScreenTerminalBody: UIView {
         addSubview(scrollView)
         scrollView.addSubview(stack)
 
-        if let command, !command.isEmpty {
-            stack.addArrangedSubview(commandView)
-            commandView.attributedText = ToolRowTextRenderer.shellHighlighted(command)
-        } else {
-            commandView.isHidden = true
-        }
-
+        stack.addArrangedSubview(commandView)
         stack.addArrangedSubview(outputView)
 
         NSLayoutConstraint.activate([
@@ -686,7 +714,42 @@ private final class NativeFullScreenTerminalBody: UIView {
         ])
     }
 
-    private func renderTerminalOutput() {
+    private func handleStreamUpdate(_ snapshot: TerminalTraceStream.Snapshot) {
+        latestSnapshot = snapshot
+        render(snapshot: snapshot)
+    }
+
+    private func render(snapshot: TerminalTraceStream.Snapshot) {
+        guard snapshot != renderedSnapshot else {
+            if shouldAutoFollowTail {
+                scheduleAutoFollowToBottom()
+            }
+            return
+        }
+
+        renderedSnapshot = snapshot
+
+        if let command = snapshot.command,
+           !command.isEmpty {
+            commandView.isHidden = false
+            commandView.attributedText = ToolRowTextRenderer.shellHighlighted(command)
+        } else {
+            commandView.isHidden = true
+            commandView.attributedText = nil
+            commandView.text = nil
+        }
+
+        renderTerminalOutput(snapshot.output, isStreaming: !snapshot.isDone)
+
+        if shouldAutoFollowTail {
+            scheduleAutoFollowToBottom()
+        }
+    }
+
+    private func renderTerminalOutput(_ content: String, isStreaming: Bool) {
+        renderTask?.cancel()
+        renderTask = nil
+
         if content.utf8.count <= Self.maxSynchronousANSIBytes {
             outputView.attributedText = NSAttributedString(
                 ANSIParser.attributedString(from: content, baseForeground: .themeFg)
@@ -694,7 +757,12 @@ private final class NativeFullScreenTerminalBody: UIView {
             return
         }
 
+        outputView.attributedText = nil
         outputView.text = ANSIParser.strip(content)
+
+        // Large streaming payloads stay in plain mode while streaming to avoid
+        // launching expensive full-text ANSI parses on every chunk.
+        guard !isStreaming else { return }
 
         let source = content
         renderTask = Task { [weak self] in
@@ -705,7 +773,88 @@ private final class NativeFullScreenTerminalBody: UIView {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.outputView.attributedText = NSAttributedString(attributed)
+                if self?.shouldAutoFollowTail == true {
+                    self?.scheduleAutoFollowToBottom()
+                }
             }
+        }
+    }
+
+    private func scheduleAutoFollowToBottom() {
+        guard !pendingAutoFollowScroll else { return }
+        pendingAutoFollowScroll = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingAutoFollowScroll = false
+            self.scrollToBottomIfNeeded()
+        }
+    }
+
+    private func scrollToBottomIfNeeded() {
+        guard scrollView.bounds.height > 0 else { return }
+
+        layoutIfNeeded()
+
+        let targetY = max(
+            -scrollView.adjustedContentInset.top,
+            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
+        )
+        guard targetY.isFinite else { return }
+        guard abs(scrollView.contentOffset.y - targetY) > 0.5 else { return }
+
+        isApplyingProgrammaticScroll = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        CATransaction.commit()
+        isApplyingProgrammaticScroll = false
+    }
+
+    private func isNearBottom() -> Bool {
+        distanceFromBottom() <= Self.nearBottomThreshold
+    }
+
+    private func distanceFromBottom() -> CGFloat {
+        let viewportHeight = scrollView.bounds.height
+            - scrollView.adjustedContentInset.top
+            - scrollView.adjustedContentInset.bottom
+        guard viewportHeight > 0 else { return .greatestFiniteMagnitude }
+
+        let visibleBottom = scrollView.contentOffset.y
+            + scrollView.adjustedContentInset.top
+            + viewportHeight
+
+        return scrollView.contentSize.height - visibleBottom
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if !isNearBottom() {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard !isApplyingProgrammaticScroll else { return }
+        guard scrollView.isDragging || scrollView.isDecelerating else { return }
+
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
+        } else {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard !decelerate else { return }
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        if isNearBottom() {
+            shouldAutoFollowTail = !latestSnapshot.isDone
         }
     }
 }

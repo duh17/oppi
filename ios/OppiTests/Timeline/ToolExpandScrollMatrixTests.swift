@@ -129,7 +129,8 @@ struct ToolExpandScrollMatrixTests {
         let fullScreenContent = ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: config,
             outputCopyText: config.copyOutputText,
-            interactionPolicy: policy
+            interactionPolicy: policy,
+            terminalStream: nil
         )
         #expect((fullScreenContent != nil) == toolCase.expectedSupportsFullScreenPreview)
     }

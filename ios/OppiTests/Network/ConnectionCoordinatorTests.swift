@@ -334,6 +334,84 @@ struct ConnectionCoordinatorTests {
         #expect(otherConnection.transportPath == .paired)
     }
 
+    @Test func lanDiscoveryPrefersCandidateThatPassesTLSPinValidation() async {
+        let (coordinator, _) = makeCoordinator()
+
+        let server = makeServer(
+            id: "sha256:SERVERFINGERPRINTABCDEF",
+            name: "LAN",
+            host: "my-server.tail00000.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+
+        coordinator.serverStore.addOrUpdate(server)
+        let connection = coordinator.ensureConnection(for: server)
+
+        coordinator._applyLANDiscoveryForTesting([
+            LANDiscoveredEndpoint(
+                host: "192.168.1.10",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "WRONGTLS"
+            ),
+            LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            ),
+        ])
+
+        #expect(connection.transportPath == .lan)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
+    }
+
+    @Test func lanDiscoveryPrefersMoreSpecificFingerprintCandidate() async {
+        let (coordinator, _) = makeCoordinator()
+
+        let server = makeServer(
+            id: "sha256:SERVERFINGERPRINTABCDEF",
+            name: "LAN",
+            host: "my-server.tail00000.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+
+        coordinator.serverStore.addOrUpdate(server)
+        let connection = coordinator.ensureConnection(for: server)
+
+        coordinator._applyLANDiscoveryForTesting([
+            LANDiscoveredEndpoint(
+                host: "192.168.1.10",
+                port: 7749,
+                serverFingerprintPrefix: "SERVER",
+                tlsCertFingerprintPrefix: nil
+            ),
+        ])
+
+        #expect(connection.transportPath == .lan)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.10:7749")
+
+        coordinator._applyLANDiscoveryForTesting([
+            LANDiscoveredEndpoint(
+                host: "192.168.1.10",
+                port: 7749,
+                serverFingerprintPrefix: "SERVER",
+                tlsCertFingerprintPrefix: nil
+            ),
+            LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            ),
+        ])
+
+        #expect(connection.transportPath == .lan)
+        #expect(await connection.apiClient?.baseURL.absoluteString == "https://192.168.1.42:7749")
+    }
+
     // MARK: - Workspace Store Order
 
     @Test func workspaceServerOrderMatchesServerStore() {
