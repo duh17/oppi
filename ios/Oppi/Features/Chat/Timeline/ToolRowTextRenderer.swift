@@ -667,18 +667,10 @@ enum ToolRowTextRenderer {
     }
 
     static func displayCommandText(_ text: String) -> String {
-        truncatedDisplayText(
-            text,
-            maxCharacters: maxRenderedCommandCharacters,
-            note: "\n… command truncated for display"
-        )
+        text
     }
 
     static func displayOutputText(_ text: String) -> String {
-        truncatedDisplayText(
-            text,
-            maxCharacters: maxRenderedOutputCharacters,
-            note: "\n… output truncated for display. Use Copy for full content."
-        )
+        text
     }
 }

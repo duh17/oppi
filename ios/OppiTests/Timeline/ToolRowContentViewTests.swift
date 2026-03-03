@@ -638,7 +638,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedOutputDisplayTruncatesLargePayloads() throws {
+    @Test func expandedOutputDisplayKeepsLargePayloadsIntact() throws {
         let longOutput = String(repeating: "x", count: 12_000)
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: nil, output: longOutput, unwrapped: true),
@@ -651,9 +651,8 @@ struct ToolTimelineRowContentViewTests {
         let renderedTexts = timelineAllLabels(in: view).map { timelineRenderedText(of: $0) }
         let longest = try #require(renderedTexts.max(by: { $0.count < $1.count }))
 
-        #expect(longest.count < longOutput.count)
-        #expect(longest.contains("output truncated for display"))
-        #expect(longest.hasPrefix(String(repeating: "x", count: 128)))
+        #expect(longest.contains(longOutput))
+        #expect(!longest.contains("output truncated for display"))
     }
 
     @MainActor

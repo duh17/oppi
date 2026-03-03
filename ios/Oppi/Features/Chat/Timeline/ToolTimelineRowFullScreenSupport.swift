@@ -1,7 +1,4 @@
 enum ToolTimelineRowFullScreenSupport {
-    /// Mirror of ToolOutputStore truncation marker.
-    /// Keep local to avoid crossing MainActor-isolated static state.
-    private static let outputTruncationMarker = "\n\n… [output truncated]"
     static func supportsPreview(toolNamePrefix: String?) -> Bool {
         switch toolNamePrefix {
         case "plot":
@@ -14,7 +11,8 @@ enum ToolTimelineRowFullScreenSupport {
     static func fullScreenContent(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,
-        interactionPolicy: ToolTimelineRowInteractionPolicy?
+        interactionPolicy: ToolTimelineRowInteractionPolicy?,
+        terminalStream: TerminalTraceStream?
     ) -> FullScreenCodeContent? {
         guard configuration.isExpanded,
               let content = configuration.expandedContent else {
@@ -53,19 +51,19 @@ enum ToolTimelineRowFullScreenSupport {
         case .bash(let command, let output, _):
             let terminalOutput = outputCopyText ?? output ?? ""
             guard !terminalOutput.isEmpty else { return nil }
-            guard !terminalOutput.hasSuffix(outputTruncationMarker) else { return nil }
             return .terminal(
                 content: terminalOutput,
-                command: command ?? configuration.copyCommandText
+                command: command ?? configuration.copyCommandText,
+                stream: terminalStream
             )
 
         case .text(let text, _):
             let terminalOutput = outputCopyText ?? text
             guard !terminalOutput.isEmpty else { return nil }
-            guard !terminalOutput.hasSuffix(outputTruncationMarker) else { return nil }
             return .terminal(
                 content: terminalOutput,
-                command: configuration.copyCommandText
+                command: configuration.copyCommandText,
+                stream: terminalStream
             )
 
         case .readMedia, .plot:
