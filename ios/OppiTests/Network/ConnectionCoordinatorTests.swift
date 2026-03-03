@@ -287,6 +287,53 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.connections["sha256:coalesce"] != nil)
     }
 
+    // MARK: - LAN Discovery Integration
+
+    @Test func lanDiscoveryUpdatesMatchingConnectionAndFallsBackWhenMissing() {
+        let (coordinator, _) = makeCoordinator()
+
+        let lanServer = makeServer(
+            id: "sha256:SERVERFINGERPRINTABCDEF",
+            name: "LAN",
+            host: "mac-studio.taila3ebc.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:TLSFINGERPRINTABCDEF"
+        )
+        let otherServer = makeServer(
+            id: "sha256:OTHERSERVERFINGERPRINT",
+            name: "Other",
+            host: "other.taila3ebc.ts.net",
+            scheme: .https,
+            tlsFingerprint: "sha256:OTHERTLSFINGERPRINT"
+        )
+
+        coordinator.serverStore.addOrUpdate(lanServer)
+        coordinator.serverStore.addOrUpdate(otherServer)
+
+        let lanConnection = coordinator.ensureConnection(for: lanServer)
+        let otherConnection = coordinator.ensureConnection(for: otherServer)
+
+        #expect(lanConnection.transportPath == .paired)
+        #expect(otherConnection.transportPath == .paired)
+
+        coordinator._applyLANDiscoveryForTesting([
+            LANDiscoveredEndpoint(
+                host: "192.168.1.42",
+                port: 7749,
+                serverFingerprintPrefix: "SERVERFINGERPRINT",
+                tlsCertFingerprintPrefix: "TLSFINGERPRINT"
+            ),
+        ])
+
+        #expect(lanConnection.transportPath == .lan)
+        #expect(otherConnection.transportPath == .paired)
+
+        coordinator._applyLANDiscoveryForTesting([])
+
+        #expect(lanConnection.transportPath == .paired)
+        #expect(otherConnection.transportPath == .paired)
+    }
+
     // MARK: - Workspace Store Order
 
     @Test func workspaceServerOrderMatchesServerStore() {
@@ -315,10 +362,21 @@ struct ConnectionCoordinatorTests {
         return (coordinator, store)
     }
 
-    private func makeServer(id: String, name: String) -> PairedServer {
+    private func makeServer(
+        id: String,
+        name: String,
+        host: String = "localhost",
+        scheme: ServerScheme = .http,
+        tlsFingerprint: String? = nil
+    ) -> PairedServer {
         let creds = ServerCredentials(
-            host: "localhost", port: 7749, token: "sk_test",
-            name: name, serverFingerprint: id
+            host: host,
+            port: 7749,
+            token: "sk_test",
+            name: name,
+            scheme: scheme,
+            serverFingerprint: id,
+            tlsCertFingerprint: tlsFingerprint
         )
 
         guard let server = PairedServer(from: creds, sortOrder: 0) else {

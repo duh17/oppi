@@ -42,11 +42,16 @@ final class ConnectionCoordinator {
     /// refresh races between WorkspaceHomeView `.task` and `reconnectOnLaunch`.
     private var refreshAllTask: Task<Void, Never>?
 
+    private let lanDiscovery = LANDiscovery()
+
     // Convenience: `connection` forwards to `activeConnection`.
     var connection: ServerConnection { activeConnection }
 
     init(serverStore: ServerStore) {
         self.serverStore = serverStore
+        lanDiscovery.onUpdate = { [weak self] endpoints in
+            self?.applyLANDiscovery(endpoints)
+        }
     }
 
     // MARK: - Connection Pool
@@ -70,6 +75,7 @@ final class ConnectionCoordinator {
         conn.sessionStore.switchServer(to: serverId)
         conn.permissionStore.switchServer(to: serverId)
         conn.workspaceStore.switchServer(to: serverId)
+        conn.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
 
         connections[serverId] = conn
         logger.info("Created connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
@@ -87,6 +93,50 @@ final class ConnectionCoordinator {
             let conn = ensureConnection(for: server)
             conn.connectStream()
         }
+    }
+
+    // MARK: - LAN Discovery
+
+    func startLANDiscovery() {
+        lanDiscovery.start()
+    }
+
+    func stopLANDiscovery() {
+        lanDiscovery.stop()
+    }
+
+    private func applyLANDiscovery(_ endpoints: [LANDiscoveredEndpoint]) {
+        for server in serverStore.servers {
+            let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)
+            if let conn = connections[server.id] {
+                conn.setDiscoveredLANEndpoint(endpoint)
+            }
+        }
+    }
+
+#if DEBUG
+    func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) {
+        applyLANDiscovery(endpoints)
+    }
+#endif
+
+    private func bestLANEndpoint(forServerId serverId: String, candidates: [LANDiscoveredEndpoint]? = nil) -> LANDiscoveredEndpoint? {
+        let normalizedServerId = normalizeFingerprint(serverId)
+        guard !normalizedServerId.isEmpty else { return nil }
+
+        let pool = candidates ?? lanDiscovery.endpoints
+        return pool.first { endpoint in
+            let prefix = normalizeFingerprint(endpoint.serverFingerprintPrefix)
+            return !prefix.isEmpty && normalizedServerId.hasPrefix(prefix)
+        }
+    }
+
+    private func normalizeFingerprint(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("sha256:") {
+            return String(trimmed.dropFirst("sha256:".count))
+        }
+        return trimmed
     }
 
     // MARK: - Server Switching

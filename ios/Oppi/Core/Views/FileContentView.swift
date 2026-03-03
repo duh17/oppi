@@ -140,10 +140,12 @@ private struct CodeFileView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: content, language: language.displayName, filePath: nil, startLine: startLine
             ))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: content.count) {
             let lang = language
@@ -180,8 +182,10 @@ private struct MarkdownFileView: View {
                 documentBody
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenMarkdownView(content: content, filePath: filePath, showSource: showRaw)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -416,10 +420,12 @@ private struct JSONFileView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: content, language: "json", filePath: nil, startLine: startLine
             ))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: content.count) {
             let raw = content
@@ -523,10 +529,12 @@ private struct PlainTextView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: content, language: nil, filePath: nil, startLine: startLine
             ))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 }

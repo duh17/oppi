@@ -293,7 +293,7 @@ function showPairingQR(
     });
 
     inviteScheme = tls.enabled ? "https" : "http";
-    if (tls.enabled && tls.mode === "self-signed" && tls.certPath) {
+    if (tls.enabled && tls.certPath) {
       tlsCertFingerprint = readCertificateFingerprint(tls.certPath);
     }
   } catch (err: unknown) {

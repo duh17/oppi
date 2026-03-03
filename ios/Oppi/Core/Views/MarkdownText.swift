@@ -782,10 +782,12 @@ struct CodeBlockView: View {
                 }
             }
         )
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .code(
                 content: code, language: language, filePath: nil, startLine: 1
             ))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .task(id: codeIdentity) {
             let lang = language.map { SyntaxLanguage.detect($0) } ?? .unknown
