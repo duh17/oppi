@@ -99,6 +99,123 @@ struct TimelineReducerEdgeCaseTests {
     }
 
     @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantWithTrailingSystemEvent() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "sys1",
+                type: .system,
+                timestamp: "2025-01-01T00:00:02.000Z",
+                text: "Model changed",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateTraceAssistantWithTrailingToolCall() {
+        let reducer = TimelineReducer()
+
+        reducer.loadSession([
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2025-01-01T00:00:01.000Z",
+                text: "Love you, man. Wrapped clean.",
+                tool: nil,
+                args: nil,
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "tool_1|fc_1",
+                type: .toolCall,
+                timestamp: "2025-01-01T00:00:02.000Z",
+                text: nil,
+                tool: "bash",
+                args: ["command": .string("echo hi")],
+                output: nil,
+                toolCallId: nil,
+                toolName: nil,
+                isError: nil,
+                thinking: nil
+            ),
+            TraceEvent(
+                id: "tool_result_1",
+                type: .toolResult,
+                timestamp: "2025-01-01T00:00:03.000Z",
+                text: nil,
+                tool: nil,
+                args: nil,
+                output: "hi\n",
+                toolCallId: "tool_1|fc_1",
+                toolName: nil,
+                isError: false,
+                thinking: nil
+            ),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Love you, man. Wrapped clean."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(let id, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(id == "a1")
+        #expect(text == "Love you, man. Wrapped clean.")
+    }
+
+    @MainActor
     @Test func doubleAgentStartPreservesFirstTurnItems() {
         let reducer = TimelineReducer()
 

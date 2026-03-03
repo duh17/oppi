@@ -18,11 +18,11 @@ enum TimelineTurnAssembler {
         content: String,
         turnInProgress: Bool,
         currentAssistantID: String?,
-        lastItem: ChatItem?
+        latestAssistantItem: ChatItem?
     ) -> Bool {
         guard !turnInProgress, currentAssistantID == nil else { return false }
-        guard let lastItem,
-              case .assistantMessage(_, let existingText, _) = lastItem else {
+        guard let latestAssistantItem,
+              case .assistantMessage(_, let existingText, _) = latestAssistantItem else {
             return false
         }
 
