@@ -32,12 +32,13 @@ enum ToolTimelineRowRenderMetrics {
         return hasher.finalize()
     }
 
-    static func outputSignature(displayOutput: String, isError: Bool, unwrapped: Bool) -> Int {
+    static func outputSignature(displayOutput: String, isError: Bool, unwrapped: Bool, isStreaming: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine("bash-output")
         hasher.combine(displayOutput)
         hasher.combine(isError)
         hasher.combine(unwrapped)
+        hasher.combine(isStreaming)
         return hasher.finalize()
     }
 
@@ -106,13 +107,15 @@ enum ToolTimelineRowRenderMetrics {
     static func textSignature(
         displayText: String,
         language: SyntaxLanguage?,
-        isError: Bool
+        isError: Bool,
+        isStreaming: Bool
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("text")
         hasher.combine(displayText)
         hasher.combine(language)
         hasher.combine(isError)
+        hasher.combine(isStreaming)
         return hasher.finalize()
     }
 }
