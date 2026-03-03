@@ -81,6 +81,7 @@ struct OppiApp: App {
     @State private var autoClientLogUploadInFlight = false
     @State private var lastAutoClientLogUploadMs: Int64 = 0
 #endif
+    @State private var inAppBrowserDestination: InAppBrowserDestination?
     @State private var inviteBootstrapInFlight = false
     @State private var foregroundReconnectGate = ForegroundReconnectGate()
     @State private var backgroundKeepAlive = BackgroundKeepAlive()
@@ -127,7 +128,17 @@ struct OppiApp: App {
                 guard let url = notification.object as? URL else { return }
                 Task { @MainActor in await handleIncomingURL(url) }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .webLinkTapped)) { notification in
+                guard let url = notification.object as? URL else { return }
+                guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+                    return
+                }
+                inAppBrowserDestination = InAppBrowserDestination(url: url)
+            }
             .onOpenURL { url in Task { @MainActor in await handleIncomingURL(url) } }
+            .sheet(item: $inAppBrowserDestination) { destination in
+                InAppBrowserView(url: destination.url)
+            }
             .task {
                 await SentryService.shared.configure()
                 MetricKitService.shared.configure()
@@ -139,6 +150,12 @@ struct OppiApp: App {
                 await setupNotifications()
                 await reconnectOnLaunch()
             }
+    }
+
+    private struct InAppBrowserDestination: Identifiable {
+        let url: URL
+
+        var id: String { url.absoluteString }
     }
 
     private struct PendingPermissionLocation {

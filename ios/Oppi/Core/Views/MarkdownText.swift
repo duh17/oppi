@@ -344,12 +344,21 @@ private struct SelectableAttributedText: UIViewRepresentable {
         private func shouldOpenLinkExternally(_ url: URL) -> Bool {
             let normalizedURL = normalizedInteractionURL(url)
 
-            guard let scheme = normalizedURL.scheme?.lowercased(), scheme == "pi" || scheme == "oppi" else {
+            guard let scheme = normalizedURL.scheme?.lowercased() else {
                 return true
             }
 
-            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            return false
+            if scheme == "pi" || scheme == "oppi" {
+                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+                return false
+            }
+
+            if scheme == "http" || scheme == "https" {
+                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+                return false
+            }
+
+            return true
         }
 
         private func normalizedInteractionURL(_ url: URL) -> URL {
@@ -393,6 +402,7 @@ private struct SelectableAttributedText: UIViewRepresentable {
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.adjustsFontForContentSizeCategory = true
+        textView.dataDetectorTypes = [.link]
         textView.textDragInteraction?.isEnabled = true
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.delegate = context.coordinator
