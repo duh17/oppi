@@ -51,6 +51,98 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
         var xVisibleDomainLength: Double?
     }
 
+    struct RenderHints: Sendable, Equatable, Hashable {
+        struct XAxis: Sendable, Equatable, Hashable {
+            enum AxisType: String, Sendable, Hashable {
+                case auto
+                case time
+                case numeric
+                case category
+            }
+
+            enum LabelFormat: String, Sendable, Hashable {
+                case auto
+                case dateShort = "date-short"
+                case dateDay = "date-day"
+                case numberShort = "number-short"
+            }
+
+            enum Strategy: String, Sendable, Hashable {
+                case auto
+                case startEndWeekly = "start-end-weekly"
+                case stride
+            }
+
+            var type: AxisType?
+            var maxVisibleTicks: Int?
+            var labelFormat: LabelFormat?
+            var strategy: Strategy?
+
+            var isEmpty: Bool {
+                type == nil && maxVisibleTicks == nil && labelFormat == nil && strategy == nil
+            }
+        }
+
+        struct YAxis: Sendable, Equatable, Hashable {
+            enum ZeroBaseline: String, Sendable, Hashable {
+                case auto
+                case always
+                case never
+            }
+
+            var maxTicks: Int?
+            var nice: Bool?
+            var zeroBaseline: ZeroBaseline?
+
+            var isEmpty: Bool {
+                maxTicks == nil && nice == nil && zeroBaseline == nil
+            }
+        }
+
+        struct Legend: Sendable, Equatable, Hashable {
+            enum Mode: String, Sendable, Hashable {
+                case auto
+                case show
+                case hide
+                case inline
+            }
+
+            var mode: Mode?
+            var maxItems: Int?
+
+            var isEmpty: Bool {
+                mode == nil && maxItems == nil
+            }
+        }
+
+        struct Grid: Sendable, Equatable, Hashable {
+            enum Vertical: String, Sendable, Hashable {
+                case none
+                case major
+            }
+
+            enum Horizontal: String, Sendable, Hashable {
+                case major
+            }
+
+            var vertical: Vertical?
+            var horizontal: Horizontal?
+
+            var isEmpty: Bool {
+                vertical == nil && horizontal == nil
+            }
+        }
+
+        var xAxis: XAxis?
+        var yAxis: YAxis?
+        var legend: Legend?
+        var grid: Grid?
+
+        var isEmpty: Bool {
+            xAxis == nil && yAxis == nil && legend == nil && grid == nil
+        }
+    }
+
     enum MarkType: String, Sendable, Hashable {
         case line
         case area
@@ -99,6 +191,7 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
     var xAxis: Axis
     var yAxis: Axis
     var interaction: Interaction
+    var renderHints: RenderHints? = nil
     var preferredHeight: Double?
 
     var isRenderable: Bool {
@@ -110,10 +203,8 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
     /// numeric string. If no row contains `key`, defaults to `true`.
     func columnIsNumeric(_ key: String?) -> Bool {
         guard let key else { return true }
-        var foundAny = false
         for row in rows {
             guard let value = row.values[key] else { continue }
-            foundAny = true
             switch value {
             case .number: continue
             case .string(let s):
@@ -272,10 +363,89 @@ struct PlotChartSpec: Sendable, Equatable, Hashable {
                 invert: yAxisObject?["invert"]?.boolValue ?? false
             ),
             interaction: interaction,
+            renderHints: parseRenderHints(root["renderHints"]?.objectValue),
             preferredHeight: root["height"]?.numberValue
         )
 
         return spec.isRenderable ? spec : nil
+    }
+
+    private static func parseRenderHints(_ object: [String: JSONValue]?) -> RenderHints? {
+        guard let object else { return nil }
+
+        var hints = RenderHints()
+
+        if let xAxisObject = object["xAxis"]?.objectValue {
+            var xAxis = RenderHints.XAxis()
+            if let token = normalizedToken(xAxisObject["type"]?.stringValue) {
+                xAxis.type = RenderHints.XAxis.AxisType(rawValue: token)
+            }
+            xAxis.maxVisibleTicks = clampedInt(xAxisObject["maxVisibleTicks"], min: 2, max: 8)
+            if let token = normalizedToken(xAxisObject["labelFormat"]?.stringValue) {
+                xAxis.labelFormat = RenderHints.XAxis.LabelFormat(rawValue: token)
+            }
+            if let token = normalizedToken(xAxisObject["strategy"]?.stringValue) {
+                xAxis.strategy = RenderHints.XAxis.Strategy(rawValue: token)
+            }
+
+            if !xAxis.isEmpty {
+                hints.xAxis = xAxis
+            }
+        }
+
+        if let yAxisObject = object["yAxis"]?.objectValue {
+            var yAxis = RenderHints.YAxis()
+            yAxis.maxTicks = clampedInt(yAxisObject["maxTicks"], min: 2, max: 8)
+            yAxis.nice = yAxisObject["nice"]?.boolValue
+            if let token = normalizedToken(yAxisObject["zeroBaseline"]?.stringValue) {
+                yAxis.zeroBaseline = RenderHints.YAxis.ZeroBaseline(rawValue: token)
+            }
+
+            if !yAxis.isEmpty {
+                hints.yAxis = yAxis
+            }
+        }
+
+        if let legendObject = object["legend"]?.objectValue {
+            var legend = RenderHints.Legend()
+            if let token = normalizedToken(legendObject["mode"]?.stringValue) {
+                legend.mode = RenderHints.Legend.Mode(rawValue: token)
+            }
+            legend.maxItems = clampedInt(legendObject["maxItems"], min: 1, max: 5)
+
+            if !legend.isEmpty {
+                hints.legend = legend
+            }
+        }
+
+        if let gridObject = object["grid"]?.objectValue {
+            var grid = RenderHints.Grid()
+            if let token = normalizedToken(gridObject["vertical"]?.stringValue) {
+                grid.vertical = RenderHints.Grid.Vertical(rawValue: token)
+            }
+            if let token = normalizedToken(gridObject["horizontal"]?.stringValue) {
+                grid.horizontal = RenderHints.Grid.Horizontal(rawValue: token)
+            }
+
+            if !grid.isEmpty {
+                hints.grid = grid
+            }
+        }
+
+        return hints.isEmpty ? nil : hints
+    }
+
+    private static func normalizedToken(_ value: String?) -> String? {
+        nonEmptyTrimmed(value)?.lowercased()
+    }
+
+    private static func clampedInt(_ value: JSONValue?, min: Int, max: Int) -> Int? {
+        guard let number = value?.numberValue, number.isFinite else {
+            return nil
+        }
+
+        let rounded = Int(number.rounded())
+        return Swift.max(min, Swift.min(max, rounded))
     }
 
     private static func collapsedTitle(from details: JSONValue?) -> String? {
