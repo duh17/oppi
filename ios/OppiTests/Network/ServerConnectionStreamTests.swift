@@ -22,6 +22,21 @@ struct ServerConnectionStreamTests {
     }
 
     @MainActor
+    @Test func connectStreamSkipsWhenWSAlreadyConnectedAndNoTask() {
+        let conn = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.connected)
+        // No consumption task — would normally trigger wsClient.connect()
+        conn.streamConsumptionTask = nil
+
+        conn.connectStream()
+
+        // Should NOT have started a new connection — the WS is healthy.
+        // wsClient.connect() would have reset status to .connecting.
+        #expect(conn.wsClient?.status == .connected,
+                "connectStream should not tear down a healthy WS")
+    }
+
+    @MainActor
     @Test func connectStreamRestartsWhenTaskExistsButWSDisconnected() {
         let conn = makeTestConnection()
 
@@ -224,7 +239,37 @@ struct ServerConnectionStreamTests {
     }
 
     @MainActor
-    @Test func routeStreamMessageDoesNotEagerlyResolveNonSubscribeCommands() {
+    @Test func routeStreamMessageResolvesGetQueueWaiterEagerly() async {
+        let conn = makeTestConnection()
+        conn._setActiveSessionIdForTesting("s1")
+
+        let pending = PendingCommand(command: "get_queue", requestId: "req-q")
+        conn.commands.registerCommand(pending)
+
+        // Per-session stream exists but nobody is consuming it — same as
+        // in streamSession() where get_queue blocks before returning.
+        _ = AsyncStream<ServerMessage> { continuation in
+            conn.sessionContinuations["s1"] = continuation
+        }
+
+        let streamMsg = StreamMessage(
+            sessionId: "s1",
+            streamSeq: 1,
+            seq: nil,
+            currentSeq: nil,
+            message: .commandResult(
+                command: "get_queue", requestId: "req-q",
+                success: true, data: nil, error: nil
+            )
+        )
+        conn.routeStreamMessage(streamMsg)
+
+        let result = try? await pending.waiter.wait()
+        #expect(result != nil, "get_queue waiter should be resolved eagerly by routeStreamMessage")
+    }
+
+    @MainActor
+    @Test func routeStreamMessageDoesNotEagerlyResolveNonSetupCommands() {
         let conn = makeTestConnection()
         conn._setActiveSessionIdForTesting("s1")
 
@@ -248,7 +293,67 @@ struct ServerConnectionStreamTests {
         conn.routeStreamMessage(streamMsg)
 
         #expect(conn.commands.pendingCommandsByRequestId["req-m"] != nil,
-                "Non-subscribe commands should not be resolved by routeStreamMessage")
+                "Non-setup commands should not be resolved eagerly by routeStreamMessage")
+    }
+
+    // MARK: - streamSession timing budget (regression gate)
+
+    /// Integration test: streamSession() must complete within a tight time budget.
+    ///
+    /// Regression gate for the 8s delay bug where:
+    /// 1. get_queue command_result was not eagerly resolved in routeStreamMessage
+    /// 2. waitForConnectionTimeout was bumped from 3s to 8s
+    ///
+    /// The mock simulates instant server responses — any delay beyond a
+    /// few hundred ms means the setup path is blocking on something it shouldn't.
+    @MainActor
+    @Test func streamSessionCompletesWithinTimeBudget() async {
+        let conn = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        // Keep consumption task alive so connectStream() is a no-op
+        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+
+        // Mock send: intercept outgoing commands and simulate server responses
+        conn._sendMessageForTesting = { [weak conn] message in
+            guard let conn else { return }
+            let typeLabel = message.typeLabel
+
+            // Extract requestId via JSON round-trip (no pattern matching on associated values)
+            let requestId: String? = {
+                guard let data = try? JSONEncoder().encode(message),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return nil }
+                return dict["requestId"] as? String
+            }()
+
+            guard let requestId else { return }
+
+            let response = StreamMessage(
+                sessionId: "s1",
+                streamSeq: 1,
+                seq: nil,
+                currentSeq: nil,
+                message: .commandResult(
+                    command: typeLabel,
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                )
+            )
+            conn.routeStreamMessage(response)
+        }
+
+        let start = ContinuousClock.now
+        let stream = await conn.streamSession("s1", workspaceId: "w1")
+        let elapsed = ContinuousClock.now - start
+
+        #expect(stream != nil, "streamSession should return a stream")
+        #expect(elapsed < .seconds(2),
+                "streamSession should complete within 2s budget, took \(elapsed) — check eager command resolution and waitForConnection")
+
+        conn.streamConsumptionTask?.cancel()
     }
 
     // MARK: - Pending unsubscribe cancelled on resubscribe
