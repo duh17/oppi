@@ -5,28 +5,13 @@
 import { describe, expect, it } from "vitest";
 import { MobileRendererRegistry, type StyledSegment } from "../src/mobile-renderer.js";
 
-function segmentsEqual(a: StyledSegment[] | undefined, b: StyledSegment[] | undefined): boolean {
-  if (!a || !b) return a === b;
-  if (a.length !== b.length) return false;
-  return a.every((segment, index) => {
-    const next = b[index];
-    return segment.text === next.text && segment.style === next.style;
-  });
-}
-
 function expectIdempotent(
   render: () => StyledSegment[] | undefined,
   message: string,
 ): void {
   const first = render();
   const second = render();
-
-  if (first === undefined) {
-    expect(second, message).toBeUndefined();
-    return;
-  }
-
-  expect(segmentsEqual(first, second), message).toBe(true);
+  expect(second, message).toEqual(first);
 }
 
 const callCases = [
@@ -57,74 +42,48 @@ const resultCases = [
   ["write", { bytesWritten: 256 }, false],
 ] as const;
 
-describe("RQ-TL-002: renderCall idempotency", () => {
-  const reg = new MobileRendererRegistry();
+describe("RQ-TL-002: renderer idempotency and purity", () => {
+  const registry = new MobileRendererRegistry();
 
   for (const [tool, args] of callCases) {
-    it(`${tool}: same args produce identical segments`, () => {
-      expectIdempotent(() => reg.renderCall(tool, args), `${tool} renderCall should be idempotent`);
+    it(`renderCall(${tool}) is deterministic`, () => {
+      expectIdempotent(() => registry.renderCall(tool, args), `${tool} renderCall should be stable`);
     });
   }
 
-  it("unknown tool: consistently returns undefined", () => {
-    expectIdempotent(
-      () => reg.renderCall("nonexistent_tool", { x: 1 }),
-      "unknown renderCall should stay undefined",
-    );
-  });
-});
-
-describe("RQ-TL-002: renderResult idempotency", () => {
-  const reg = new MobileRendererRegistry();
-
   for (const [tool, details, isError] of resultCases) {
-    it(`${tool} (${isError ? "error" : "success"}): identical details are stable`, () => {
+    it(`renderResult(${tool}, ${isError ? "error" : "success"}) is deterministic`, () => {
       expectIdempotent(
-        () => reg.renderResult(tool, details, isError),
-        `${tool} renderResult should be idempotent`,
+        () => registry.renderResult(tool, details, isError),
+        `${tool} renderResult should be stable`,
       );
     });
   }
 
-  it("unknown tool result: consistently returns undefined", () => {
+  it("unknown tool renderers consistently return undefined", () => {
     expectIdempotent(
-      () => reg.renderResult("nonexistent", {}, false),
+      () => registry.renderCall("nonexistent_tool", { x: 1 }),
+      "unknown renderCall should stay undefined",
+    );
+    expectIdempotent(
+      () => registry.renderResult("nonexistent", {}, false),
       "unknown renderResult should stay undefined",
     );
   });
-});
 
-describe("RQ-TL-002: no-op detection (same input = same output)", () => {
-  const reg = new MobileRendererRegistry();
-
-  it("all built-in tools: renderCall is pure", () => {
-    for (const [tool, args] of callCases) {
-      expectIdempotent(() => reg.renderCall(tool, args), `${tool} renderCall should be pure`);
-    }
-  });
-
-  it("all built-in tools: renderResult is pure", () => {
-    for (const [tool] of callCases) {
-      expectIdempotent(
-        () => reg.renderResult(tool, {}, false),
-        `${tool} renderResult should be pure`,
-      );
-    }
-  });
-
-  it("renderCall output is deterministic for equivalent args objects", () => {
+  it("equivalent args objects produce identical render output", () => {
     const argsA = JSON.parse('{"command":"npm test","timeout":30}');
     const argsB = JSON.parse('{"command":"npm test","timeout":30}');
 
-    expect(segmentsEqual(reg.renderCall("bash", argsA), reg.renderCall("bash", argsB))).toBe(true);
+    expect(registry.renderCall("bash", argsA)).toEqual(registry.renderCall("bash", argsB));
   });
 });
 
 describe("RQ-TL-002: segment structural invariants", () => {
-  const reg = new MobileRendererRegistry();
+  const registry = new MobileRendererRegistry();
 
   it("segments always expose string text", () => {
-    const segments = reg.renderCall("bash", { command: "echo hi" });
+    const segments = registry.renderCall("bash", { command: "echo hi" });
     expect(segments).toBeDefined();
 
     for (const segment of segments ?? []) {
@@ -147,15 +106,11 @@ describe("RQ-TL-002: segment structural invariants", () => {
     for (const [tool, args] of callCases.filter(([tool]) =>
       ["bash", "read", "edit", "write"].includes(tool),
     )) {
-      const callSegs = reg.renderCall(tool, args);
-      const resultSegs = reg.renderResult(tool, {}, false);
+      const callSegments = registry.renderCall(tool, args) ?? [];
+      const resultSegments = registry.renderResult(tool, {}, false) ?? [];
 
-      for (const seg of callSegs ?? []) {
-        expect(allowedStyles.has(seg.style), `${tool} renderCall has unexpected style`).toBe(true);
-      }
-
-      for (const seg of resultSegs ?? []) {
-        expect(allowedStyles.has(seg.style), `${tool} renderResult has unexpected style`).toBe(true);
+      for (const segment of [...callSegments, ...resultSegments]) {
+        expect(allowedStyles.has(segment.style), `${tool} has unexpected style`).toBe(true);
       }
     }
   });

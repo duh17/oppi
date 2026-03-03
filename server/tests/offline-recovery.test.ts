@@ -49,11 +49,25 @@ function createMux(ringCapacity: number): UserStreamMux {
 }
 
 function recordTextDeltas(mux: UserStreamMux, count: number): number[] {
-  const seqs: number[] = [];
-  for (let i = 0; i < count; i++) {
-    seqs.push(mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `d${i}` }));
+  return Array.from({ length: count }, (_value, index) =>
+    mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `d${index}` }),
+  );
+}
+
+function expectCatchUpTypes(mux: UserStreamMux, sinceSeq: number, types: ServerMessage["type"][]): void {
+  const catchUp = mux.getUserStreamCatchUp(sinceSeq);
+  expect(catchUp.catchUpComplete).toBe(true);
+  expect(catchUp.events.map((event) => event.type)).toEqual(types);
+}
+
+function pushRingTextEvents(ring: EventRing, fromSeq: number, toSeq: number): void {
+  for (let seq = fromSeq; seq <= toSeq; seq++) {
+    ring.push({
+      seq,
+      event: { type: "text_delta", delta: `${seq}` } as ServerMessage,
+      timestamp: Date.now(),
+    });
   }
-  return seqs;
 }
 
 describe("RQ-OFFLINE-001: stream replay after disconnect", () => {
@@ -65,14 +79,7 @@ describe("RQ-OFFLINE-001: stream replay after disconnect", () => {
     mux.recordUserStreamEvent("s1", { type: "text_delta", delta: " world" });
     mux.recordUserStreamEvent("s1", { type: "agent_end" });
 
-    const catchUp = mux.getUserStreamCatchUp(0);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expect(catchUp.events.map((event) => event.type)).toEqual([
-      "agent_start",
-      "text_delta",
-      "text_delta",
-      "agent_end",
-    ]);
+    expectCatchUpTypes(mux, 0, ["agent_start", "text_delta", "text_delta", "agent_end"]);
   });
 
   it("partial replay from mid-stream returns only missed events", () => {
@@ -83,13 +90,7 @@ describe("RQ-OFFLINE-001: stream replay after disconnect", () => {
     mux.recordUserStreamEvent("s1", { type: "text_delta", delta: "b" });
     mux.recordUserStreamEvent("s1", { type: "agent_end" });
 
-    const catchUp = mux.getUserStreamCatchUp(seq1);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expect(catchUp.events.map((event) => event.type)).toEqual([
-      "text_delta",
-      "text_delta",
-      "agent_end",
-    ]);
+    expectCatchUpTypes(mux, seq1, ["text_delta", "text_delta", "agent_end"]);
   });
 
   it("replay after multiple agent turns preserves full history", () => {
@@ -97,8 +98,11 @@ describe("RQ-OFFLINE-001: stream replay after disconnect", () => {
 
     for (let turn = 0; turn < 3; turn++) {
       mux.recordUserStreamEvent("s1", { type: "agent_start" });
-      for (let i = 0; i < 5; i++) {
-        mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `turn${turn}-chunk${i}` });
+      for (let index = 0; index < 5; index++) {
+        mux.recordUserStreamEvent("s1", {
+          type: "text_delta",
+          delta: `turn${turn}-chunk${index}`,
+        });
       }
       mux.recordUserStreamEvent("s1", {
         type: "message_end",
@@ -139,12 +143,10 @@ describe("RQ-OFFLINE-001: stream replay after disconnect", () => {
       mux.recordUserStreamEvent("s1", event);
     }
 
-    const catchUp = mux.getUserStreamCatchUp(0);
-    const types = catchUp.events.map((event) => event.type);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expect(types).toEqual(events.map((event) => event.type));
-    expect(types).toEqual(
-      expect.arrayContaining(["tool_start", "permission_request", "tool_output", "tool_end"]),
+    expectCatchUpTypes(
+      mux,
+      0,
+      events.map((event) => event.type),
     );
   });
 });
@@ -173,11 +175,10 @@ describe("RQ-OFFLINE-001: ring miss recovery", () => {
     const seqs = recordTextDeltas(mux, 8);
     const catchUp = mux.getUserStreamCatchUp(seqs[3]);
 
-    if (catchUp.catchUpComplete) {
-      expect(catchUp.events.length).toBeGreaterThan(0);
-      for (const event of catchUp.events) {
-        expect(event.streamSeq!).toBeGreaterThan(seqs[3]);
-      }
+    expect(catchUp.catchUpComplete).toBe(true);
+    expect(catchUp.events.length).toBeGreaterThan(0);
+    for (const event of catchUp.events) {
+      expect(event.streamSeq!).toBeGreaterThan(seqs[3]);
     }
   });
 
@@ -197,21 +198,21 @@ describe("RQ-OFFLINE-001: multiple reconnect cycles", () => {
     const phase1Last = mux.recordUserStreamEvent("s1", { type: "text_delta", delta: "p1" });
 
     const reconnect1 = mux.getUserStreamCatchUp(0);
-    expect(reconnect1.catchUpComplete).toBe(true);
+    expect(reconnect1).toMatchObject({ catchUpComplete: true });
     expect(reconnect1.events).toHaveLength(2);
 
     mux.recordUserStreamEvent("s1", { type: "text_delta", delta: "p2" });
     const phase2Last = mux.recordUserStreamEvent("s1", { type: "agent_end" });
 
     const reconnect2 = mux.getUserStreamCatchUp(phase1Last);
-    expect(reconnect2.catchUpComplete).toBe(true);
+    expect(reconnect2).toMatchObject({ catchUpComplete: true });
     expect(reconnect2.events).toHaveLength(2);
 
     mux.recordUserStreamEvent("s1", { type: "agent_start" });
     mux.recordUserStreamEvent("s1", { type: "text_delta", delta: "p3" });
 
     const reconnect3 = mux.getUserStreamCatchUp(phase2Last);
-    expect(reconnect3.catchUpComplete).toBe(true);
+    expect(reconnect3).toMatchObject({ catchUpComplete: true });
     expect(reconnect3.events).toHaveLength(2);
   });
 
@@ -233,9 +234,7 @@ describe("RQ-OFFLINE-001: multiple reconnect cycles", () => {
     mux.recordUserStreamEvent("s1", { type: "tool_end", tool: "bash" });
     mux.recordUserStreamEvent("s1", { type: "agent_end" });
 
-    const catchUp = mux.getUserStreamCatchUp(beforeDisconnect);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expect(catchUp.events.map((event) => event.type)).toEqual(["tool_output", "tool_end", "agent_end"]);
+    expectCatchUpTypes(mux, beforeDisconnect, ["tool_output", "tool_end", "agent_end"]);
   });
 });
 
@@ -283,14 +282,7 @@ describe("RQ-OFFLINE-002: offline state signal paths", () => {
 describe("RQ-OFFLINE-002: EventRing boundary conditions", () => {
   it("ring reports canServe correctly at capacity boundary", () => {
     const ring = new EventRing(5);
-
-    for (let i = 1; i <= 5; i++) {
-      ring.push({
-        seq: i,
-        event: { type: "text_delta", delta: `${i}` } as ServerMessage,
-        timestamp: Date.now(),
-      });
-    }
+    pushRingTextEvents(ring, 1, 5);
 
     expect(ring.canServe(0)).toBe(true);
     expect(ring.canServe(5)).toBe(true);
@@ -298,14 +290,7 @@ describe("RQ-OFFLINE-002: EventRing boundary conditions", () => {
 
   it("ring reports canServe=false for sequences before oldest-1", () => {
     const ring = new EventRing(3);
-
-    for (let i = 1; i <= 6; i++) {
-      ring.push({
-        seq: i,
-        event: { type: "text_delta", delta: `${i}` } as ServerMessage,
-        timestamp: Date.now(),
-      });
-    }
+    pushRingTextEvents(ring, 1, 6);
 
     expect(ring.canServe(2)).toBe(false);
     expect(ring.canServe(1)).toBe(false);
@@ -316,10 +301,10 @@ describe("RQ-OFFLINE-002: EventRing boundary conditions", () => {
   it("ring since() returns events after a given seq", () => {
     const ring = new EventRing(10);
 
-    for (let i = 1; i <= 5; i++) {
+    for (let seq = 1; seq <= 5; seq++) {
       ring.push({
-        seq: i,
-        event: { type: "text_delta", delta: `${i}`, streamSeq: i } as ServerMessage,
+        seq,
+        event: { type: "text_delta", delta: `${seq}`, streamSeq: seq } as ServerMessage,
         timestamp: Date.now(),
       });
     }

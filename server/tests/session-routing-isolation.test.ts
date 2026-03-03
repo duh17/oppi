@@ -38,7 +38,9 @@ function makeRoutingContext(sessions: Session[]): {
     sessions: {
       startSession: vi.fn(async (id: string) => sessionMap.get(id)!),
       subscribe: vi.fn((id: string, cb: SubscribeCallback) => {
-        if (!subscribers.has(id)) subscribers.set(id, new Set());
+        if (!subscribers.has(id)) {
+          subscribers.set(id, new Set());
+        }
         subscribers.get(id)?.add(cb);
         return () => subscribers.get(id)?.delete(cb);
       }),
@@ -60,8 +62,8 @@ function makeRoutingContext(sessions: Session[]): {
     ctx,
     subscribers,
     broadcast: (sessionId: string, msg: ServerMessage) => {
-      for (const cb of subscribers.get(sessionId) ?? []) {
-        cb(msg);
+      for (const callback of subscribers.get(sessionId) ?? []) {
+        callback(msg);
       }
     },
   };
@@ -89,8 +91,7 @@ describe("RQ-ROUTE-002: event recording isolation", () => {
       mux.recordUserStreamEvent(sessionId, event);
     }
 
-    const catchUp = mux.getUserStreamCatchUp(0);
-    expect(catchUp.events.map((event) => event.sessionId)).toEqual([
+    expect(mux.getUserStreamCatchUp(0).events.map((event) => event.sessionId)).toEqual([
       "s1",
       "s2",
       "s3",
@@ -137,11 +138,15 @@ describe("RQ-ROUTE-002: subscriber callback isolation", () => {
     ctx.sessions.subscribe("sa", cbA);
     ctx.sessions.subscribe("sb", cbB);
 
-    broadcast("sa", { type: "text_delta", delta: "for A" });
-    broadcast("sb", { type: "text_delta", delta: "for B" });
+    const eventA: ServerMessage = { type: "text_delta", delta: "for A" };
+    const eventB: ServerMessage = { type: "text_delta", delta: "for B" };
+    broadcast("sa", eventA);
+    broadcast("sb", eventB);
 
     expect(cbA).toHaveBeenCalledTimes(1);
+    expect(cbA).toHaveBeenCalledWith(eventA);
     expect(cbB).toHaveBeenCalledTimes(1);
+    expect(cbB).toHaveBeenCalledWith(eventB);
   });
 
   it("unsubscribe detaches only that session callback", () => {
@@ -152,13 +157,13 @@ describe("RQ-ROUTE-002: subscriber callback isolation", () => {
 
     const cbA = vi.fn();
     const cbB = vi.fn();
-    const unsubA = ctx.sessions.subscribe("sa", cbA);
+    const unsubscribeA = ctx.sessions.subscribe("sa", cbA);
     ctx.sessions.subscribe("sb", cbB);
 
     expect(subscribers.get("sa")?.size).toBe(1);
     expect(subscribers.get("sb")?.size).toBe(1);
 
-    unsubA();
+    unsubscribeA();
     broadcast("sa", { type: "text_delta", delta: "for A" });
     broadcast("sb", { type: "text_delta", delta: "for B" });
 
@@ -174,8 +179,8 @@ describe("RQ-ROUTE-002: ring + outbound consistency", () => {
     const { ctx } = makeRoutingContext([]);
     const mux = new UserStreamMux(ctx, { ringCapacity: 5 });
 
-    for (let i = 0; i < 10; i++) {
-      mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `d${i}` });
+    for (let index = 0; index < 10; index++) {
+      mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `d${index}` });
     }
 
     expect(mux.getUserStreamCatchUp(1).catchUpComplete).toBe(false);

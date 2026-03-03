@@ -6,23 +6,30 @@ import { describe, expect, it } from "vitest";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 
 function minimalSession(): Session {
+  const now = Date.now();
   return {
     id: "s1",
     status: "ready",
-    createdAt: Date.now(),
-    lastActivity: Date.now(),
+    createdAt: now,
+    lastActivity: now,
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
   };
 }
 
-function roundTrip<T>(msg: T): T {
-  return JSON.parse(JSON.stringify(msg)) as T;
+function roundTrip<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function withExtraFields<T extends object>(msg: T, extras: Record<string, unknown>): T {
-  return { ...msg, ...extras };
+function withExtraFields<T extends object>(value: T, extras: Record<string, unknown>): T {
+  return { ...value, ...extras };
+}
+
+function expectUndefinedKeys<T extends object>(value: T, keys: Array<keyof T>): void {
+  for (const key of keys) {
+    expect(value[key]).toBeUndefined();
+  }
 }
 
 describe("RQ-PROTO-002: ServerMessage schema drift", () => {
@@ -35,13 +42,13 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           nestedFuture: { x: 1 },
         }),
         currentSeq: 5,
-      });
+      }) as Extract<ServerMessage, { type: "connected" }> & {
+        session: Session & Record<string, unknown>;
+      };
 
       expect(parsed.type).toBe("connected");
-      expect((parsed as { session: Session }).session.id).toBe("s1");
-      expect((parsed as { session: Record<string, unknown> }).session.futureField).toBe(
-        "unknown-value",
-      );
+      expect(parsed.session.id).toBe("s1");
+      expect(parsed.session.futureField).toBe("unknown-value");
     });
 
     it("state with unknown top-level fields", () => {
@@ -50,10 +57,10 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           { type: "state" as const, session: minimalSession() },
           { serverVersion: "99.0.0", experimental: true },
         ),
-      );
+      ) as Record<string, unknown>;
 
       expect(parsed.type).toBe("state");
-      expect((parsed as Record<string, unknown>).serverVersion).toBe("99.0.0");
+      expect(parsed.serverVersion).toBe("99.0.0");
     });
 
     it("tool_start with unknown args keys", () => {
@@ -62,10 +69,12 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         tool: "bash",
         args: { command: "echo hi", futureArg: [1, 2, 3] },
         toolCallId: "tc-1",
-      });
+      }) as Extract<ServerMessage, { type: "tool_start" }> & {
+        args: Record<string, unknown>;
+      };
 
       expect(parsed.type).toBe("tool_start");
-      expect((parsed as { args: Record<string, unknown> }).args.futureArg).toEqual([1, 2, 3]);
+      expect(parsed.args.futureArg).toEqual([1, 2, 3]);
     });
 
     it("permission_request with extra security fields", () => {
@@ -84,10 +93,10 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           },
           { riskScore: 0.95, policyVersion: 3 },
         ),
-      );
+      ) as Record<string, unknown>;
 
       expect(parsed.type).toBe("permission_request");
-      expect((parsed as Record<string, unknown>).riskScore).toBe(0.95);
+      expect(parsed.riskScore).toBe(0.95);
     });
 
     it("command_result with unknown data shape", () => {
@@ -97,23 +106,21 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         requestId: "req-1",
         success: true,
         data: { unknown: { deeply: { nested: true } } },
-      });
+      }) as Extract<ServerMessage, { type: "command_result" }>;
 
-      expect((parsed as { data: Record<string, unknown> }).data).toEqual({
-        unknown: { deeply: { nested: true } },
-      });
+      expect(parsed.data).toEqual({ unknown: { deeply: { nested: true } } });
     });
   });
 
   describe("missing optional fields", () => {
     it("session without optional fields parses cleanly", () => {
-      const session = (roundTrip<ServerMessage>({
+      const connected = roundTrip<ServerMessage>({
         type: "connected",
         session: minimalSession(),
-      }) as { session: Session }).session;
+      }) as Extract<ServerMessage, { type: "connected" }>;
 
-      expect(session.id).toBe("s1");
-      const optionalKeys: Array<keyof Session> = [
+      expect(connected.session.id).toBe("s1");
+      expectUndefinedKeys(connected.session, [
         "workspaceId",
         "name",
         "model",
@@ -123,38 +130,40 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         "thinkingLevel",
         "piSessionFile",
         "warnings",
-      ];
-      for (const key of optionalKeys) {
-        expect(session[key]).toBeUndefined();
-      }
+      ]);
     });
 
-    it("tool_start without optional fields", () => {
-      const parsed = roundTrip<ServerMessage>({
+    it("tool_start and tool_end omit optional payload fields", () => {
+      const start = roundTrip<ServerMessage>({
         type: "tool_start",
         tool: "read",
         args: { path: "file.ts" },
-      });
+      }) as Extract<ServerMessage, { type: "tool_start" }>;
+      const end = roundTrip<ServerMessage>({ type: "tool_end", tool: "bash" }) as Extract<
+        ServerMessage,
+        { type: "tool_end" }
+      >;
 
-      expect((parsed as { callSegments?: unknown }).callSegments).toBeUndefined();
-      expect((parsed as { toolCallId?: unknown }).toolCallId).toBeUndefined();
+      expect(start.callSegments).toBeUndefined();
+      expect(start.toolCallId).toBeUndefined();
+      expect(end.resultSegments).toBeUndefined();
+      expect(end.details).toBeUndefined();
+      expect(end.isError).toBeUndefined();
     });
 
-    it("tool_end without optional fields", () => {
-      const parsed = roundTrip<ServerMessage>({ type: "tool_end", tool: "bash" });
+    it("error/stop_requested omit optional fields", () => {
+      const error = roundTrip<ServerMessage>({
+        type: "error",
+        error: "Something went wrong",
+      }) as Extract<ServerMessage, { type: "error" }>;
+      const stop = roundTrip<ServerMessage>({
+        type: "stop_requested",
+        source: "server",
+      }) as Extract<ServerMessage, { type: "stop_requested" }>;
 
-      expect((parsed as { resultSegments?: unknown }).resultSegments).toBeUndefined();
-      expect((parsed as { details?: unknown }).details).toBeUndefined();
-      expect((parsed as { isError?: unknown }).isError).toBeUndefined();
-    });
-
-    it("error/stop_requested without optional fields", () => {
-      const error = roundTrip<ServerMessage>({ type: "error", error: "Something went wrong" });
-      const stop = roundTrip<ServerMessage>({ type: "stop_requested", source: "server" });
-
-      expect((error as { code?: unknown }).code).toBeUndefined();
-      expect((error as { fatal?: unknown }).fatal).toBeUndefined();
-      expect((stop as { reason?: unknown }).reason).toBeUndefined();
+      expect(error.code).toBeUndefined();
+      expect(error.fatal).toBeUndefined();
+      expect(stop.reason).toBeUndefined();
     });
   });
 
@@ -234,8 +243,8 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
         },
       ];
 
-      for (const msg of messages) {
-        expect(roundTrip(msg).type).toBe(msg.type);
+      for (const message of messages) {
+        expect(roundTrip(message).type).toBe(message.type);
       }
     });
   });
@@ -246,7 +255,7 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
     });
 
     it("session with partial + future changeStats fields", () => {
-      const session = {
+      const parsed = roundTrip({
         ...minimalSession(),
         changeStats: {
           mutatingToolCalls: 5,
@@ -256,9 +265,8 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
           removedLines: 3,
           futureMetric: 42,
         },
-      };
+      });
 
-      const parsed = roundTrip(session);
       expect(parsed.changeStats?.mutatingToolCalls).toBe(5);
       expect((parsed.changeStats as Record<string, unknown>).futureMetric).toBe(42);
     });
@@ -267,35 +275,37 @@ describe("RQ-PROTO-002: ServerMessage schema drift", () => {
 
 describe("RQ-PROTO-002: ClientMessage schema drift", () => {
   it("prompt with extra fields round-trips", () => {
-    const msg = withExtraFields<ClientMessage>(
-      {
-        type: "prompt",
-        message: "hello",
-        sessionId: "s1",
-        requestId: "r1",
-      },
-      { priority: "high", metadata: { source: "voice" } },
+    const parsed = roundTrip(
+      withExtraFields<ClientMessage>(
+        {
+          type: "prompt",
+          message: "hello",
+          sessionId: "s1",
+          requestId: "r1",
+        },
+        { priority: "high", metadata: { source: "voice" } },
+      ),
     );
 
-    const parsed = roundTrip(msg);
     expect(parsed.type).toBe("prompt");
     expect(parsed.message).toBe("hello");
   });
 
   it("permission_response with extra fields round-trips", () => {
-    const msg = withExtraFields<ClientMessage>(
-      {
-        type: "permission_response",
-        id: "p1",
-        action: "allow",
-        scope: "session",
-      },
-      { approvedBy: "user", confidence: 0.9 },
-    );
+    const parsed = roundTrip(
+      withExtraFields<ClientMessage>(
+        {
+          type: "permission_response",
+          id: "p1",
+          action: "allow",
+          scope: "session",
+        },
+        { approvedBy: "user", confidence: 0.9 },
+      ),
+    ) as Record<string, unknown>;
 
-    const parsed = roundTrip(msg);
     expect(parsed.type).toBe("permission_response");
-    expect((parsed as Record<string, unknown>).approvedBy).toBe("user");
+    expect(parsed.approvedBy).toBe("user");
   });
 
   it("subscribe with future level values preserved as string", () => {
