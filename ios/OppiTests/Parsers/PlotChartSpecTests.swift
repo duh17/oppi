@@ -201,6 +201,26 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy.tickBudget(for: 500) == 6)
     }
 
+    @Test("y-axis major tick target tightens on compact widths")
+    func yTickTargetAdjustsForCompactWidths() {
+        let spec = makeSpec(
+            rows: [
+                .object(["x": .number(0), "y": .number(1)]),
+                .object(["x": .number(1), "y": .number(2)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        #expect(PlotRenderPolicy(spec: spec, viewportWidth: 320).yTickCount == 4)
+        #expect(PlotRenderPolicy(spec: spec, viewportWidth: 390).yTickCount == 5)
+    }
+
     @Test("x-axis decimation keeps first and last category anchors")
     func categoryXAxisDecimationKeepsAnchors() {
         let rows: [JSONValue] = (0..<12).map { index in
@@ -229,6 +249,37 @@ struct PlotRenderPolicyTests {
             #expect(labels.last == "day-11")
         default:
             Issue.record("Expected categorical x tick labels")
+        }
+    }
+
+    @Test("x-axis decimation keeps first and last numeric anchors")
+    func numericXAxisDecimationKeepsAnchors() {
+        let rows: [JSONValue] = (0..<30).map { index in
+            .object([
+                "x": .number(Double(index)),
+                "y": .number(Double(index * 2)),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 320)
+        switch policy.xTickValues {
+        case .numeric(let values):
+            #expect(values.count <= policy.xTickBudget)
+            #expect(values.first == 0)
+            #expect(values.last == 29)
+        default:
+            Issue.record("Expected numeric x tick values")
         }
     }
 
@@ -286,6 +337,30 @@ struct PlotRenderPolicyTests {
         #expect(!PlotRenderPolicy(spec: fourSeries, viewportWidth: 390).legendVisible)
     }
 
+    @Test("legend auto policy ignores rule marks")
+    func legendAutoPolicyIgnoresRuleMarks() {
+        let spec = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2)]),
+                .object(["x": .number(2), "y": .number(3)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+                .object([
+                    "type": .string("rule"),
+                    "yValue": .number(2.5),
+                    "label": .string("threshold"),
+                ]),
+            ]
+        )
+
+        #expect(!PlotRenderPolicy(spec: spec, viewportWidth: 390).legendVisible)
+    }
+
     @Test("vertical gridlines are disabled for dense x domains")
     func verticalGridlineDensityPolicy() {
         let sparseRows: [JSONValue] = (0..<4).map { index in
@@ -309,6 +384,26 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy(spec: sparseSpec, viewportWidth: 390).showVerticalGridlines)
         #expect(!PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showVerticalGridlines)
         #expect(PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showHorizontalGridlines)
+    }
+
+    @Test("x-axis falls back to automatic ticks when mark has no x key")
+    func xAxisFallsBackToAutomaticWhenNoXKey() {
+        let spec = makeSpec(
+            rows: [
+                .object(["value": .number(1)]),
+                .object(["value": .number(2)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("rule"),
+                    "yValue": .number(1.5),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
+        #expect(policy.xTickValues == .automatic)
+        #expect(!policy.showVerticalGridlines)
     }
 
     private func makeSpec(rows: [JSONValue], marks: [JSONValue]) -> PlotChartSpec {
