@@ -59,12 +59,7 @@ function makePush(): PushClient {
   } as unknown as PushClient;
 }
 
-function forcePushDecision(sessionId: string, command: string, toolCallId: string): {
-  sessionId: string;
-  tool: string;
-  input: { command: string };
-  toolCallId: string;
-} {
+function makeDangerousBashCall(sessionId: string, command: string, toolCallId: string) {
   return {
     sessionId,
     tool: "bash",
@@ -78,7 +73,19 @@ async function waitForPendingCount(list: PendingDecision[], count: number): Prom
   while (list.length < count && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  expect(list.length).toBe(count);
+  expect(list).toHaveLength(count);
+}
+
+function findPendingBySession(
+  pending: PendingDecision[],
+  sessionId: string,
+): PendingDecision {
+  const match = pending.find((decision) => decision.sessionId === sessionId);
+  expect(match).toBeDefined();
+  if (!match) {
+    throw new Error(`Missing pending decision for session ${sessionId}`);
+  }
+  return match;
 }
 
 function makePending(overrides?: Partial<PendingDecision>): PendingDecision {
@@ -102,73 +109,95 @@ function makePending(overrides?: Partial<PendingDecision>): PendingDecision {
 describe("RQ-PERM-002: checkToolCall creates session-scoped pending", () => {
   it("pending decision from checkToolCall carries correct sessionId", async () => {
     const gate = createGate(0);
-    gate.createGuard("session-target", "w1");
+    try {
+      gate.createGuard("session-target", "w1");
 
-    const pending: PendingDecision[] = [];
-    gate.on("approval_needed", (decision: PendingDecision) => {
-      pending.push(decision);
-      gate.resolveDecision(decision.id, "allow");
-    });
+      const pending: PendingDecision[] = [];
+      gate.on("approval_needed", (decision: PendingDecision) => {
+        pending.push(decision);
+        gate.resolveDecision(decision.id, "allow");
+      });
 
-    await gate.checkToolCall("session-target", forcePushDecision("session-target", "git push --force origin main", "tc-1"));
+      await gate.checkToolCall(
+        "session-target",
+        makeDangerousBashCall("session-target", "git push --force origin main", "tc-1"),
+      );
 
-    expect(pending).toHaveLength(1);
-    expect(pending[0].sessionId).toBe("session-target");
-    await gate.shutdown();
+      expect(pending).toHaveLength(1);
+      expect(pending[0].sessionId).toBe("session-target");
+    } finally {
+      await gate.shutdown();
+    }
   });
 
   it("multiple sessions create independent pending decisions", async () => {
     const gate = createGate(0);
-    gate.createGuard("session-a", "w1");
-    gate.createGuard("session-b", "w2");
+    try {
+      gate.createGuard("session-a", "w1");
+      gate.createGuard("session-b", "w2");
 
-    const pending: PendingDecision[] = [];
-    gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
+      const pending: PendingDecision[] = [];
+      gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
 
-    const promiseA = gate.checkToolCall("session-a", forcePushDecision("session-a", "git push --force origin main", "tc-a"));
-    const promiseB = gate.checkToolCall("session-b", forcePushDecision("session-b", "git push --force origin dev", "tc-b"));
+      const promiseA = gate.checkToolCall(
+        "session-a",
+        makeDangerousBashCall("session-a", "git push --force origin main", "tc-a"),
+      );
+      const promiseB = gate.checkToolCall(
+        "session-b",
+        makeDangerousBashCall("session-b", "git push --force origin dev", "tc-b"),
+      );
 
-    await waitForPendingCount(pending, 2);
-    expect(new Set(pending.map((decision) => decision.sessionId))).toEqual(
-      new Set(["session-a", "session-b"]),
-    );
-    expect(gate.getPendingForUser()).toHaveLength(2);
+      await waitForPendingCount(pending, 2);
+      expect(new Set(pending.map((decision) => decision.sessionId))).toEqual(
+        new Set(["session-a", "session-b"]),
+      );
+      expect(gate.getPendingForUser()).toHaveLength(2);
 
-    for (const decision of pending) {
-      gate.resolveDecision(decision.id, "allow");
+      for (const decision of pending) {
+        gate.resolveDecision(decision.id, "allow");
+      }
+      await Promise.all([promiseA, promiseB]);
+    } finally {
+      await gate.shutdown();
     }
-    await Promise.all([promiseA, promiseB]);
-    await gate.shutdown();
   });
 
   it("resolving one session does not affect another session's pending", async () => {
     const gate = createGate(0);
-    gate.createGuard("sa", "w1");
-    gate.createGuard("sb", "w1");
+    try {
+      gate.createGuard("sa", "w1");
+      gate.createGuard("sb", "w1");
 
-    const pending: PendingDecision[] = [];
-    gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
+      const pending: PendingDecision[] = [];
+      gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
 
-    const promiseA = gate.checkToolCall("sa", forcePushDecision("sa", "git push --force origin main", "tc-a"));
-    const promiseB = gate.checkToolCall("sb", forcePushDecision("sb", "git push --force origin dev", "tc-b"));
+      const promiseA = gate.checkToolCall(
+        "sa",
+        makeDangerousBashCall("sa", "git push --force origin main", "tc-a"),
+      );
+      const promiseB = gate.checkToolCall(
+        "sb",
+        makeDangerousBashCall("sb", "git push --force origin dev", "tc-b"),
+      );
 
-    await waitForPendingCount(pending, 2);
+      await waitForPendingCount(pending, 2);
 
-    const sa = pending.find((decision) => decision.sessionId === "sa");
-    const sb = pending.find((decision) => decision.sessionId === "sb");
-    expect(sa).toBeDefined();
-    expect(sb).toBeDefined();
+      const sa = findPendingBySession(pending, "sa");
+      const sb = findPendingBySession(pending, "sb");
 
-    gate.resolveDecision(sa!.id, "allow");
-    await promiseA;
+      gate.resolveDecision(sa.id, "allow");
+      await promiseA;
 
-    const remaining = gate.getPendingForUser();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0].sessionId).toBe("sb");
+      const remaining = gate.getPendingForUser();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].sessionId).toBe("sb");
 
-    gate.resolveDecision(sb!.id, "deny");
-    await promiseB;
-    await gate.shutdown();
+      gate.resolveDecision(sb.id, "deny");
+      await promiseB;
+    } finally {
+      await gate.shutdown();
+    }
   });
 
   it("resolving nonexistent ID returns false", () => {
@@ -179,11 +208,13 @@ describe("RQ-PERM-002: checkToolCall creates session-scoped pending", () => {
 
 describe("RQ-PERM-002: buildPermissionMessage session context", () => {
   it("permission payload mirrors pending decision fields", () => {
-    const msg = buildPermissionMessage(makePending());
-    const perm = msg as Extract<ServerMessage, { type: "permission_request" }>;
+    const message = buildPermissionMessage(makePending()) as Extract<
+      ServerMessage,
+      { type: "permission_request" }
+    >;
 
-    expect(perm.type).toBe("permission_request");
-    expect(perm).toMatchObject({
+    expect(message).toMatchObject({
+      type: "permission_request",
       id: "p1",
       sessionId: "target-session",
       tool: "bash",
@@ -194,7 +225,7 @@ describe("RQ-PERM-002: buildPermissionMessage session context", () => {
   });
 
   it("non-bash tools preserve full input context", () => {
-    const msg = buildPermissionMessage(
+    const message = buildPermissionMessage(
       makePending({
         id: "p2",
         sessionId: "edit-session",
@@ -205,12 +236,11 @@ describe("RQ-PERM-002: buildPermissionMessage session context", () => {
         displaySummary: "Edit: secret.env",
         reason: "modifying sensitive file",
       }),
-    );
+    ) as Extract<ServerMessage, { type: "permission_request" }>;
 
-    const perm = msg as Extract<ServerMessage, { type: "permission_request" }>;
-    expect(perm.tool).toBe("edit");
-    expect(perm.sessionId).toBe("edit-session");
-    expect(perm.input).toEqual({
+    expect(message.tool).toBe("edit");
+    expect(message.sessionId).toBe("edit-session");
+    expect(message.input).toEqual({
       path: "secret.env",
       oldText: "KEY=old",
       newText: "KEY=new",
@@ -221,51 +251,69 @@ describe("RQ-PERM-002: buildPermissionMessage session context", () => {
 describe("RQ-PERM-002: pending permission filtering and cleanup", () => {
   it("getPendingForUser returns decisions from all sessions", async () => {
     const gate = createGate(0);
-    gate.createGuard("s1", "w1");
-    gate.createGuard("s2", "w2");
+    try {
+      gate.createGuard("s1", "w1");
+      gate.createGuard("s2", "w2");
 
-    const pending: PendingDecision[] = [];
-    gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
+      const pending: PendingDecision[] = [];
+      gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
 
-    const p1 = gate.checkToolCall("s1", forcePushDecision("s1", "git push --force origin main", "tc-1"));
-    const p2 = gate.checkToolCall("s2", forcePushDecision("s2", "git push --force origin dev", "tc-2"));
+      const p1 = gate.checkToolCall(
+        "s1",
+        makeDangerousBashCall("s1", "git push --force origin main", "tc-1"),
+      );
+      const p2 = gate.checkToolCall(
+        "s2",
+        makeDangerousBashCall("s2", "git push --force origin dev", "tc-2"),
+      );
 
-    await waitForPendingCount(pending, 2);
+      await waitForPendingCount(pending, 2);
 
-    const all = gate.getPendingForUser();
-    expect(all.filter((decision) => decision.sessionId === "s1")).toHaveLength(1);
-    expect(all.filter((decision) => decision.sessionId === "s2")).toHaveLength(1);
+      const all = gate.getPendingForUser();
+      expect(all.filter((decision) => decision.sessionId === "s1")).toHaveLength(1);
+      expect(all.filter((decision) => decision.sessionId === "s2")).toHaveLength(1);
 
-    for (const decision of pending) {
-      gate.resolveDecision(decision.id, "deny");
+      for (const decision of pending) {
+        gate.resolveDecision(decision.id, "deny");
+      }
+      await Promise.allSettled([p1, p2]);
+    } finally {
+      await gate.shutdown();
     }
-    await Promise.allSettled([p1, p2]);
-    await gate.shutdown();
   });
 
   it("destroySessionGuard cleans up only that session pending", async () => {
     const gate = createGate(0);
-    gate.createGuard("s1", "w1");
-    gate.createGuard("s2", "w1");
+    try {
+      gate.createGuard("s1", "w1");
+      gate.createGuard("s2", "w1");
 
-    const pending: PendingDecision[] = [];
-    gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
+      const pending: PendingDecision[] = [];
+      gate.on("approval_needed", (decision: PendingDecision) => pending.push(decision));
 
-    const p1 = gate.checkToolCall("s1", forcePushDecision("s1", "git push --force origin main", "tc-1"));
-    const p2 = gate.checkToolCall("s2", forcePushDecision("s2", "git push --force origin dev", "tc-2"));
+      const p1 = gate.checkToolCall(
+        "s1",
+        makeDangerousBashCall("s1", "git push --force origin main", "tc-1"),
+      );
+      const p2 = gate.checkToolCall(
+        "s2",
+        makeDangerousBashCall("s2", "git push --force origin dev", "tc-2"),
+      );
 
-    await waitForPendingCount(pending, 2);
+      await waitForPendingCount(pending, 2);
 
-    gate.destroySessionGuard("s1");
-    await p1;
+      gate.destroySessionGuard("s1");
+      await p1;
 
-    const remaining = gate.getPendingForUser();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0].sessionId).toBe("s2");
+      const remaining = gate.getPendingForUser();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].sessionId).toBe("s2");
 
-    gate.resolveDecision(remaining[0].id, "deny");
-    await p2;
-    await gate.shutdown();
+      gate.resolveDecision(remaining[0].id, "deny");
+      await p2;
+    } finally {
+      await gate.shutdown();
+    }
   });
 });
 
@@ -301,21 +349,5 @@ describe("RQ-PERM-002: Live Activity session event routing", () => {
 
     expect(() => bridge.handleSessionEvent(stateEvent)).not.toThrow();
     expect(() => bridge.handleSessionEvent(startEvent)).not.toThrow();
-  });
-
-  it("permission_request event carries session-scoped routing fields", () => {
-    const event: ServerMessage = {
-      type: "permission_request",
-      id: "p1",
-      sessionId: "s1",
-      tool: "bash",
-      input: { command: "rm -rf /" },
-      displaySummary: "Run: rm -rf /",
-      reason: "destructive",
-      timeoutAt: Date.now() + 30000,
-    };
-
-    expect(event.type).toBe("permission_request");
-    expect(event.sessionId).toBe("s1");
   });
 });

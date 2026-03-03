@@ -22,7 +22,7 @@ function makeSession(id: string, overrides?: Partial<Session>): Session {
 }
 
 function makeStreamContext(sessions: Session[] = []): StreamContext {
-  const sessionMap = new Map(sessions.map((s) => [s.id, s]));
+  const sessionMap = new Map(sessions.map((session) => [session.id, session]));
   const subscribers = new Map<string, Set<(msg: ServerMessage) => void>>();
 
   return {
@@ -33,7 +33,9 @@ function makeStreamContext(sessions: Session[] = []): StreamContext {
     sessions: {
       startSession: vi.fn(async (id: string) => sessionMap.get(id)!),
       subscribe: vi.fn((id: string, cb: (msg: ServerMessage) => void) => {
-        if (!subscribers.has(id)) subscribers.set(id, new Set());
+        if (!subscribers.has(id)) {
+          subscribers.set(id, new Set());
+        }
         subscribers.get(id)?.add(cb);
         return () => subscribers.get(id)?.delete(cb);
       }),
@@ -44,9 +46,9 @@ function makeStreamContext(sessions: Session[] = []): StreamContext {
     gate: {
       getPendingForUser: vi.fn(() => []),
     } as unknown as StreamContext["gate"],
-    ensureSessionContextWindow: (s: Session) => s,
+    ensureSessionContextWindow: (session: Session) => session,
     resolveWorkspaceForSession: () => undefined as Workspace | undefined,
-    handleClientMessage: vi.fn(async (_s, msg, send) => {
+    handleClientMessage: vi.fn(async (_session, msg, send) => {
       send({
         type: "command_result",
         command: msg.type,
@@ -59,48 +61,59 @@ function makeStreamContext(sessions: Session[] = []): StreamContext {
   };
 }
 
+function createMux(sessions: Session[] = [], ringCapacity = 100): UserStreamMux {
+  return new UserStreamMux(makeStreamContext(sessions), { ringCapacity });
+}
+
 function expectStrictlyIncreasing(seqs: number[]): void {
-  for (let i = 1; i < seqs.length; i++) {
-    expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
+  for (let index = 1; index < seqs.length; index++) {
+    expect(seqs[index]).toBeGreaterThan(seqs[index - 1]);
   }
+}
+
+function expectOrderedCatchUp(mux: UserStreamMux, sinceSeq: number): void {
+  const catchUp = mux.getUserStreamCatchUp(sinceSeq);
+  expect(catchUp.catchUpComplete).toBe(true);
+  expectStrictlyIncreasing(catchUp.events.map((event) => event.streamSeq!));
 }
 
 describe("RQ-WS-002: stream event recording ordering", () => {
   it("recordUserStreamEvent assigns monotonically increasing streamSeq", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 100 });
+    const mux = createMux();
 
-    const seqs = Array.from({ length: 50 }, (_v, i) =>
-      mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `chunk-${i}` }),
+    const seqs = Array.from({ length: 50 }, (_value, index) =>
+      mux.recordUserStreamEvent("s1", { type: "text_delta", delta: `chunk-${index}` }),
     );
 
     expectStrictlyIncreasing(seqs);
   });
 
   it("interleaved multi-session recording preserves global ordering", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 100 });
+    const mux = createMux();
 
-    const seqs = Array.from({ length: 30 }, (_v, i) =>
-      mux.recordUserStreamEvent(`s${(i % 3) + 1}`, { type: "text_delta", delta: `msg-${i}` }),
+    const seqs = Array.from({ length: 30 }, (_value, index) =>
+      mux.recordUserStreamEvent(`s${(index % 3) + 1}`, {
+        type: "text_delta",
+        delta: `msg-${index}`,
+      }),
     );
 
     expectStrictlyIncreasing(seqs);
   });
 
   it("catch-up replay preserves recording order after interleaved writes", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 200 });
+    const mux = createMux([], 200);
 
-    for (let i = 0; i < 20; i++) {
-      mux.recordUserStreamEvent(`s${(i % 2) + 1}`, { type: "agent_start" });
+    for (let index = 0; index < 20; index++) {
+      mux.recordUserStreamEvent(`s${(index % 2) + 1}`, { type: "agent_start" });
     }
 
-    const catchUp = mux.getUserStreamCatchUp(0);
-    expect(catchUp.catchUpComplete).toBe(true);
-    expectStrictlyIncreasing(catchUp.events.map((event) => event.streamSeq!));
+    expectOrderedCatchUp(mux, 0);
   });
 });
 
 describe("RQ-WS-002: rapid command sequence invariants", () => {
-  it("rapid subscribe/command burst: commands before subscribe are rejected", () => {
+  it("recording stream events does not invoke command handler", () => {
     const ctx = makeStreamContext([makeSession("s1")]);
     const mux = new UserStreamMux(ctx);
 
@@ -111,7 +124,7 @@ describe("RQ-WS-002: rapid command sequence invariants", () => {
   });
 
   it("duplicate recordUserStreamEvent calls produce unique seqs", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 100 });
+    const mux = createMux();
 
     const event: ServerMessage = { type: "agent_start" };
     const seqs = [
@@ -125,11 +138,12 @@ describe("RQ-WS-002: rapid command sequence invariants", () => {
   });
 
   it("high-frequency burst: 1000 events maintain ordering", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 2000 });
+    const mux = createMux([], 2000);
 
-    const seqs = Array.from({ length: 1000 }, (_v, i) =>
-      mux.recordUserStreamEvent(`s${i % 5}`, { type: "text_delta", delta: `d${i}` }),
+    const seqs = Array.from({ length: 1000 }, (_value, index) =>
+      mux.recordUserStreamEvent(`s${index % 5}`, { type: "text_delta", delta: `d${index}` }),
     );
+
     expectStrictlyIncreasing(seqs);
 
     const catchUp = mux.getUserStreamCatchUp(seqs[499]);
@@ -140,8 +154,8 @@ describe("RQ-WS-002: rapid command sequence invariants", () => {
 });
 
 describe("RQ-WS-002: notification-level filtering invariants", () => {
-  it("isNotificationLevelMessage classifies all notification types correctly", () => {
-    const mux = new UserStreamMux(makeStreamContext());
+  it("isNotificationLevelMessage classifies notification vs full-only types", () => {
+    const mux = createMux();
 
     const notificationTypes: ServerMessage["type"][] = [
       "permission_request",
@@ -190,7 +204,7 @@ describe("RQ-WS-002: notification-level filtering invariants", () => {
 
 describe("RQ-WS-002: catch-up replay validation", () => {
   it("getUserStreamCatchUp returns ordered session-scoped events", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 100 });
+    const mux = createMux();
 
     mux.recordUserStreamEvent("s1", { type: "agent_start" });
     mux.recordUserStreamEvent("s1", { type: "text_delta", delta: "a" });
@@ -203,15 +217,14 @@ describe("RQ-WS-002: catch-up replay validation", () => {
   });
 
   it("catch-up at or beyond current seq returns empty", () => {
-    const mux = new UserStreamMux(makeStreamContext(), { ringCapacity: 100 });
+    const mux = createMux();
     const lastSeq = mux.recordUserStreamEvent("s1", { type: "agent_start" });
 
     const atCurrent = mux.getUserStreamCatchUp(lastSeq);
     const beyondCurrent = mux.getUserStreamCatchUp(9999);
 
-    expect(atCurrent.catchUpComplete).toBe(true);
+    expect(atCurrent).toMatchObject({ catchUpComplete: true, currentSeq: lastSeq });
     expect(atCurrent.events).toHaveLength(0);
-    expect(atCurrent.currentSeq).toBe(lastSeq);
     expect(beyondCurrent.events).toHaveLength(0);
   });
 });
