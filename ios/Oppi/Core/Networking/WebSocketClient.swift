@@ -29,6 +29,13 @@ final class WebSocketClient {
     struct InboundMeta: Sendable, Equatable {
         let seq: Int?
         let currentSeq: Int?
+        let receivedAtMs: Int64?
+
+        init(seq: Int?, currentSeq: Int?, receivedAtMs: Int64? = nil) {
+            self.seq = seq
+            self.currentSeq = currentSeq
+            self.receivedAtMs = receivedAtMs
+        }
     }
 
     private var webSocket: URLSessionWebSocketTask?
@@ -50,24 +57,29 @@ final class WebSocketClient {
     private(set) var activeSubscriptions: [String: StreamSubscriptionLevel] = [:]
 
     let credentials: ServerCredentials
+    private var preferredEndpoint: EndpointSelection?
     private let urlSession: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
 
     private let maxReconnectAttempts = 10
     private let pingInterval: Duration = .seconds(30)
     private let waitForConnectionTimeout: Duration
-    private let waitPollInterval: Duration
     private let sendTimeout: Duration
+
+    /// Continuations waiting for `.connected` status. Resolved on status
+    /// transition to `.connected` or `.disconnected`.
+    private var connectionWaiters: [UInt64: CheckedContinuation<Bool, Never>] = [:]
+    private var nextWaiterId: UInt64 = 0
 
     init(
         credentials: ServerCredentials,
-        waitForConnectionTimeout: Duration = .seconds(8),
-        waitPollInterval: Duration = .milliseconds(100),
+        preferredEndpoint: EndpointSelection? = nil,
+        waitForConnectionTimeout: Duration = .seconds(3),
         sendTimeout: Duration = .seconds(5)
     ) {
         self.credentials = credentials
+        self.preferredEndpoint = preferredEndpoint
         self.waitForConnectionTimeout = waitForConnectionTimeout
-        self.waitPollInterval = waitPollInterval
         self.sendTimeout = sendTimeout
         self.trustDelegate = PinnedServerTrustDelegate(
             pinnedLeafFingerprint: credentials.normalizedTLSCertFingerprint
@@ -101,7 +113,12 @@ final class WebSocketClient {
         connectionID &+= 1
         let thisConnection = connectionID
         status = .connecting
-        wsLogInfo("Connect requested to /stream (old=\(oldConn) new=\(thisConnection))")
+        wsLogInfo(
+            "Connect requested to /stream (old=\(oldConn) new=\(thisConnection))",
+            metadata: [
+                "url": (preferredEndpoint?.streamURL ?? credentials.streamURL)?.absoluteString ?? "invalid",
+            ]
+        )
 
         return AsyncStream { [weak self] continuation in
             self?.continuation = continuation
@@ -119,6 +136,10 @@ final class WebSocketClient {
                 }
             }
         }
+    }
+
+    func setPreferredEndpoint(_ endpoint: EndpointSelection) {
+        preferredEndpoint = endpoint
     }
 
     // MARK: - Send
@@ -285,16 +306,39 @@ final class WebSocketClient {
     }
 
     /// Wait for the connection to reach `.connected` state.
+    ///
+    /// Uses continuation-based waiting instead of polling. Resolves
+    /// immediately if already connected, or when the status transitions
+    /// to `.connected` / `.disconnected`. Falls back to timeout.
     private func waitForConnection() async throws -> Bool {
+        if status == .connected { return true }
         if status == .disconnected { return false }
 
-        let deadline = ContinuousClock.now + waitForConnectionTimeout
-        while ContinuousClock.now < deadline {
-            try await Task.sleep(for: waitPollInterval)
-            if status == .connected { return true }
-            if status == .disconnected { return false }
+        let waiterId = nextWaiterId
+        nextWaiterId &+= 1
+
+        return await withCheckedContinuation { continuation in
+            connectionWaiters[waiterId] = continuation
+
+            // Timeout: resolve with false if not connected within deadline
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: self?.waitForConnectionTimeout ?? .seconds(3))
+                guard let self else { return }
+                if let waiter = self.connectionWaiters.removeValue(forKey: waiterId) {
+                    waiter.resume(returning: false)
+                }
+            }
         }
-        return false
+    }
+
+    /// Resolve all pending connection waiters with the current status.
+    private func resolveConnectionWaiters() {
+        let connected = status == .connected
+        let waiters = connectionWaiters
+        connectionWaiters.removeAll()
+        for (_, waiter) in waiters {
+            waiter.resume(returning: connected)
+        }
     }
 
     /// Cancel an in-progress reconnect backoff so a fresh connection can start immediately.
@@ -353,6 +397,7 @@ final class WebSocketClient {
         lastReceiveErrorLogNs = 0
 
         status = .disconnected
+        resolveConnectionWaiters()
     }
 
     // MARK: - Private
@@ -362,6 +407,7 @@ final class WebSocketClient {
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
         metadata["subscriptions"] = activeSubscriptions.keys.joined(separator: ",")
+        metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
         return metadata
     }
 
@@ -399,7 +445,9 @@ final class WebSocketClient {
     }
 
     private func openStreamWebSocket(continuation: AsyncStream<StreamMessage>.Continuation) {
-        guard let url = credentials.streamURL else {
+        let url = preferredEndpoint?.streamURL ?? credentials.streamURL
+
+        guard let url else {
             logger.error("Invalid /stream URL — disconnecting")
             disconnect()
             return
@@ -446,6 +494,8 @@ final class WebSocketClient {
                         continue
                     }
 
+                    let transportTag = self?.preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
+                    let messageType = streamMessage.message.typeLabel
                     let decodeDurationMs = Double((DispatchTime.now().uptimeNanoseconds &- decodeStartNs) / 1_000_000)
                     Task.detached(priority: .utility) {
                         await ChatMetricsService.shared.record(
@@ -454,12 +504,20 @@ final class WebSocketClient {
                             unit: .ms,
                             sessionId: streamMessage.sessionId,
                             tags: [
-                                "type": streamMessage.message.typeLabel,
+                                "type": messageType,
+                                "stage": "decode",
+                                "transport": transportTag,
                             ]
                         )
                     }
 
-                    let inboundMeta = InboundMeta(seq: streamMessage.seq, currentSeq: streamMessage.currentSeq)
+                    let inboundReceivedAtMs = ChatMetricsService.nowMs()
+                    let inboundMeta = InboundMeta(
+                        seq: streamMessage.seq,
+                        currentSeq: streamMessage.currentSeq,
+                        receivedAtMs: inboundReceivedAtMs
+                    )
+                    let mainActorHopStartedAtMs = ChatMetricsService.nowMs()
                     await MainActor.run {
                         guard let self,
                               let sessionId = streamMessage.sessionId,
@@ -491,13 +549,41 @@ final class WebSocketClient {
                             }
                         }
                     }
+                    let mainActorHopDurationMs = max(0, ChatMetricsService.nowMs() - mainActorHopStartedAtMs)
+                    if messageType == "connected" || mainActorHopDurationMs >= 200 {
+                        Task.detached(priority: .utility) {
+                            await ChatMetricsService.shared.record(
+                                metric: .wsDecodeMs,
+                                value: Double(mainActorHopDurationMs),
+                                unit: .ms,
+                                sessionId: streamMessage.sessionId,
+                                tags: [
+                                    "type": messageType,
+                                    "stage": "main_actor_hop",
+                                    "transport": transportTag,
+                                ]
+                            )
+                        }
+                    }
+                    if mainActorHopDurationMs >= 1_000 {
+                        self?.wsLogError(
+                            "WS main-actor hop lag",
+                            metadata: [
+                                "type": messageType,
+                                "hopMs": String(mainActorHopDurationMs),
+                                "transport": transportTag,
+                            ]
+                        )
+                    }
 
                     // First successful message = connected
                     await MainActor.run {
                         if case .connecting = self?.status {
                             self?.status = .connected
+                            self?.resolveConnectionWaiters()
                         } else if case .reconnecting = self?.status {
                             self?.status = .connected
+                            self?.resolveConnectionWaiters()
                         }
                     }
 
@@ -650,6 +736,9 @@ final class WebSocketClient {
     /// Test seam for deterministic send/reconnect behavior tests.
     func _setStatusForTesting(_ status: Status) {
         self.status = status
+        if status == .connected || status == .disconnected {
+            resolveConnectionWaiters()
+        }
     }
 
     /// Thread-safe one-shot resolver for callback + timeout races.

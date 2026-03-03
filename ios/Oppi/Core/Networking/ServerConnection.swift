@@ -15,6 +15,10 @@ final class ServerConnection {
     // Networking
     private(set) var apiClient: APIClient?
     private(set) var wsClient: WebSocketClient?
+    private(set) var transportPath: ConnectionTransportPath = .paired
+
+    private var discoveredLANEndpoint: LANDiscoveredEndpoint?
+    private var endpointSelection: EndpointSelection?
 
     /// Derived connection state for UI badges.
     var isConnected: Bool {
@@ -157,6 +161,9 @@ final class ServerConnection {
         disconnectSession()
         disconnectStream()
         reducer.reset()
+        discoveredLANEndpoint = nil
+        endpointSelection = nil
+        transportPath = .paired
         return configure(credentials: server.credentials)
     }
 
@@ -164,19 +171,68 @@ final class ServerConnection {
     /// Returns `false` if the credentials contain a malformed host.
     @discardableResult
     func configure(credentials: ServerCredentials) -> Bool {
-        guard let baseURL = credentials.baseURL else {
+        guard let selection = LANEndpointSelection.select(
+            credentials: credentials,
+            discoveredEndpoint: discoveredLANEndpoint
+        ) else {
             logger.error("Invalid server credentials: host=\(credentials.host) port=\(credentials.port)")
             return false
         }
+
         self.credentials = credentials
         self.currentServerId = credentials.normalizedServerFingerprint
+        self.endpointSelection = selection
+        self.transportPath = selection.transportPath
+
         self.apiClient = APIClient(
-            baseURL: baseURL,
+            baseURL: selection.baseURL,
             token: credentials.token,
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
         )
-        self.wsClient = WebSocketClient(credentials: credentials)
+        self.wsClient = WebSocketClient(
+            credentials: credentials,
+            preferredEndpoint: selection
+        )
+
         return true
+    }
+
+    func setDiscoveredLANEndpoint(_ endpoint: LANDiscoveredEndpoint?) {
+        discoveredLANEndpoint = endpoint
+        guard let credentials else { return }
+        guard let selection = LANEndpointSelection.select(
+            credentials: credentials,
+            discoveredEndpoint: endpoint
+        ) else {
+            return
+        }
+
+        let previousSelection = endpointSelection
+        endpointSelection = selection
+        transportPath = selection.transportPath
+
+        if previousSelection?.transportPath != selection.transportPath {
+            ClientLog.info(
+                "Network",
+                "Transport path changed",
+                metadata: [
+                    "from": previousSelection?.transportPath.rawValue ?? "unknown",
+                    "to": selection.transportPath.rawValue,
+                    "fromHost": previousSelection?.baseURL.host ?? "unknown",
+                    "toHost": selection.baseURL.host ?? "unknown",
+                ]
+            )
+        }
+
+        wsClient?.setPreferredEndpoint(selection)
+
+        if previousSelection?.baseURL != selection.baseURL {
+            apiClient = APIClient(
+                baseURL: selection.baseURL,
+                token: credentials.token,
+                tlsCertFingerprint: credentials.normalizedTLSCertFingerprint
+            )
+        }
     }
 
     // MARK: - Stream Lifecycle
@@ -205,6 +261,14 @@ final class ServerConnection {
             // WS is dead but task is waiting on a finished stream — clean up
             task.cancel()
             streamConsumptionTask = nil
+        }
+
+        // Don't tear down a healthy connection. wsClient.connect() calls
+        // disconnect() internally, which would drop a working socket just
+        // to re-establish it — causing an 8s+ re-entry delay while
+        // waitForConnection() blocks subscribe/get_queue sends.
+        if wsClient.status == .connected {
+            return
         }
 
         let stream = wsClient.connect()
@@ -254,12 +318,11 @@ final class ServerConnection {
             return
         }
 
-        // Resolve pending subscribe/unsubscribe waiters directly from stream
-        // routing, BEFORE yielding to the per-session stream. This prevents a
-        // deadlock where streamSession() awaits a subscribe command_result
-        // that only gets consumed after the per-session stream loop starts —
-        // which can't start until streamSession() returns.
-        resolveSubscribeWaiters(message)
+        // Resolve pending command waiters directly from stream routing,
+        // BEFORE yielding to the per-session stream. Commands sent during
+        // streamSession() setup (subscribe, get_queue) block before the
+        // consumer loop starts, so their results must be resolved eagerly.
+        resolveEagerCommands(message)
 
         // Route to per-session continuation if active
         if let sessionId, let cont = sessionContinuations[sessionId] {
@@ -273,16 +336,24 @@ final class ServerConnection {
         }
     }
 
-    /// Eagerly resolve subscribe/unsubscribe command results from stream routing.
+    /// Commands sent from `streamSession()` before the per-session stream
+    /// consumer starts. These must be resolved eagerly in `routeStreamMessage`
+    /// because the per-session `AsyncStream` isn't being consumed yet — the
+    /// consumer loop starts only after `streamSession()` returns.
+    private static let eagerResolveCommands: Set<String> = [
+        "subscribe", "unsubscribe", "get_queue",
+    ]
+
+    /// Eagerly resolve command results from stream routing for commands
+    /// sent during `streamSession()` setup.
     ///
-    /// Only these two commands need eager resolution — they're sent in
-    /// `streamSession()` before the per-session stream consumer starts.
-    /// Other commands (set_model, get_fork_messages, etc.) are sent while
-    /// the consumer is running and resolve normally through `handleCommandResult`.
-    private func resolveSubscribeWaiters(_ message: ServerMessage) {
+    /// Without this, `command_result` messages buffer in the per-session
+    /// `AsyncStream` (nobody consuming it yet) while `sendCommandAwaitingResult`
+    /// waits for the waiter to resolve — causing an 8s timeout.
+    private func resolveEagerCommands(_ message: ServerMessage) {
         guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
               let requestId,
-              command == "subscribe" || command == "unsubscribe" else {
+              Self.eagerResolveCommands.contains(command) else {
             return
         }
         _ = commands.resolveCommandResult(
@@ -707,13 +778,17 @@ final class ServerConnection {
             logger.debug("Initial queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
+        let transport = transportPath.rawValue
+        let endpointHost = endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
 
-        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) connect=\(connectMs)ms subscribe=\(subscribeMs)ms total=\(totalMs)ms")
+        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) connect=\(connectMs)ms subscribe=\(subscribeMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
             "wsStatus": String(describing: wsStatus),
             "connectMs": String(connectMs),
             "subscribeMs": String(subscribeMs),
             "totalMs": String(totalMs),
+            "transport": transport,
+            "endpointHost": endpointHost,
         ])
 
         syncNotificationSubscriptions()

@@ -58,7 +58,6 @@ struct ReliabilityTests {
         let client = WebSocketClient(
             credentials: makeTestCredentials(),
             waitForConnectionTimeout: .milliseconds(150),
-            waitPollInterval: .milliseconds(25),
             sendTimeout: .milliseconds(150)
         )
         client._setStatusForTesting(.connecting)
@@ -87,7 +86,6 @@ struct ReliabilityTests {
         let client = WebSocketClient(
             credentials: makeTestCredentials(),
             waitForConnectionTimeout: .milliseconds(150),
-            waitPollInterval: .milliseconds(25),
             sendTimeout: .milliseconds(150)
         )
         client._setStatusForTesting(.reconnecting(attempt: 1))
@@ -109,6 +107,84 @@ struct ReliabilityTests {
 
         let elapsed = ContinuousClock.now - start
         #expect(elapsed < .seconds(1), "Send should fail fast while reconnecting")
+    }
+
+    // MARK: - Event-Driven Connection Waiting
+
+    @MainActor
+    @Test func waitForConnectionResolvesImmediatelyWhenConnected() async {
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(),
+            waitForConnectionTimeout: .milliseconds(500),
+            sendTimeout: .milliseconds(500)
+        )
+        client._setStatusForTesting(.connected)
+
+        let start = ContinuousClock.now
+        // send() returns immediately when already connected (no socket = throws, but fast)
+        do {
+            try await client.send(.getState())
+        } catch {
+            // Expected — no real socket
+        }
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .milliseconds(100), "Should not poll when already connected (\(elapsed))")
+    }
+
+    @MainActor
+    @Test func waitForConnectionResolvesOnStatusTransition() async {
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(),
+            waitForConnectionTimeout: .seconds(5),
+            sendTimeout: .seconds(5)
+        )
+        client._setStatusForTesting(.connecting)
+
+        // Simulate connection completing after 50ms
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            client._setStatusForTesting(.connected)
+        }
+
+        let start = ContinuousClock.now
+        do {
+            try await client.send(.getState())
+        } catch {
+            // Expected — no real socket, but waited for connected first
+        }
+        let elapsed = ContinuousClock.now - start
+
+        // Should resolve in ~50ms (when status changes), not 5s (timeout)
+        #expect(elapsed < .milliseconds(500), "Should resolve on status change, not timeout (\(elapsed))")
+        #expect(elapsed >= .milliseconds(40), "Should wait for status change (\(elapsed))")
+    }
+
+    @MainActor
+    @Test func waitForConnectionResolvesOnDisconnect() async {
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(),
+            waitForConnectionTimeout: .seconds(5),
+            sendTimeout: .seconds(5)
+        )
+        client._setStatusForTesting(.reconnecting(attempt: 1))
+
+        // Simulate disconnect after 50ms
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            client._setStatusForTesting(.disconnected)
+        }
+
+        let start = ContinuousClock.now
+        do {
+            try await client.send(.getState())
+            Issue.record("Expected send failure on disconnect")
+        } catch {
+            // Expected
+        }
+        let elapsed = ContinuousClock.now - start
+
+        // Should resolve in ~50ms, not 5s
+        #expect(elapsed < .milliseconds(500), "Should resolve on disconnect, not timeout (\(elapsed))")
     }
 
     // MARK: - Fix 2: Extension Dialog Timeout
