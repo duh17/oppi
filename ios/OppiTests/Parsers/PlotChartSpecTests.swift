@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import Oppi
 
@@ -245,6 +246,7 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy.tickBudget(for: 200) == 4)
         #expect(PlotRenderPolicy.tickBudget(for: 320) == 5)
         #expect(PlotRenderPolicy.tickBudget(for: 390) == 6)
+        #expect(PlotRenderPolicy.tickBudget(for: 430) == 6)
         #expect(PlotRenderPolicy.tickBudget(for: 500) == 6)
     }
 
@@ -266,6 +268,33 @@ struct PlotRenderPolicyTests {
 
         #expect(PlotRenderPolicy(spec: spec, viewportWidth: 320).yTickCount == 4)
         #expect(PlotRenderPolicy(spec: spec, viewportWidth: 390).yTickCount == 5)
+    }
+
+    @Test("x visible tick count remains within mobile budgets")
+    func xVisibleTickCountRespectsMobileBudgets() {
+        let rows: [JSONValue] = (0..<80).map { index in
+            .object([
+                "x": .number(Double(index)),
+                "y": .number(Double(index) * 1.2),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ]
+        )
+
+        for width: CGFloat in [320, 390, 430] {
+            let policy = PlotRenderPolicy(spec: spec, viewportWidth: width)
+            #expect(policy.xVisibleTickCount >= 4)
+            #expect(policy.xVisibleTickCount <= 6)
+        }
     }
 
     @Test("render hints can tighten axis tick budgets")
@@ -561,6 +590,30 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy(spec: singleSeries, viewportWidth: 390).legendItemCount == 0)
     }
 
+    @Test("auto adjustment count is zero for already mobile-safe specs")
+    func autoAdjustmentCountZeroForMobileSafeSpecs() {
+        let spec = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2), "series": .string("A")]),
+                .object(["x": .number(2), "y": .number(3), "series": .string("A")]),
+                .object(["x": .number(1), "y": .number(1), "series": .string("B")]),
+                .object(["x": .number(2), "y": .number(2), "series": .string("B")]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                    "series": .string("series"),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
+        #expect(policy.legendVisible)
+        #expect(policy.autoAdjustmentCount == 0)
+    }
+
     @Test("vertical gridlines are disabled for dense x domains")
     func verticalGridlineDensityPolicy() {
         let sparseRows: [JSONValue] = (0..<4).map { index in
@@ -584,6 +637,34 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy(spec: sparseSpec, viewportWidth: 390).showVerticalGridlines)
         #expect(!PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showVerticalGridlines)
         #expect(PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showHorizontalGridlines)
+    }
+
+    @Test("auto adjustment count increases for dense charts")
+    func autoAdjustmentCountIncreasesForDenseCharts() {
+        let seriesValues = ["A", "B", "C", "D"]
+        let rows: [JSONValue] = (0..<80).map { index in
+            .object([
+                "x": .number(Double(index)),
+                "y": .number(Double(index % 10) + 1),
+                "series": .string(seriesValues[index % seriesValues.count]),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                    "series": .string("series"),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 320)
+        #expect(!policy.legendVisible)
+        #expect(policy.autoAdjustmentCount >= 3)
     }
 
     @Test("grid hints can force vertical gridlines off")
@@ -632,6 +713,7 @@ struct PlotRenderPolicyTests {
 
         let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
         #expect(policy.xTickValues == .automatic)
+        #expect(policy.xVisibleTickCount == 0)
         #expect(!policy.showVerticalGridlines)
     }
 
