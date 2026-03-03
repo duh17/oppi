@@ -30,43 +30,13 @@ import {
   validateLocalSessionPath,
   validateCwdAlignment,
 } from "../local-sessions.js";
-import type { ClientLogUploadRequest, Session } from "../types.js";
+import {
+  telemetryUploadsEnabledFromEnv,
+  type ClientLogUploadRequest,
+  type Session,
+} from "../types.js";
 import { ts } from "../log-utils.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-
-function remoteDiagnosticsUploadsEnabledFromEnv(): boolean {
-  const raw = process.env.OPPI_TELEMETRY_MODE?.trim().toLowerCase() ?? "";
-  if (!raw) {
-    return true;
-  }
-
-  switch (raw) {
-    case "internal":
-    case "debug":
-    case "test":
-    case "qa":
-    case "staging":
-    case "dev":
-    case "development":
-    case "enabled":
-    case "on":
-    case "true":
-    case "1":
-      return true;
-    case "public":
-    case "release":
-    case "prod":
-    case "production":
-    case "off":
-    case "disabled":
-    case "none":
-    case "false":
-    case "0":
-      return false;
-    default:
-      return false;
-  }
-}
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   function handleListWorkspaceSessions(workspaceId: string, res: ServerResponse): void {
@@ -375,7 +345,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!remoteDiagnosticsUploadsEnabledFromEnv()) {
+    if (!telemetryUploadsEnabledFromEnv()) {
       helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
       return;
     }
