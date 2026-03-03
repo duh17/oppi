@@ -78,13 +78,15 @@ struct DiffContentView: View {
                 UIPasteboard.general.string = DiffEngine.formatUnified(diffLines)
             }
         }
-        .fullScreenCover(isPresented: $showFullScreen) {
+        .sheet(isPresented: $showFullScreen) {
             FullScreenCodeView(content: .diff(
                 oldText: oldText,
                 newText: newText,
                 filePath: filePath,
                 precomputedLines: diffLines
             ))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 

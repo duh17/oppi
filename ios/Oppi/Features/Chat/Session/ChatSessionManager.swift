@@ -65,6 +65,7 @@ final class ChatSessionManager {
     private var freshContentLagStartMs: Int64?
     private var freshContentLagRecorded = false
     private var loadedFromCacheAtConnect = false
+    private var observedTransportPath: ConnectionTransportPath = .paired
 
     private var snapshotFlushInFlight = false
     private var lastSnapshotFlushAt: Date?
@@ -229,6 +230,7 @@ final class ChatSessionManager {
         let metricSessionId = sessionId
         let cachedTag = loadedFromCacheAtConnect ? "1" : "0"
         let metricWorkspaceId = workspaceId
+        let transportTag = observedTransportPath.rawValue
 
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
@@ -240,6 +242,7 @@ final class ChatSessionManager {
                 tags: [
                     "reason": reason,
                     "cache": cachedTag,
+                    "transport": transportTag,
                 ]
             )
         }
@@ -294,6 +297,7 @@ final class ChatSessionManager {
         markSyncStarted()
 
         // Measure stale-cache window: from session entry until first confirmed fresh content.
+        observedTransportPath = connection.transportPath
         beginFreshContentLagMeasurement(hadCache: false)
 
         transitionTo(.loadingCache)
@@ -448,11 +452,44 @@ final class ChatSessionManager {
             }
 
             markSyncSucceeded()
+            observedTransportPath = connection.transportPath
             let inboundMeta = _consumeInboundMetaForTesting?() ?? connection.wsClient?.consumeInboundMeta(sessionId: sessionId)
 
             switch entryState {
             case .awaitingConnected:
                 if case .connected = message {
+                    let transportTag = connection.transportPath.rawValue
+
+                    if let receivedAtMs = inboundMeta?.receivedAtMs {
+                        let dispatchLagMs = max(0, ChatMetricsService.nowMs() - receivedAtMs)
+                        let dispatchMetricSessionId = sessionId
+                        Task.detached(priority: .utility) {
+                            await ChatMetricsService.shared.record(
+                                metric: .wsDecodeMs,
+                                value: Double(dispatchLagMs),
+                                unit: .ms,
+                                sessionId: dispatchMetricSessionId,
+                                tags: [
+                                    "type": "connected",
+                                    "stage": "session_loop_dispatch",
+                                    "transport": transportTag,
+                                ]
+                            )
+                        }
+
+                        if dispatchLagMs >= 1_000 {
+                            ClientLog.error(
+                                "WebSocket",
+                                "Connected message dispatch lag",
+                                metadata: [
+                                    "sessionId": sessionId,
+                                    "transport": transportTag,
+                                    "lagMs": String(dispatchLagMs),
+                                ]
+                            )
+                        }
+                    }
+
                     // Record time from WS open to first .connected message.
                     if !hasReceivedConnected {
                         let wsConnectDurationMs = max(0, ChatMetricsService.nowMs() - wsOpenStartMs)
@@ -462,7 +499,10 @@ final class ChatSessionManager {
                                 metric: .wsConnectMs,
                                 value: Double(wsConnectDurationMs),
                                 unit: .ms,
-                                sessionId: wsMetricSessionId
+                                sessionId: wsMetricSessionId,
+                                tags: [
+                                    "transport": transportTag,
+                                ]
                             )
                         }
                     }

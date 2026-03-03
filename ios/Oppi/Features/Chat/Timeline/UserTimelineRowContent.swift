@@ -326,20 +326,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     }
 
     private func presentFullScreenImage(_ image: UIImage) {
-        guard let vc = findViewController() else { return }
-        let zoomVC = FullScreenImageViewController(image: image)
-        // Use .overFullScreen to prevent SwiftUI lifecycle churn (onDisappear/onAppear).
-        zoomVC.modalPresentationStyle = .overFullScreen
-        vc.present(zoomVC, animated: true)
-    }
-
-    private func findViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let next = responder?.next {
-            if let vc = next as? UIViewController { return vc }
-            responder = next
-        }
-        return nil
+        ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
     }
 
     @objc private func handleBubbleDoubleTapCopy() {

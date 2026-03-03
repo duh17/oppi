@@ -46,15 +46,15 @@ All chat metrics are emitted from iOS and validated by server allowlists in `ser
 | `chat.catchup_ring_miss` | `count` | `ChatSessionManager.swift` | none | Ring-buffer miss rate |
 | `chat.timeline_apply_ms` | `ms` | `ios/Oppi/Features/Chat/Timeline/ChatTimelinePerf.swift` | `items`,`changed` | UI apply jank guardrail |
 | `chat.timeline_layout_ms` | `ms` | `ChatTimelinePerf.swift` | `items` | UI layout jank guardrail |
-| `chat.ws_decode_ms` | `ms` | `ios/Oppi/Core/Networking/WebSocketClient.swift` | `type` | Stream decode regression detection |
+| `chat.ws_decode_ms` | `ms` | `ios/Oppi/Core/Networking/WebSocketClient.swift`, `ChatSessionManager.swift` | `type`,`stage`,`transport` | Decode and main-thread handoff lag isolation |
 | `chat.coalescer_flush_events` | `count` | `ios/Oppi/Core/Runtime/DeltaCoalescer.swift` | none | Burst-shaping observability |
 | `chat.coalescer_flush_bytes` | `count` | `DeltaCoalescer.swift` | none | Burst payload sizing |
 | `chat.inbound_queue_depth` | `count` | `WebSocketClient.swift` | none | Backpressure/high-water visibility |
 | `chat.full_reload_ms` | `ms` | `ChatSessionManager.swift` | `traceEvents` | Full-history reload budget |
-| `chat.fresh_content_lag_ms` | `ms` | `ChatSessionManager.swift` | `reason`,`cache` | Time-to-fresh-content after entering session |
+| `chat.fresh_content_lag_ms` | `ms` | `ChatSessionManager.swift` | `reason`,`cache`,`transport` | Time-to-fresh-content after entering session |
 | `chat.cache_load_ms` | `ms` | `ChatSessionManager.swift` | `hit`,`events` | Cache load performance |
 | `chat.reducer_load_ms` | `ms` | `ChatSessionManager.swift` | `source`,`events`,`items` | Timeline reduction/build cost |
-| `chat.ws_connect_ms` | `ms` | `ChatSessionManager.swift` | none | WS connect latency tracking |
+| `chat.ws_connect_ms` | `ms` | `ChatSessionManager.swift` | `transport` | WS connect latency tracking by path |
 | `chat.voice_prewarm_ms` | `ms` | `ios/Oppi/Core/Services/VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status` | Voice prewarm readiness |
 | `chat.voice_setup_ms` | `ms` | `VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status`,`path` | Voice start pipeline latency |
 | `chat.voice_first_result_ms` | `ms` | `VoiceInputManager.swift` | `engine`,`locale`,`source`,`phase`,`status`,`result_type` | Voice first-result latency |

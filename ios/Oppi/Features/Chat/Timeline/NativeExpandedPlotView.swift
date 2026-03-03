@@ -24,7 +24,14 @@ final class NativeExpandedPlotView: UIView {
         guard signature != renderSignature else { return }
         renderSignature = signature
 
-        let rootView = PlotChartContainerView(spec: spec, fallbackText: fallbackText)
+        let rootView = PlotChartContainerView(
+            spec: spec,
+            fallbackText: fallbackText,
+            onRequestFullScreen: { [weak self] spec, fallbackText in
+                self?.presentFullScreenPlot(spec: spec, fallbackText: fallbackText)
+            },
+            isFullScreen: false
+        )
         if let hostingController {
             hostingController.rootView = rootView
             return
@@ -44,28 +51,83 @@ final class NativeExpandedPlotView: UIView {
 
         self.hostingController = hostingController
     }
+
+    @MainActor
+    private func presentFullScreenPlot(spec: PlotChartSpec, fallbackText: String?) {
+        ToolTimelineRowPresentationHelpers.presentFullScreenPlot(
+            spec: spec,
+            fallbackText: fallbackText,
+            from: self
+        )
+    }
 }
 
 private struct PlotChartContainerView: View {
     let spec: PlotChartSpec
     let fallbackText: String?
+    let onRequestFullScreen: ((PlotChartSpec, String?) -> Void)?
+    let isFullScreen: Bool
 
     @State private var selectedX: Double?
     @State private var selectedXRange: ClosedRange<Double>?
     @State private var lastTelemetrySignature: Int?
 
     private var chartHeight: CGFloat {
-        let preferred = spec.preferredHeight ?? 220
-        return min(320, max(160, CGFloat(preferred)))
+        let preferred = CGFloat(spec.preferredHeight ?? 220)
+        if isFullScreen {
+            return min(520, max(240, preferred + 120))
+        }
+        return min(320, max(160, preferred))
+    }
+
+    private var hasHeaderTitle: Bool {
+        if let title = spec.title {
+            return !title.isEmpty
+        }
+        return false
+    }
+
+    private var canPresentFullScreen: Bool {
+        !isFullScreen && onRequestFullScreen != nil
+    }
+
+    private var effectiveInteraction: PlotChartSpec.Interaction {
+        guard isFullScreen else {
+            return spec.interaction
+        }
+
+        var interaction = spec.interaction
+        interaction.scrollableX = false
+        interaction.xVisibleDomainLength = nil
+        return interaction
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let title = spec.title, !title.isEmpty {
-                Text(title)
-                    .font(.caption.bold())
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(2)
+            if hasHeaderTitle || canPresentFullScreen {
+                HStack(alignment: .top, spacing: 8) {
+                    if let title = spec.title, !title.isEmpty {
+                        Text(title)
+                            .font(.caption.bold())
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if canPresentFullScreen {
+                        Button {
+                            onRequestFullScreen?(spec, fallbackText)
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.themeComment)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open chart full screen")
+                        .accessibilityIdentifier("plot.expand.fullscreen")
+                    }
+                }
             }
 
             chartView
@@ -89,7 +151,13 @@ private struct PlotChartContainerView: View {
                 Text(fallbackText)
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
-                    .lineLimit(3)
+                    .lineLimit(isFullScreen ? 6 : 3)
+            }
+
+            if isFullScreen {
+                Text("Tip: rotate to landscape for a wider plot view")
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
             }
         }
         .padding(8)
@@ -102,15 +170,20 @@ private struct PlotChartContainerView: View {
             let telemetrySnapshot = PlotTelemetrySnapshot(
                 xVisibleTickCount: renderPolicy.xVisibleTickCount,
                 legendItemCount: renderPolicy.legendItemCount,
-                scrollEnabled: spec.interaction.scrollableX,
+                scrollEnabled: effectiveInteraction.scrollableX,
                 autoAdjustmentCount: renderPolicy.autoAdjustmentCount
             )
 
-            chartView(renderPolicy: renderPolicy)
-                .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
-                .task(id: telemetrySnapshot) {
-                    await emitPlotTelemetryIfNeeded(snapshot: telemetrySnapshot)
-                }
+            if isFullScreen {
+                chartView(renderPolicy: renderPolicy)
+                    .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
+            } else {
+                chartView(renderPolicy: renderPolicy)
+                    .frame(width: proxy.size.width, height: chartHeight, alignment: .leading)
+                    .task(id: telemetrySnapshot) {
+                        await emitPlotTelemetryIfNeeded(snapshot: telemetrySnapshot)
+                    }
+            }
         }
         .frame(height: chartHeight)
     }
@@ -134,8 +207,8 @@ private struct PlotChartContainerView: View {
         }
         .frame(height: chartHeight)
 
-        if spec.interaction.scrollableX {
-            if let length = spec.interaction.xVisibleDomainLength,
+        if effectiveInteraction.scrollableX {
+            if let length = effectiveInteraction.xVisibleDomainLength,
                length > 0 {
                 applyXSelectionIfNeeded(
                     base
@@ -193,8 +266,8 @@ private struct PlotChartContainerView: View {
 
     @ViewBuilder
     private func applyXSelectionIfNeeded<Content: View>(_ view: Content) -> some View {
-        if spec.interaction.xSelection {
-            if spec.interaction.xRangeSelection {
+        if effectiveInteraction.xSelection {
+            if effectiveInteraction.xRangeSelection {
                 view.chartXSelection(range: $selectedXRange)
             } else {
                 view.chartXSelection(value: $selectedX)
@@ -438,6 +511,46 @@ private struct PlotChartContainerView: View {
     }
 }
 
+struct PlotFullScreenView: View {
+    let spec: PlotChartSpec
+    let fallbackText: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            PlotChartContainerView(
+                spec: spec,
+                fallbackText: fallbackText,
+                onRequestFullScreen: nil,
+                isFullScreen: true
+            )
+            .navigationTitle(spec.title ?? "Chart")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .accessibilityLabel("Dismiss chart")
+                    .accessibilityIdentifier("plot.fullscreen.dismiss")
+                }
+            }
+        }
+    }
+}
+
+final class FullScreenPlotViewController: UIHostingController<PlotFullScreenView> {
+    init(spec: PlotChartSpec, fallbackText: String?) {
+        super.init(rootView: PlotFullScreenView(spec: spec, fallbackText: fallbackText))
+    }
+
+    @available(*, unavailable)
+    @MainActor dynamic required init?(coder aDecoder: NSCoder) { nil }
+}
+
 struct PlotTelemetrySnapshot: Sendable, Equatable, Hashable {
     let xVisibleTickCount: Int
     let legendItemCount: Int
@@ -546,28 +659,34 @@ struct PlotRenderPolicy: Sendable, Equatable {
         }
     }
 
+    private struct LegendPolicy: Sendable, Equatable {
+        let visible: Bool
+        let itemCount: Int
+        let adjusted: Bool
+    }
+
     private static func resolveLegendPolicy(
         seriesCount: Int,
         hints: PlotChartSpec.RenderHints.Legend?
-    ) -> (visible: Bool, itemCount: Int, adjusted: Bool) {
+    ) -> LegendPolicy {
         let safeMaxItems = max(1, min(3, hints?.maxItems ?? 3))
         let mode = hints?.mode ?? .auto
 
         switch mode {
         case .auto:
             if seriesCount >= 2 && seriesCount <= safeMaxItems {
-                return (true, min(seriesCount, safeMaxItems), false)
+                return LegendPolicy(visible: true, itemCount: min(seriesCount, safeMaxItems), adjusted: false)
             }
-            return (false, 0, seriesCount > 0)
+            return LegendPolicy(visible: false, itemCount: 0, adjusted: seriesCount > 0)
 
         case .show:
             if seriesCount >= 1 && seriesCount <= safeMaxItems {
-                return (true, min(seriesCount, safeMaxItems), false)
+                return LegendPolicy(visible: true, itemCount: min(seriesCount, safeMaxItems), adjusted: false)
             }
-            return (false, 0, seriesCount > safeMaxItems)
+            return LegendPolicy(visible: false, itemCount: 0, adjusted: seriesCount > safeMaxItems)
 
         case .hide, .inline:
-            return (false, 0, false)
+            return LegendPolicy(visible: false, itemCount: 0, adjusted: false)
         }
     }
 

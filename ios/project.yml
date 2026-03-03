@@ -84,6 +84,8 @@ targets:
         NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
         NSPhotoLibraryUsageDescription: "Oppi accesses your photo library to attach images to agent conversations."
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your Mac server."
+        NSBonjourServices:
+          - "_oppi._tcp"
         NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
         NSSpeechRecognitionUsageDescription: "Oppi uses on-device speech recognition to convert your voice into text."
         NSFaceIDUsageDescription: "Oppi uses Face ID to confirm approval of high-risk agent actions like sudo, force push, and recursive deletes."
