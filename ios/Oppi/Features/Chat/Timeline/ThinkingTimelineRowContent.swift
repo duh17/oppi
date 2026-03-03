@@ -64,6 +64,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private var fadeApplied = false
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
+    private let fullScreenThinkingStream: ThinkingTraceStream
 
     private lazy var bubbleDoubleTapGesture: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleBubbleDoubleTap))
@@ -88,6 +89,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
     init(configuration: ThinkingTimelineRowConfiguration) {
         self.currentConfiguration = configuration
+        let initialText = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.fullScreenThinkingStream = ThinkingTraceStream(
+            text: initialText,
+            isDone: configuration.isDone
+        )
         super.init(frame: .zero)
         setupViews()
         apply(configuration: configuration)
@@ -275,6 +281,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         titleLabel.textColor = UIColor(palette.comment)
 
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
 
         if configuration.isDone {
             // Done: hide header, show bubble with brain icon + text.
@@ -498,7 +505,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     func showFullScreen() {
         guard canShowFullScreen else { return }
 
-        let content = FullScreenCodeContent.thinking(content: trimmedDisplayText)
+        let content = FullScreenCodeContent.thinking(
+            content: trimmedDisplayText,
+            stream: fullScreenThinkingStream
+        )
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(content, from: self)
     }
 
