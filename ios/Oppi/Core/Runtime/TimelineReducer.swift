@@ -204,6 +204,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             _lastLoadWasIncrementalForTesting = false
         }
 
+        // Preserve locally-added user messages that aren't yet in the trace.
+        // Race condition: user sends a message (appendUserMessage adds it locally),
+        // then a background history reload completes with a stale trace that
+        // predates the JSONL write. The full rebuild would clear the optimistic
+        // user message, and streaming events never re-emit it. Capture orphans
+        // here and re-append them after the rebuild.
+        let traceIDs = Set(events.map(\.id))
+        let orphanedUserMessages = items.filter { item in
+            if case .userMessage(let id, _, _, _) = item {
+                return !traceIDs.contains(id)
+            }
+            return false
+        }
+
         items.removeAll()
         itemIndex.clear()
         clearTurnBuffers()
@@ -221,12 +235,24 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
         }
 
+        // Re-append orphaned user messages so they survive the rebuild.
+        // These appear at the tail (most recent) since they were sent after
+        // the trace snapshot was taken.
+        for orphan in orphanedUserMessages {
+            items.append(orphan)
+            indexAppend(orphan)
+        }
+
         loadedTraceEventIDs = events.map(\.id)
         rebuildIndex()
         bumpRenderVersion()
-        timelineMatchesTrace = true
+        // If we preserved orphans, the timeline no longer exactly matches the
+        // trace — force a full rebuild on the next loadSession so the orphans
+        // get reconciled once the trace catches up.
+        timelineMatchesTrace = orphanedUserMessages.isEmpty
 
-        loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items")
+        let orphanInfo = orphanedUserMessages.isEmpty ? "" : " (preserved \(orphanedUserMessages.count) local user msgs)"
+        loadSessionLog.info("[loadSession] full rebuild: \(events.count) events → \(self.items.count) items\(orphanInfo)")
 
         prewarmMarkdownCache(for: assistantTextsToCache)
     }

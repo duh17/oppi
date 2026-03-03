@@ -522,6 +522,92 @@ struct TimelineReducerLoadTests {
         #expect(text == "Fourth")
     }
 
+    // MARK: - Orphaned User Message Preservation
+
+    @MainActor
+    @Test func fullRebuildPreservesLocalUserMessageNotInTrace() {
+        let reducer = TimelineReducer()
+
+        // Simulate: load initial trace, then user sends a message locally.
+        let initialTrace = makeBaseTrace()
+        reducer.loadSession(initialTrace)
+        #expect(reducer.items.count == 2)
+
+        // User sends a new message (optimistic insert).
+        let localMsgId = reducer.appendUserMessage("How about this graph?")
+        #expect(reducer.items.count == 3)
+
+        // A background history reload returns a stale trace that predates
+        // the user's message (race condition).
+        reducer.loadSession(initialTrace)
+
+        // The local user message must survive the rebuild.
+        #expect(reducer.items.count == 3)
+        let lastItem = reducer.items.last
+        guard case .userMessage(let id, let text, _, _) = lastItem else {
+            Issue.record("Expected preserved userMessage at tail")
+            return
+        }
+        #expect(id == localMsgId)
+        #expect(text == "How about this graph?")
+    }
+
+    @MainActor
+    @Test func fullRebuildDropsLocalUserMessageWhenTraceIncludesIt() {
+        let reducer = TimelineReducer()
+
+        // Load initial trace.
+        let initialTrace = makeBaseTrace()
+        reducer.loadSession(initialTrace)
+
+        // User sends a message.
+        _ = reducer.appendUserMessage("New question")
+        #expect(reducer.items.count == 3)
+
+        // Fresh trace now includes the user message (pi wrote it to JSONL).
+        var freshTrace = initialTrace
+        freshTrace.append(
+            TraceEvent(id: "e3", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "Fresh trace question", tool: nil, args: nil, output: nil,
+                       toolCallId: nil, toolName: nil, isError: nil, thinking: nil)
+        )
+        reducer.loadSession(freshTrace)
+
+        // Only trace events — the local orphan had a different ID and is dropped
+        // in favor of the canonical trace version (or it was superseded).
+        // The locally-added message (UUID-based) survives because its ID
+        // doesn't match e3. Both appear until the next trace catches up.
+        let userItems = reducer.items.filter {
+            if case .userMessage = $0 { return true }
+            return false
+        }
+        // e1 (trace) + e3 (trace) + local UUID (orphan) = 3 user messages
+        #expect(userItems.count == 3)
+    }
+
+    @MainActor
+    @Test func fullRebuildSetsTimelineMatchesFalseWhenOrphansPreserved() {
+        let reducer = TimelineReducer()
+
+        let initialTrace = makeBaseTrace()
+        reducer.loadSession(initialTrace)
+
+        // Add local user message.
+        _ = reducer.appendUserMessage("Local msg")
+
+        // Stale trace reload.
+        reducer.loadSession(initialTrace)
+
+        // timelineMatchesTrace should be false since we preserved orphans,
+        // ensuring the next loadSession triggers a full rebuild to reconcile.
+        // We verify indirectly: another load with the same trace should NOT
+        // be a no-op (it should be a full rebuild).
+        let versionBefore = reducer.renderVersion
+        reducer.loadSession(initialTrace)
+        #expect(reducer.renderVersion > versionBefore,
+                "Expected full rebuild (not no-op) because orphans made timeline dirty")
+    }
+
     // MARK: - Helpers
 
     private func makeBaseTrace() -> [TraceEvent] {

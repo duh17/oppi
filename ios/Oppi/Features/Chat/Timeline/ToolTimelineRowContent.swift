@@ -164,6 +164,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedMarkdownHeightCacheWidth: Int?
     private var expandedMarkdownHeightCacheValue: CGFloat?
     private var expandedPinchDidTriggerFullScreen = false
+    private let fullScreenTerminalStream: TerminalTraceStream
     private let expandFloatingButton = UIButton(type: .system)
 
     private lazy var commandDoubleTapGesture: UITapGestureRecognizer = {
@@ -219,6 +220,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     init(configuration: ToolTimelineRowConfiguration) {
         self.currentConfiguration = configuration
+        self.fullScreenTerminalStream = TerminalTraceStream(
+            output: configuration.copyOutputText ?? "",
+            command: configuration.copyCommandText,
+            isDone: configuration.isDone
+        )
         super.init(frame: .zero)
         setupViews()
         apply(configuration: configuration)
@@ -836,6 +842,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let previousConfiguration = currentConfiguration
         let isExpandingTransition = !previousConfiguration.isExpanded && configuration.isExpanded
         currentConfiguration = configuration
+
+        fullScreenTerminalStream.update(
+            output: configuration.copyOutputText ?? "",
+            command: configuration.copyCommandText,
+            isDone: configuration.isDone
+        )
 
         ToolTimelineRowDisplayState.applyTitle(
             configuration: configuration,
@@ -1537,7 +1549,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: currentConfiguration,
             outputCopyText: outputCopyText,
-            interactionPolicy: currentInteractionPolicy
+            interactionPolicy: currentInteractionPolicy,
+            terminalStream: fullScreenTerminalStream
         )
     }
 

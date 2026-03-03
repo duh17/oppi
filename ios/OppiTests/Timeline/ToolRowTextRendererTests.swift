@@ -277,18 +277,16 @@ struct TruncationTests {
         #expect(result == "abcde…trunc")
     }
 
-    @Test func displayCommandTextTruncatesLongCommands() {
+    @Test func displayCommandTextKeepsLongCommandsIntact() {
         let long = String(repeating: "x", count: ToolRowTextRenderer.maxRenderedCommandCharacters + 100)
         let result = ToolRowTextRenderer.displayCommandText(long)
-        #expect(result.count < long.count)
-        #expect(result.hasSuffix("command truncated for display"))
+        #expect(result == long)
     }
 
-    @Test func displayOutputTextTruncatesLongOutput() {
+    @Test func displayOutputTextKeepsLongOutputIntact() {
         let long = String(repeating: "y", count: ToolRowTextRenderer.maxRenderedOutputCharacters + 100)
         let result = ToolRowTextRenderer.displayOutputText(long)
-        #expect(result.count < long.count)
-        #expect(result.contains("Use Copy"))
+        #expect(result == long)
     }
 
     @Test func shortCommandNotTruncated() {
