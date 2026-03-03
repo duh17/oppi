@@ -761,6 +761,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         timelineMatchesTrace = false
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Append a locally generated audio clip to the timeline.
     func appendAudioClip(title: String, fileURL: URL) {
         let item = ChatItem.audioClip(

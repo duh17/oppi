@@ -71,10 +71,6 @@ struct MessageQueueContainer: View {
         }
     }
 
-    private var totalCount: Int {
-        draftSteering.count + draftFollowUp.count
-    }
-
     private var header: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.18)) {

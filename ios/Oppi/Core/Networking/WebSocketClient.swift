@@ -770,6 +770,7 @@ final class WebSocketClient {
         return max(1, Int((wholeMs + fractionalMs).rounded(.up)))
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Test seam for deterministic send/reconnect behavior tests.
     func _setStatusForTesting(_ status: Status) {
         self.status = status
@@ -778,16 +779,19 @@ final class WebSocketClient {
         }
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Test seam: read subscription level for a session.
     func _activeSubscriptionForTesting(_ sessionId: String) -> StreamSubscriptionLevel? {
         activeSubscriptions[sessionId]
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Test seam: exercise pre-track subscription logic without a real send.
     func _preTrackSubscriptionForTesting(_ message: ClientMessage) {
         preTrackSubscription(message)
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Test seam: exercise rollback logic without a real send failure.
     func _rollbackPreTrackSubscriptionForTesting(_ message: ClientMessage) {
         rollbackPreTrackSubscription(message)

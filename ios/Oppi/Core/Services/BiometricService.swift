@@ -47,6 +47,7 @@ final class BiometricService {
 
     // MARK: - Capability Check
 
+    // periphery:ignore - API surface for biometric lock feature
     /// Whether the device supports any form of biometric auth.
     var isBiometricAvailable: Bool {
         let context = LAContext()

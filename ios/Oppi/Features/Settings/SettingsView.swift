@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
     @Environment(ThemeStore.self) private var themeStore

@@ -43,6 +43,7 @@ enum KeychainService {
         SecItemDelete(sharedQuery(account: account) as CFDictionary)
     }
 
+    // periphery:ignore - used by ConnectionCoordinatorTests via @testable import
     /// Delete ALL server entries. Test use only.
     static func deleteAllServers() {
         let query: [String: Any] = [

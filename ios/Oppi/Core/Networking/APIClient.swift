@@ -33,6 +33,7 @@ actor APIClient {
         )
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Test-only init with custom URLSessionConfiguration.
     init(
         baseURL: URL,
@@ -95,6 +96,7 @@ actor APIClient {
         return sessions.sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Create a new session in a target workspace.
     ///
     /// If `workspaceId` is nil, the first available workspace is used.
@@ -203,6 +205,7 @@ actor APIClient {
 
     // MARK: - Permissions
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Resolve a pending permission request through REST.
     ///
     /// Used by action surfaces that may not have a live WebSocket (for example,
@@ -259,6 +262,7 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).workspaces
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Get a single workspace.
     func getWorkspace(id: String) async throws -> Workspace {
         let data = try await get("/workspaces/\(id)")
@@ -414,6 +418,7 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).skills
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Rescan host skills (e.g. after adding a new skill on the server).
     func rescanSkills() async throws -> [SkillInfo] {
         let data = try await post("/skills/rescan", body: EmptyBody())
@@ -441,6 +446,7 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).content
     }
 
+    // periphery:ignore - API surface for future skills editor UI
     /// Create or update a user skill via inline content.
     ///
     /// Calls `PUT /me/skills/:name` with SKILL.md content and optional extra files.
@@ -522,6 +528,7 @@ actor APIClient {
         try await stopSession(workspaceId: workspaceId, id: sessionId)
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Get session detail via workspace path.
     func getWorkspaceSession(
         workspaceId: String,
@@ -638,6 +645,7 @@ actor APIClient {
         _ = try await post("/me/device-token", body: Body(deviceToken: token, tokenType: tokenType))
     }
 
+    // periphery:ignore - used by APIClientTests via @testable import
     /// Unregister APNs device token.
     func unregisterDeviceToken(_ token: String) async throws {
         struct Body: Encodable { let deviceToken: String }

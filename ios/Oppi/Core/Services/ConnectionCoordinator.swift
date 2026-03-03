@@ -44,7 +44,7 @@ final class ConnectionCoordinator {
 
     private let lanDiscovery = LANDiscovery()
 
-    // Convenience: `connection` forwards to `activeConnection`.
+    // periphery:ignore - used by RestorationStateTests via @testable import
     var connection: ServerConnection { activeConnection }
 
     init(serverStore: ServerStore) {
@@ -82,6 +82,7 @@ final class ConnectionCoordinator {
         return conn
     }
 
+    // periphery:ignore - intentional API surface; connectAllStreams() is the current call site
     /// Open `/stream` WebSocket for a server's connection (if not already connected).
     func connectStream(for serverId: String) {
         connections[serverId]?.connectStream()
@@ -101,6 +102,7 @@ final class ConnectionCoordinator {
         lanDiscovery.start()
     }
 
+    // periphery:ignore - intentional API surface; companion to startLANDiscovery()
     func stopLANDiscovery() {
         lanDiscovery.stop()
     }
@@ -115,6 +117,7 @@ final class ConnectionCoordinator {
     }
 
 #if DEBUG
+    // periphery:ignore - used by OppiTests via @testable import
     func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) {
         applyLANDiscovery(endpoints)
     }
@@ -372,6 +375,7 @@ final class ConnectionCoordinator {
         let connection: ServerConnection
     }
 
+    // periphery:ignore - used by ConnectionCoordinatorTests via @testable import
     /// All sessions across all servers, ordered by last activity.
     var allSessions: [Session] {
         connections.values
@@ -384,6 +388,7 @@ final class ConnectionCoordinator {
         connections.values.flatMap { $0.permissionStore.pending }
     }
 
+    // periphery:ignore - used by ConnectionCoordinatorTests via @testable import
     /// Total pending permission count across all servers.
     var allPendingPermissionCount: Int {
         connections.values.reduce(0) { $0 + $1.permissionStore.count }

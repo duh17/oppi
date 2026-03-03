@@ -168,7 +168,7 @@ final class FullScreenImageViewController: UIViewController {
         present(activity, animated: true)
     }
 
-    @objc private func saveTapped(_ sender: UIBarButtonItem) {
+    @objc private func saveTapped(_: UIBarButtonItem) {
         PhotoLibrarySaver.save(image)
         showSavedFeedback()
     }

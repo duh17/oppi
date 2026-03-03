@@ -17,6 +17,7 @@ final class BaselineSafeTextView: UITextView {
 
     // MARK: - Baseline safety
 
+    // periphery:ignore - @objc override of UIKit private baseline query; prevents assertion during detach
     /// Override UIKit's private baseline query to prevent the assertion
     /// that fires when the text view is between superview attachment.
     @objc func _firstBaselineOffsetFromTop() -> CGFloat {
@@ -26,6 +27,7 @@ final class BaselineSafeTextView: UITextView {
         return textContainerInset.top + fontAscent
     }
 
+    // periphery:ignore - @objc override of UIKit private baseline query; prevents assertion during detach
     @objc func _lastBaselineOffsetFromBottom() -> CGFloat {
         let fontDescender = font?.descender ?? UIFont.preferredFont(forTextStyle: .body).descender
         return textContainerInset.bottom - fontDescender

@@ -12,6 +12,7 @@ enum ToolCallFormatting {
         normalized(name) == "read"
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     static func isWriteTool(_ name: String) -> Bool {
         normalized(name) == "write"
     }
@@ -239,21 +240,4 @@ enum ToolCallFormatting {
         return DiffStats(added: stats.added, removed: stats.removed)
     }
 
-    // MARK: - Preview Extraction
-
-    /// Extract tail lines from text (for bash collapsed preview).
-    static func tailLines(_ text: String, count: Int = 3) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.suffix(count).joined(separator: "\n")
-    }
-
-    /// Extract head lines from text (for read collapsed preview).
-    static func headLines(_ text: String, count: Int = 3) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.prefix(count).joined(separator: "\n")
-    }
 }

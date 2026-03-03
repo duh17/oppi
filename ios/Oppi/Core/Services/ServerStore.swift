@@ -37,6 +37,7 @@ final class ServerStore {
         saveIndex()
     }
 
+    // periphery:ignore - used by ServerStoreTests via @testable import
     /// Add or update from validated `ServerCredentials`.
     /// Returns the `PairedServer` (new or updated), or `nil` if credentials lack a fingerprint.
     @discardableResult
@@ -83,6 +84,7 @@ final class ServerStore {
         servers.first { $0.id == id }
     }
 
+    // periphery:ignore - used by ServerStoreTests via @testable import
     /// Look up which server owns a given host:port combination.
     func server(forHost host: String, port: Int) -> PairedServer? {
         servers.first { $0.host == host && $0.port == port }
