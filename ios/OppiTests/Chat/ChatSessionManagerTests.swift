@@ -1130,6 +1130,69 @@ struct ChatSessionManagerTests {
             thinking: nil
         )
     }
+
+    // MARK: - WSS Connect Dispatch Lag
+
+    /// Reproduces the ~8s `session_loop_dispatch` lag observed in production.
+    ///
+    /// Root cause: `streamSession()` blocks on subscribe + get_queue round-trips
+    /// while `.connected` sits buffered in the per-session AsyncStream. The session
+    /// loop in `ChatSessionManager.connect()` can't consume until `streamSession()`
+    /// returns.
+    ///
+    /// This test verifies that `.connected` is processed promptly after the stream
+    /// starts, rather than being delayed by upstream blocking.
+    @MainActor
+    @Test func connectedMessageIsProcessedWithoutExcessiveDispatchLag() async {
+        let sessionId = "dispatch-lag-test"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectStartMs = ChatMetricsService.nowMs()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        // Wait for stream to be created
+        #expect(await streams.waitForCreated(1))
+
+        // Yield .connected with inbound meta (simulating WS receive)
+        let connectedYieldMs = ChatMetricsService.nowMs()
+        manager._consumeInboundMetaForTesting = {
+            WebSocketClient.InboundMeta(seq: nil, currentSeq: 0, receivedAtMs: connectedYieldMs)
+        }
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+
+        // Wait for streaming state
+        let reachedStreaming = await waitForTestCondition(timeoutMs: 2_000) {
+            await MainActor.run { manager.entryState == .streaming }
+        }
+        let streamingReachedMs = ChatMetricsService.nowMs()
+        let dispatchLagMs = streamingReachedMs - connectedYieldMs
+        let totalMs = streamingReachedMs - connectStartMs
+
+        #expect(reachedStreaming, "Should reach .streaming state")
+
+        // The dispatch lag from connected-yield to streaming-state should be well under 1s.
+        // In production, this is ~8s because streamSession() blocks on subscribe.
+        // With test seams (no real WS), it should be near-instant.
+        #expect(dispatchLagMs < 500, "Dispatch lag was \(dispatchLagMs)ms — connected message should be processed promptly")
+        #expect(totalMs < 2_000, "Total connect time was \(totalMs)ms — should be fast with scripted stream")
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
 }
 
 private struct HistoryReloadCall: Equatable, Sendable {
