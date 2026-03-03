@@ -1,6 +1,48 @@
 import SwiftUI
 import UIKit
 
+final class ThinkingTraceStream {
+    struct Snapshot: Equatable {
+        let text: String
+        let isDone: Bool
+    }
+
+    private var snapshotStorage: Snapshot
+    private var observers: [UUID: (Snapshot) -> Void] = [:]
+
+    init(text: String, isDone: Bool) {
+        snapshotStorage = Snapshot(text: text, isDone: isDone)
+    }
+
+    var snapshot: Snapshot {
+        snapshotStorage
+    }
+
+    func update(text: String, isDone: Bool) {
+        let next = Snapshot(text: text, isDone: isDone)
+        guard next != snapshotStorage else { return }
+
+        snapshotStorage = next
+        for observer in observers.values {
+            observer(next)
+        }
+    }
+
+    @discardableResult
+    func addObserver(deliverImmediately: Bool = true, _ observer: @escaping (Snapshot) -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        if deliverImmediately {
+            observer(snapshotStorage)
+        }
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observers.removeValue(forKey: id)
+    }
+}
+
 /// Full-screen content viewer for tool output.
 ///
 /// Supports three modes:
@@ -11,7 +53,7 @@ enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
     case markdown(content: String, filePath: String?)
-    case thinking(content: String)
+    case thinking(content: String, stream: ThinkingTraceStream? = nil)
     case terminal(content: String, command: String?)
 }
 
