@@ -1193,6 +1193,131 @@ struct ChatSessionManagerTests {
         await connectTask.value
         manager.cleanup()
     }
+
+    // MARK: - Meta race regression: nil currentSeq preserves history reload
+
+    /// Regression test for the blank timeline bug.
+    ///
+    /// When the subscription metadata race drops `currentSeq` (now fixed via
+    /// pre-tracking), catch-up is skipped. The safety net is that the pending
+    /// history reload stays alive. This test ensures that safety net holds:
+    /// nil `currentSeq` → history reload preserved → timeline populated.
+    @MainActor
+    @Test func nilCurrentSeqPreservesHistoryReloadAsSafetyNet() async {
+        let sessionId = "meta-race-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        let tracker = HistoryReloadTracker()
+        manager._loadHistoryForTesting = { cachedCount, cachedLastId in
+            _ = await tracker.recordCall(cachedEventCount: cachedCount, cachedLastEventId: cachedLastId)
+            return (eventCount: 20, lastEventId: "evt-20")
+        }
+
+        // Simulate the old race: inboundMeta has nil currentSeq.
+        manager._consumeInboundMetaForTesting = {
+            WebSocketClient.InboundMeta(seq: nil, currentSeq: nil)
+        }
+
+        // Catch-up should NOT be called — verify via absence of call.
+        var catchUpCalled = false
+        manager._loadCatchUpForTesting = { _, _ in
+            catchUpCalled = true
+            return APIClient.SessionEventsResponse(
+                events: [],
+                currentSeq: 0,
+                session: makeTestSession(id: sessionId),
+                catchUpComplete: true
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+
+        // Deliver .connected with nil currentSeq (the race scenario).
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .ready)))
+
+        // History reload should complete (not be cancelled).
+        #expect(await tracker.waitForCalls(1), "Nil currentSeq must preserve history reload as safety net")
+        #expect(!catchUpCalled, "Catch-up should not run when currentSeq is nil")
+        #expect(manager.entryState == .streaming)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    /// Complement of the nil-meta test: when `currentSeq` is available (the
+    /// fix working), catch-up runs and the slow history reload is cancelled.
+    /// This validates that the pre-track fix provides the fast path.
+    @MainActor
+    @Test func availableCurrentSeqRunsCatchUpAndCancelsHistoryReload() async {
+        let sessionId = "meta-fixed-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        let tracker = HistoryReloadTracker()
+        manager._loadHistoryForTesting = { cachedCount, cachedLastId in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return nil }
+            _ = await tracker.recordCall(cachedEventCount: cachedCount, cachedLastEventId: cachedLastId)
+            return (eventCount: 20, lastEventId: "evt-20")
+        }
+
+        // Fix working: inboundMeta has currentSeq.
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 10),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        manager._loadCatchUpForTesting = { _, _ in
+            APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
+                    .init(seq: 10, message: .state(session: makeTestSession(id: sessionId, status: .ready))),
+                ],
+                currentSeq: 10,
+                session: makeTestSession(id: sessionId, status: .ready),
+                catchUpComplete: true
+            )
+        }
+
+        let connection = ServerConnection()
+        let reducer = TimelineReducer()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+        try? await Task.sleep(for: .milliseconds(150))
+
+        // Catch-up applied → history reload should be cancelled.
+        let snapshot = await tracker.snapshot()
+        #expect(snapshot.calls.isEmpty, "Available currentSeq should run catch-up and cancel history reload")
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 10)
+        #expect(manager.entryState == .streaming)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
 }
 
 private struct HistoryReloadCall: Equatable, Sendable {

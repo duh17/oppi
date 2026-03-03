@@ -185,6 +185,20 @@ final class WebSocketClient {
 
         let sendTimeout = self.sendTimeout
 
+        // Track subscribe state BEFORE sending so the receive loop's meta
+        // guard (`activeSubscriptions[sessionId] == .full`) passes for the
+        // server's immediate response (connected, state, command_result).
+        //
+        // Without this, there's a race: `sendWithTimeout` suspends the
+        // MainActor, the server responds, the receive loop hops to
+        // MainActor to store InboundMeta but `activeSubscriptions` isn't
+        // set yet → meta (carrying `currentSeq`) is dropped → catch-up
+        // is skipped → timeline stays empty for idle sessions.
+        //
+        // Unsubscribe is tracked AFTER send to avoid premature rejection
+        // of in-flight messages.
+        preTrackSubscription(message)
+
         do {
             try await sendWithTimeout(payload: payload, over: ws, timeout: sendTimeout)
         } catch {
@@ -200,22 +214,45 @@ final class WebSocketClient {
                     attemptReconnect()
                 }
             }
+            // Rollback pre-tracked subscription on send failure so stale
+            // entries don't leak into the meta guard.
+            rollbackPreTrackSubscription(message)
             throw error
         }
 
-        // Track subscription state
+        // Post-send tracking: handles unsubscribe and is a no-op for
+        // subscribe (already tracked above).
         trackSubscription(message)
     }
 
     // MARK: - Subscription Tracking
 
-    /// Track subscribe/unsubscribe commands for reconnect resubscription.
+    /// Pre-send: set subscription level for `.subscribe` so the receive
+    /// loop's meta guard passes for the server's immediate response.
+    /// No-op for other message types.
+    private func preTrackSubscription(_ message: ClientMessage) {
+        guard case .subscribe(let sessionId, let level, _, _) = message else { return }
+        activeSubscriptions[sessionId] = level
+        inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
+        inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
+    }
+
+    /// Undo `preTrackSubscription` when the send fails — prevents stale
+    /// subscription entries from leaking.
+    private func rollbackPreTrackSubscription(_ message: ClientMessage) {
+        guard case .subscribe(let sessionId, _, _, _) = message else { return }
+        activeSubscriptions.removeValue(forKey: sessionId)
+        inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
+        inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
+    }
+
+    /// Post-send: track subscribe/unsubscribe for reconnect resubscription.
+    /// For `.subscribe` this is a no-op (already pre-tracked).
     private func trackSubscription(_ message: ClientMessage) {
         switch message {
         case .subscribe(let sessionId, let level, _, _):
             activeSubscriptions[sessionId] = level
-            inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
-            inboundMetaQueueHighWaterBySessionID.removeValue(forKey: sessionId)
+            // Meta queue already cleared by preTrackSubscription; no-op here.
         case .unsubscribe(let sessionId, _):
             activeSubscriptions.removeValue(forKey: sessionId)
             inboundMetaQueueBySessionID.removeValue(forKey: sessionId)
@@ -739,6 +776,21 @@ final class WebSocketClient {
         if status == .connected || status == .disconnected {
             resolveConnectionWaiters()
         }
+    }
+
+    /// Test seam: read subscription level for a session.
+    func _activeSubscriptionForTesting(_ sessionId: String) -> StreamSubscriptionLevel? {
+        activeSubscriptions[sessionId]
+    }
+
+    /// Test seam: exercise pre-track subscription logic without a real send.
+    func _preTrackSubscriptionForTesting(_ message: ClientMessage) {
+        preTrackSubscription(message)
+    }
+
+    /// Test seam: exercise rollback logic without a real send failure.
+    func _rollbackPreTrackSubscriptionForTesting(_ message: ClientMessage) {
+        rollbackPreTrackSubscription(message)
     }
 
     /// Thread-safe one-shot resolver for callback + timeout races.

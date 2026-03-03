@@ -390,4 +390,57 @@ struct ServerConnectionStreamTests {
         #expect(conn.pendingUnsubscribeTasks.isEmpty,
                 "disconnectStream should cancel all pending unsubscribes")
     }
+
+    // MARK: - Pre-track subscription for inbound meta
+
+    @MainActor
+    @Test func subscribePreTracksActiveSubscriptionSynchronously() {
+        let conn = makeTestConnection()
+        let ws = conn.wsClient!
+
+        // Before pre-track: no subscription
+        #expect(ws._activeSubscriptionForTesting("pre-track-session") == nil)
+
+        // Simulate what send() does: pre-track synchronously
+        ws._preTrackSubscriptionForTesting(
+            .subscribe(sessionId: "pre-track-session", level: .full, requestId: "r1")
+        )
+
+        #expect(
+            ws._activeSubscriptionForTesting("pre-track-session") == .full,
+            "preTrackSubscription should set activeSubscriptions synchronously before the actual send, so the receive loop meta guard passes for the server's immediate response"
+        )
+    }
+
+    @MainActor
+    @Test func subscribePreTrackRolledBackOnFailure() {
+        let conn = makeTestConnection()
+        let ws = conn.wsClient!
+
+        // Pre-track then rollback (simulates send failure path)
+        ws._preTrackSubscriptionForTesting(
+            .subscribe(sessionId: "rollback-session", level: .full, requestId: "r1")
+        )
+        #expect(ws._activeSubscriptionForTesting("rollback-session") == .full)
+
+        ws._rollbackPreTrackSubscriptionForTesting(
+            .subscribe(sessionId: "rollback-session", level: .full, requestId: "r1")
+        )
+        #expect(
+            ws._activeSubscriptionForTesting("rollback-session") == nil,
+            "rollbackPreTrackSubscription should remove the pre-tracked subscription"
+        )
+    }
+
+    @MainActor
+    @Test func preTrackIsNoOpForNonSubscribeMessages() {
+        let conn = makeTestConnection()
+        let ws = conn.wsClient!
+
+        // Pre-track with a non-subscribe message should be a no-op
+        ws._preTrackSubscriptionForTesting(
+            .unsubscribe(sessionId: "some-session", requestId: "r1")
+        )
+        #expect(ws._activeSubscriptionForTesting("some-session") == nil)
+    }
 }
