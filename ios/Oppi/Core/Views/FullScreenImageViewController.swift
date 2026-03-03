@@ -1,18 +1,19 @@
 import UIKit
 
-/// Unified full-screen zoomable image viewer with share/save actions.
+/// Unified zoomable image viewer with share/save actions.
 ///
-/// Used everywhere via direct UIKit presentation (``present(image:)``).
-/// Pinch-to-zoom via UIScrollView with double-tap toggle. Bottom toolbar has
-/// share and save-to-photos actions.
+/// Presented as a large detent sheet so it matches the app's slide-down
+/// dismissal behavior used by other "full-screen" previews.
 final class FullScreenImageViewController: UIViewController {
     private let image: UIImage
+    private let palette: ThemePalette
     private let scrollView = UIScrollView()
     private let imageView: UIImageView
     private var savedFeedbackLabel: UILabel?
 
     init(image: UIImage) {
         self.image = image
+        self.palette = ThemeRuntimeState.currentThemeID().palette
         self.imageView = UIImageView(image: image)
         super.init(nibName: nil, bundle: nil)
     }
@@ -22,17 +23,42 @@ final class FullScreenImageViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = UIColor(palette.bgDark)
 
+        setupNavigationChrome()
         setupScrollView()
         setupImageView()
         setupConstraints()
         setupDoubleTap()
-        setupDoneButton()
         setupBottomToolbar()
     }
 
     // MARK: - Setup
+
+    private func setupNavigationChrome() {
+        let doneButton = UIBarButtonItem(
+            image: UIImage(systemName: "chevron.down"),
+            style: .plain,
+            target: self,
+            action: #selector(dismissTapped)
+        )
+        doneButton.tintColor = UIColor(palette.cyan)
+        doneButton.accessibilityLabel = String(localized: "Done")
+        doneButton.accessibilityIdentifier = "fullscreen-image.dismiss"
+        navigationItem.leftBarButtonItem = doneButton
+
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(palette.bgHighlight)
+        appearance.titleTextAttributes = [.foregroundColor: UIColor(palette.fg)]
+        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
+
+        navigationController?.view.backgroundColor = UIColor(palette.bgDark)
+        navigationController?.navigationBar.tintColor = UIColor(palette.cyan)
+        navigationController?.navigationBar.standardAppearance = appearance
+        navigationController?.navigationBar.scrollEdgeAppearance = appearance
+        navigationController?.navigationBar.compactAppearance = appearance
+    }
 
     private func setupScrollView() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -41,6 +67,8 @@ final class FullScreenImageViewController: UIViewController {
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.contentInsetAdjustmentBehavior = .never
         view.addSubview(scrollView)
     }
 
@@ -52,7 +80,7 @@ final class FullScreenImageViewController: UIViewController {
 
     private func setupConstraints() {
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -76,27 +104,19 @@ final class FullScreenImageViewController: UIViewController {
         scrollView.addGestureRecognizer(doubleTap)
     }
 
-    private func setupDoneButton() {
-        let done = UIButton(type: .system)
-        done.setTitle("Done", for: .normal)
-        done.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        done.setTitleColor(.white, for: .normal)
-        done.translatesAutoresizingMaskIntoConstraints = false
-        done.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
-        view.addSubview(done)
-
-        NSLayoutConstraint.activate([
-            done.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            done.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-        ])
-    }
-
     private func setupBottomToolbar() {
         let toolbar = UIToolbar()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.barStyle = .black
-        toolbar.isTranslucent = true
-        toolbar.tintColor = .white
+        toolbar.tintColor = UIColor(palette.cyan)
+
+        let appearance = UIToolbarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(palette.bgHighlight)
+        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        toolbar.standardAppearance = appearance
+        toolbar.scrollEdgeAppearance = appearance
+        toolbar.compactAppearance = appearance
+
         view.addSubview(toolbar)
 
         NSLayoutConstraint.activate([
@@ -160,10 +180,12 @@ final class FullScreenImageViewController: UIViewController {
         let label = UILabel()
         label.text = "Saved"
         label.font = .systemFont(ofSize: 14, weight: .medium)
-        label.textColor = .white
+        label.textColor = UIColor(palette.fg)
         label.textAlignment = .center
-        label.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+        label.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.9)
         label.layer.cornerRadius = 8
+        label.layer.borderWidth = 1
+        label.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
         label.clipsToBounds = true
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
@@ -196,6 +218,29 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
 // MARK: - Presentation Helper
 
 extension FullScreenImageViewController {
+    /// Build a large-detent sheet controller with the app's standard
+    /// slide-down dismissal affordance.
+    static func makeSlideDownController(image: UIImage) -> UIViewController {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let viewer = FullScreenImageViewController(image: image)
+        let navigation = UINavigationController(rootViewController: viewer)
+        navigation.modalPresentationStyle = .pageSheet
+        navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+
+        navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        return navigation
+    }
+
+    /// Present the image viewer from a specific presenter.
+    static func present(image: UIImage, from presenter: UIViewController) {
+        presenter.present(makeSlideDownController(image: image), animated: true)
+    }
+
     /// Present the image viewer from the topmost view controller.
     /// Works from both UIKit and SwiftUI contexts.
     static func present(image: UIImage) {
@@ -206,9 +251,6 @@ extension FullScreenImageViewController {
         while let presented = presenter.presentedViewController {
             presenter = presented
         }
-        let vc = FullScreenImageViewController(image: image)
-        // Use .overFullScreen to prevent SwiftUI lifecycle churn (onDisappear/onAppear).
-        vc.modalPresentationStyle = .overFullScreen
-        presenter.present(vc, animated: true)
+        present(image: image, from: presenter)
     }
 }
