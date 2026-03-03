@@ -123,6 +123,7 @@ enum ToolTimelineRowExpandedRenderer {
     static func renderDiffMode(
         lines: [DiffLine],
         path: String?,
+        isStreaming: Bool,
         expandedLabel: UILabel,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
@@ -134,17 +135,37 @@ enum ToolTimelineRowExpandedRenderer {
         updateExpandedLabelWidthIfNeeded: () -> Void,
         showExpandedViewport: () -> Void
     ) -> Visibility {
-        let signature = ToolTimelineRowRenderMetrics.diffSignature(lines: lines, path: path)
+        let signature = ToolTimelineRowRenderMetrics.diffSignature(
+            lines: lines, path: path, isStreaming: isStreaming
+        )
         let shouldRerender = signature != expandedRenderSignature
             || !isCurrentModeDiff
             || expandedLabel.attributedText == nil
 
         showExpandedLabel()
         if shouldRerender {
-            let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
-            expandedLabel.text = nil
-            expandedLabel.attributedText = diffText
-            expandedRenderedText = diffText.string
+            if isStreaming {
+                // During streaming, skip expensive per-line syntax highlighting
+                // and colored attributed text. Show plain diff markers; the full
+                // diff view renders once when the tool completes.
+                let plainDiff = lines.map { line in
+                    switch line.kind {
+                    case .added: "+ \(line.text)"
+                    case .removed: "- \(line.text)"
+                    case .context: "  \(line.text)"
+                    }
+                }.joined(separator: "\n")
+                expandedLabel.attributedText = nil
+                expandedLabel.text = plainDiff
+                expandedLabel.textColor = UIColor(.themeFg)
+                expandedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                expandedRenderedText = plainDiff
+            } else {
+                let diffText = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: path)
+                expandedLabel.text = nil
+                expandedLabel.attributedText = diffText
+                expandedRenderedText = diffText.string
+            }
             expandedRenderSignature = signature
         }
 
@@ -154,8 +175,8 @@ enum ToolTimelineRowExpandedRenderer {
         setModeDiff()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldRerender { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
+        expandedShouldAutoFollow = isStreaming
+        if shouldRerender && !isStreaming { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
 
         return Visibility(
             showExpandedContainer: true,
@@ -168,6 +189,7 @@ enum ToolTimelineRowExpandedRenderer {
         text: String,
         language: SyntaxLanguage?,
         startLine: Int?,
+        isStreaming: Bool,
         expandedLabel: UILabel,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
@@ -184,7 +206,8 @@ enum ToolTimelineRowExpandedRenderer {
         let signature = ToolTimelineRowRenderMetrics.codeSignature(
             displayText: displayText,
             language: language,
-            startLine: resolvedStartLine
+            startLine: resolvedStartLine,
+            isStreaming: isStreaming
         )
         let shouldRerender = signature != expandedRenderSignature
             || !isCurrentModeCode
@@ -192,14 +215,24 @@ enum ToolTimelineRowExpandedRenderer {
 
         showExpandedLabel()
         if shouldRerender {
-            let codeText = ToolRowTextRenderer.makeCodeAttributedText(
-                text: displayText,
-                language: language,
-                startLine: resolvedStartLine
-            )
-            expandedLabel.text = nil
-            expandedLabel.attributedText = codeText
-            expandedRenderedText = codeText.string
+            if isStreaming {
+                // During streaming, skip expensive syntax highlighting and
+                // line-number rendering. Show plain monospace text; the full
+                // code view renders once when the tool completes.
+                expandedLabel.attributedText = nil
+                expandedLabel.text = displayText
+                expandedLabel.textColor = UIColor(.themeFg)
+                expandedLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+            } else {
+                let codeText = ToolRowTextRenderer.makeCodeAttributedText(
+                    text: displayText,
+                    language: language,
+                    startLine: resolvedStartLine
+                )
+                expandedLabel.text = nil
+                expandedLabel.attributedText = codeText
+            }
+            expandedRenderedText = expandedLabel.attributedText?.string ?? expandedLabel.text ?? ""
             expandedRenderSignature = signature
         }
 
@@ -209,8 +242,8 @@ enum ToolTimelineRowExpandedRenderer {
         setModeCode()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
-        expandedShouldAutoFollow = false
-        if shouldRerender { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
+        expandedShouldAutoFollow = isStreaming
+        if shouldRerender && !isStreaming { ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView) }
 
         return Visibility(
             showExpandedContainer: true,
@@ -221,6 +254,7 @@ enum ToolTimelineRowExpandedRenderer {
 
     static func renderMarkdownMode(
         text: String,
+        isStreaming: Bool,
         expandedMarkdownView: AssistantMarkdownContentView,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
@@ -247,7 +281,7 @@ enum ToolTimelineRowExpandedRenderer {
         if shouldRerender {
             expandedMarkdownView.apply(configuration: .init(
                 content: text,
-                isStreaming: false,
+                isStreaming: isStreaming,
                 themeID: ThemeRuntimeState.currentThemeID()
             ))
             expandedRenderSignature = signature
