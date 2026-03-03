@@ -822,6 +822,24 @@ describe("routes modules", () => {
                 unit: "count",
                 tags: { tool: "plot" },
               },
+              {
+                ts: generatedAt + 25,
+                metric: "plot.legend_item_count",
+                value: 3,
+                unit: "count",
+              },
+              {
+                ts: generatedAt + 30,
+                metric: "plot.scroll_enabled",
+                value: 1,
+                unit: "ratio",
+              },
+              {
+                ts: generatedAt + 35,
+                metric: "plot.auto_adjustments",
+                value: 2,
+                unit: "count",
+              },
             ],
           }) as never,
           res: res as never,
@@ -845,10 +863,13 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(4);
+        expect(record.sampleCount).toBe(7);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
         expect(record.samples[3]?.metric).toBe("plot.axis_visible_tick_count");
+        expect(record.samples[4]?.metric).toBe("plot.legend_item_count");
+        expect(record.samples[5]?.metric).toBe("plot.scroll_enabled");
+        expect(record.samples[6]?.metric).toBe("plot.auto_adjustments");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }
