@@ -30,6 +30,7 @@ This gate controls all diagnostics transports:
 For the build-mode matrix, channel inventory, and full metric catalog, see:
 - [`docs/telemetry-catalog.md`](telemetry-catalog.md)
 
+
 ## Explicit non-goals (what Oppi does not track)
 
 Oppi is not designed to collect product analytics. We do **not** track:

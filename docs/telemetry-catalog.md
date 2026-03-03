@@ -2,9 +2,6 @@
 
 This document is the canonical inventory for Oppi diagnostics telemetry.
 
-For the forward-looking iOS+server observability design and rollout plan, see:
-- [`docs/observability-metrics-spec.md`](observability-metrics-spec.md)
-
 ## Build-mode matrix
 
 | Build mode | How it is set | `OPPI_TELEMETRY_MODE` default | Remote diagnostics upload |
