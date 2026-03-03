@@ -29,6 +29,20 @@ const CHART_INTERPOLATIONS = new Set([
   "stepend",
 ]);
 
+const RENDER_HINT_X_AXIS_TYPES = new Set(["auto", "time", "numeric", "category"]);
+const RENDER_HINT_X_AXIS_LABEL_FORMATS = new Set([
+  "auto",
+  "date-short",
+  "date-day",
+  "number-short",
+]);
+const RENDER_HINT_X_AXIS_STRATEGIES = new Set(["auto", "start-end-weekly", "stride"]);
+const RENDER_HINT_Y_AXIS_ZERO_BASELINES = new Set(["auto", "always", "never"]);
+const RENDER_HINT_LEGEND_MODES = new Set(["auto", "show", "hide", "inline"]);
+const RENDER_HINT_GRID_VERTICAL_MODES = new Set(["none", "major"]);
+const RENDER_HINT_GRID_HORIZONTAL_MODES = new Set(["major"]);
+const CATEGORY_DENSITY_WARNING_THRESHOLD = 40;
+
 export interface ToolResultDetailsSanitization {
   details: unknown;
   warnings: string[];
@@ -337,6 +351,263 @@ function sanitizeChartInteraction(value: unknown): Record<string, unknown> | und
   return Object.keys(interaction).length > 0 ? interaction : undefined;
 }
 
+function parseRenderHintEnum(
+  value: unknown,
+  allowed: Set<string>,
+  warningKey: string,
+  warnings: string[],
+): string | undefined {
+  const token = boundedString(value, 64)?.toLowerCase();
+  if (!token) {
+    return undefined;
+  }
+
+  if (!allowed.has(token)) {
+    warnings.push(`dropped invalid ${warningKey}`);
+    return undefined;
+  }
+
+  return token;
+}
+
+function clampRenderHintInteger(
+  value: unknown,
+  min: number,
+  max: number,
+  warningKey: string,
+  warnings: string[],
+): number | undefined {
+  const parsed = finiteNumber(value);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  const rounded = Math.round(parsed);
+  const clamped = Math.min(max, Math.max(min, rounded));
+  if (rounded !== clamped) {
+    warnings.push(`${warningKey} clamped to ${clamped} (${min}...${max})`);
+  }
+
+  return clamped;
+}
+
+function sanitizeChartRenderHints(
+  value: unknown,
+  warnings: string[],
+): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const renderHints: Record<string, unknown> = {};
+
+  const xAxisRecord = asRecord(record.xAxis);
+  if (xAxisRecord) {
+    const xAxis: Record<string, unknown> = {};
+
+    const type = parseRenderHintEnum(
+      xAxisRecord.type,
+      RENDER_HINT_X_AXIS_TYPES,
+      "renderHints.xAxis.type",
+      warnings,
+    );
+    if (type) {
+      xAxis.type = type;
+    }
+
+    const maxVisibleTicks = clampRenderHintInteger(
+      xAxisRecord.maxVisibleTicks,
+      2,
+      8,
+      "renderHints.xAxis.maxVisibleTicks",
+      warnings,
+    );
+    if (maxVisibleTicks !== undefined) {
+      xAxis.maxVisibleTicks = maxVisibleTicks;
+    }
+
+    const labelFormat = parseRenderHintEnum(
+      xAxisRecord.labelFormat,
+      RENDER_HINT_X_AXIS_LABEL_FORMATS,
+      "renderHints.xAxis.labelFormat",
+      warnings,
+    );
+    if (labelFormat) {
+      xAxis.labelFormat = labelFormat;
+    }
+
+    const strategy = parseRenderHintEnum(
+      xAxisRecord.strategy,
+      RENDER_HINT_X_AXIS_STRATEGIES,
+      "renderHints.xAxis.strategy",
+      warnings,
+    );
+    if (strategy) {
+      xAxis.strategy = strategy;
+    }
+
+    if (Object.keys(xAxis).length > 0) {
+      renderHints.xAxis = xAxis;
+    }
+  }
+
+  const yAxisRecord = asRecord(record.yAxis);
+  if (yAxisRecord) {
+    const yAxis: Record<string, unknown> = {};
+
+    const maxTicks = clampRenderHintInteger(
+      yAxisRecord.maxTicks,
+      2,
+      8,
+      "renderHints.yAxis.maxTicks",
+      warnings,
+    );
+    if (maxTicks !== undefined) {
+      yAxis.maxTicks = maxTicks;
+    }
+
+    if (typeof yAxisRecord.nice === "boolean") {
+      yAxis.nice = yAxisRecord.nice;
+    }
+
+    const zeroBaseline = parseRenderHintEnum(
+      yAxisRecord.zeroBaseline,
+      RENDER_HINT_Y_AXIS_ZERO_BASELINES,
+      "renderHints.yAxis.zeroBaseline",
+      warnings,
+    );
+    if (zeroBaseline) {
+      yAxis.zeroBaseline = zeroBaseline;
+    }
+
+    if (Object.keys(yAxis).length > 0) {
+      renderHints.yAxis = yAxis;
+    }
+  }
+
+  const legendRecord = asRecord(record.legend);
+  if (legendRecord) {
+    const legend: Record<string, unknown> = {};
+
+    const mode = parseRenderHintEnum(
+      legendRecord.mode,
+      RENDER_HINT_LEGEND_MODES,
+      "renderHints.legend.mode",
+      warnings,
+    );
+    if (mode) {
+      legend.mode = mode;
+    }
+
+    const maxItems = clampRenderHintInteger(
+      legendRecord.maxItems,
+      1,
+      5,
+      "renderHints.legend.maxItems",
+      warnings,
+    );
+    if (maxItems !== undefined) {
+      legend.maxItems = maxItems;
+    }
+
+    if (Object.keys(legend).length > 0) {
+      renderHints.legend = legend;
+    }
+  }
+
+  const gridRecord = asRecord(record.grid);
+  if (gridRecord) {
+    const grid: Record<string, unknown> = {};
+
+    const vertical = parseRenderHintEnum(
+      gridRecord.vertical,
+      RENDER_HINT_GRID_VERTICAL_MODES,
+      "renderHints.grid.vertical",
+      warnings,
+    );
+    if (vertical) {
+      grid.vertical = vertical;
+    }
+
+    const horizontal = parseRenderHintEnum(
+      gridRecord.horizontal,
+      RENDER_HINT_GRID_HORIZONTAL_MODES,
+      "renderHints.grid.horizontal",
+      warnings,
+    );
+    if (horizontal) {
+      grid.horizontal = horizontal;
+    }
+
+    if (Object.keys(grid).length > 0) {
+      renderHints.grid = grid;
+    }
+  }
+
+  return Object.keys(renderHints).length > 0 ? renderHints : undefined;
+}
+
+function primaryXFieldName(marks: Record<string, unknown>[]): string | undefined {
+  for (const mark of marks) {
+    const x = boundedString(mark.x, MAX_FIELD_NAME_LENGTH);
+    if (x) {
+      return x;
+    }
+  }
+
+  return undefined;
+}
+
+function domainCardinality(rows: Record<string, unknown>[], field: string): number {
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const value = row[field];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      seen.add(String(value));
+    }
+  }
+
+  return seen.size;
+}
+
+function enforceRenderHintSafety(
+  renderHints: Record<string, unknown>,
+  interaction: Record<string, unknown> | undefined,
+  rows: Record<string, unknown>[],
+  marks: Record<string, unknown>[],
+  warnings: string[],
+): void {
+  const xAxis = asRecord(renderHints.xAxis);
+  if (!xAxis || xAxis.type !== "category") {
+    return;
+  }
+
+  if (interaction?.scrollableX === true) {
+    return;
+  }
+
+  const xField = primaryXFieldName(marks);
+  if (!xField) {
+    return;
+  }
+
+  const uniqueCount = domainCardinality(rows, xField);
+  if (uniqueCount <= CATEGORY_DENSITY_WARNING_THRESHOLD) {
+    return;
+  }
+
+  delete xAxis.type;
+  warnings.push(
+    `dropped renderHints.xAxis.type category for dense domain (${uniqueCount}) without scrollableX`,
+  );
+
+  if (Object.keys(xAxis).length === 0) {
+    delete renderHints.xAxis;
+  }
+}
+
 function sanitizeChartSpec(value: unknown, warnings: string[]): Record<string, unknown> | null {
   const record = asRecord(value);
   if (!record) {
@@ -382,6 +653,14 @@ function sanitizeChartSpec(value: unknown, warnings: string[]): Record<string, u
   const interaction = sanitizeChartInteraction(record.interaction);
   if (interaction) {
     spec.interaction = interaction;
+  }
+
+  const renderHints = sanitizeChartRenderHints(record.renderHints, warnings);
+  if (renderHints) {
+    enforceRenderHintSafety(renderHints, interaction, rows, marks, warnings);
+    if (Object.keys(renderHints).length > 0) {
+      spec.renderHints = renderHints;
+    }
   }
 
   const height = finiteNumber(record.height);
