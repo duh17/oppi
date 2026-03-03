@@ -165,6 +165,53 @@ struct PlotChartSpecTests {
         #expect(spec.rows[0].number(for: "count") == 5)
     }
 
+    @Test("parses render hints with clamped numeric bounds")
+    func fromPlotArgsParsesRenderHints() {
+        let spec = PlotChartSpec.fromPlotArgs([
+            "spec": .object([
+                "dataset": .object([
+                    "rows": .array([
+                        .object(["x": .number(0), "y": .number(10)]),
+                        .object(["x": .number(1), "y": .number(20)]),
+                    ]),
+                ]),
+                "marks": .array([
+                    .object(["type": .string("line"), "x": .string("x"), "y": .string("y")]),
+                ]),
+                "renderHints": .object([
+                    "xAxis": .object([
+                        "type": .string("numeric"),
+                        "maxVisibleTicks": .number(99),
+                    ]),
+                    "yAxis": .object([
+                        "maxTicks": .number(1),
+                    ]),
+                    "legend": .object([
+                        "mode": .string("show"),
+                        "maxItems": .number(0),
+                    ]),
+                    "grid": .object([
+                        "vertical": .string("none"),
+                        "horizontal": .string("major"),
+                    ]),
+                ]),
+            ]),
+        ])
+
+        guard let spec else {
+            Issue.record("Expected PlotChartSpec to parse")
+            return
+        }
+
+        #expect(spec.renderHints?.xAxis?.type == .numeric)
+        #expect(spec.renderHints?.xAxis?.maxVisibleTicks == 8)
+        #expect(spec.renderHints?.yAxis?.maxTicks == 2)
+        #expect(spec.renderHints?.legend?.mode == .show)
+        #expect(spec.renderHints?.legend?.maxItems == 1)
+        #expect(spec.renderHints?.grid?.vertical == PlotChartSpec.RenderHints.Grid.Vertical.none)
+        #expect(spec.renderHints?.grid?.horizontal == .major)
+    }
+
     @Test("ignores unsupported chart version")
     func fromToolDetailsIgnoresUnsupportedVersion() {
         let details: JSONValue = .object([
@@ -219,6 +266,34 @@ struct PlotRenderPolicyTests {
 
         #expect(PlotRenderPolicy(spec: spec, viewportWidth: 320).yTickCount == 4)
         #expect(PlotRenderPolicy(spec: spec, viewportWidth: 390).yTickCount == 5)
+    }
+
+    @Test("render hints can tighten axis tick budgets")
+    func renderHintsCanTightenTickBudgets() {
+        let spec = makeSpec(
+            rows: [
+                .object(["x": .number(0), "y": .number(1)]),
+                .object(["x": .number(1), "y": .number(2)]),
+                .object(["x": .number(2), "y": .number(3)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ],
+            extraSpec: [
+                "renderHints": .object([
+                    "xAxis": .object(["maxVisibleTicks": .number(2)]),
+                    "yAxis": .object(["maxTicks": .number(3)]),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
+        #expect(policy.xTickBudget == 2)
+        #expect(policy.yTickCount == 3)
     }
 
     @Test("x-axis decimation keeps first and last category anchors")
@@ -280,6 +355,43 @@ struct PlotRenderPolicyTests {
             #expect(values.last == 29)
         default:
             Issue.record("Expected numeric x tick values")
+        }
+    }
+
+    @Test("x-axis category hint forces categorical tick labels")
+    func categoryHintForcesCategoricalTicks() {
+        let rows: [JSONValue] = (0..<8).map { index in
+            .object([
+                "x": .number(Double(index)),
+                "y": .number(Double(index * 3)),
+            ])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ],
+            extraSpec: [
+                "renderHints": .object([
+                    "xAxis": .object([
+                        "type": .string("category"),
+                    ]),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
+        switch policy.xTickValues {
+        case .category(let labels):
+            #expect(labels.first == "0")
+            #expect(labels.last == "7")
+        default:
+            Issue.record("Expected category tick values when category hint is set")
         }
     }
 
@@ -361,6 +473,33 @@ struct PlotRenderPolicyTests {
         #expect(!PlotRenderPolicy(spec: spec, viewportWidth: 390).legendVisible)
     }
 
+    @Test("legend show hint can force single-series legend")
+    func legendShowHintForSingleSeries() {
+        let spec = makeSpec(
+            rows: [
+                .object(["x": .number(1), "y": .number(2)]),
+                .object(["x": .number(2), "y": .number(3)]),
+            ],
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ],
+            extraSpec: [
+                "renderHints": .object([
+                    "legend": .object([
+                        "mode": .string("show"),
+                        "maxItems": .number(2),
+                    ]),
+                ]),
+            ]
+        )
+
+        #expect(PlotRenderPolicy(spec: spec, viewportWidth: 390).legendVisible)
+    }
+
     @Test("vertical gridlines are disabled for dense x domains")
     func verticalGridlineDensityPolicy() {
         let sparseRows: [JSONValue] = (0..<4).map { index in
@@ -386,6 +525,35 @@ struct PlotRenderPolicyTests {
         #expect(PlotRenderPolicy(spec: denseSpec, viewportWidth: 390).showHorizontalGridlines)
     }
 
+    @Test("grid hints can force vertical gridlines off")
+    func gridHintsCanDisableVerticalGridlines() {
+        let rows: [JSONValue] = (0..<4).map { index in
+            .object(["x": .number(Double(index)), "y": .number(Double(index + 1))])
+        }
+
+        let spec = makeSpec(
+            rows: rows,
+            marks: [
+                .object([
+                    "type": .string("line"),
+                    "x": .string("x"),
+                    "y": .string("y"),
+                ]),
+            ],
+            extraSpec: [
+                "renderHints": .object([
+                    "grid": .object([
+                        "vertical": .string("none"),
+                    ]),
+                ]),
+            ]
+        )
+
+        let policy = PlotRenderPolicy(spec: spec, viewportWidth: 390)
+        #expect(!policy.showVerticalGridlines)
+        #expect(policy.showHorizontalGridlines)
+    }
+
     @Test("x-axis falls back to automatic ticks when mark has no x key")
     func xAxisFallsBackToAutomaticWhenNoXKey() {
         let spec = makeSpec(
@@ -406,14 +574,24 @@ struct PlotRenderPolicyTests {
         #expect(!policy.showVerticalGridlines)
     }
 
-    private func makeSpec(rows: [JSONValue], marks: [JSONValue]) -> PlotChartSpec {
-        let args: [String: JSONValue] = [
-            "spec": .object([
-                "dataset": .object([
-                    "rows": .array(rows),
-                ]),
-                "marks": .array(marks),
+    private func makeSpec(
+        rows: [JSONValue],
+        marks: [JSONValue],
+        extraSpec: [String: JSONValue] = [:]
+    ) -> PlotChartSpec {
+        var specObject: [String: JSONValue] = [
+            "dataset": .object([
+                "rows": .array(rows),
             ]),
+            "marks": .array(marks),
+        ]
+
+        for (key, value) in extraSpec {
+            specObject[key] = value
+        }
+
+        let args: [String: JSONValue] = [
+            "spec": .object(specObject),
         ]
 
         guard let spec = PlotChartSpec.fromPlotArgs(args) else {
