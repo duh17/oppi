@@ -16,6 +16,7 @@ import { createThemeRoutes } from "../src/routes/themes.js";
 import { createTelemetryRoutes } from "../src/routes/telemetry.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { CHAT_METRIC_NAME_VALUES, telemetryUploadsEnabledFromEnv } from "../src/types.js";
 
 interface MockResponse {
   statusCode: number;
@@ -51,6 +52,19 @@ function makeRequest(body?: unknown): IncomingMessage {
 }
 
 describe("routes modules", () => {
+  describe("shared telemetry constants", () => {
+    it("keeps chat metric names unique", () => {
+      expect(new Set(CHAT_METRIC_NAME_VALUES).size).toBe(CHAT_METRIC_NAME_VALUES.length);
+    });
+
+    it("parses OPPI_TELEMETRY_MODE consistently", () => {
+      expect(telemetryUploadsEnabledFromEnv(undefined)).toBe(true);
+      expect(telemetryUploadsEnabledFromEnv("internal")).toBe(true);
+      expect(telemetryUploadsEnabledFromEnv("PUBLIC")).toBe(false);
+      expect(telemetryUploadsEnabledFromEnv("unknown-mode")).toBe(false);
+    });
+  });
+
   describe("streaming module", () => {
     it("handles GET /stream/events in isolation", async () => {
       const ctx = {
