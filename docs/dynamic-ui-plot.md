@@ -158,6 +158,15 @@ Enable the `plot` extension in your Oppi workspace settings.
 
 This file is not loaded by default server startup; it is only used when explicitly symlinked/registered as an extension.
 
+### Mobile normalization defaults in the sample extension
+
+The sample `plot` extension now applies `normalizeForMobile(spec)` before returning `details.ui`:
+
+- For dense sequential x domains (`rows > 24`), it enables `interaction.scrollableX` and sets a mobile window (`xVisibleDomainLength` default 12).
+- For dense bar domains (`> 40` categories), it enables horizontal scroll, sets a conservative visible domain window, and emits adjustment warnings.
+- It sets legend defaults to mobile-safe values (`mode: auto`, `maxItems <= 3`).
+- It always emits `fallbackText` summary text and appends auto-adjustment notes when normalization changed layout behavior.
+
 ## Kypu-first examples
 
 - Pace + HR vs distance/time (multi-line)
