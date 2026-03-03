@@ -815,6 +815,13 @@ describe("routes modules", () => {
                 unit: "ms",
                 tags: { reason: "history_applied", cache: "1" },
               },
+              {
+                ts: generatedAt + 20,
+                metric: "plot.axis_visible_tick_count",
+                value: 5,
+                unit: "count",
+                tags: { tool: "plot" },
+              },
             ],
           }) as never,
           res: res as never,
@@ -838,9 +845,10 @@ describe("routes modules", () => {
           samples: Array<{ metric: string; value: number }>;
         };
         expect(record.appVersion).toBe("1.0.0");
-        expect(record.sampleCount).toBe(3);
+        expect(record.sampleCount).toBe(4);
         expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
         expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
+        expect(record.samples[3]?.metric).toBe("plot.axis_visible_tick_count");
       } finally {
         rmSync(dataDir, { recursive: true, force: true });
       }
