@@ -2,11 +2,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import type {
-  ChatMetricSample,
-  ChatMetricUploadRequest,
-  MetricKitPayloadItem,
-  MetricKitUploadRequest,
+import {
+  CHAT_METRIC_NAME_VALUES,
+  telemetryUploadsEnabledFromEnv,
+  type ChatMetricSample,
+  type ChatMetricUploadRequest,
+  type MetricKitPayloadItem,
+  type MetricKitUploadRequest,
 } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -46,40 +48,6 @@ function chatMetricRetentionDaysFromEnv(): number {
   const parsed = Number.parseInt(raw, 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return 14;
-}
-
-function telemetryUploadsEnabledFromEnv(): boolean {
-  const raw = process.env.OPPI_TELEMETRY_MODE?.trim().toLowerCase() ?? "";
-  if (!raw) {
-    return true;
-  }
-
-  switch (raw) {
-    case "internal":
-    case "debug":
-    case "test":
-    case "qa":
-    case "staging":
-    case "dev":
-    case "development":
-    case "enabled":
-    case "on":
-    case "true":
-    case "1":
-      return true;
-    case "public":
-    case "release":
-    case "prod":
-    case "production":
-    case "off":
-    case "disabled":
-    case "none":
-    case "false":
-    case "0":
-      return false;
-    default:
-      return false;
-  }
 }
 
 function isString(value: unknown): value is string {
@@ -315,29 +283,11 @@ function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadReques
   });
 }
 
-const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>([
-  "chat.ttft_ms",
-  "chat.catchup_ms",
-  "chat.catchup_ring_miss",
-  "chat.timeline_apply_ms",
-  "chat.timeline_layout_ms",
-  "chat.ws_decode_ms",
-  "chat.coalescer_flush_events",
-  "chat.coalescer_flush_bytes",
-  "chat.inbound_queue_depth",
-  "chat.full_reload_ms",
-  "chat.fresh_content_lag_ms",
-  "chat.cache_load_ms",
-  "chat.reducer_load_ms",
-  "chat.ws_connect_ms",
-  "chat.voice_prewarm_ms",
-  "chat.voice_setup_ms",
-  "chat.voice_first_result_ms",
-  "plot.axis_visible_tick_count",
-  "plot.legend_item_count",
-  "plot.scroll_enabled",
-  "plot.auto_adjustments",
-]);
+const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>(CHAT_METRIC_NAME_VALUES);
+
+if (CHAT_METRIC_NAMES.size !== CHAT_METRIC_NAME_VALUES.length) {
+  throw new Error("CHAT_METRIC_NAME_VALUES contains duplicate entries");
+}
 
 const CHAT_METRIC_UNITS = new Set<ChatMetricSample["unit"]>(["ms", "count", "ratio"]);
 

@@ -338,6 +338,40 @@ export interface ClientLogUploadRequest {
   entries: ClientLogUploadEntry[];
 }
 
+export function telemetryUploadsEnabledFromEnv(mode = process.env.OPPI_TELEMETRY_MODE): boolean {
+  const raw = mode?.trim().toLowerCase() ?? "";
+  if (!raw) {
+    return true;
+  }
+
+  switch (raw) {
+    case "internal":
+    case "debug":
+    case "test":
+    case "qa":
+    case "staging":
+    case "dev":
+    case "development":
+    case "enabled":
+    case "on":
+    case "true":
+    case "1":
+      return true;
+    case "public":
+    case "release":
+    case "prod":
+    case "production":
+    case "off":
+    case "disabled":
+    case "none":
+    case "false":
+    case "0":
+      return false;
+    default:
+      return false;
+  }
+}
+
 export interface MetricKitPayloadItem {
   /** "metric" (MXMetricPayload) or "diagnostic" (MXDiagnosticPayload). */
   kind: "metric" | "diagnostic";
@@ -360,28 +394,31 @@ export interface MetricKitUploadRequest {
   payloads: MetricKitPayloadItem[];
 }
 
-export type ChatMetricName =
-  | "chat.ttft_ms"
-  | "chat.catchup_ms"
-  | "chat.catchup_ring_miss"
-  | "chat.timeline_apply_ms"
-  | "chat.timeline_layout_ms"
-  | "chat.ws_decode_ms"
-  | "chat.coalescer_flush_events"
-  | "chat.coalescer_flush_bytes"
-  | "chat.inbound_queue_depth"
-  | "chat.full_reload_ms"
-  | "chat.fresh_content_lag_ms"
-  | "chat.cache_load_ms"
-  | "chat.reducer_load_ms"
-  | "chat.ws_connect_ms"
-  | "chat.voice_prewarm_ms"
-  | "chat.voice_setup_ms"
-  | "chat.voice_first_result_ms"
-  | "plot.axis_visible_tick_count"
-  | "plot.legend_item_count"
-  | "plot.scroll_enabled"
-  | "plot.auto_adjustments";
+export const CHAT_METRIC_NAME_VALUES = [
+  "chat.ttft_ms",
+  "chat.catchup_ms",
+  "chat.catchup_ring_miss",
+  "chat.timeline_apply_ms",
+  "chat.timeline_layout_ms",
+  "chat.ws_decode_ms",
+  "chat.coalescer_flush_events",
+  "chat.coalescer_flush_bytes",
+  "chat.inbound_queue_depth",
+  "chat.full_reload_ms",
+  "chat.fresh_content_lag_ms",
+  "chat.cache_load_ms",
+  "chat.reducer_load_ms",
+  "chat.ws_connect_ms",
+  "chat.voice_prewarm_ms",
+  "chat.voice_setup_ms",
+  "chat.voice_first_result_ms",
+  "plot.axis_visible_tick_count",
+  "plot.legend_item_count",
+  "plot.scroll_enabled",
+  "plot.auto_adjustments",
+] as const;
+
+export type ChatMetricName = (typeof CHAT_METRIC_NAME_VALUES)[number];
 
 export type ChatMetricUnit = "ms" | "count" | "ratio";
 
