@@ -803,11 +803,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
-        TimelineTurnAssembler.shouldSuppressDuplicateMessageEnd(
+        let latestAssistantItem = items.reversed().first {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        return TimelineTurnAssembler.shouldSuppressDuplicateMessageEnd(
             content: content,
             turnInProgress: turnInProgress,
             currentAssistantID: currentAssistantID,
-            lastItem: items.last
+            latestAssistantItem: latestAssistantItem
         )
     }
 
