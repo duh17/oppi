@@ -298,6 +298,22 @@ function isChatMetricName(value: string): value is ChatMetricSample["metric"] {
   return CHAT_METRIC_NAMES.has(value as ChatMetricSample["metric"]);
 }
 
+function normalizeChatMetricTagKey(key: string): string {
+  const candidate = trimText(key, CHAT_METRIC_MAX_TAG_KEY_CHARS);
+  if (!candidate) {
+    return "";
+  }
+
+  const normalized = candidate
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+
+  return trimText(normalized, CHAT_METRIC_MAX_TAG_KEY_CHARS);
+}
+
 function sanitizeChatMetricTags(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object") {
     return {};
@@ -315,8 +331,8 @@ function sanitizeChatMetricTags(value: unknown): Record<string, string> {
       continue;
     }
 
-    const safeKey = trimText(key, CHAT_METRIC_MAX_TAG_KEY_CHARS);
-    if (!safeKey) {
+    const safeKey = normalizeChatMetricTagKey(key);
+    if (!safeKey || safeKey in out) {
       continue;
     }
 

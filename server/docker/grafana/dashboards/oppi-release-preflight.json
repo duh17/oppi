@@ -422,13 +422,246 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value,\n  MAX(build_number) AS latest_build\nFROM chat_metric_samples\nWHERE ts_ms BETWEEN $__from AND $__to\nGROUP BY metric\nORDER BY samples DESC",
-          "queryText": "SELECT\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value,\n  MAX(build_number) AS latest_build\nFROM chat_metric_samples\nWHERE ts_ms BETWEEN $__from AND $__to\nGROUP BY metric\nORDER BY samples DESC",
+          "rawQueryText": "SELECT\n  CASE\n    WHEN metric LIKE 'chat.voice_%' THEN 'voice'\n    WHEN metric LIKE 'plot.%' THEN 'plot'\n    WHEN metric LIKE 'chat.%' THEN 'chat'\n    ELSE 'other'\n  END AS segment,\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value,\n  MAX(build_number) AS latest_build\nFROM chat_metric_samples\nWHERE ts_ms BETWEEN $__from AND $__to\nGROUP BY segment, metric\nORDER BY segment, samples DESC",
+          "queryText": "SELECT\n  CASE\n    WHEN metric LIKE 'chat.voice_%' THEN 'voice'\n    WHEN metric LIKE 'plot.%' THEN 'plot'\n    WHEN metric LIKE 'chat.%' THEN 'chat'\n    ELSE 'other'\n  END AS segment,\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value,\n  MAX(build_number) AS latest_build\nFROM chat_metric_samples\nWHERE ts_ms BETWEEN $__from AND $__to\nGROUP BY segment, metric\nORDER BY segment, samples DESC",
           "timeColumns": [],
           "refId": "A"
         }
       ],
       "title": "Metric inventory",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 32
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_prewarm_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_prewarm_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": [
+            "time"
+          ],
+          "refId": "A"
+        }
+      ],
+      "title": "Voice prewarm (chat.voice_prewarm_ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 32
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND COALESCE(json_extract(tags_json, '$.phase'), '') = 'total'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND COALESCE(json_extract(tags_json, '$.phase'), '') = 'total'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": [
+            "time"
+          ],
+          "refId": "A"
+        }
+      ],
+      "title": "Voice setup total (chat.voice_setup_ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 32
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_first_result_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": [
+            "time"
+          ],
+          "refId": "A"
+        }
+      ],
+      "title": "Voice first result (chat.voice_first_result_ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.phase'), '<none>') AS phase,\n  COALESCE(json_extract(tags_json, '$.status'), '<none>') AS status,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_ms,\n  ROUND(MIN(value), 2) AS min_ms,\n  ROUND(MAX(value), 2) AS max_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY phase, status\nORDER BY phase, status",
+          "queryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.phase'), '<none>') AS phase,\n  COALESCE(json_extract(tags_json, '$.status'), '<none>') AS status,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_ms,\n  ROUND(MIN(value), 2) AS min_ms,\n  ROUND(MAX(value), 2) AS max_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.voice_setup_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY phase, status\nORDER BY phase, status",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ],
+      "title": "Voice setup phase/status breakdown",
       "type": "table"
     }
   ],
@@ -451,6 +684,6 @@
   "timezone": "browser",
   "title": "Oppi Release Preflight",
   "uid": "oppi-release-preflight",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
