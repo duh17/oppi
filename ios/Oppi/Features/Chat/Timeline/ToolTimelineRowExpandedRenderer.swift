@@ -13,6 +13,7 @@ enum ToolTimelineRowExpandedRenderer {
         output: String?,
         unwrapped: Bool,
         isError: Bool,
+        isStreaming: Bool,
         outputColor: UIColor,
         commandTextColor: UIColor,
         wasOutputVisible: Bool,
@@ -56,14 +57,26 @@ enum ToolTimelineRowExpandedRenderer {
             let signature = ToolTimelineRowRenderMetrics.outputSignature(
                 displayOutput: displayOutput,
                 isError: isError,
-                unwrapped: unwrapped
+                unwrapped: unwrapped,
+                isStreaming: isStreaming
             )
 
             if signature != outputRenderSignature {
-                let presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
-                    displayOutput,
-                    isError: isError
-                )
+                let presentation: ToolRowTextRenderer.ANSIOutputPresentation
+                if isStreaming {
+                    // During streaming, skip expensive ANSI parsing — show
+                    // stripped plain text. Full-screen view handles ANSI live.
+                    // Highlighting applies once when the tool completes.
+                    presentation = ToolRowTextRenderer.ANSIOutputPresentation(
+                        attributedText: nil,
+                        plainText: ANSIParser.strip(displayOutput)
+                    )
+                } else {
+                    presentation = ToolRowTextRenderer.makeANSIOutputPresentation(
+                        displayOutput,
+                        isError: isError
+                    )
+                }
                 let nextRendered = presentation.attributedText?.string ?? presentation.plainText ?? ""
                 let prevOutputRendered = outputLabel.attributedText?.string ?? outputLabel.text ?? ""
                 outputDidTextChange = prevOutputRendered != nextRendered
@@ -366,6 +379,7 @@ enum ToolTimelineRowExpandedRenderer {
         text: String,
         language: SyntaxLanguage?,
         isError: Bool,
+        isStreaming: Bool,
         outputColor: UIColor,
         expandedLabel: UILabel,
         expandedScrollView: UIScrollView,
@@ -387,7 +401,8 @@ enum ToolTimelineRowExpandedRenderer {
         let signature = ToolTimelineRowRenderMetrics.textSignature(
             displayText: displayText,
             language: language,
-            isError: isError
+            isError: isError,
+            isStreaming: isStreaming
         )
         let shouldRerender = signature != expandedRenderSignature
             || !isCurrentModeText
@@ -399,7 +414,14 @@ enum ToolTimelineRowExpandedRenderer {
         showExpandedLabel()
         if shouldRerender {
             let presentation: ToolRowTextRenderer.ANSIOutputPresentation
-            if let language, !isError {
+            if isStreaming {
+                // During streaming, skip expensive ANSI/syntax parsing — show
+                // stripped plain text. Highlighting applies once when done.
+                presentation = ToolRowTextRenderer.ANSIOutputPresentation(
+                    attributedText: nil,
+                    plainText: ANSIParser.strip(displayText)
+                )
+            } else if let language, !isError {
                 presentation = ToolRowTextRenderer.makeSyntaxOutputPresentation(
                     displayText,
                     language: language
