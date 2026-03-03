@@ -875,6 +875,121 @@ describe("routes modules", () => {
       }
     });
 
+    it("rejects chat metrics payloads when all samples are invalid", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-invalid-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            samples: [
+              {
+                ts: generatedAt,
+                metric: "plot.not_real",
+                value: 1,
+                unit: "count",
+              },
+              {
+                ts: generatedAt + 1,
+                metric: "plot.scroll_enabled",
+                value: 1,
+                unit: "wat",
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "samples must be a non-empty array of valid metrics",
+        });
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("drops invalid chat metric samples while persisting valid plot metrics", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-chat-metrics-mixed-"));
+      try {
+        const ctx = {
+          storage: {
+            getDataDir: () => dataDir,
+          },
+        } as unknown as RouteContext;
+
+        const dispatch = createTelemetryRoutes(ctx, createRouteHelpers());
+        const res = makeResponse();
+        const generatedAt = Date.now();
+
+        const handled = await dispatch({
+          method: "POST",
+          path: "/telemetry/chat-metrics",
+          url: new URL("http://localhost/telemetry/chat-metrics"),
+          req: makeRequest({
+            generatedAt,
+            samples: [
+              {
+                ts: generatedAt,
+                metric: "plot.scroll_enabled",
+                value: 1,
+                unit: "ratio",
+              },
+              {
+                ts: generatedAt + 1,
+                metric: "plot.unknown",
+                value: 3,
+                unit: "count",
+              },
+              {
+                ts: generatedAt + 2,
+                metric: "plot.legend_item_count",
+                value: 3,
+                unit: "banana",
+              },
+            ],
+          }) as never,
+          res: res as never,
+        });
+
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const dayFile = join(
+          dataDir,
+          "diagnostics",
+          "telemetry",
+          `chat-metrics-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+        );
+        const lines = readFileSync(dayFile, "utf8").trim().split("\n");
+        expect(lines).toHaveLength(1);
+
+        const record = JSON.parse(lines[0]) as {
+          sampleCount: number;
+          samples: Array<{ metric: string; unit: string; value: number }>;
+        };
+        expect(record.sampleCount).toBe(1);
+        expect(record.samples[0]?.metric).toBe("plot.scroll_enabled");
+        expect(record.samples[0]?.unit).toBe("ratio");
+        expect(record.samples[0]?.value).toBe(1);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("rejects telemetry uploads when OPPI_TELEMETRY_MODE disables telemetry", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-telemetry-gate-"));
       const previousMode = process.env.OPPI_TELEMETRY_MODE;
