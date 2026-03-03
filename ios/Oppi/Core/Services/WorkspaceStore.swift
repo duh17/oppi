@@ -9,6 +9,7 @@ struct ServerSyncState: Sendable {
     var isSyncing: Bool = false
     var lastSyncFailed: Bool = false
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     var freshnessState: FreshnessState {
         freshnessState()
     }
@@ -108,6 +109,7 @@ final class WorkspaceStore {
         }
     }
 
+    // periphery:ignore - store API surface; active-server convenience accessor
     /// Active server syncing flag.
     var isSyncing: Bool {
         get { serverFreshness[activeKey]?.isSyncing ?? false }
@@ -130,11 +132,13 @@ final class WorkspaceStore {
 
     // MARK: - Cross-server queries
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// All workspaces flattened from all servers, ordered by server sort order.
     var allWorkspaces: [Workspace] {
         serverOrder.flatMap { workspacesByServer[$0] ?? [] }
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// All skills flattened from all servers (deduplicated by name).
     var allSkills: [SkillInfo] {
         var seen = Set<String>()
@@ -142,12 +146,14 @@ final class WorkspaceStore {
             .filter { seen.insert($0.name).inserted }
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Whether ALL servers have successfully synced at least once.
     var isAllLoaded: Bool {
         guard !serverOrder.isEmpty else { return false }
         return serverOrder.allSatisfy { serverFreshness[$0]?.lastSuccessfulSyncAt != nil }
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Whether ANY server is currently syncing.
     var isAnySyncing: Bool {
         serverFreshness.values.contains { $0.isSyncing }
@@ -176,22 +182,27 @@ final class WorkspaceStore {
 
     // MARK: - Freshness (active server compatibility)
 
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     func markSyncStarted() {
         markSyncStarted(forServer: activeKey)
     }
 
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     func markSyncSucceeded(at date: Date = Date()) {
         markSyncSucceeded(forServer: activeKey, at: date)
     }
 
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     func markSyncFailed() {
         markSyncFailed(forServer: activeKey)
     }
 
+    // periphery:ignore - store freshness API surface; active-server convenience accessor
     func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
         freshnessState(forServer: activeKey, now: now, staleAfter: staleAfter)
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     func freshnessLabel(now: Date = Date()) -> String {
         freshnessLabel(forServer: activeKey, now: now)
     }
@@ -212,6 +223,7 @@ final class WorkspaceStore {
 
     // MARK: - Mutations
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Insert or update a workspace in the active-server partition.
     func upsert(_ workspace: Workspace) {
         upsert(workspace, serverId: activeKey)
@@ -228,6 +240,7 @@ final class WorkspaceStore {
         workspacesByServer[serverId] = list
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Remove a workspace by ID from active-server partition.
     func remove(id: String) {
         remove(id: id, serverId: activeKey)
@@ -238,6 +251,7 @@ final class WorkspaceStore {
         workspacesByServer[serverId]?.removeAll { $0.id == id }
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         workspacesByServer.removeValue(forKey: serverId)
@@ -336,6 +350,7 @@ final class WorkspaceStore {
         }
     }
 
+    // periphery:ignore - used by MultiServerStoreTests via @testable import
     /// Load workspaces and skills from ALL paired servers.
     ///
     /// Uses the same per-server path as single-server loads (`loadServer`).

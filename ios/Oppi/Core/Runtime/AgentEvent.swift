@@ -33,6 +33,7 @@ enum AgentEvent: Sendable {
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
 
+    // periphery:ignore - used by OppiTests via @testable import
     var typeLabel: String {
         switch self {
         case .agentStart: "agentStart"

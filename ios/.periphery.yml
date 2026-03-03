@@ -1,0 +1,12 @@
+project: Oppi.xcodeproj
+schemes:
+  - Oppi
+exclude_tests: true
+report_exclude:
+  # Generated files
+  - "**/*Generated*"
+  # Theme color contract — all properties are intentionally defined by the server
+  # theme palette and consumed progressively as UI is built
+  - "**/Color+Theme.swift"
+  # Debug test harness — internal constants and unused params are intentional
+  - "**/UIHangHarnessView.swift"

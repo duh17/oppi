@@ -4,7 +4,6 @@ import SwiftUI
 struct ThemeImportView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ThemeStore.self) private var themeStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var remoteThemes: [RemoteThemeSummary] = []
     @State private var isLoading = true

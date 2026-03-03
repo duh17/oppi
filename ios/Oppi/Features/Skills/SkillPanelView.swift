@@ -1,5 +1,6 @@
 import SwiftUI
 
+// periphery:ignore - future skill browser UI; not yet wired to navigation
 /// Quick skill browser shown from the session status badge in ChatView.
 ///
 /// Shows the skills enabled for the current workspace, with tappable
@@ -72,6 +73,7 @@ struct SkillPanelView: View {
 
 // MARK: - SkillRow
 
+// periphery:ignore - used by SkillPanelView
 private struct SkillRow: View {
     let skill: SkillInfo
     let isEnabled: Bool

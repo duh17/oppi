@@ -30,6 +30,7 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case strikethrough([Self])
 }
 
+// periphery:ignore - used by OppiTests via @testable import
 /// Extract plain text from inline nodes, stripping all formatting.
 func plainText(from inlines: [MarkdownInline]) -> String {
     inlines.map { inline -> String in

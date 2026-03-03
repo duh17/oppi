@@ -36,6 +36,7 @@ struct SlashCommand: Identifiable, Sendable, Equatable {
     let location: Location?
     let path: String?
 
+    // periphery:ignore - API surface for constructing SlashCommand instances
     init(
         name: String,
         description: String?,

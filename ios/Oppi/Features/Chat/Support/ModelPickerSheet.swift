@@ -12,8 +12,6 @@ struct ModelPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
-    @State private var isRefreshing = false
-
     private var recentIds: [String] { RecentModels.load() }
 
     private var models: [ModelInfo] { connection.cachedModels }

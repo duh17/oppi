@@ -13,7 +13,9 @@ enum ToolRowTextRenderer {
     static let maxDiffSyntaxHighlightBytes = 48 * 1024
     static let maxRenderedDiffLines = 400
     static let maxRenderedDiffLineCharacters = 800
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static let maxRenderedCommandCharacters = 6_000
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static let maxRenderedOutputCharacters = 2_000
     static let maxShellHighlightBytes = 64 * 1024
 
@@ -87,6 +89,7 @@ enum ToolRowTextRenderer {
 
     // MARK: - Markdown
 
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static func makeMarkdownAttributedText(_ text: String) -> NSAttributedString {
         let markdownOptions = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
@@ -529,6 +532,7 @@ enum ToolRowTextRenderer {
         return (oldLine, newLine)
     }
 
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static func lineNumberDigits(for lines: [DiffLine]) -> Int {
         lineNumberDigits(for: lines, startOldLine: 1, startNewLine: 1)
     }
@@ -568,6 +572,7 @@ enum ToolRowTextRenderer {
         return String(format: "%\(digits)d", number)
     }
 
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static func paddedHeader(_ value: String, digits: Int) -> String {
         if value.count >= digits {
             return String(value.suffix(digits))
@@ -661,6 +666,7 @@ enum ToolRowTextRenderer {
 
     // MARK: - Display Text Truncation
 
+    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static func truncatedDisplayText(_ text: String, maxCharacters: Int, note: String) -> String {
         guard text.count > maxCharacters else { return text }
         return String(text.prefix(maxCharacters)) + note

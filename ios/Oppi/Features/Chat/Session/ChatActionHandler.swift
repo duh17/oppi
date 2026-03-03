@@ -348,6 +348,7 @@ final class ChatActionHandler {
         }
     }
 
+    // periphery:ignore - future UI wiring point for thinking level cycling
     func cycleThinking(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task {
             do {
@@ -371,6 +372,7 @@ final class ChatActionHandler {
         }
     }
 
+    // periphery:ignore - future UI wiring point for new session creation
     func newSession(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task { @MainActor in
             do {

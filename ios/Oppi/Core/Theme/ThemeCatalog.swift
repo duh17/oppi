@@ -76,6 +76,7 @@ struct ThemePalette: Sendable {
 
 // MARK: - Convenience Initializer (base 13 → derive rest)
 
+// periphery:ignore - used by ThemeImportView for custom theme creation
 extension ThemePalette {
     /// Create a palette from 13 base colors, deriving all semantic tokens.
     /// Used when importing themes that only specify core colors.
@@ -409,6 +410,7 @@ enum ThemeRuntimeState {
         state.withLock { $0.palette }
     }
 
+    // periphery:ignore - API surface for future custom theme editing
     /// Force palette recomputation (e.g. after editing a custom theme's colors).
     static func invalidateCache() {
         state.withLock { $0.palette = $0.themeID.palette }

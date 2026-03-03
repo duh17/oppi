@@ -128,7 +128,7 @@ final class ChatScrollController: NSObject {
         }
     }
 
-    @objc private func handleKeyboardTransitionNotification(_ notification: Notification) {
+    @objc private func handleKeyboardTransitionNotification(_: Notification) {
         keyboardTransitionUntil = ContinuousClock.now.advanced(by: keyboardSettleDuration)
     }
 

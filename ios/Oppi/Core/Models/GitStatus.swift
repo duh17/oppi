@@ -60,6 +60,7 @@ struct GitStatus: Codable, Sendable, Equatable {
         totalFiles == 0
     }
 
+    // periphery:ignore - API surface for empty/default git state
     static let empty = Self(
         isGitRepo: false,
         branch: nil,
@@ -95,6 +96,7 @@ struct GitFileStatus: Codable, Sendable, Equatable, Identifiable {
 
     var id: String { path }
 
+    // periphery:ignore - API surface for git status display UI
     /// Human-readable status label.
     var label: String {
         switch status.trimmingCharacters(in: .whitespaces) {

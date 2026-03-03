@@ -213,6 +213,7 @@ struct WorkspaceHomeView: View {
         }
     }
 
+    // periphery:ignore:parameters force
     private func refresh(force: Bool) async {
         // Unified path: coordinator handles single- and multi-server refresh
         await coordinator.refreshAllServers()

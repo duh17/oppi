@@ -36,6 +36,7 @@ final class LANDiscovery: NSObject {
         browser.searchForServices(ofType: "_oppi._tcp.", inDomain: "local.")
     }
 
+    // periphery:ignore - intentional API surface; companion to start()
     func stop() {
         netServiceBrowser?.stop()
         netServiceBrowser = nil
@@ -101,7 +102,7 @@ final class LANDiscovery: NSObject {
         rebuildEndpoints()
     }
 
-    fileprivate func handleTXTRecordUpdate(_ data: Data, name: String) {
+    fileprivate func handleTXTRecordUpdate(_: Data, name: String) {
         logger.info("TXT record updated: \(name, privacy: .public)")
         rebuildEndpoints()
     }
@@ -130,6 +131,7 @@ final class LANDiscovery: NSObject {
     }
 
     // Keep NWBrowser parsing helpers for test compatibility
+    // periphery:ignore - intentional API surface; retained for NWBrowser test compat
     nonisolated static func txtRecordMap(from result: NWBrowser.Result) -> [String: String]? {
         switch result.metadata {
         case let .bonjour(txtRecord):
@@ -142,6 +144,7 @@ final class LANDiscovery: NSObject {
         }
     }
 
+    // periphery:ignore - used by LANDiscoveryTests via @testable import
     nonisolated static func parseTXTRecord(_ txtRecord: NWTXTRecord) -> [String: String] {
         var map: [String: String] = [:]
         map.reserveCapacity(txtRecord.count)

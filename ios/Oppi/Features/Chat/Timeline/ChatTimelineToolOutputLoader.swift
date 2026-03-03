@@ -55,10 +55,12 @@ final class ExpandedToolOutputLoader {
         private(set) var staleDiscardCountForTesting = 0
         private(set) var appliedCountForTesting = 0
 
+        // periphery:ignore - accessed via ChatTimelineCollectionView wrapper
         var taskCountForTesting: Int {
             loadState.taskCount
         }
 
+        // periphery:ignore - accessed via ChatTimelineCollectionView wrapper
         var loadingIDsForTesting: Set<String> {
             loadState.loadingIDs
         }
@@ -235,6 +237,7 @@ private struct LoadState {
     var loadingIDs: Set<String> = []
     var tasks: [String: Task<Void, Never>] = [:]
 
+    // periphery:ignore - used by taskCountForTesting in DEBUG builds
     var taskCount: Int {
         tasks.count
     }

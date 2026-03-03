@@ -59,6 +59,7 @@ struct RestorationState: Codable {
 
     // MARK: - Clear
 
+    // periphery:ignore - used by RestorationStateTests via @testable import
     static func clear() {
         UserDefaults.standard.removeObject(forKey: key)
     }

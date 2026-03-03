@@ -287,25 +287,12 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload%60"))
 
-        final class URLCapture: @unchecked Sendable {
-            var value: URL?
+        let action = markdownView.classifyLink(url)
+        guard case .deepLink(let routed) = action else {
+            Issue.record("Expected .deepLink, got \(action)")
+            return
         }
-        let observed = URLCapture()
-
-        let observer = NotificationCenter.default.addObserver(
-            forName: .inviteDeepLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            observed.value = notification.object as? URL
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-
-        let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
-
-        #expect(!shouldOpenExternally)
-        let routedURL = try #require(observed.value)
-        #expect(routedURL.absoluteString == "oppi://connect?v=3&invite=test-payload")
+        #expect(routed.absoluteString == "oppi://connect?v=3&invite=test-payload")
     }
 
     @MainActor
@@ -313,61 +300,25 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
 
-        final class URLCapture: @unchecked Sendable {
-            var value: URL?
+        let action = markdownView.classifyLink(url)
+        guard case .deepLink(let routed) = action else {
+            Issue.record("Expected .deepLink, got \(action)")
+            return
         }
-        let observed = URLCapture()
-
-        let observer = NotificationCenter.default.addObserver(
-            forName: .inviteDeepLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            observed.value = notification.object as? URL
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-
-        let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
-
-        #expect(!shouldOpenExternally)
-        #expect(observed.value == url)
+        #expect(routed == url)
     }
 
     @MainActor
-    @Test func routesHttpLinksToInAppBrowserNotification() throws {
+    @Test func classifiesHttpLinksAsWebLinks() throws {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "https://example.com/docs"))
 
-        final class URLCapture: @unchecked Sendable {
-            var value: URL?
+        let action = markdownView.classifyLink(url)
+        guard case .webLink(let routed) = action else {
+            Issue.record("Expected .webLink, got \(action)")
+            return
         }
-        let inviteObserved = URLCapture()
-        let webObserved = URLCapture()
-
-        let inviteObserver = NotificationCenter.default.addObserver(
-            forName: .inviteDeepLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            inviteObserved.value = notification.object as? URL
-        }
-        let webObserver = NotificationCenter.default.addObserver(
-            forName: .webLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            webObserved.value = notification.object as? URL
-        }
-        defer {
-            NotificationCenter.default.removeObserver(inviteObserver)
-            NotificationCenter.default.removeObserver(webObserver)
-        }
-
-        let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
-
-        #expect(!shouldOpenExternally)
-        #expect(inviteObserved.value == nil)
-        #expect(webObserved.value == url)
+        #expect(routed == url)
     }
 
     @MainActor
@@ -375,36 +326,8 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = try #require(URL(string: "mailto:support@example.com"))
 
-        final class URLCapture: @unchecked Sendable {
-            var value: URL?
-        }
-        let inviteObserved = URLCapture()
-        let webObserved = URLCapture()
-
-        let inviteObserver = NotificationCenter.default.addObserver(
-            forName: .inviteDeepLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            inviteObserved.value = notification.object as? URL
-        }
-        let webObserver = NotificationCenter.default.addObserver(
-            forName: .webLinkTapped,
-            object: nil,
-            queue: nil
-        ) { notification in
-            webObserved.value = notification.object as? URL
-        }
-        defer {
-            NotificationCenter.default.removeObserver(inviteObserver)
-            NotificationCenter.default.removeObserver(webObserver)
-        }
-
-        let shouldOpenExternally = markdownView.shouldOpenLinkExternally(url)
-
-        #expect(shouldOpenExternally)
-        #expect(inviteObserved.value == nil)
-        #expect(webObserved.value == nil)
+        let action = markdownView.classifyLink(url)
+        #expect(action == .systemDefault)
     }
 
     // MARK: - Helpers

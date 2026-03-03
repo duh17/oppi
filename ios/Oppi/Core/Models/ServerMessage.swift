@@ -412,6 +412,7 @@ extension ServerMessage {
         }
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
     /// Decode a `ServerMessage` from raw WebSocket text data.
     static func decode(from text: String) throws -> ServerMessage {
         guard let data = text.data(using: .utf8) else {
