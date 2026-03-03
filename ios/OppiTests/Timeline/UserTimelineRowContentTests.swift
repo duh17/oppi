@@ -101,6 +101,29 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("fullscreen image viewer uses theme navigation chrome")
+    func fullscreenViewerUsesThemeNavigationChrome() throws {
+        let palette = ThemeRuntimeState.currentThemeID().palette
+        let viewController = FullScreenImageViewController(image: makeTestImage())
+        let navigation = UINavigationController(rootViewController: viewController)
+
+        navigation.loadViewIfNeeded()
+        viewController.loadViewIfNeeded()
+
+        let doneButton = try #require(viewController.navigationItem.leftBarButtonItem)
+        #expect(doneButton.accessibilityLabel == "Done")
+        #expect(doneButton.accessibilityIdentifier == "fullscreen-image.dismiss")
+        #expect(color(doneButton.tintColor, approximatelyEquals: UIColor(palette.cyan)))
+
+        let navAppearance = navigation.navigationBar.standardAppearance
+        #expect(color(navAppearance.backgroundColor, approximatelyEquals: UIColor(palette.bgHighlight)))
+
+        let toolbar = try #require(firstSubview(ofType: UIToolbar.self, in: viewController.view))
+        #expect(color(toolbar.tintColor, approximatelyEquals: UIColor(palette.cyan)))
+        #expect(color(toolbar.standardAppearance.backgroundColor, approximatelyEquals: UIColor(palette.bgHighlight)))
+    }
+
+    @MainActor
     @Test("tool timeline image presentation uses page-sheet swipe dismiss")
     func toolTimelineImagePresentationUsesPageSheet() throws {
         let window = UIWindow()
@@ -115,10 +138,11 @@ struct UserTimelineRowContentTests {
 
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(makeTestImage(), from: source)
 
-        let presented = try #require(host.presentedViewController as? FullScreenImageViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        #expect(navigation.modalPresentationStyle == .pageSheet)
+        #expect(navigation.viewControllers.first is FullScreenImageViewController)
 
-        let sheet = try #require(presented.sheetPresentationController)
+        let sheet = try #require(navigation.sheetPresentationController)
         #expect(sheet.prefersGrabberVisible)
         #expect(sheet.detents.count == 1)
 
@@ -271,4 +295,28 @@ private func hasConstraint(
     }
 
     return false
+}
+
+@MainActor
+private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
+    guard let lhs else { return false }
+
+    var lr: CGFloat = 0
+    var lg: CGFloat = 0
+    var lb: CGFloat = 0
+    var la: CGFloat = 0
+    var rr: CGFloat = 0
+    var rg: CGFloat = 0
+    var rb: CGFloat = 0
+    var ra: CGFloat = 0
+
+    guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+          rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+        return lhs.cgColor == rhs.cgColor
+    }
+
+    return abs(lr - rr) <= tolerance &&
+        abs(lg - rg) <= tolerance &&
+        abs(lb - rb) <= tolerance &&
+        abs(la - ra) <= tolerance
 }

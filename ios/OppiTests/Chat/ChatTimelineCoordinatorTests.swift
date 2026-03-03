@@ -412,7 +412,8 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(!harness.reducer.expandedItemIDs.contains(toolID))
-        #expect(root.presentedViewController is FullScreenImageViewController)
+        let navigation = try #require(root.presentedViewController as? UINavigationController)
+        #expect(navigation.viewControllers.first is FullScreenImageViewController)
 
         root.dismiss(animated: false)
         harness.window.isHidden = true
