@@ -76,6 +76,7 @@ final class ToolOutputStore {
         chunks[itemID, default: ""]
     }
 
+    // periphery:ignore - used by ToolOutputStoreTests via @testable import
     func byteCount(for itemID: String) -> Int {
         chunks[itemID]?.utf8.count ?? 0
     }

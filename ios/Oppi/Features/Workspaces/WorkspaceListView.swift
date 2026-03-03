@@ -8,7 +8,6 @@ struct WorkspaceListView: View {
     let server: PairedServer
 
     @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerConnection.self) private var connection
     @State private var showCreate = false
 
     private var workspaces: [Workspace] {

@@ -58,6 +58,7 @@ final class GitStatusStore {
         }
     }
 
+    // periphery:ignore - API surface for git status lifecycle management
     /// Clear state when leaving the chat view.
     func reset() {
         gitStatus = nil

@@ -15,6 +15,7 @@ enum UIHangHarnessConfig {
         let queueHarnessEnabled: Bool
     }
 
+    // periphery:ignore - debug harness state container
     private struct StickyState {
         let noStream: Bool
         let includeVisualFixtures: Bool
@@ -26,14 +27,21 @@ enum UIHangHarnessConfig {
     // XCTest repeat mode can transiently reinstall/relaunch the app without
     // preserving our explicit harness launch args/env. Persist the last
     // harness launch knobs briefly so simulator relaunches stay in harness mode.
+    // periphery:ignore - debug harness persistence keys
     private static let stickyTimestampKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.timestamp"
+    // periphery:ignore - debug harness persistence keys
     private static let stickyNoStreamKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.noStream"
+    // periphery:ignore - debug harness persistence keys
     private static let stickyVisualFixturesKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.visualFixtures"
+    // periphery:ignore - debug harness persistence keys
     private static let stickyWriteMarkdownFixtureKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.writeMarkdownFixture"
+    // periphery:ignore - debug harness persistence keys
     private static let stickyMixedContentKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.mixedContent"
+    // periphery:ignore - debug harness persistence keys
     private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
     // Keep sticky harness launch knobs alive long enough for long-running UI
     // suites where CoreSimulator may relaunch the app mid-run.
+    // periphery:ignore - debug harness TTL constant
     private static let stickyTTLSeconds: TimeInterval = 900
 
     private static let launchContext = resolveLaunchContext()
@@ -1120,6 +1128,7 @@ struct UIHangHarnessView: View {
         ] + bodySections).joined(separator: "\n")
     }
 
+    // periphery:ignore - debug harness; session param reserved for future use
     private func visualWriteMarkdownContent(for session: HarnessSession) -> String {
         var sections: [String] = [
             "# Chat Timeline Code Paths (Streaming + Normal Output)",

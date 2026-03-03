@@ -155,6 +155,7 @@ extension ServerConnection {
             messageQueueStore.clear(sessionId: deletedId)
             sessionStore.remove(id: deletedId)
             notificationSessionIds.remove(deletedId)
+            sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             syncLiveActivityPermissions()
 
         case .error(let msg, _, let fatal):
@@ -207,6 +208,7 @@ extension ServerConnection {
 
     func handleConnected(_ session: Session) {
         sessionStore.upsert(session)
+        emitSessionUsageMetricsIfNeeded(session)
         syncThinkingLevel(from: session)
         scheduleSlashCommandsRefresh(for: session, force: true)
         syncLiveActivityPermissions()
@@ -219,6 +221,7 @@ extension ServerConnection {
         let previousStatus = previous?.status
 
         sessionStore.upsert(session)
+        emitSessionUsageMetricsIfNeeded(session)
         syncThinkingLevel(from: session)
         if previousWorkspaceId != session.workspaceId {
             scheduleSlashCommandsRefresh(for: session, force: true)
@@ -235,6 +238,91 @@ extension ServerConnection {
         }
 
         syncLiveActivityPermissions()
+    }
+
+    func emitSessionUsageMetricsIfNeeded(_ session: Session) {
+        let snapshot = sessionUsageMetricSnapshot(from: session)
+        if sessionUsageMetricSnapshots[session.id] == snapshot {
+            return
+        }
+        sessionUsageMetricSnapshots[session.id] = snapshot
+
+        let sessionId = session.id
+        let workspaceId = session.workspaceId
+        let tags: [String: String] = [
+            "provider": snapshot.provider,
+            "model": snapshot.model,
+        ]
+
+        let samples: [(ChatMetricName, Double)] = [
+            (.sessionMessageCount, Double(snapshot.messageCount)),
+            (.sessionInputTokens, Double(snapshot.inputTokens)),
+            (.sessionOutputTokens, Double(snapshot.outputTokens)),
+            (.sessionTotalTokens, Double(snapshot.totalTokens)),
+            (.sessionMutatingToolCalls, Double(snapshot.mutatingToolCalls)),
+            (.sessionFilesChanged, Double(snapshot.filesChanged)),
+            (.sessionAddedLines, Double(snapshot.addedLines)),
+            (.sessionRemovedLines, Double(snapshot.removedLines)),
+            (.sessionContextTokens, Double(snapshot.contextTokens)),
+            (.sessionContextWindow, Double(snapshot.contextWindow)),
+        ]
+
+        Task.detached(priority: .utility) {
+            for (metric, value) in samples {
+                await ChatMetricsService.shared.record(
+                    metric: metric,
+                    value: value,
+                    unit: .count,
+                    sessionId: sessionId,
+                    workspaceId: workspaceId,
+                    tags: tags
+                )
+            }
+        }
+    }
+
+    func sessionUsageMetricSnapshot(from session: Session) -> SessionUsageMetricSnapshot {
+        let (provider, model) = parseModelTags(session.model)
+        let inputTokens = max(0, session.tokens.input)
+        let outputTokens = max(0, session.tokens.output)
+        let mutatingToolCalls = max(0, session.changeStats?.mutatingToolCalls ?? 0)
+        let filesChanged = max(0, session.changeStats?.filesChanged ?? 0)
+        let addedLines = max(0, session.changeStats?.addedLines ?? 0)
+        let removedLines = max(0, session.changeStats?.removedLines ?? 0)
+        let contextTokens = max(0, session.contextTokens ?? 0)
+        let contextWindow = max(0, session.contextWindow ?? 0)
+
+        return SessionUsageMetricSnapshot(
+            provider: provider,
+            model: model,
+            messageCount: max(0, session.messageCount),
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            totalTokens: inputTokens + outputTokens,
+            mutatingToolCalls: mutatingToolCalls,
+            filesChanged: filesChanged,
+            addedLines: addedLines,
+            removedLines: removedLines,
+            contextTokens: contextTokens,
+            contextWindow: contextWindow
+        )
+    }
+
+    func parseModelTags(_ rawModel: String?) -> (provider: String, model: String) {
+        guard let rawModel,
+              !rawModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ("unknown", "unknown")
+        }
+
+        let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        if parts.count == 2 {
+            let provider = String(parts[0]).isEmpty ? "unknown" : String(parts[0])
+            let model = String(parts[1]).isEmpty ? "unknown" : String(parts[1])
+            return (provider, model)
+        }
+
+        return ("unknown", trimmed)
     }
 
     func decodeQueueStateFromCommandData(_ data: JSONValue?) -> MessageQueueState? {
@@ -436,6 +524,7 @@ extension ServerConnection {
         }
     }
 
+    // periphery:ignore - API surface for model cache management
     /// Invalidate the model cache so next connect re-fetches.
     func invalidateModelCache() {
         modelsCacheReady = false

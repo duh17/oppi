@@ -3,6 +3,7 @@ import Foundation
 // MARK: - Fork Operations
 
 extension ServerConnection {
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     /// Fork from a canonical session entry ID (mirrors pi CLI behavior).
     ///
     /// Flow:

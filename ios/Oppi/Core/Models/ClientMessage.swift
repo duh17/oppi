@@ -59,6 +59,9 @@ enum ClientMessage: Sendable {
     // ── Commands ──
     case getCommands(requestId: String? = nil)
 
+    // ── File suggestions ──
+    case getFileSuggestions(query: String, requestId: String? = nil)
+
     // ── Permission gate ──
     case permissionResponse(
         id: String,
@@ -91,6 +94,7 @@ struct ImageAttachment: Codable, Sendable, Equatable {
     let mimeType: String  // image/jpeg, image/png, etc.
 
 #if canImport(UIKit)
+    // periphery:ignore - API surface for image attachment display in UI
     /// Decode base64 data to UIImage for display.
     var decodedImage: UIImage? {
         guard let imageData = Data(base64Encoded: data) else { return nil }
@@ -287,6 +291,12 @@ extension ClientMessage: Encodable {
             try c.encode("get_commands", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        // ── File suggestions ──
+        case .getFileSuggestions(let query, let reqId):
+            try c.encode("get_file_suggestions", forKey: .type)
+            try c.encode(query, forKey: .query)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── Permission gate ──
         case .permissionResponse(let id, let action, let scope, let expiresInMs, let reqId):
             try c.encode("permission_response", forKey: .type)
@@ -324,7 +334,7 @@ extension ClientMessage: Encodable {
         case type, message, images, streamingBehavior, requestId, clientTurnId
         case id, action, scope, expiresInMs, value, confirmed, cancelled
         case provider, modelId, level, name, mode, enabled
-        case customInstructions, entryId, sessionPath, command
+        case customInstructions, entryId, sessionPath, command, query
         case baseVersion, steering, followUp
         case sessionId, sinceSeq
     }
@@ -401,6 +411,7 @@ extension ClientMessage {
         case .bash: return "bash"
         case .abortBash: return "abort_bash"
         case .getCommands: return "get_commands"
+        case .getFileSuggestions: return "get_file_suggestions"
         case .permissionResponse: return "permission_response"
         case .extensionUIResponse: return "extension_ui_response"
         case .subscribe: return "subscribe"

@@ -26,6 +26,7 @@ final class ToolSegmentStore {
         resultStore[id]
     }
 
+    // periphery:ignore - API surface for granular tool store cleanup
     func clear(itemIDs: Set<String>) {
         guard !itemIDs.isEmpty else { return }
         for id in itemIDs {

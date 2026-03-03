@@ -504,6 +504,7 @@ private final class NativeFullScreenDiffBody: UIView {
 }
 
 private final class DiffRowView: UIView {
+    // periphery:ignore:parameters themeID
     init(line: DiffLine, oldLineNumber: Int?, newLineNumber: Int?, language: SyntaxLanguage, palette: ThemePalette, themeID: ThemeID) {
         super.init(frame: .zero)
 

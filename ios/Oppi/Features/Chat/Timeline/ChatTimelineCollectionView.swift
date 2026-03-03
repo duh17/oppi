@@ -180,6 +180,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         Controller()
     }
 
+    // periphery:ignore - used by ChatTimelineLayoutTests via @testable import
     /// Exposed for tests that need the same layout as the real timeline.
     static func makeTestLayout() -> UICollectionViewLayout { makeLayout() }
 
@@ -252,14 +253,17 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 set { toolOutputLoader.fetchOverrideForTesting = newValue }
             }
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputCanceledCountForTesting: Int {
                 toolOutputLoader.canceledCountForTesting
             }
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputStaleDiscardCountForTesting: Int {
                 toolOutputLoader.staleDiscardCountForTesting
             }
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputAppliedCountForTesting: Int {
                 toolOutputLoader.appliedCountForTesting
             }
@@ -267,14 +271,17 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             private(set) var _audioStateRefreshCountForTesting = 0
             private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputLoadTaskCountForTesting: Int {
                 toolOutputLoader.taskCountForTesting
             }
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             var _loadingToolOutputIDsForTesting: Set<String> {
                 toolOutputLoader.loadingIDsForTesting
             }
 
+            // periphery:ignore - used by ChatTimelineTests via @testable import
             func _triggerLoadFullToolOutputForTesting(
                 itemID: String,
                 tool: String,
@@ -658,6 +665,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             return (orderedIDs: orderedIDs, itemByID: itemByID)
         }
 
+        // periphery:ignore - used by ChatTimelineCoordinatorTests via @testable import
         static func toolOutputCompletionDisposition(
             output: String,
             isTaskCancelled: Bool,
@@ -1480,10 +1488,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         private func cancelToolOutputRetryWork(for itemID: String) {
             toolOutputLoader.cancelRetryWork(for: itemID)
-        }
-
-        private func cancelAllToolOutputRetryWork() {
-            toolOutputLoader.cancelAllRetryWork()
         }
 
         private func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {

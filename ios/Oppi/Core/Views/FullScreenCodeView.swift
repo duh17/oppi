@@ -39,6 +39,7 @@ final class ThinkingTraceStream {
         return id
     }
 
+    // periphery:ignore - paired with addObserver; lifecycle management API
     func removeObserver(_ id: UUID) {
         observers.removeValue(forKey: id)
     }

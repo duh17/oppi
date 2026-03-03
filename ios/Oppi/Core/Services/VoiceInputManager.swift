@@ -270,6 +270,7 @@ final class VoiceInputManager {
 
     // MARK: - Availability
 
+    // periphery:ignore - API surface for voice availability checks
     /// Whether the preferred engine for `locale` supports that locale.
     static func isAvailable(for locale: Locale = .current) async -> Bool {
         let localeID = locale.identifier(.bcp47)
@@ -283,6 +284,7 @@ final class VoiceInputManager {
         }
     }
 
+    // periphery:ignore - API surface for voice model availability checks
     /// Whether the preferred engine model for `locale` is installed.
     static func isModelInstalled(for locale: Locale) async -> Bool {
         let localeID = locale.identifier(.bcp47)
@@ -888,16 +890,19 @@ final class VoiceInputManager {
 
 #if DEBUG
 extension VoiceInputManager {
+    // periphery:ignore - used by VoiceInputManagerTests via @testable import
     var _testState: State {
         get { state }
         set { state = newValue }
     }
 
+    // periphery:ignore - used by VoiceInputManagerTests via @testable import
     var _testOperationInFlight: Bool {
         get { operationInFlight }
         set { operationInFlight = newValue }
     }
 
+    // periphery:ignore - used by VoiceInputManagerTests via @testable import
     var _testModelReady: Bool {
         get { modelReady }
         set { modelReady = newValue }

@@ -28,9 +28,11 @@ final class PermissionStore {
         set { serverPending[activeServerId ?? ""] = newValue }
     }
 
+    // periphery:ignore - used by ServerConnectionPermissionTests via @testable import
     /// Total pending count for the active server (for badge display).
     var count: Int { pending.count }
 
+    // periphery:ignore - used by BugBashTests via @testable import
     /// Convenience emptiness check for active server permissions.
     var isEmpty: Bool { pending.isEmpty }
 
@@ -76,15 +78,18 @@ final class PermissionStore {
 
     // ── Cross-server queries ──
 
+    // periphery:ignore - store API surface; not yet wired to UI directly
     /// ALL pending permissions across ALL servers. Used by cross-session
     /// permission banner in ContentView.
     var allPending: [PermissionRequest] {
         serverPending.values.flatMap { $0 }
     }
 
+    // periphery:ignore - store API surface; not yet wired to UI directly
     /// Total pending count across ALL servers.
     var allCount: Int { allPending.count }
 
+    // periphery:ignore - store API surface; not yet wired to UI directly
     /// Pending permissions for a specific server.
     func pending(forServer serverId: String) -> [PermissionRequest] {
         serverPending[serverId] ?? []
@@ -101,6 +106,7 @@ final class PermissionStore {
         }
     }
 
+    // periphery:ignore - store API surface; called during server removal
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         serverPending.removeValue(forKey: serverId)

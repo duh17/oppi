@@ -105,6 +105,7 @@ actor TimelineCache {
         }
     }
 
+    // periphery:ignore - used by ChatSessionManagerTests via @testable import
     func removeTrace(_ sessionId: String) {
         try? fileManager.removeItem(at: traceURL(sessionId))
         logger.debug("Cache removed: trace for \(sessionId)")

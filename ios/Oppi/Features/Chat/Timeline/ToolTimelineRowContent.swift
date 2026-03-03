@@ -1445,6 +1445,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     #if DEBUG
+    // periphery:ignore - used by ToolRowContentViewTests via @testable import
     var expandedTapCopyGestureEnabledForTesting: Bool {
         expandedDoubleTapGesture.isEnabled && expandedSingleTapBlocker.isEnabled
     }

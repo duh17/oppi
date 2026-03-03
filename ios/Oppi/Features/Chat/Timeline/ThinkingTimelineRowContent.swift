@@ -537,6 +537,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     }
 
     #if DEBUG
+    // periphery:ignore - used by ThinkingRowContentViewTests via @testable import
     func contextMenuForTesting() -> UIMenu? {
         contextMenu()
     }

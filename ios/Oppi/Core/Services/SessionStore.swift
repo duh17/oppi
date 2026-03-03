@@ -52,16 +52,19 @@ final class SessionStore {
 
     // ── Cross-server queries ──
 
+    // periphery:ignore - used by SessionStoreTests via @testable import
     /// Sessions for a specific server (regardless of which is active).
     func sessions(forServer serverId: String) -> [Session] {
         serverSessions[serverId] ?? []
     }
 
+    // periphery:ignore - used by SessionStoreTests via @testable import
     /// All sessions across all servers, ordered by last activity.
     var allSessions: [Session] {
         serverSessions.values.flatMap { $0 }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    // periphery:ignore - used by SessionStoreTests via @testable import
     /// Look up a session by ID across ALL servers.
     /// Returns the session and its server ID, or nil.
     func findSession(id: String) -> (session: Session, serverId: String)? {
@@ -85,6 +88,7 @@ final class SessionStore {
         }
     }
 
+    // periphery:ignore - used by SessionStoreTests via @testable import
     /// Remove all data for a server (on unpair).
     func removeServer(_ serverId: String) {
         serverSessions.removeValue(forKey: serverId)
@@ -130,6 +134,7 @@ final class SessionStore {
         lastSyncFailed = true
     }
 
+    // periphery:ignore - store freshness API surface; not yet consumed by UI
     func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
         FreshnessState.derive(
             lastSuccessfulSyncAt: lastSuccessfulSyncAt,
@@ -140,6 +145,7 @@ final class SessionStore {
         )
     }
 
+    // periphery:ignore - store freshness API surface; not yet consumed by UI
     func freshnessLabel(now: Date = Date()) -> String {
         FreshnessState.updatedLabel(lastSuccessfulSyncAt: lastSuccessfulSyncAt, now: now)
     }
@@ -172,6 +178,7 @@ final class SessionStore {
         }
     }
 
+    // periphery:ignore - used by StoreTests via @testable import
     /// Sort sessions by last activity (most recent first).
     func sort() {
         var list = sessions

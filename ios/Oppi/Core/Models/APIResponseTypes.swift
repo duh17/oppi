@@ -332,6 +332,7 @@ struct WorkspaceGraphResponse: Decodable, Sendable, Equatable {
     }
 }
 
+// periphery:ignore - test convenience initializer for WorkspaceGraphResponse assembly
 extension WorkspaceGraphResponse {
     init(
         workspaceId: String,
@@ -348,6 +349,7 @@ extension WorkspaceGraphResponse {
     }
 }
 
+// periphery:ignore - test convenience initializer for SessionGraph.Node assembly
 extension WorkspaceGraphResponse.SessionGraph.Node {
     init(
         id: String,

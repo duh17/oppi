@@ -9,6 +9,7 @@ extension ServerConnection {
         try await send(.setModel(provider: provider, modelId: modelId))
     }
 
+    // periphery:ignore - API surface for model cycling
     func cycleModel() async throws {
         try await send(.cycleModel())
     }
@@ -19,6 +20,7 @@ extension ServerConnection {
         try await send(.setThinkingLevel(level: level))
     }
 
+    // periphery:ignore - used by ChatActionHandler; false positive from extension file split
     func cycleThinkingLevel() async throws {
         try await send(.cycleThinkingLevel())
     }
@@ -45,7 +47,7 @@ extension ServerConnection {
         requestId: String?,
         success: Bool,
         data: JSONValue?,
-        error: String?,
+        error _: String?,
         sessionId: String
     ) {
         if let expectedRequestId = slashCommandsRequestId,
@@ -71,6 +73,7 @@ extension ServerConnection {
 
     // ── Session Commands ──
 
+    // periphery:ignore - used by ChatActionHandler; false positive from extension file split
     func newSession() async throws {
         try await send(.newSession())
     }

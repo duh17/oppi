@@ -190,6 +190,7 @@ enum ToolPresentationBuilder {
         var editTrailingFallback: String?
     }
 
+    // periphery:ignore:parameters isError,outputPreview
     private static func buildCollapsed(
         normalizedTool: String,
         tool: String,

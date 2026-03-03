@@ -367,9 +367,37 @@ final class AssistantMarkdownContentView: UIView {
 
 }
 
+// MARK: - Link Classification
+
+/// How the markdown view handles a tapped/long-pressed link.
+enum LinkAction: Equatable {
+    /// Deep link (oppi://, pi://) — fires immediately on tap.
+    case deepLink(URL)
+    /// Web link (http/https) — no tap; long press shows context menu.
+    case webLink(URL)
+    /// Other schemes (mailto:, tel:, etc.) — system default handling.
+    case systemDefault
+}
+
 // MARK: - UITextViewDelegate (deep link routing)
 
 extension AssistantMarkdownContentView: UITextViewDelegate {
+
+    /// Classify a URL for tap/long-press behavior. Exposed for testing.
+    func classifyLink(_ url: URL) -> LinkAction {
+        let normalizedURL = Self.normalizedInteractionURL(url)
+        guard let scheme = normalizedURL.scheme?.lowercased() else {
+            return .systemDefault
+        }
+        if scheme == "pi" || scheme == "oppi" {
+            return .deepLink(normalizedURL)
+        }
+        if scheme == "http" || scheme == "https" {
+            return .webLink(normalizedURL)
+        }
+        return .systemDefault
+    }
+
     func textView(
         _ textView: UITextView,
         primaryActionFor textItem: UITextItem,
@@ -379,34 +407,67 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return defaultAction
         }
 
-        return shouldOpenLinkExternally(url) ? defaultAction : nil
+        switch classifyLink(url) {
+        case .deepLink(let normalizedURL):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+            }
+        case .webLink:
+            return nil
+        case .systemDefault:
+            return defaultAction
+        }
     }
 
-    @MainActor
-    func shouldOpenLinkExternally(_ url: URL) -> Bool {
-        let normalizedURL = Self.normalizedInteractionURL(url)
-
-        guard let scheme = normalizedURL.scheme?.lowercased() else {
-            return true
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        if scheme == "pi" || scheme == "oppi" {
-            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            return false
+        guard case .webLink(let normalizedURL) = classifyLink(url) else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        if scheme == "http" || scheme == "https" {
+        let copyAction = UIAction(
+            title: "Copy Link",
+            image: UIImage(systemName: "doc.on.doc")
+        ) { _ in
+            UIPasteboard.general.string = normalizedURL.absoluteString
+        }
+
+        let openAction = UIAction(
+            title: "Open in Browser",
+            image: UIImage(systemName: "safari")
+        ) { _ in
             NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            return false
         }
 
-        return true
+        let shareAction = UIAction(
+            title: "Share...",
+            image: UIImage(systemName: "square.and.arrow.up")
+        ) { [weak textView] _ in
+            guard let textView else { return }
+            let activityVC = UIActivityViewController(
+                activityItems: [normalizedURL], applicationActivities: nil
+            )
+            activityVC.popoverPresentationController?.sourceView = textView
+            textView.window?.rootViewController?
+                .presentedViewController?.present(activityVC, animated: true)
+                ?? textView.window?.rootViewController?.present(activityVC, animated: true)
+        }
+
+        let menu = UIMenu(children: [openAction, copyAction, shareAction])
+        return UITextItem.MenuConfiguration(menu: menu)
     }
 
     private static let trailingLinkDelimiters: Set<Character> = ["`", "'", "\"", "\u{2018}", "\u{201C}"]
     private static let trailingEncodedLinkDelimiters = ["%60", "%27", "%22"]
 
-    private static func normalizedInteractionURL(_ url: URL) -> URL {
+    static func normalizedInteractionURL(_ url: URL) -> URL {
         let normalized = normalizedURLString(url.absoluteString)
         return URL(string: normalized) ?? url
     }
@@ -576,6 +637,7 @@ final class NativeCodeBlockView: UIView {
         ])
     }
 
+    // periphery:ignore:parameters isOpen
     func apply(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         currentCode = code
 

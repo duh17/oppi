@@ -20,6 +20,7 @@ final class ServerConnection {
     private var discoveredLANEndpoint: LANDiscoveredEndpoint?
     private var endpointSelection: EndpointSelection?
 
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     /// Derived connection state for UI badges.
     var isConnected: Bool {
         wsClient?.status == .connected
@@ -50,6 +51,21 @@ final class ServerConnection {
     static let turnSendMaxAttempts = 2
     static let turnSendRequiredStage: TurnAckStage = .dispatched
     static let commandRequestTimeoutDefault: Duration = .seconds(8)
+
+    struct SessionUsageMetricSnapshot: Equatable {
+        let provider: String
+        let model: String
+        let messageCount: Int
+        let inputTokens: Int
+        let outputTokens: Int
+        let totalTokens: Int
+        let mutatingToolCalls: Int
+        let filesChanged: Int
+        let addedLines: Int
+        let removedLines: Int
+        let contextTokens: Int
+        let contextWindow: Int
+    }
 
     /// Test seam: override outbound send path without opening a real WebSocket.
     var _sendMessageForTesting: ((ClientMessage) async throws -> Void)?
@@ -87,6 +103,11 @@ final class ServerConnection {
     var slashCommandsRequestId: String?
     var slashCommandsTask: Task<Void, Never>?
 
+    /// File suggestions for @file composer autocomplete.
+    var fileSuggestions: [FileSuggestion] = []
+    /// Active file suggestion request — cancelled on new query.
+    var fileSuggestionTask: Task<Void, Never>?
+
     /// Timer that auto-dismisses extension dialogs after their timeout expires.
     var extensionTimeoutTask: Task<Void, Never>?
 
@@ -117,6 +138,9 @@ final class ServerConnection {
     /// session lost full subscription level on `/stream`.
     var fullSubscriptionRecoveryTask: Task<Void, Never>?
     var lastFullSubscriptionRecoveryAt: Date?
+
+    /// Last emitted per-session usage snapshot to avoid duplicate metric spam.
+    @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
 
     init() {
         // Wire coalescer to reducer (batch) + Live Activity (throttled).
@@ -151,6 +175,7 @@ final class ServerConnection {
 
     // MARK: - Setup
 
+    // periphery:ignore - used by ServerConnectionTests via @testable import
     /// Reconfigure to target a different server.
     ///
     /// Tears down any active session stream and WebSocket, then configures
@@ -300,6 +325,7 @@ final class ServerConnection {
         pendingUnsubscribeTasks.removeAll()
         notificationSessionIds.removeAll()
         pendingNotificationSubscriptionIds.removeAll()
+        sessionUsageMetricSnapshots.removeAll()
         wsClient?.disconnect()
 
         if ReleaseFeatures.liveActivitiesEnabled {
@@ -377,7 +403,6 @@ final class ServerConnection {
     }
 
     private static let resubscribeMaxAttempts = 3
-    private static let resubscribeBaseDelay: Duration = .milliseconds(500)
     private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
 
     private func resubscribeTrackedSessions() async {
@@ -666,6 +691,7 @@ final class ServerConnection {
 
         case .state(let session):
             sessionStore.upsert(session)
+            emitSessionUsageMetricsIfNeeded(session)
             syncLiveActivityPermissions()
 
         case .sessionEnded(let reason):
@@ -685,6 +711,7 @@ final class ServerConnection {
         case .sessionDeleted(let deletedId):
             sessionStore.remove(id: deletedId)
             notificationSessionIds.remove(deletedId)
+            sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             syncLiveActivityPermissions()
 
         case .error(let message, _, _):
@@ -742,10 +769,34 @@ final class ServerConnection {
             await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
         }
 
-        // Ensure /stream is connected
+        // Ensure /stream is connected.
         let wsStatus = wsClient?.status
+        let transport = transportPath.rawValue
+
         connectStream()
-        let connectMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
+
+        let streamOpenStart = ContinuousClock.now
+        let streamOpenStatus: String
+        if wsClient?.status == .connected {
+            streamOpenStatus = "already_connected"
+        } else if await waitForConnectedStream(timeout: .seconds(10)) {
+            streamOpenStatus = "connected"
+        } else {
+            streamOpenStatus = "timeout"
+        }
+        let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .streamOpenMs,
+                value: Double(streamOpenMs),
+                unit: .ms,
+                sessionId: sessionId,
+                tags: [
+                    "transport": transport,
+                    "status": streamOpenStatus,
+                ]
+            )
+        }
 
         // Create per-session stream
         let perSessionStream = AsyncStream<ServerMessage> { continuation in
@@ -760,6 +811,9 @@ final class ServerConnection {
 
         // Subscribe at full level — await server confirmation before returning
         // so commands sent after this call don't race the subscription.
+        let subscribeStart = ContinuousClock.now
+        var subscribeStatus = "ok"
+        var subscribeErrorKind: String?
         do {
             _ = try await sendCommandAwaitingResult(
                 command: "subscribe",
@@ -768,32 +822,117 @@ final class ServerConnection {
                 .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
             }
         } catch {
+            subscribeStatus = "error"
+            subscribeErrorKind = telemetryErrorKind(from: error)
             logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
-        let subscribeMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
+        let subscribeAckMs = Int((ContinuousClock.now - subscribeStart) / .milliseconds(1))
+        Task.detached(priority: .utility) {
+            var tags: [String: String] = [
+                "transport": transport,
+                "status": subscribeStatus,
+            ]
+            if let subscribeErrorKind {
+                tags["error_kind"] = subscribeErrorKind
+            }
+            await ChatMetricsService.shared.record(
+                metric: .subscribeAckMs,
+                value: Double(subscribeAckMs),
+                unit: .ms,
+                sessionId: sessionId,
+                tags: tags
+            )
+        }
 
+        let queueSyncStart = ContinuousClock.now
+        var queueSyncStatus = "ok"
+        var queueSyncErrorKind: String?
         do {
             try await requestMessageQueue()
         } catch {
+            queueSyncStatus = "error"
+            queueSyncErrorKind = telemetryErrorKind(from: error)
             logger.debug("Initial queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
+        let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
+        Task.detached(priority: .utility) {
+            var tags: [String: String] = [
+                "transport": transport,
+                "status": queueSyncStatus,
+            ]
+            if let queueSyncErrorKind {
+                tags["error_kind"] = queueSyncErrorKind
+            }
+            await ChatMetricsService.shared.record(
+                metric: .queueSyncMs,
+                value: Double(queueSyncMs),
+                unit: .ms,
+                sessionId: sessionId,
+                tags: tags
+            )
+        }
+
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
-        let transport = transportPath.rawValue
         let endpointHost = endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
 
-        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) connect=\(connectMs)ms subscribe=\(subscribeMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
+        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeAck=\(subscribeAckMs)ms queueSync=\(queueSyncMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
             "wsStatus": String(describing: wsStatus),
-            "connectMs": String(connectMs),
-            "subscribeMs": String(subscribeMs),
+            "streamOpenMs": String(streamOpenMs),
+            "subscribeAckMs": String(subscribeAckMs),
+            "queueSyncMs": String(queueSyncMs),
             "totalMs": String(totalMs),
             "transport": transport,
             "endpointHost": endpointHost,
+            // Keep legacy keys for compatibility with existing local analysis scripts.
+            "connectMs": String(streamOpenMs),
+            "subscribeMs": String(subscribeAckMs),
         ])
 
         syncNotificationSubscriptions()
 
         return perSessionStream
+    }
+
+    private func waitForConnectedStream(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50)
+    ) async -> Bool {
+        let startedAt = ContinuousClock.now
+
+        while wsClient?.status != .connected {
+            if Task.isCancelled {
+                return false
+            }
+
+            if ContinuousClock.now - startedAt >= timeout {
+                return false
+            }
+
+            try? await Task.sleep(for: pollInterval)
+        }
+
+        return true
+    }
+
+    private func telemetryErrorKind(from error: Error) -> String {
+        if error is CommandRequestError {
+            return "command_request"
+        }
+
+        if error is WebSocketError {
+            return "websocket"
+        }
+
+        if error is URLError {
+            return "url"
+        }
+
+        if error is CancellationError {
+            return "cancelled"
+        }
+
+        return "other"
     }
 
     /// Unsubscribe from a specific session.
@@ -825,6 +964,7 @@ final class ServerConnection {
         if let activeSessionId {
             unsubscribeSession(activeSessionId)
             messageQueueStore.clear(sessionId: activeSessionId)
+            sessionUsageMetricSnapshots.removeValue(forKey: activeSessionId)
         }
 
         activeSessionId = nil
@@ -841,6 +981,7 @@ final class ServerConnection {
         slashCommandsRequestId = nil
         slashCommandsCacheKey = nil
         slashCommands = []
+        clearFileSuggestions()
 
         syncNotificationSubscriptions()
 

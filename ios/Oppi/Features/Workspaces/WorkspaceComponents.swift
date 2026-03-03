@@ -91,6 +91,7 @@ private extension ServerBadgeColor {
 
 // MARK: - RuntimeStatusBadge
 
+// periphery:ignore - future navigation bar badge; not yet integrated into ChatView
 /// Environment icon with a small status dot overlay in the bottom-trailing corner.
 /// Used in the ChatView navigation bar to show session + sync state.
 struct RuntimeStatusBadge: View {
@@ -146,6 +147,7 @@ struct RuntimeStatusBadge: View {
     }
 }
 
+// periphery:ignore - extension on RuntimeStatusBadge.SyncState; suppressed with parent type
 extension RuntimeStatusBadge.SyncState {
     init(_ freshness: FreshnessState) {
         switch freshness {

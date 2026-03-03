@@ -46,6 +46,7 @@ enum SegmentRenderer {
         return result
     }
 
+    // periphery:ignore - used by SegmentRendererTests via @testable import
     /// Extract plain text from segments (for accessibility, copy, search).
     static func plainText(from segments: [StyledSegment]) -> String {
         segments.map(\.text).joined()
@@ -64,6 +65,7 @@ enum SegmentRenderer {
         return color(for: first.style)
     }
 
+    // periphery:ignore - used by SegmentRendererTests via @testable import
     /// Render result segments as a trailing badge string.
     /// Returns nil if segments are empty or all whitespace.
     static func trailingText(from segments: [StyledSegment]) -> String? {

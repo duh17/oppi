@@ -4,9 +4,6 @@ struct ContentView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
-    @Environment(PermissionStore.self) private var permissionStore
-    @Environment(SessionStore.self) private var sessionStore
-
     @State private var showCrossSessionPermissionSheet = false
 
     /// Pending permissions from ALL servers, excluding the active session's

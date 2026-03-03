@@ -155,6 +155,7 @@ struct MarkdownText: View {
     @State private var cachedSegments: [FlatSegment]?
     @State private var cachedThemeID: ThemeID?
 
+    // periphery:ignore - @State scratch storage, retained for incremental parsing refactor
     /// Raw CommonMark blocks — intermediate, only used during parsing.
     @State private var commonMarkBlocks: [MarkdownBlock]?
 
@@ -337,28 +338,67 @@ private struct SelectableAttributedText: UIViewRepresentable {
                 return defaultAction
             }
 
-            return shouldOpenLinkExternally(url) ? defaultAction : nil
+            let normalizedURL = normalizedInteractionURL(url)
+            guard let scheme = normalizedURL.scheme?.lowercased() else {
+                return defaultAction
+            }
+
+            // Deep links fire immediately on tap.
+            if scheme == "pi" || scheme == "oppi" {
+                return UIAction { _ in
+                    NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
+                }
+            }
+
+            // HTTP(S) links: no tap action — long press for context menu.
+            if scheme == "http" || scheme == "https" {
+                return nil
+            }
+
+            return defaultAction
         }
 
-        @MainActor
-        private func shouldOpenLinkExternally(_ url: URL) -> Bool {
+        func textView(
+            _ textView: UITextView,
+            menuConfigurationFor textItem: UITextItem,
+            defaultMenu: UIMenu
+        ) -> UITextItem.MenuConfiguration? {
+            guard case let .link(url) = textItem.content else {
+                return UITextItem.MenuConfiguration(menu: defaultMenu)
+            }
+
             let normalizedURL = normalizedInteractionURL(url)
 
-            guard let scheme = normalizedURL.scheme?.lowercased() else {
-                return true
+            let copyAction = UIAction(
+                title: "Copy Link",
+                image: UIImage(systemName: "doc.on.doc")
+            ) { _ in
+                UIPasteboard.general.string = normalizedURL.absoluteString
             }
 
-            if scheme == "pi" || scheme == "oppi" {
-                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-                return false
-            }
-
-            if scheme == "http" || scheme == "https" {
+            let openAction = UIAction(
+                title: "Open in Browser",
+                image: UIImage(systemName: "safari")
+            ) { _ in
                 NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-                return false
             }
 
-            return true
+            let shareAction = UIAction(
+                title: "Share...",
+                image: UIImage(systemName: "square.and.arrow.up")
+            ) { [weak textView] _ in
+                guard let textView else { return }
+                let activityVC = UIActivityViewController(
+                    activityItems: [normalizedURL], applicationActivities: nil
+                )
+                activityVC.popoverPresentationController?.sourceView = textView
+                textView.window?.rootViewController?
+                    .presentedViewController?.present(activityVC, animated: true)
+                    ?? textView.window?.rootViewController?.present(activityVC, animated: true)
+            }
+
+            let menu = UIMenu(children: [openAction, copyAction, shareAction])
+            return UITextItem.MenuConfiguration(menu: menu)
         }
 
         private func normalizedInteractionURL(_ url: URL) -> URL {
