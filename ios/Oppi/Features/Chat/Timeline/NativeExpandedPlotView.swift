@@ -404,16 +404,34 @@ struct PlotRenderPolicy: Sendable, Equatable {
     let legendVisible: Bool
 
     init(spec: PlotChartSpec, viewportWidth: CGFloat) {
-        xTickBudget = Self.tickBudget(for: viewportWidth)
-        yTickCount = viewportWidth < 340 ? 4 : 5
+        let baseXTickBudget = Self.tickBudget(for: viewportWidth)
+        xTickBudget = Self.resolvedXTickBudget(base: baseXTickBudget, hinted: spec.renderHints?.xAxis?.maxVisibleTicks)
 
-        let decimatedXTicks = Self.decimatedXTickValues(spec: spec, budget: xTickBudget)
+        let baseYTickCount = viewportWidth < 340 ? 4 : 5
+        yTickCount = Self.resolvedYTickCount(base: baseYTickCount, hinted: spec.renderHints?.yAxis?.maxTicks)
+
+        let decimatedXTicks = Self.decimatedXTickValues(
+            spec: spec,
+            budget: xTickBudget,
+            hintedType: spec.renderHints?.xAxis?.type
+        )
         xTickValues = decimatedXTicks.values
-        showVerticalGridlines = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xTickBudget
-        showHorizontalGridlines = true
+
+        let sparseDomain = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xTickBudget
+        if let verticalHint = spec.renderHints?.grid?.vertical {
+            showVerticalGridlines = verticalHint == .major && sparseDomain
+        } else {
+            showVerticalGridlines = sparseDomain
+        }
+
+        if let horizontalHint = spec.renderHints?.grid?.horizontal {
+            showHorizontalGridlines = horizontalHint == .major
+        } else {
+            showHorizontalGridlines = true
+        }
 
         let seriesCount = Self.legendSeriesCount(spec: spec)
-        legendVisible = seriesCount >= 2 && seriesCount <= 3
+        legendVisible = Self.resolveLegendVisibility(seriesCount: seriesCount, hints: spec.renderHints?.legend)
     }
 
     static func tickBudget(for viewportWidth: CGFloat) -> Int {
@@ -421,12 +439,64 @@ struct PlotRenderPolicy: Sendable, Equatable {
         return max(4, min(6, raw))
     }
 
-    private static func decimatedXTickValues(spec: PlotChartSpec, budget: Int) -> (values: XTickValues, domainCount: Int) {
+    private static func resolvedXTickBudget(base: Int, hinted: Int?) -> Int {
+        guard let hinted else {
+            return base
+        }
+
+        return min(base, max(2, min(8, hinted)))
+    }
+
+    private static func resolvedYTickCount(base: Int, hinted: Int?) -> Int {
+        guard let hinted else {
+            return base
+        }
+
+        return min(base, max(2, min(8, hinted)))
+    }
+
+    private static func resolveLegendVisibility(
+        seriesCount: Int,
+        hints: PlotChartSpec.RenderHints.Legend?
+    ) -> Bool {
+        let safeMaxItems = max(1, min(3, hints?.maxItems ?? 3))
+        let mode = hints?.mode ?? .auto
+
+        switch mode {
+        case .auto:
+            return seriesCount >= 2 && seriesCount <= safeMaxItems
+        case .show:
+            return seriesCount >= 1 && seriesCount <= safeMaxItems
+        case .hide, .inline:
+            return false
+        }
+    }
+
+    private static func shouldTreatXAxisAsNumeric(
+        spec: PlotChartSpec,
+        key: String,
+        hintedType: PlotChartSpec.RenderHints.XAxis.AxisType?
+    ) -> Bool {
+        switch hintedType {
+        case .numeric:
+            return true
+        case .category, .time:
+            return false
+        case .auto, .none:
+            return spec.columnIsNumeric(key)
+        }
+    }
+
+    private static func decimatedXTickValues(
+        spec: PlotChartSpec,
+        budget: Int,
+        hintedType: PlotChartSpec.RenderHints.XAxis.AxisType?
+    ) -> (values: XTickValues, domainCount: Int) {
         guard let xKey = primaryXKey(spec: spec) else {
             return (.automatic, 0)
         }
 
-        if spec.columnIsNumeric(xKey) {
+        if shouldTreatXAxisAsNumeric(spec: spec, key: xKey, hintedType: hintedType) {
             let uniqueValues = orderedUnique(spec.rows.compactMap { $0.number(for: xKey) })
             let decimated = decimate(uniqueValues, targetCount: budget)
             guard !decimated.isEmpty else {
