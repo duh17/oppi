@@ -603,11 +603,116 @@ private final class DiffRowView: UIView {
     required init?(coder: NSCoder) { nil }
 }
 
+@MainActor
+private final class TailFollowScrollCoordinator {
+    private let scrollView: UIScrollView
+    private let nearBottomThreshold: CGFloat
+    private let performLayout: () -> Void
+
+    private(set) var isApplyingProgrammaticScroll = false
+    var shouldAutoFollowTail: Bool
+    private var pendingAutoFollowScroll = false
+
+    init(
+        scrollView: UIScrollView,
+        shouldAutoFollowTail: Bool,
+        nearBottomThreshold: CGFloat = 28,
+        performLayout: @escaping () -> Void
+    ) {
+        self.scrollView = scrollView
+        self.shouldAutoFollowTail = shouldAutoFollowTail
+        self.nearBottomThreshold = nearBottomThreshold
+        self.performLayout = performLayout
+    }
+
+    func onLayoutPass() {
+        scheduleAutoFollowToBottomIfNeeded()
+    }
+
+    func scheduleAutoFollowToBottomIfNeeded() {
+        guard shouldAutoFollowTail else { return }
+        guard !pendingAutoFollowScroll else { return }
+        pendingAutoFollowScroll = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingAutoFollowScroll = false
+            self.scrollToBottomIfNeeded()
+        }
+    }
+
+    func handleWillBeginDragging() {
+        if !isNearBottom() {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func handleDidScroll(isUserDriven: Bool, isStreaming: Bool) {
+        guard !isApplyingProgrammaticScroll else { return }
+        guard isUserDriven else { return }
+
+        if isNearBottom() {
+            shouldAutoFollowTail = isStreaming
+        } else {
+            shouldAutoFollowTail = false
+        }
+    }
+
+    func handleDidEndDragging(willDecelerate: Bool, isStreaming: Bool) {
+        guard !willDecelerate else { return }
+        if isNearBottom() {
+            shouldAutoFollowTail = isStreaming
+        }
+    }
+
+    func handleDidEndDecelerating(isStreaming: Bool) {
+        if isNearBottom() {
+            shouldAutoFollowTail = isStreaming
+        }
+    }
+
+    private func scrollToBottomIfNeeded() {
+        guard scrollView.bounds.height > 0 else { return }
+
+        performLayout()
+
+        let targetY = max(
+            -scrollView.adjustedContentInset.top,
+            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
+        )
+        guard targetY.isFinite else { return }
+        guard abs(scrollView.contentOffset.y - targetY) > 0.5 else { return }
+
+        isApplyingProgrammaticScroll = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        CATransaction.commit()
+        isApplyingProgrammaticScroll = false
+    }
+
+    private func isNearBottom() -> Bool {
+        distanceFromBottom() <= nearBottomThreshold
+    }
+
+    private func distanceFromBottom() -> CGFloat {
+        let viewportHeight = scrollView.bounds.height
+            - scrollView.adjustedContentInset.top
+            - scrollView.adjustedContentInset.bottom
+        guard viewportHeight > 0 else { return .greatestFiniteMagnitude }
+
+        let visibleBottom = scrollView.contentOffset.y
+            + scrollView.adjustedContentInset.top
+            + viewportHeight
+
+        return scrollView.contentSize.height - visibleBottom
+    }
+}
+
 // MARK: - Terminal Body
 
 private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
     private static let maxSynchronousANSIBytes = 64 * 1024
-    private static let nearBottomThreshold: CGFloat = 28
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
@@ -618,9 +723,14 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     private var latestSnapshot: TerminalTraceStream.Snapshot
     private var renderedSnapshot: TerminalTraceStream.Snapshot?
-    private var shouldAutoFollowTail: Bool
-    private var isApplyingProgrammaticScroll = false
-    private var pendingAutoFollowScroll = false
+
+    private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
+        scrollView: scrollView,
+        shouldAutoFollowTail: false,
+        performLayout: { [weak self] in
+            self?.layoutIfNeeded()
+        }
+    )
 
     private var renderTask: Task<Void, Never>?
     private var streamObserverID: UUID?
@@ -632,9 +742,9 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         let initialSnapshot = stream?.snapshot
             ?? TerminalTraceStream.Snapshot(output: content, command: command, isDone: true)
         latestSnapshot = initialSnapshot
-        shouldAutoFollowTail = !initialSnapshot.isDone
 
         super.init(frame: .zero)
+        tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
         setup()
         render(snapshot: initialSnapshot)
 
@@ -658,10 +768,7 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-
-        if shouldAutoFollowTail {
-            scheduleAutoFollowToBottom()
-        }
+        tailFollowCoordinator.onLayoutPass()
     }
 
     private func setup() {
@@ -721,9 +828,7 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
 
     private func render(snapshot: TerminalTraceStream.Snapshot) {
         guard snapshot != renderedSnapshot else {
-            if shouldAutoFollowTail {
-                scheduleAutoFollowToBottom()
-            }
+            tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             return
         }
 
@@ -740,10 +845,7 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         }
 
         renderTerminalOutput(snapshot.output, isStreaming: !snapshot.isDone)
-
-        if shouldAutoFollowTail {
-            scheduleAutoFollowToBottom()
-        }
+        tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
     }
 
     private func renderTerminalOutput(_ content: String, isStreaming: Bool) {
@@ -773,110 +875,54 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.outputView.attributedText = NSAttributedString(attributed)
-                if self?.shouldAutoFollowTail == true {
-                    self?.scheduleAutoFollowToBottom()
-                }
+                self?.tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             }
         }
     }
 
-    private func scheduleAutoFollowToBottom() {
-        guard !pendingAutoFollowScroll else { return }
-        pendingAutoFollowScroll = true
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pendingAutoFollowScroll = false
-            self.scrollToBottomIfNeeded()
-        }
-    }
-
-    private func scrollToBottomIfNeeded() {
-        guard scrollView.bounds.height > 0 else { return }
-
-        layoutIfNeeded()
-
-        let targetY = max(
-            -scrollView.adjustedContentInset.top,
-            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
-        )
-        guard targetY.isFinite else { return }
-        guard abs(scrollView.contentOffset.y - targetY) > 0.5 else { return }
-
-        isApplyingProgrammaticScroll = true
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
-        CATransaction.commit()
-        isApplyingProgrammaticScroll = false
-    }
-
-    private func isNearBottom() -> Bool {
-        distanceFromBottom() <= Self.nearBottomThreshold
-    }
-
-    private func distanceFromBottom() -> CGFloat {
-        let viewportHeight = scrollView.bounds.height
-            - scrollView.adjustedContentInset.top
-            - scrollView.adjustedContentInset.bottom
-        guard viewportHeight > 0 else { return .greatestFiniteMagnitude }
-
-        let visibleBottom = scrollView.contentOffset.y
-            + scrollView.adjustedContentInset.top
-            + viewportHeight
-
-        return scrollView.contentSize.height - visibleBottom
-    }
-
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        if !isNearBottom() {
-            shouldAutoFollowTail = false
-        }
+        tailFollowCoordinator.handleWillBeginDragging()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard !isApplyingProgrammaticScroll else { return }
-        guard scrollView.isDragging || scrollView.isDecelerating else { return }
-
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        } else {
-            shouldAutoFollowTail = false
-        }
+        tailFollowCoordinator.handleDidScroll(
+            isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
+            isStreaming: !latestSnapshot.isDone
+        )
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        guard !decelerate else { return }
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        }
+        tailFollowCoordinator.handleDidEndDragging(
+            willDecelerate: decelerate,
+            isStreaming: !latestSnapshot.isDone
+        )
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        }
+        tailFollowCoordinator.handleDidEndDecelerating(isStreaming: !latestSnapshot.isDone)
     }
 }
 
 private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
-    private static let nearBottomThreshold: CGFloat = 28
-
     private let scrollView = UIScrollView()
     private let markdownView = AssistantMarkdownContentView()
     private let markdownWidthConstraint: NSLayoutConstraint
 
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
-    private var shouldAutoFollowTail: Bool
-    private var isApplyingProgrammaticScroll = false
-    private var pendingAutoFollowScroll = false
+
+    private lazy var tailFollowCoordinator = TailFollowScrollCoordinator(
+        scrollView: scrollView,
+        shouldAutoFollowTail: false,
+        performLayout: { [weak self] in
+            self?.layoutIfNeeded()
+        }
+    )
 
     init(initialContent: String, stream: ThinkingTraceStream?, palette: ThemePalette) {
         let initialSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: initialContent, isDone: true)
         latestSnapshot = initialSnapshot
-        shouldAutoFollowTail = !initialSnapshot.isDone
 
         markdownWidthConstraint = markdownView.widthAnchor.constraint(
             equalTo: scrollView.frameLayoutGuide.widthAnchor,
@@ -884,6 +930,7 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
         )
 
         super.init(frame: .zero)
+        tailFollowCoordinator.shouldAutoFollowTail = !initialSnapshot.isDone
 
         backgroundColor = UIColor(palette.bgDark)
 
@@ -924,10 +971,7 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-
-        if shouldAutoFollowTail {
-            scheduleAutoFollowToBottom()
-        }
+        tailFollowCoordinator.onLayoutPass()
     }
 
     private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
@@ -937,9 +981,7 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
 
     private func render(snapshot: ThinkingTraceStream.Snapshot) {
         guard snapshot != renderedSnapshot else {
-            if shouldAutoFollowTail {
-                scheduleAutoFollowToBottom()
-            }
+            tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             return
         }
 
@@ -950,87 +992,29 @@ private final class NativeFullScreenThinkingBody: UIView, UIScrollViewDelegate {
             themeID: ThemeRuntimeState.currentThemeID()
         ))
 
-        if shouldAutoFollowTail {
-            scheduleAutoFollowToBottom()
-        }
-    }
-
-    private func scheduleAutoFollowToBottom() {
-        guard !pendingAutoFollowScroll else { return }
-        pendingAutoFollowScroll = true
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pendingAutoFollowScroll = false
-            self.scrollToBottomIfNeeded()
-        }
-    }
-
-    private func scrollToBottomIfNeeded() {
-        guard scrollView.bounds.height > 0 else { return }
-
-        layoutIfNeeded()
-
-        let targetY = max(
-            -scrollView.adjustedContentInset.top,
-            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
-        )
-        guard targetY.isFinite else { return }
-        guard abs(scrollView.contentOffset.y - targetY) > 0.5 else { return }
-
-        isApplyingProgrammaticScroll = true
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
-        CATransaction.commit()
-        isApplyingProgrammaticScroll = false
-    }
-
-    private func isNearBottom() -> Bool {
-        distanceFromBottom() <= Self.nearBottomThreshold
-    }
-
-    private func distanceFromBottom() -> CGFloat {
-        let viewportHeight = scrollView.bounds.height
-            - scrollView.adjustedContentInset.top
-            - scrollView.adjustedContentInset.bottom
-        guard viewportHeight > 0 else { return .greatestFiniteMagnitude }
-
-        let visibleBottom = scrollView.contentOffset.y
-            + scrollView.adjustedContentInset.top
-            + viewportHeight
-
-        return scrollView.contentSize.height - visibleBottom
+        tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        if !isNearBottom() {
-            shouldAutoFollowTail = false
-        }
+        tailFollowCoordinator.handleWillBeginDragging()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard !isApplyingProgrammaticScroll else { return }
-        guard scrollView.isDragging || scrollView.isDecelerating else { return }
-
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        } else {
-            shouldAutoFollowTail = false
-        }
+        tailFollowCoordinator.handleDidScroll(
+            isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
+            isStreaming: !latestSnapshot.isDone
+        )
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        guard !decelerate else { return }
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        }
+        tailFollowCoordinator.handleDidEndDragging(
+            willDecelerate: decelerate,
+            isStreaming: !latestSnapshot.isDone
+        )
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        if isNearBottom() {
-            shouldAutoFollowTail = !latestSnapshot.isDone
-        }
+        tailFollowCoordinator.handleDidEndDecelerating(isStreaming: !latestSnapshot.isDone)
     }
 }
 
