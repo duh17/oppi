@@ -123,4 +123,192 @@ describe("sanitizeToolResultDetails", () => {
 
     expect(result.warnings.some((warning) => warning.includes("capped"))).toBe(true);
   });
+
+  it("sanitizes renderHints and clamps supported ranges", () => {
+    const result = sanitizeToolResultDetails({
+      ui: [
+        {
+          id: "hints-1",
+          kind: "chart",
+          version: 1,
+          spec: {
+            dataset: {
+              rows: [
+                { x: 0, y: 5 },
+                { x: 1, y: 8 },
+              ],
+            },
+            marks: [{ type: "line", x: "x", y: "y" }],
+            renderHints: {
+              xAxis: {
+                type: "time",
+                maxVisibleTicks: 99,
+                labelFormat: "DATE-SHORT",
+                strategy: "stride",
+              },
+              yAxis: {
+                maxTicks: 1,
+                nice: true,
+                zeroBaseline: "always",
+              },
+              legend: {
+                mode: "show",
+                maxItems: 99,
+              },
+              grid: {
+                vertical: "major",
+                horizontal: "none",
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const sanitized = result.details as {
+      ui?: Array<{
+        spec?: {
+          renderHints?: {
+            xAxis?: {
+              type?: string;
+              maxVisibleTicks?: number;
+              labelFormat?: string;
+              strategy?: string;
+            };
+            yAxis?: {
+              maxTicks?: number;
+              nice?: boolean;
+              zeroBaseline?: string;
+            };
+            legend?: {
+              mode?: string;
+              maxItems?: number;
+            };
+            grid?: {
+              vertical?: string;
+              horizontal?: string;
+            };
+          };
+        };
+      }>;
+    };
+
+    const hints = sanitized.ui?.[0]?.spec?.renderHints;
+    expect(hints?.xAxis).toEqual({
+      type: "time",
+      maxVisibleTicks: 8,
+      labelFormat: "date-short",
+      strategy: "stride",
+    });
+    expect(hints?.yAxis).toEqual({ maxTicks: 2, nice: true, zeroBaseline: "always" });
+    expect(hints?.legend).toEqual({ mode: "show", maxItems: 5 });
+    expect(hints?.grid).toEqual({ vertical: "major" });
+
+    expect(
+      result.warnings.some((warning) => warning.includes("renderHints.xAxis.maxVisibleTicks clamped")),
+    ).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("renderHints.yAxis.maxTicks clamped"))).toBe(
+      true,
+    );
+    expect(
+      result.warnings.some((warning) => warning.includes("renderHints.legend.maxItems clamped")),
+    ).toBe(true);
+    expect(
+      result.warnings.some((warning) => warning.includes("dropped invalid renderHints.grid.horizontal")),
+    ).toBe(true);
+  });
+
+  it("drops dense category x-axis type hint when scroll is disabled", () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      bucket: `day-${index}`,
+      value: index,
+    }));
+
+    const result = sanitizeToolResultDetails({
+      ui: [
+        {
+          id: "dense-category",
+          kind: "chart",
+          version: 1,
+          spec: {
+            dataset: { rows },
+            marks: [{ type: "bar", x: "bucket", y: "value" }],
+            renderHints: {
+              xAxis: {
+                type: "category",
+                maxVisibleTicks: 6,
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const sanitized = result.details as {
+      ui?: Array<{
+        spec?: {
+          renderHints?: {
+            xAxis?: {
+              type?: string;
+              maxVisibleTicks?: number;
+            };
+          };
+        };
+      }>;
+    };
+
+    const xAxisHints = sanitized.ui?.[0]?.spec?.renderHints?.xAxis;
+    expect(xAxisHints?.type).toBeUndefined();
+    expect(xAxisHints?.maxVisibleTicks).toBe(6);
+    expect(
+      result.warnings.some((warning) => warning.includes("dropped renderHints.xAxis.type category")),
+    ).toBe(true);
+  });
+
+  it("keeps category x-axis type hint when scroll is enabled", () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      bucket: `day-${index}`,
+      value: index,
+    }));
+
+    const result = sanitizeToolResultDetails({
+      ui: [
+        {
+          id: "dense-scrollable-category",
+          kind: "chart",
+          version: 1,
+          spec: {
+            dataset: { rows },
+            marks: [{ type: "bar", x: "bucket", y: "value" }],
+            interaction: {
+              scrollableX: true,
+            },
+            renderHints: {
+              xAxis: {
+                type: "category",
+                maxVisibleTicks: 6,
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const sanitized = result.details as {
+      ui?: Array<{
+        spec?: {
+          renderHints?: {
+            xAxis?: {
+              type?: string;
+            };
+          };
+        };
+      }>;
+    };
+
+    expect(sanitized.ui?.[0]?.spec?.renderHints?.xAxis?.type).toBe("category");
+    expect(
+      result.warnings.some((warning) => warning.includes("dropped renderHints.xAxis.type category")),
+    ).toBe(false);
+  });
 });
