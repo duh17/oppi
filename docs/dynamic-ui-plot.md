@@ -167,6 +167,17 @@ The sample `plot` extension now applies `normalizeForMobile(spec)` before return
 - It sets legend defaults to mobile-safe values (`mode: auto`, `maxItems <= 3`).
 - It always emits `fallbackText` summary text and appends auto-adjustment notes when normalization changed layout behavior.
 
+### Plot telemetry (phase 4)
+
+iOS emits the following chat telemetry metrics when rendering `plot` charts:
+
+- `plot.axis_visible_tick_count` (`count`)
+- `plot.legend_item_count` (`count`)
+- `plot.scroll_enabled` (`ratio`, 0/1)
+- `plot.auto_adjustments` (`count`)
+
+Metrics are computed from the effective mobile render policy (after decimation/legend/grid decisions), not raw input hints.
+
 ## Kypu-first examples
 
 - Pace + HR vs distance/time (multi-line)

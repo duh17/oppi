@@ -475,7 +475,11 @@ struct PlotRenderPolicy: Sendable, Equatable {
             hintedType: spec.renderHints?.xAxis?.type
         )
         xTickValues = decimatedXTicks.values
-        xVisibleTickCount = Self.visibleXTickCount(xTickValues: xTickValues, fallbackBudget: xTickBudget)
+        xVisibleTickCount = Self.visibleXTickCount(
+            xTickValues: xTickValues,
+            fallbackBudget: xTickBudget,
+            domainCount: decimatedXTicks.domainCount
+        )
 
         let sparseDomain = decimatedXTicks.domainCount > 0 && decimatedXTicks.domainCount <= xVisibleTickCount
         if let verticalHint = spec.renderHints?.grid?.vertical {
@@ -524,10 +528,17 @@ struct PlotRenderPolicy: Sendable, Equatable {
         return min(base, max(2, min(8, hinted)))
     }
 
-    private static func visibleXTickCount(xTickValues: XTickValues, fallbackBudget: Int) -> Int {
+    private static func visibleXTickCount(
+        xTickValues: XTickValues,
+        fallbackBudget: Int,
+        domainCount: Int
+    ) -> Int {
         switch xTickValues {
         case .automatic:
-            return fallbackBudget
+            guard domainCount > 0 else {
+                return 0
+            }
+            return min(fallbackBudget, domainCount)
         case .numeric(let values):
             return values.count
         case .category(let values):
