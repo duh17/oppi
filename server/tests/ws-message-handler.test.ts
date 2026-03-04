@@ -347,6 +347,44 @@ describe("WsMessageHandler", () => {
     );
   });
 
+  it("forwards get_fork_messages requests", async () => {
+    const harness = makeHarness();
+
+    await dispatch(harness, {
+      type: "get_fork_messages",
+      requestId: "req-forks-1",
+    });
+
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledTimes(1);
+    expect(harness.sessions.forwardClientCommand).toHaveBeenCalledWith(
+      "s1",
+      {
+        type: "get_fork_messages",
+        requestId: "req-forks-1",
+      },
+      "req-forks-1",
+    );
+  });
+
+  it("returns command_result error for unsupported command types", async () => {
+    const harness = makeHarness();
+
+    await dispatch(
+      harness,
+      { type: "future_command_v99", requestId: "req-unknown" } as unknown as ClientMessage,
+    );
+
+    expect(harness.sent).toEqual([
+      {
+        type: "command_result",
+        command: "future_command_v99",
+        requestId: "req-unknown",
+        success: false,
+        error: "Unsupported command type: future_command_v99",
+      },
+    ]);
+  });
+
   it("handles stop aliases through sendAbort and emits command_result", async () => {
     const harness = makeHarness();
 
