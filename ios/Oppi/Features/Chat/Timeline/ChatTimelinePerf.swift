@@ -53,6 +53,11 @@ enum ChatTimelinePerf {
     private static let guardrailLayoutThresholdMs = 250
     private static let guardrailCellThresholdMs = 80
 
+    /// Discard apply/layout measurements above this threshold. Wall-clock
+    /// timers include iOS process suspension time, so multi-second values
+    /// are nearly always background artifacts, not real rendering cost.
+    static let suspensionCeilingMs = 5_000
+
     private static let slowLogCooldownMs: UInt64 = 2_000
 
     private static var applyLastMs = 0
@@ -242,6 +247,11 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
+        // Discard suspension-inflated samples. Wall-clock timers include
+        // iOS process suspension time, producing multi-second values that
+        // are background artifacts, not real rendering cost.
+        guard durationMs < suspensionCeilingMs else { return }
+
         let applySid = activeSessionId
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
@@ -311,6 +321,8 @@ enum ChatTimelinePerf {
         if durationMs >= guardrailLayoutThresholdMs {
             hardGuardrailBreachCount &+= 1
         }
+
+        guard durationMs < suspensionCeilingMs else { return }
 
         let layoutSid = activeSessionId
         Task.detached(priority: .utility) {
