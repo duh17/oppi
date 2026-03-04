@@ -45,11 +45,13 @@ final class VoiceInputManager {
     enum TranscriptionEngine: String, Equatable, Sendable {
         case modernSpeech
         case classicDictation
+        case remoteASR
 
         var logName: String {
             switch self {
             case .modernSpeech: return "speech"
             case .classicDictation: return "dictation"
+            case .remoteASR: return "remote"
             }
         }
     }
@@ -139,6 +141,9 @@ final class VoiceInputManager {
     private var audioEngine: AVAudioEngine?
     private var resultsTask: Task<Void, Never>?
 
+    /// Remote ASR transcriber — used when engine is `.remoteASR`.
+    private var remoteTranscriber: RemoteASRTranscriber?
+
     /// Cached across sessions — model availability and preferred audio format.
     /// Keyed by engine + locale so switching languages/engines invalidates correctly.
     private var cachedModelKey: String?
@@ -156,9 +161,40 @@ final class VoiceInputManager {
     private var nextStartRequestID = 0
     private var activeStartRequestID: Int?
 
+    // MARK: - Remote ASR Configuration
+
+    /// Base URL for the remote ASR server (e.g. `http://mac-studio.local:8321`).
+    /// When set, enables `.remoteASR` engine selection.
+    private(set) var remoteASREndpoint: URL?
+
+    /// Engine preference override. When `.remoteASR`, bypasses locale-based routing.
+    private(set) var enginePreference: TranscriptionEngine?
+
     // MARK: - Init
 
     init() {}
+
+    /// Configure the remote ASR endpoint. Pass nil to disable.
+    func setRemoteASREndpoint(_ url: URL?) {
+        remoteASREndpoint = url
+        // Invalidate cached model state when endpoint changes
+        if enginePreference == .remoteASR {
+            modelReady = false
+            cachedFormat = nil
+            cachedModelKey = nil
+        }
+        logger.info("Remote ASR endpoint: \(url?.absoluteString ?? "disabled")")
+    }
+
+    /// Set engine preference override. Pass nil for automatic locale-based selection.
+    func setEnginePreference(_ engine: TranscriptionEngine?) {
+        enginePreference = engine
+        // Invalidate cache when switching engines
+        modelReady = false
+        cachedFormat = nil
+        cachedModelKey = nil
+        logger.info("Engine preference: \(engine?.logName ?? "auto")")
+    }
 
     // MARK: - Locale Resolution
 
@@ -185,6 +221,19 @@ final class VoiceInputManager {
         default:
             return .modernSpeech
         }
+    }
+
+    /// Resolve the effective engine, considering user preference and remote availability.
+    private func effectiveEngine(for locale: Locale) -> TranscriptionEngine {
+        if let pref = enginePreference {
+            // If remote is preferred but no endpoint, fall back to locale-based
+            if pref == .remoteASR, remoteASREndpoint == nil {
+                logger.warning("Remote ASR preferred but no endpoint configured, falling back")
+                return Self.preferredEngine(for: locale)
+            }
+            return pref
+        }
+        return Self.preferredEngine(for: locale)
     }
 
     private static func modelKey(engine: TranscriptionEngine, localeID: String) -> String {
@@ -281,6 +330,8 @@ final class VoiceInputManager {
         case .classicDictation:
             let supported = await DictationTranscriber.supportedLocales
             return supported.contains { $0.identifier(.bcp47) == localeID }
+        case .remoteASR:
+            return true  // Remote endpoint handles all locales
         }
     }
 
@@ -295,6 +346,8 @@ final class VoiceInputManager {
         case .classicDictation:
             let installed = await DictationTranscriber.installedLocales
             return installed.contains { $0.identifier(.bcp47) == localeID }
+        case .remoteASR:
+            return true  // No local model needed
         }
     }
 
@@ -379,7 +432,7 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        let engine = Self.preferredEngine(for: locale)
+        let engine = effectiveEngine(for: locale)
         let key = Self.modelKey(engine: engine, localeID: localeID)
         let metricAnnotation = VoiceMetricAnnotation(
             engine: engine.logName,
@@ -397,121 +450,26 @@ final class VoiceInputManager {
         do {
             try ensureStartRequestActive(requestID)
 
-            let modelPhaseStart = ContinuousClock.now
-
-            // Phase 1: ensure model is ready
-            var joinedMatchingPrewarm = false
-            if let inflight = prewarmTask {
-                if prewarmModelKey == key {
-                    modelPathTag = "join_prewarm"
-                    logger.info("Voice setup: awaiting in-flight \(engine.logName) prewarm")
-                    let format = try await inflight.value
-                    try ensureStartRequestActive(requestID)
-                    cachedFormat = format
-                    cachedModelKey = key
-                    modelReady = true
-                    prewarmTask = nil
-                    prewarmModelKey = nil
-                    joinedMatchingPrewarm = true
-                    let ms = elapsedMs(since: startTime)
-                    logger.error("Voice setup: joined prewarm in \(ms)ms")
-                } else {
-                    inflight.cancel()
-                    prewarmTask = nil
-                    prewarmModelKey = nil
-                }
-            }
-
-            if !joinedMatchingPrewarm {
-                if !modelReady {
-                    modelPathTag = "cold"
-                    let format = try await Self.warmModel(engine: engine, locale: locale)
-                    try ensureStartRequestActive(requestID)
-                    cachedFormat = format
-                    cachedModelKey = key
-                    modelReady = true
-                    let ms = elapsedMs(since: startTime)
-                    logger.error("Voice setup: cold \(engine.logName) model check in \(ms)ms")
-                } else {
-                    modelPathTag = "warm_cache"
-                    logger.error("Voice setup: \(engine.logName) model ready (0ms)")
-                }
-            }
-
-            let modelPhaseMs = elapsedMs(since: modelPhaseStart)
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: modelPhaseMs,
-                annotation: metricAnnotation,
-                phase: .modelReady,
-                status: "ok",
-                extraTags: ["path": modelPathTag]
-            )
-
-            // Phase 2: fresh transcriber for this session
-            let transcriberStart = ContinuousClock.now
-            let newTranscriber = Self.makeTranscriber(engine: engine, locale: locale)
-            transcriber = newTranscriber
-            activeLanguageLabel = Self.languageLabel(for: locale)
-            let transcriberMs = elapsedMs(since: transcriberStart)
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: transcriberMs,
-                annotation: metricAnnotation,
-                phase: .transcriberCreate,
-                status: "ok",
-                extraTags: ["path": modelPathTag]
-            )
-            logger.info("Voice setup: created \(engine.logName) transcriber (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
-
-            // Use cached format, or compute if missing
-            let format: AVAudioFormat?
-            if let cached = cachedFormat {
-                format = cached
-            } else {
-                format = await SpeechAnalyzer.bestAvailableAudioFormat(
-                    compatibleWith: [newTranscriber.speechModule]
+            if engine == .remoteASR {
+                try await startRemoteRecording(
+                    requestID: requestID,
+                    startTime: startTime,
+                    locale: locale,
+                    metricAnnotation: metricAnnotation,
+                    modelPathTag: &modelPathTag
                 )
-                cachedFormat = format
+            } else {
+                try await startOnDeviceRecording(
+                    requestID: requestID,
+                    startTime: startTime,
+                    engine: engine,
+                    locale: locale,
+                    localeID: localeID,
+                    key: key,
+                    metricAnnotation: metricAnnotation,
+                    modelPathTag: &modelPathTag
+                )
             }
-            try ensureStartRequestActive(requestID)
-
-            // Phase 3: start analyzer session
-            let analyzerStart = ContinuousClock.now
-            let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber.speechModule])
-            analyzer = newAnalyzer
-
-            let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
-            inputBuilder = builder
-
-            try await newAnalyzer.start(inputSequence: sequence)
-            try ensureStartRequestActive(requestID)
-            let analyzerMs = elapsedMs(since: analyzerStart)
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: analyzerMs,
-                annotation: metricAnnotation,
-                phase: .analyzerStart,
-                status: "ok",
-                extraTags: ["path": modelPathTag]
-            )
-            startResultsHandler(transcriber: newTranscriber, metricAnnotation: metricAnnotation)
-            logger.info("Voice setup: analyzer session started")
-
-            // Phase 4: audio engine
-            let audioStart = ContinuousClock.now
-            try setupAudioSession()
-            try await startAudioEngine(format: format)
-            try ensureStartRequestActive(requestID)
-            let audioMs = elapsedMs(since: audioStart)
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: audioMs,
-                annotation: metricAnnotation,
-                phase: .audioStart,
-                status: "ok",
-                extraTags: ["path": modelPathTag]
-            )
 
             let totalMs = elapsedMs(since: startTime)
             recordVoiceMetric(
@@ -535,11 +493,7 @@ final class VoiceInputManager {
                 extraTags: ["path": modelPathTag]
             )
             logger.info("Voice setup cancelled")
-            resultsTask?.cancel()
-            resultsTask = nil
-            await analyzer?.cancelAndFinishNow()
-            deactivateAudioSession()
-            teardownSession()
+            await cleanupFailedStart()
             state = .idle
             return
         } catch {
@@ -556,11 +510,7 @@ final class VoiceInputManager {
                 ]
             )
             logger.error("Voice setup failed: \(error.localizedDescription)")
-            resultsTask?.cancel()
-            resultsTask = nil
-            await analyzer?.cancelAndFinishNow()
-            deactivateAudioSession()
-            teardownSession()
+            await cleanupFailedStart()
             state = .error(error.localizedDescription)
             scheduleErrorReset()
             throw error
@@ -588,10 +538,17 @@ final class VoiceInputManager {
         audioEngine = nil
         inputBuilder?.finish()
 
-        do {
-            try await analyzer?.finalizeAndFinishThroughEndOfInput()
-        } catch {
-            logger.error("Error finalizing: \(error.localizedDescription)")
+        if let remote = remoteTranscriber {
+            // Remote path: flush remaining audio as final chunk
+            await remote.stop()
+            remoteTranscriber = nil
+        } else {
+            // On-device path: finalize SpeechAnalyzer
+            do {
+                try await analyzer?.finalizeAndFinishThroughEndOfInput()
+            } catch {
+                logger.error("Error finalizing: \(error.localizedDescription)")
+            }
         }
 
         await resultsTask?.value
@@ -628,6 +585,8 @@ final class VoiceInputManager {
         resultsTask?.cancel()
         resultsTask = nil
 
+        remoteTranscriber?.cancel()
+        remoteTranscriber = nil
         await analyzer?.cancelAndFinishNow()
 
         deactivateAudioSession()
@@ -637,6 +596,323 @@ final class VoiceInputManager {
         volatileTranscript = ""
         operationInFlight = false
         state = .idle
+    }
+
+    // MARK: - Remote ASR Recording
+
+    /// Start recording with the remote ASR engine. No SpeechAnalyzer — audio
+    /// is buffered locally and uploaded in WAV chunks to the configured endpoint.
+    private func startRemoteRecording(
+        requestID: Int,
+        startTime: ContinuousClock.Instant,
+        locale: Locale,
+        metricAnnotation: VoiceMetricAnnotation,
+        modelPathTag: inout String
+    ) async throws {
+        guard let endpoint = remoteASREndpoint else {
+            throw VoiceInputError.internalError("Remote ASR endpoint not configured")
+        }
+
+        modelPathTag = "remote"
+        let localeID = locale.identifier(.bcp47)
+        let langCode = locale.language.languageCode?.identifier
+
+        // Phase 1: no model to warm — remote handles it
+        let modelPhaseMs = elapsedMs(since: startTime)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: modelPhaseMs,
+            annotation: metricAnnotation,
+            phase: .modelReady,
+            status: "ok",
+            extraTags: ["path": "remote"]
+        )
+        logger.info("Voice setup: remote ASR (endpoint: \(endpoint.absoluteString))")
+
+        // Phase 2: create remote transcriber
+        let transcriberStart = ContinuousClock.now
+        let config = RemoteASRTranscriber.Configuration(
+            endpointURL: endpoint,
+            language: langCode
+        )
+        let newRemote = RemoteASRTranscriber(configuration: config)
+        remoteTranscriber = newRemote
+        activeLanguageLabel = Self.languageLabel(for: locale)
+
+        let transcriberMs = elapsedMs(since: transcriberStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: transcriberMs,
+            annotation: metricAnnotation,
+            phase: .transcriberCreate,
+            status: "ok",
+            extraTags: ["path": "remote"]
+        )
+        logger.info("Voice setup: created remote transcriber (locale: \(localeID))")
+        try ensureStartRequestActive(requestID)
+
+        // Phase 3: start the chunk loop and results handler
+        let analyzerStart = ContinuousClock.now
+        let resultStream = newRemote.start()
+
+        let analyzerMs = elapsedMs(since: analyzerStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: analyzerMs,
+            annotation: metricAnnotation,
+            phase: .analyzerStart,
+            status: "ok",
+            extraTags: ["path": "remote"]
+        )
+
+        startRemoteResultsHandler(
+            resultStream: resultStream,
+            metricAnnotation: metricAnnotation
+        )
+        logger.info("Voice setup: remote chunk loop started")
+        try ensureStartRequestActive(requestID)
+
+        // Phase 4: audio engine — target 16kHz mono for remote
+        let audioStart = ContinuousClock.now
+        try setupAudioSession()
+        try startRemoteAudioEngine(transcriber: newRemote)
+        try ensureStartRequestActive(requestID)
+
+        let audioMs = elapsedMs(since: audioStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: audioMs,
+            annotation: metricAnnotation,
+            phase: .audioStart,
+            status: "ok",
+            extraTags: ["path": "remote"]
+        )
+    }
+
+    /// Start the audio engine for remote ASR — captures at device rate,
+    /// resamples to 16kHz mono, feeds the remote transcriber.
+    private func startRemoteAudioEngine(transcriber: RemoteASRTranscriber) throws {
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        // Target: 16kHz mono Float32
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(transcriber.config.sampleRate),
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw VoiceInputError.internalError("Cannot create 16kHz mono format")
+        }
+
+        let converter: AVAudioConverter?
+        if inputFormat != targetFormat {
+            converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        } else {
+            converter = nil
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak transcriber] buffer, _ in
+            guard let transcriber else { return }
+
+            // Resample to 16kHz mono if needed
+            let outputBuffer: AVAudioPCMBuffer
+            if let converter, let targetFormat = converter.outputFormat as AVAudioFormat? {
+                let frameCapacity = AVAudioFrameCount(
+                    Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
+                )
+                guard let converted = AVAudioPCMBuffer(
+                    pcmFormat: targetFormat,
+                    frameCapacity: frameCapacity
+                ) else { return }
+
+                var error: NSError?
+                converter.convert(to: converted, error: &error) { _, outStatus in
+                    outStatus.pointee = .haveData
+                    return buffer
+                }
+                if error != nil { return }
+                outputBuffer = converted
+            } else {
+                outputBuffer = buffer
+            }
+
+            transcriber.appendAudio(buffer: outputBuffer)
+        }
+
+        engine.prepare()
+        try engine.start()
+        audioEngine = engine
+    }
+
+    /// Handle results from the remote ASR transcriber stream.
+    private func startRemoteResultsHandler(
+        resultStream: AsyncStream<RemoteASRTranscriber.TranscriptionResult>,
+        metricAnnotation: VoiceMetricAnnotation
+    ) {
+        let recordingStartTime = ContinuousClock.now
+        var firstResultReceived = false
+
+        resultsTask = Task {
+            for await result in resultStream {
+                guard !Task.isCancelled else { break }
+
+                if !firstResultReceived {
+                    firstResultReceived = true
+                    let ms = elapsedMs(since: recordingStartTime)
+                    recordVoiceMetric(
+                        .voiceFirstResultMs,
+                        valueMs: ms,
+                        annotation: metricAnnotation,
+                        phase: .firstResult,
+                        status: "ok",
+                        extraTags: ["result_type": "final"]
+                    )
+                    logger.error("Voice latency: first remote result in \(ms)ms")
+                }
+
+                // Remote results are always finalized (one chunk = one result).
+                // Add a space separator between chunks for natural text flow.
+                if !finalizedTranscript.isEmpty {
+                    finalizedTranscript += " "
+                }
+                finalizedTranscript += result.text
+                volatileTranscript = ""
+                logger.debug("Remote finalized: \(result.text)")
+            }
+        }
+    }
+
+    // MARK: - On-Device Recording
+
+    /// Start recording with the on-device SpeechAnalyzer engine (SpeechTranscriber
+    /// or DictationTranscriber). This is the original recording path.
+    private func startOnDeviceRecording(
+        requestID: Int,
+        startTime: ContinuousClock.Instant,
+        engine: TranscriptionEngine,
+        locale: Locale,
+        localeID: String,
+        key: String,
+        metricAnnotation: VoiceMetricAnnotation,
+        modelPathTag: inout String
+    ) async throws {
+        let modelPhaseStart = ContinuousClock.now
+
+        // Phase 1: ensure model is ready
+        var joinedMatchingPrewarm = false
+        if let inflight = prewarmTask {
+            if prewarmModelKey == key {
+                modelPathTag = "join_prewarm"
+                logger.info("Voice setup: awaiting in-flight \(engine.logName) prewarm")
+                let format = try await inflight.value
+                try ensureStartRequestActive(requestID)
+                cachedFormat = format
+                cachedModelKey = key
+                modelReady = true
+                prewarmTask = nil
+                prewarmModelKey = nil
+                joinedMatchingPrewarm = true
+                let ms = elapsedMs(since: startTime)
+                logger.error("Voice setup: joined prewarm in \(ms)ms")
+            } else {
+                inflight.cancel()
+                prewarmTask = nil
+                prewarmModelKey = nil
+            }
+        }
+
+        if !joinedMatchingPrewarm {
+            if !modelReady {
+                modelPathTag = "cold"
+                let format = try await Self.warmModel(engine: engine, locale: locale)
+                try ensureStartRequestActive(requestID)
+                cachedFormat = format
+                cachedModelKey = key
+                modelReady = true
+                let ms = elapsedMs(since: startTime)
+                logger.error("Voice setup: cold \(engine.logName) model check in \(ms)ms")
+            } else {
+                modelPathTag = "warm_cache"
+                logger.error("Voice setup: \(engine.logName) model ready (0ms)")
+            }
+        }
+
+        let modelPhaseMs = elapsedMs(since: modelPhaseStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: modelPhaseMs,
+            annotation: metricAnnotation,
+            phase: .modelReady,
+            status: "ok",
+            extraTags: ["path": modelPathTag]
+        )
+
+        // Phase 2: fresh transcriber for this session
+        let transcriberStart = ContinuousClock.now
+        let newTranscriber = Self.makeTranscriber(engine: engine, locale: locale)
+        transcriber = newTranscriber
+        activeLanguageLabel = Self.languageLabel(for: locale)
+        let transcriberMs = elapsedMs(since: transcriberStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: transcriberMs,
+            annotation: metricAnnotation,
+            phase: .transcriberCreate,
+            status: "ok",
+            extraTags: ["path": modelPathTag]
+        )
+        logger.info("Voice setup: created \(engine.logName) transcriber (locale: \(localeID), label: \(self.activeLanguageLabel ?? "?"))")
+
+        // Use cached format, or compute if missing
+        let format: AVAudioFormat?
+        if let cached = cachedFormat {
+            format = cached
+        } else {
+            format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                compatibleWith: [newTranscriber.speechModule]
+            )
+            cachedFormat = format
+        }
+        try ensureStartRequestActive(requestID)
+
+        // Phase 3: start analyzer session
+        let analyzerStart = ContinuousClock.now
+        let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber.speechModule])
+        analyzer = newAnalyzer
+
+        let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
+        inputBuilder = builder
+
+        try await newAnalyzer.start(inputSequence: sequence)
+        try ensureStartRequestActive(requestID)
+        let analyzerMs = elapsedMs(since: analyzerStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: analyzerMs,
+            annotation: metricAnnotation,
+            phase: .analyzerStart,
+            status: "ok",
+            extraTags: ["path": modelPathTag]
+        )
+        startResultsHandler(transcriber: newTranscriber, metricAnnotation: metricAnnotation)
+        logger.info("Voice setup: analyzer session started")
+
+        // Phase 4: audio engine
+        let audioStart = ContinuousClock.now
+        try setupAudioSession()
+        try await startAudioEngine(format: format)
+        try ensureStartRequestActive(requestID)
+        let audioMs = elapsedMs(since: audioStart)
+        recordVoiceMetric(
+            .voiceSetupMs,
+            valueMs: audioMs,
+            annotation: metricAnnotation,
+            phase: .audioStart,
+            status: "ok",
+            extraTags: ["path": modelPathTag]
+        )
     }
 
     // MARK: - Setup
@@ -658,6 +934,8 @@ final class VoiceInputManager {
         case .classicDictation:
             let installed = await DictationTranscriber.installedLocales
             isInstalled = installed.contains(where: { $0.identifier(.bcp47) == localeID })
+        case .remoteASR:
+            return nil  // Remote engine has no local model to warm
         }
 
         if !isInstalled {
@@ -702,6 +980,10 @@ final class VoiceInputManager {
                     attributeOptions: []
                 )
             )
+        case .remoteASR:
+            // Remote ASR doesn't use SpeechModule. This should never be called
+            // for the remote path — startRemoteRecording() handles it directly.
+            fatalError("makeTranscriber called for .remoteASR — use startRemoteRecording instead")
         }
     }
 
@@ -825,8 +1107,19 @@ final class VoiceInputManager {
         transcriber = nil
         analyzer = nil
         inputBuilder = nil
+        remoteTranscriber = nil
         audioLevel = 0
         activeLanguageLabel = nil
+    }
+
+    private func cleanupFailedStart() async {
+        resultsTask?.cancel()
+        resultsTask = nil
+        remoteTranscriber?.cancel()
+        remoteTranscriber = nil
+        await analyzer?.cancelAndFinishNow()
+        deactivateAudioSession()
+        teardownSession()
     }
 
     private func scheduleErrorReset() {
