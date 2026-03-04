@@ -408,16 +408,19 @@ struct ChatView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
+                .truncationMode(.tail)
 
             if let cost = session?.cost, cost > 0 {
                 Text(String(format: "$%.2f", cost))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.themeComment)
+                    .fixedSize()
             }
 
             Image(systemName: copiedSessionID ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
                 .foregroundStyle(copiedSessionID ? .themeGreen : .themeComment)
+                .fixedSize()
         }
     }
 
