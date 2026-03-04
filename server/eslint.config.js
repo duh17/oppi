@@ -215,7 +215,7 @@ export default tseslint.config(
       "prefer-const": "error",
       "no-throw-literal": "error",
       "no-return-await": "error",
-      "local/file-size-limit": "warn",
+      "local/file-size-limit": "off",
       "local/structured-log-format": "warn",
       "local/architecture-layer-boundaries": "error",
 
