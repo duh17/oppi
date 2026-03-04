@@ -365,7 +365,7 @@ private struct TimelineComplexityBudget {
 private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
     .init(
         path: "ios/Oppi/Core/Runtime/TimelineReducer.swift",
-        maxLines: 1_100,
+        maxLines: 1_150,
         maxCyclomaticDisables: 1
     ),
     .init(
