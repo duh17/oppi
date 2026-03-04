@@ -96,6 +96,24 @@ enum ComposerAutocomplete {
         return updated
     }
 
+    static func insertFileSuggestion(_ suggestion: FileSuggestion, into text: String) -> String {
+        guard let tokenRange = activeTokenRange(in: text) else {
+            return text
+        }
+
+        let token = text[tokenRange]
+        guard token.hasPrefix("@") else {
+            return text
+        }
+
+        var updated = text
+        let suffix = suggestion.isDirectory ? "" : " "
+        updated.replaceSubrange(tokenRange, with: "@\(suggestion.path)\(suffix)")
+        return updated
+    }
+
+    // MARK: - Internals
+
     private static func activeTokenRange(in text: String) -> Range<String.Index>? {
         guard let last = text.last, !last.isWhitespace else {
             return nil
