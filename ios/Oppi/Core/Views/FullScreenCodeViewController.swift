@@ -838,7 +838,7 @@ private final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         if let command = snapshot.command,
            !command.isEmpty {
             commandView.isHidden = false
-            commandView.attributedText = ToolRowTextRenderer.shellHighlighted(command)
+            commandView.attributedText = ToolRowTextRenderer.bashCommandHighlighted(command)
         } else {
             commandView.isHidden = true
             commandView.attributedText = nil
