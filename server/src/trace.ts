@@ -176,7 +176,6 @@ export function buildSessionContext(
 
   // Convert visible entries to TraceEvents
   const events: TraceEvent[] = [];
-  let eventCounter = 0;
 
   // Context view preserves existing behavior: synthetic compaction summary first.
   if (view === "context" && compaction) {
@@ -188,8 +187,7 @@ export function buildSessionContext(
 
     switch (entry.type) {
       case "message":
-        emitMessageEvents(entry, timestamp, events, eventCounter);
-        eventCounter += 10; // Reserve IDs for sub-events
+        emitMessageEvents(entry, timestamp, events);
         break;
 
       case "compaction":
@@ -268,12 +266,7 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
  * Emit TraceEvents for a single message entry.
  * Handles user, assistant (with text/thinking/toolCall blocks), and toolResult.
  */
-function emitMessageEvents(
-  entry: SessionEntry,
-  timestamp: string,
-  events: TraceEvent[],
-  _counterBase: number,
-): void {
+function emitMessageEvents(entry: SessionEntry, timestamp: string, events: TraceEvent[]): void {
   const msg = entry.message;
   if (!msg) return;
 
@@ -295,12 +288,12 @@ function emitMessageEvents(
       let subIdx = 0;
       for (const block of content) {
         const b = block as Record<string, unknown>;
-        if (b.type === "text" && b.text) {
+        if (isTextBlock(b)) {
           events.push({
             id: `${entry.id}-text-${subIdx++}`,
             type: "assistant",
             timestamp,
-            text: b.text as string,
+            text: b.text,
           });
         } else if (b.type === "thinking" && b.thinking) {
           events.push({
@@ -309,14 +302,20 @@ function emitMessageEvents(
             timestamp,
             thinking: b.thinking as string,
           });
-        } else if (b.type === "toolCall") {
+        } else if (b.type === "toolCall" || b.type === "tool_call") {
           events.push({
             id: (b.id as string) || `${entry.id}-tool-${subIdx++}`,
             type: "toolCall",
             timestamp,
-            tool: b.name as string,
+            tool: (b.name as string) || (b.tool_name as string) || "unknown",
             args: (b.arguments as Record<string, unknown>) || tryParseJson(b.partialJson),
           });
+        } else if (b.type && !KNOWN_BLOCK_TYPES.has(b.type as string)) {
+          // Unknown content block type — log so new API formats don't
+          // silently vanish from the timeline.
+          console.warn(
+            `[trace] Unknown assistant content block type "${b.type as string}" in entry ${entry.id}`,
+          );
         }
       }
     } else if (typeof content === "string" && content) {
@@ -576,13 +575,34 @@ export function findToolOutput(
 
 // ─── Helpers ───
 
+/** Content block types that carry displayable text. Single source of truth
+ *  for both `emitMessageEvents` (assistant blocks) and `extractText`
+ *  (user/toolResult). Add new text-carrying types here. */
+const TEXT_BLOCK_TYPES: ReadonlySet<string> = new Set(["text", "output_text"]);
+
+function isTextBlock(b: Record<string, unknown>): b is { type: string; text: string } {
+  return TEXT_BLOCK_TYPES.has(b.type as string) && typeof b.text === "string" && b.text.length > 0;
+}
+
+/** Known non-text block types that are handled elsewhere (thinking, toolCall,
+ *  image, audio). Used to detect truly unknown block types. */
+const KNOWN_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  ...TEXT_BLOCK_TYPES,
+  "thinking",
+  "toolCall",
+  "tool_call",
+  "image",
+  "audio",
+  "output_audio",
+]);
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
       .map((b: Record<string, unknown>) => {
-        if ((b.type === "text" || b.type === "output_text") && b.text) {
-          return b.text as string;
+        if (isTextBlock(b)) {
+          return b.text;
         }
         // Image/audio content blocks -> data URI so iOS extractors can render them
         if (b.type === "image" && b.data) {
