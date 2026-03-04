@@ -269,10 +269,79 @@ final class ServerConnection {
         }
     }
 
+    // MARK: - Network Path Change
+
+    /// Handle a network interface change (WiFi→cellular, LAN→Tailscale).
+    ///
+    /// Called by `ConnectionCoordinator` when `NWPathMonitor` detects the
+    /// device changed networks. Clears the stale LAN endpoint (falls back
+    /// to paired/Tailscale) and forces a WebSocket reconnect when needed.
+    ///
+    /// Without this, the WS would burn all reconnect attempts against the
+    /// dead LAN IP, then fully disconnect — requiring an app restart.
+    func handleNetworkPathChange() {
+        let wasOnLAN = transportPath == .lan
+
+        // Clear stale LAN endpoint — falls back to paired/Tailscale address
+        setDiscoveredLANEndpoint(nil)
+
+        guard let wsClient else { return }
+
+        let statusBeforePathChange = wsClient.status
+
+        let shouldReconnect: Bool
+        switch statusBeforePathChange {
+        case .reconnecting:
+            // Stale backoff accumulated against the old LAN IP.
+            // Cancel and reconnect immediately with the new endpoint.
+            wsClient.cancelReconnectBackoff()
+            shouldReconnect = true
+
+        case .connected where wasOnLAN:
+            // Connected to a LAN IP that's now unreachable.
+            // Force reconnect rather than waiting 30-60s for the
+            // ping watchdog to detect the zombie TCP connection.
+            shouldReconnect = true
+
+        case .disconnected:
+            // Dead — try to reconnect with the updated endpoint.
+            shouldReconnect = true
+
+        default:
+            // Connected via Tailscale or still connecting — leave it.
+            // Tailscale handles network mobility internally.
+            shouldReconnect = false
+        }
+
+        guard shouldReconnect else { return }
+
+        ClientLog.info("Network", "Force stream reconnect after path change", metadata: [
+            "wasLAN": wasOnLAN ? "true" : "false",
+            "wsStatus": String(describing: statusBeforePathChange),
+            "activeSession": activeSessionId ?? "none",
+        ])
+
+        // Tear down old WS + consumption task. Per-session continuations
+        // are preserved — they'll resume receiving events after the new
+        // WS connects and resubscribeTrackedSessions() runs.
+        streamConsumptionTask?.cancel()
+        streamConsumptionTask = nil
+        wsClient.disconnect()
+
+        // Reconnect with the updated (Tailscale) endpoint.
+        connectStream()
+    }
+
     // MARK: - Stream Lifecycle
 
     /// Background task consuming the multiplexed `/stream` WebSocket.
     internal var streamConsumptionTask: Task<Void, Never>?
+
+    /// Monotonic generation for consumption task ownership.
+    /// Prevents a stale task's cleanup from nil-ing a newer task reference
+    /// when `handleNetworkPathChange` or `reconnectIfNeeded` tears down
+    /// and recreates the stream in quick succession.
+    private var streamConsumptionGeneration: UInt64 = 0
 
     /// Per-session continuations for routing multiplexed messages.
     internal var sessionContinuations: [String: AsyncStream<ServerMessage>.Continuation] = [:]
@@ -307,6 +376,9 @@ final class ServerConnection {
 
         let stream = wsClient.connect()
 
+        streamConsumptionGeneration &+= 1
+        let generation = streamConsumptionGeneration
+
         streamConsumptionTask = Task { [weak self] in
             for await streamMessage in stream {
                 guard let self, !Task.isCancelled else { break }
@@ -314,8 +386,11 @@ final class ServerConnection {
             }
             // Stream ended (WS disconnected or max reconnect attempts).
             // Nil out so future connectStream() calls can restart.
+            // Guard on generation to prevent a stale task from nil-ing
+            // a newer task created by handleNetworkPathChange/reconnectIfNeeded.
             await MainActor.run { [weak self] in
-                self?.streamConsumptionTask = nil
+                guard let self, self.streamConsumptionGeneration == generation else { return }
+                self.streamConsumptionTask = nil
             }
         }
     }
