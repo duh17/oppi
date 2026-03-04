@@ -49,6 +49,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentAssistantID ?? (turnInProgress ? lastAssistantIDThisTurn : nil)
     }
 
+    /// ID of the current in-flight compaction cycle's timeline item.
+    ///
+    /// Set on `compactionStart` (generates a new UUID or reuses the trace-derived ID).
+    /// Used on `compactionEnd` to replace the start item in-place (collapse start+end
+    /// into a single row). Cleared on `compactionEnd`, `reset`, and `loadSession`.
+    ///
+    /// When `loadSession` processes a `.compaction` trace event, this is set to the
+    /// trace event's ID. If live WS `compaction_start`/`compaction_end` events arrive
+    /// for the same compaction (race between trace rebuild and buffered WS events),
+    /// they upsert the trace-derived item instead of appending duplicates.
+    private var currentCompactionItemID: String?
+
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
 
@@ -107,6 +119,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         items.removeAll()
         itemIndex.clear()
         clearTurnBuffers()
+        currentCompactionItemID = nil
         toolOutputStore.clearAll()
         toolArgsStore.clearAll()
         toolSegmentStore.clearAll()
@@ -337,6 +350,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let compactionMessage = event.text?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let message = compactionMessage.flatMap { $0.isEmpty ? nil : $0 } ?? "Context compacted"
+            // Track the trace compaction ID so that if buffered live WS
+            // compaction_start/compaction_end events arrive for the SAME
+            // compaction, they upsert this item instead of appending duplicates.
+            currentCompactionItemID = event.id
             upsertHistoryItem(.systemEvent(
                 id: event.id,
                 message: message
@@ -529,8 +546,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
             default:
                 flushPendingUpserts()
-                processInternal(event)
-                didMutate = true
+                if processInternal(event) {
+                    didMutate = true
+                }
             }
         }
 
@@ -543,49 +561,76 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Process a single event. Bumps renderVersion once.
     func process(_ event: AgentEvent) {
-        processInternal(event)
+        _ = processInternal(event)
         bumpRenderVersion()
         timelineMatchesTrace = false
     }
 
-    private func processInternal(_ event: AgentEvent) { // swiftlint:disable:this cyclomatic_complexity
+    private struct RenderMutationCheckpoint: Equatable {
+        let items: [ChatItem]
+        let assistantBuffer: String
+        let currentAssistantID: String?
+        let currentAssistantTimestamp: Date?
+        let thinkingBuffer: String
+        let currentThinkingID: String?
+        let turnInProgress: Bool
+        let lastAssistantIDThisTurn: String?
+    }
+
+    private func renderMutationCheckpoint() -> RenderMutationCheckpoint {
+        .init(
+            items: items,
+            assistantBuffer: assistantBuffer,
+            currentAssistantID: currentAssistantID,
+            currentAssistantTimestamp: currentAssistantTimestamp,
+            thinkingBuffer: thinkingBuffer,
+            currentThinkingID: currentThinkingID,
+            turnInProgress: turnInProgress,
+            lastAssistantIDThisTurn: lastAssistantIDThisTurn
+        )
+    }
+    private func processInternal(_ event: AgentEvent) -> Bool { // swiftlint:disable:this cyclomatic_complexity
         switch event {
         case .agentStart:
-            // Finalize any leftover state from a previous turn that didn't
-            // end cleanly (missed agentEnd, reconnect gap, etc.).
+            let before = renderMutationCheckpoint()
             finalizeAssistantMessage()
             finalizeThinking()
             closeAllOrphanedTools()
             clearTurnBuffers()
             turnInProgress = true
+            return renderMutationCheckpoint() != before
 
         case .agentEnd:
-            // End the turn BEFORE finalizing so streamingAssistantID goes nil
-            // and MarkdownText transitions to finalizedBody for caching.
+            let before = renderMutationCheckpoint()
             turnInProgress = false
             lastAssistantIDThisTurn = nil
             finalizeAssistantMessage()
             finalizeThinking()
             closeAllOrphanedTools()
+            return renderMutationCheckpoint() != before
 
         case .textDelta(_, let delta):
             assistantBuffer += delta
             upsertAssistantMessage()
+            return true
 
         case .thinkingDelta(_, let delta):
             if appendThinkingDelta(delta) {
                 upsertThinking()
+                return true
             }
+            return false
 
         case .messageEnd(_, let content):
+            let before = renderMutationCheckpoint()
             handleMessageEnd(content)
+            return renderMutationCheckpoint() != before
 
         case .toolStart(_, let toolEventId, let tool, let args, let callSegments):
-            // Split assistant text around tool boundaries so chronology in the
-            // timeline matches execution order (text-before-tool, tool row,
-            // text-after-tool).
+            let before = renderMutationCheckpoint()
+            let previousArgs = toolArgsStore.args(for: toolEventId)
+            let previousCallSegments = toolSegmentStore.callSegments(for: toolEventId)
             finalizeAssistantMessage()
-
             let argsSummary = args.map { "\($0.key): \($0.value.summary())" }
                 .joined(separator: ", ")
             let fullOutput = toolOutputStore.fullOutput(for: toolEventId)
@@ -625,43 +670,45 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     indexAppend(toolItem)
                 }
             }
-
-            // Store structured args for smart rendering
             if !args.isEmpty {
                 toolArgsStore.set(args, for: toolEventId)
             }
-
-            // Store server-rendered segments for collapsed display
             if let callSegments, !callSegments.isEmpty {
                 toolSegmentStore.setCallSegments(callSegments, for: toolEventId)
             }
+            return renderMutationCheckpoint() != before ||
+                toolArgsStore.args(for: toolEventId) != previousArgs ||
+                toolSegmentStore.callSegments(for: toolEventId) != previousCallSegments
 
         case .toolOutput(_, let toolEventId, let output, let isError):
-            toolOutputStore.append(output, to: toolEventId)
-            updateToolCallPreview(id: toolEventId, isError: isError)
+            let outputDidChange = toolOutputStore.append(output, to: toolEventId)
+            let previewDidChange = updateToolCallPreview(id: toolEventId, isError: isError)
+            return outputDidChange || previewDidChange
 
         case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments):
+            let before = renderMutationCheckpoint()
+            let previousDetails = toolDetailsStore.details(for: toolEventId)
+            let previousResultSegments = toolSegmentStore.resultSegments(for: toolEventId)
             if let details {
                 toolDetailsStore.set(details, for: toolEventId)
             } else {
                 toolDetailsStore.remove(for: toolEventId)
             }
-
             if let resultSegments, !resultSegments.isEmpty {
                 toolSegmentStore.setResultSegments(resultSegments, for: toolEventId)
             }
             updateToolCallDone(id: toolEventId, isError: isError)
+            return renderMutationCheckpoint() != before ||
+                toolDetailsStore.details(for: toolEventId) != previousDetails ||
+                toolSegmentStore.resultSegments(for: toolEventId) != previousResultSegments
 
         case .permissionRequest:
-            // Pending permissions live in PermissionStore/overlay, not the timeline.
-            // ServerConnection routes these to PermissionStore directly.
-            break
-
+            return false
         case .permissionExpired:
-            // Handled by ServerConnection via PermissionStore.take() + resolvePermission().
-            break
+            return false
 
         case .sessionEnded(_, let reason):
+            let before = renderMutationCheckpoint()
             // Session termination is terminal for the current turn.
             // Clear streaming mode before finalizing buffered content.
             turnInProgress = false
@@ -670,59 +717,89 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             finalizeThinking()
             closeAllOrphanedTools()
             items.append(.systemEvent(id: UUID().uuidString, message: "Session ended: \(reason)"))
+            return renderMutationCheckpoint() != before
 
         case .error(_, let message):
             items.append(.error(id: UUID().uuidString, message: message))
+            return true
 
         // Compaction
+        //
+        // compactionStart + compactionEnd are collapsed into a single timeline
+        // item per compaction cycle. compactionStart creates (or reuses) an item
+        // with a tracked `currentCompactionItemID`; compactionEnd replaces it
+        // in-place with the final message.
+        //
+        // When `loadSession` processes a `.compaction` trace event, it sets
+        // `currentCompactionItemID` to the trace event's ID. If buffered live
+        // WS events for the same compaction arrive afterward, they upsert the
+        // trace-derived item instead of appending duplicates.
         case .compactionStart(_, let reason):
             let label = reason == "overflow" ? String(localized: "Context overflow — compacting...") : String(localized: "Compacting context...")
-            items.append(.systemEvent(id: UUID().uuidString, message: label))
+            let id = currentCompactionItemID ?? UUID().uuidString
+            currentCompactionItemID = id
+            let item = ChatItem.systemEvent(id: id, message: label)
+            if let idx = indexForID(id) {
+                items[idx] = item
+            } else {
+                items.append(item)
+                indexAppend(item)
+            }
+            return true
 
         case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore):
+            let message: String
             if aborted {
-                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Compaction cancelled")))
+                message = String(localized: "Compaction cancelled")
             } else if willRetry {
-                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Context compacted — retrying...")))
+                message = String(localized: "Context compacted — retrying...")
             } else {
-                let tokenBadge: String
-                if let tokensBefore, tokensBefore > 0 {
-                    tokenBadge = " (\(Self.formatTokenCount(tokensBefore)) tokens)"
+                let tokenBadge = (tokensBefore ?? 0) > 0 ? " (\(Self.formatTokenCount(tokensBefore ?? 0)) tokens)" : ""
+                let cleanedSummary = summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+                message = if let cleanedSummary, !cleanedSummary.isEmpty {
+                    "Context compacted\(tokenBadge): \(cleanedSummary)"
                 } else {
-                    tokenBadge = ""
+                    "Context compacted\(tokenBadge)"
                 }
-
-                let cleanedSummary = summary?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                let message: String
-                if let cleanedSummary, !cleanedSummary.isEmpty {
-                    message = "Context compacted\(tokenBadge): \(cleanedSummary)"
-                } else {
-                    message = "Context compacted\(tokenBadge)"
-                }
-
-                items.append(.systemEvent(id: UUID().uuidString, message: message))
             }
+            let id = currentCompactionItemID ?? UUID().uuidString
+            let item = ChatItem.systemEvent(id: id, message: message)
+            if let idx = indexForID(id) {
+                items[idx] = item
+            } else {
+                items.append(item)
+                indexAppend(item)
+            }
+            currentCompactionItemID = nil
+            return true
 
         // Retry
         case .retryStart(_, let attempt, let maxAttempts, _, let errorMessage):
             items.append(.systemEvent(id: UUID().uuidString, message: "Retrying (\(attempt)/\(maxAttempts)): \(errorMessage)"))
+            return true
 
         case .retryEnd(_, let success, _, let finalError):
             if !success, let err = finalError {
                 items.append(.error(id: UUID().uuidString, message: "Retry failed: \(err)"))
+                return true
             }
+            return false
 
         // RPC results — model changes get a system event, others are silent
         case .commandResult(_, let command, _, let success, _, let error):
             if !success, let err = error {
                 items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(err)"))
-            } else if command == "set_model" || command == "cycle_model" {
-                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Model changed")))
-            } else if command == "set_thinking_level" || command == "cycle_thinking_level" {
-                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Thinking level changed")))
+                return true
             }
+            if command == "set_model" || command == "cycle_model" {
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Model changed")))
+                return true
+            }
+            if command == "set_thinking_level" || command == "cycle_thinking_level" {
+                items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Thinking level changed")))
+                return true
+            }
+            return false
         }
     }
 
