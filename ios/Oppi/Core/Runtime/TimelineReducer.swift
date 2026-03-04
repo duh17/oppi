@@ -210,14 +210,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // predates the JSONL write. The full rebuild would clear the optimistic
         // user message, and streaming events never re-emit it. Capture orphans
         // here and re-append them after the rebuild.
-        let traceIDs = Set(events.map(\.id))
+        let traceUserTexts: Set<String> = Set(events.compactMap { event in
+            guard event.type == .user else { return nil }
+            return Self.extractImagesFromText(event.text ?? "").0
+        })
         let orphanedUserMessages = items.filter { item in
-            if case .userMessage(let id, _, _, _) = item {
-                return !traceIDs.contains(id)
-            }
-            return false
+            guard case .userMessage(_, let text, _, _) = item else { return false }
+            return !traceUserTexts.contains(text)
         }
-
         items.removeAll()
         itemIndex.clear()
         clearTurnBuffers()
