@@ -20,14 +20,14 @@ export interface SessionMessageQueueStoreLike {
   followUp: MessageQueueItem[];
 }
 
-export function cloneImageAttachment(image: ImageAttachment): ImageAttachment {
+function cloneImageAttachment(image: ImageAttachment): ImageAttachment {
   return {
     data: image.data,
     mimeType: image.mimeType,
   };
 }
 
-export function cloneImageAttachments(
+function cloneImageAttachments(
   images: ImageAttachment[] | undefined,
 ): ImageAttachment[] | undefined {
   if (!images || images.length === 0) {
