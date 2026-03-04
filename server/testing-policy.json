@@ -3,11 +3,11 @@
   "gates": {
     "pr-fast": [
       "check",
-      "test"
+      "test:coverage"
     ],
     "nightly-deep": [
       "check",
-      "test",
+      "test:coverage",
       "test:ios:ui:full",
       "test:e2e:linux",
       "test:e2e:linux:https",
