@@ -55,17 +55,9 @@ struct ContextUsageRingBadge: View {
                         style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
-            } else {
-                Circle()
-                    .trim(from: 0, to: 0.25)
-                    .stroke(
-                        .themeComment,
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [2, 2])
-                    )
-                    .rotationEffect(.degrees(-90))
             }
 
-            Text(usage.progress.map { String(Int(($0 * 100).rounded())) } ?? "?")
+            Text(usage.progress.map { String(Int(($0 * 100).rounded())) } ?? "0")
                 .font(.system(size: 7, weight: .semibold, design: .rounded))
                 .foregroundStyle(.themeFg)
                 .minimumScaleFactor(0.6)

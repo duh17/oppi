@@ -166,12 +166,17 @@ extension ServerConnection {
             )
         } ?? []
 
+        let skillsListingChars = parseInt(object["skillsListingChars"]) ?? 0
+        let skillsListingTokens = parseInt(object["skillsListingTokens"]) ?? 0
+
         return SessionContextCompositionSnapshot(
             piSystemPromptChars: piSystemPromptChars,
             piSystemPromptTokens: piSystemPromptTokens,
             agentsChars: agentsChars,
             agentsTokens: agentsTokens,
-            agentsFiles: agentsFiles
+            agentsFiles: agentsFiles,
+            skillsListingChars: skillsListingChars,
+            skillsListingTokens: skillsListingTokens
         )
     }
 

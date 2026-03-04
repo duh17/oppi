@@ -42,22 +42,6 @@ struct ContextInspectorView: View {
         )
     }
 
-    private var sessionTokenStats: SessionTokenStats {
-        if let loadedStats {
-            return loadedStats.tokens
-        }
-
-        let input = session?.tokens.input ?? 0
-        let output = session?.tokens.output ?? 0
-        return SessionTokenStats(
-            input: input,
-            output: output,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: input + output
-        )
-    }
-
     private var workspaceSkillEstimates: [SkillEstimate] {
         let byName = Dictionary(uniqueKeysWithValues: availableSkills.map { ($0.name, $0) })
 
@@ -84,27 +68,58 @@ struct ContextInspectorView: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    /// Breaks the total context into up to 4 colored segments:
+    /// base prompt, AGENTS files, skills listing, and messages+runtime.
     private var compositionSegments: [CompositionSegment] {
         guard let total = contextSnapshot.tokens, total > 0 else { return [] }
         guard let composition = loadedStats?.contextComposition else { return [] }
 
-        let system = min(max(composition.piSystemPromptTokens, 0), total)
-        let messages = max(total - system, 0)
+        let systemTotal = min(max(composition.piSystemPromptTokens, 0), total)
+        let agents = min(max(composition.agentsTokens, 0), systemTotal)
+        let skills = min(max(composition.skillsListingTokens, 0), systemTotal)
+        let basePrompt = max(systemTotal - agents - skills, 0)
+        let messages = max(total - systemTotal, 0)
 
-        return [
-            CompositionSegment(
-                label: "Pi system prompt (actual)",
-                detail: "Exact current prompt text loaded by pi (includes AGENTS and instructions).",
-                tokens: system,
+        var segments: [CompositionSegment] = []
+
+        if basePrompt > 0 {
+            segments.append(CompositionSegment(
+                label: "Base prompt",
+                detail: "Pi system prompt, tools, and guidelines.",
+                tokens: basePrompt,
                 color: .themePurple
-            ),
-            CompositionSegment(
+            ))
+        }
+
+        if agents > 0 {
+            let fileCount = composition.agentsFiles.count
+            segments.append(CompositionSegment(
+                label: "AGENTS files (\(fileCount))",
+                detail: "Project context from AGENTS.md files.",
+                tokens: agents,
+                color: .themeCyan
+            ))
+        }
+
+        if skills > 0 {
+            segments.append(CompositionSegment(
+                label: "Skills listing",
+                detail: "Available skills index injected into system prompt.",
+                tokens: skills,
+                color: .themeYellow
+            ))
+        }
+
+        if messages > 0 {
+            segments.append(CompositionSegment(
                 label: "Messages + runtime",
-                detail: "Everything else currently in context beyond the system prompt.",
+                detail: "Conversation history, tool calls, and results.",
                 tokens: messages,
                 color: .themeGreen
-            ),
-        ]
+            ))
+        }
+
+        return segments
     }
 
     private var contextUsedTokens: Int {
@@ -127,66 +142,29 @@ struct ContextInspectorView: View {
 
             Section("Context Composition") {
                 if compositionSegments.isEmpty {
-                    Text("Composition appears after detailed stats load.")
-                        .font(.subheadline)
-                        .foregroundStyle(.themeComment)
+                    if statsLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading composition…")
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+                    } else if let statsError, !statsError.isEmpty {
+                        Text(statsError)
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
+                    } else {
+                        Text("Composition appears after stats load.")
+                            .font(.subheadline)
+                            .foregroundStyle(.themeComment)
+                    }
                 } else {
+                    compositionBar
+
                     ForEach(compositionSegments) { segment in
                         compositionLegendRow(segment)
                     }
-
-                    if let composition = loadedStats?.contextComposition {
-                        Text("AGENTS files loaded: \(composition.agentsFiles.count) (~\(formatTokenCount(composition.agentsTokens))).")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-            }
-
-            Section("Session Activity") {
-                contextUsageBar
-
-                metricChipRow(
-                    MetricChip(title: "Input", value: formatTokenCount(sessionTokenStats.input)),
-                    MetricChip(title: "Output", value: formatTokenCount(sessionTokenStats.output))
-                )
-
-                if loadedStats != nil {
-                    metricChipRow(
-                        MetricChip(title: "Cache read", value: formatTokenCount(sessionTokenStats.cacheRead)),
-                        MetricChip(title: "Cache write", value: formatTokenCount(sessionTokenStats.cacheWrite))
-                    )
-                }
-
-                metricChipRow(
-                    MetricChip(title: "Total", value: formatTokenCount(sessionTokenStats.total)),
-                    MetricChip(title: "Cost", value: String(format: "$%.2f", session?.cost ?? loadedStats?.cost ?? 0))
-                )
-
-                if loadedStats != nil {
-                    Text("Total includes input, output, cache read, and cache write.")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                }
-
-                Text("Cost uses cumulative session cost (matches session list/title).")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-
-                if statsLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Loading detailed token stats…")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-
-                if let statsError, !statsError.isEmpty {
-                    Text(statsError)
-                        .font(.caption)
-                        .foregroundStyle(.themeOrange)
                 }
             }
 
@@ -251,6 +229,8 @@ struct ContextInspectorView: View {
         }
     }
 
+    // MARK: - Header
+
     private var usageHeaderCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(contextSnapshot.usageText)
@@ -269,6 +249,60 @@ struct ContextInspectorView: View {
         }
         .padding(.vertical, 4)
     }
+
+    // MARK: - Composition Bar
+
+    /// Multi-segment bar where each segment's width is proportional to its
+    /// share of the total context window.
+    @ViewBuilder
+    private var compositionBar: some View {
+        if contextWindowTokens > 0, !compositionSegments.isEmpty {
+            GeometryReader { proxy in
+                let totalWidth = max(proxy.size.width, 0)
+                let window = Double(contextWindowTokens)
+
+                HStack(spacing: 1.5) {
+                    ForEach(compositionSegments) { segment in
+                        let fraction = CGFloat(Double(segment.tokens) / window)
+                        let segmentWidth = max(totalWidth * fraction, 0)
+
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(segment.color)
+                            .frame(width: segmentWidth)
+                    }
+
+                    // Remaining (unused) portion
+                    let usedFraction = compositionSegments.reduce(0.0) { $0 + Double($1.tokens) }
+                        / window
+                    let remainingFraction = max(1.0 - usedFraction, 0)
+                    let remainingWidth = totalWidth * CGFloat(remainingFraction)
+
+                    if remainingWidth > 1 {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.themeComment.opacity(0.2))
+                            .frame(width: remainingWidth)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 14)
+            .padding(.vertical, 2)
+
+            HStack(spacing: 10) {
+                Text("Used: \(formatTokenCount(contextUsedTokens))")
+                    .font(.caption)
+                    .foregroundStyle(.themeFg)
+
+                Spacer(minLength: 8)
+
+                Text("Remaining: \(formatTokenCount(contextRemainingTokens))")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+        }
+    }
+
+    // MARK: - Legend
 
     private func compositionLegendRow(_ segment: CompositionSegment) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -296,79 +330,7 @@ struct ContextInspectorView: View {
         .padding(.vertical, 1)
     }
 
-    @ViewBuilder
-    private var contextUsageBar: some View {
-        if let progress = contextSnapshot.progress,
-           contextWindowTokens > 0 {
-            GeometryReader { proxy in
-                let totalWidth = max(proxy.size.width, 0)
-                let usedWidth = totalWidth * CGFloat(progress)
-                let remainingWidth = max(totalWidth - usedWidth, 0)
-
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(progressTint(progress))
-                        .frame(width: usedWidth)
-
-                    if remainingWidth > 0 {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(.themeComment.opacity(0.25))
-                            .frame(width: remainingWidth)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(height: 14)
-            .padding(.vertical, 2)
-
-            HStack(spacing: 10) {
-                Text("Used: \(formatTokenCount(contextUsedTokens))")
-                    .font(.caption)
-                    .foregroundStyle(.themeFg)
-
-                Spacer(minLength: 8)
-
-                Text("Remaining: \(formatTokenCount(contextRemainingTokens))")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            }
-        } else {
-            Text("Context usage unavailable.")
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-        }
-    }
-
-    private struct MetricChip {
-        let title: String
-        let value: String
-    }
-
-    private func metricChipRow(_ left: MetricChip, _ right: MetricChip) -> some View {
-        HStack(spacing: 10) {
-            metricChip(left)
-            metricChip(right)
-        }
-    }
-
-    private func metricChip(_ metric: MetricChip) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(metric.title)
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-
-            Text(metric.value)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.themeBgDark)
-        )
-    }
+    // MARK: - Skills
 
     private func skillEstimateRow(_ skill: SkillEstimate) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -391,6 +353,8 @@ struct ContextInspectorView: View {
         }
         .padding(.vertical, 2)
     }
+
+    // MARK: - Helpers
 
     private func refreshSessionStats() async {
         statsLoading = true

@@ -29,6 +29,8 @@ struct SessionContextCompositionSnapshot: Equatable, Sendable {
     let agentsChars: Int
     let agentsTokens: Int
     let agentsFiles: [ContextFileTokenSnapshot]
+    let skillsListingChars: Int
+    let skillsListingTokens: Int
 }
 
 struct SessionStatsSnapshot: Equatable, Sendable {
