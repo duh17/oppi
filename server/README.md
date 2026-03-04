@@ -136,6 +136,59 @@ npm run test:e2e:linux              # linux container E2E
 npm run test:e2e:lmstudio:contract  # real model contract tests
 ```
 
+## Local release telemetry dashboard (SQLite + Grafana)
+
+This stack builds directly on telemetry JSONL files written by oppi-server at:
+
+- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
+
+### 1) Import JSONL telemetry into SQLite
+
+```bash
+cd server
+npm run telemetry:import
+```
+
+This creates/updates:
+
+- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db`
+
+For live refresh while testing:
+
+```bash
+npm run telemetry:import:watch
+```
+
+### 2) Start Grafana (Mac-local)
+
+```bash
+cd server
+npm run telemetry:grafana:up
+```
+
+Open:
+
+- `http://localhost:13001`
+- default login: `admin` / `admin`
+
+The datasource and dashboard are provisioned automatically:
+
+- datasource: `Oppi Telemetry SQLite`
+- dashboard: `Oppi Release Preflight` (folder: `Oppi`)
+
+### 3) Stop Grafana
+
+```bash
+cd server
+npm run telemetry:grafana:down
+```
+
+Notes:
+
+- The Grafana service is defined in `server/docker-compose.telemetry.yml`.
+- It mounts the host telemetry directory read-only.
+- If you use a non-default data dir, export `OPPI_DATA_DIR` before running import/up commands.
+
 ## License
 
 MIT

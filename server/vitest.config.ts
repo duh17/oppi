@@ -9,6 +9,12 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       reporter: ["text", "json-summary"],
       reportsDirectory: "coverage",
+      thresholds: {
+        statements: 70,
+        branches: 63,
+        functions: 77,
+        lines: 70,
+      },
     },
   },
   resolve: {

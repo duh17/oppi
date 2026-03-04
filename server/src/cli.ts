@@ -721,17 +721,20 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   // Create storage (auto-creates dirs + default config)
   const storage = new Storage(dataDir);
 
-  // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0
+  // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0.
+  // Default to self-signed TLS so first `oppi serve` boots HTTPS/WSS out of the box.
   storage.updateConfig({
     port,
     defaultModel,
     maxSessionsGlobal,
+    tls: { mode: "self-signed" },
   });
   storage.rotateToken();
 
   console.log("");
   console.log(c.green("  ✓ Config written to ") + c.dim(storage.getConfigPath()));
   console.log(c.green("  ✓ Owner token generated"));
+  console.log(c.green("  ✓ TLS mode set to self-signed (cert generated on first serve)"));
 
   // 4. Generate identity keys
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
@@ -741,7 +744,9 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   console.log("");
   console.log(c.bold("  Next steps:"));
   console.log("");
-  console.log(`    ${c.cyan("1.")} oppi serve              ${c.dim("Start the server")}`);
+  console.log(
+    `    ${c.cyan("1.")} oppi serve              ${c.dim("Start the server (HTTPS/WSS)")}`,
+  );
   console.log(
     `    ${c.cyan("2.")} oppi pair ${c.dim('"YourName"')}     ${c.dim("Generate pairing QR")}`,
   );

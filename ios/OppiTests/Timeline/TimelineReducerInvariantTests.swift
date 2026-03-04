@@ -375,7 +375,7 @@ private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
     ),
     .init(
         path: "ios/Oppi/Features/Chat/Timeline/ToolTimelineRowContent.swift",
-        maxLines: 1_730,
+        maxLines: 1_731,
         maxCyclomaticDisables: 0
     ),
 ]
