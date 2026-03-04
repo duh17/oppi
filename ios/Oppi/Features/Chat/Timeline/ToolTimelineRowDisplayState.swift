@@ -26,8 +26,7 @@ enum ToolTimelineRowDisplayState {
         languageBadgeIconView: UIImageView
     ) {
         let trimmedBadge = badge?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let badgeSymbolName = ToolTimelineRowUIHelpers.languageBadgeSymbolName(for: trimmedBadge),
-           let badgeImage = UIImage(systemName: badgeSymbolName) {
+        if let badgeImage = ToolTimelineRowUIHelpers.languageBadgeImage(for: trimmedBadge) {
             languageBadgeIconView.image = badgeImage
             languageBadgeIconView.isHidden = false
         } else {
