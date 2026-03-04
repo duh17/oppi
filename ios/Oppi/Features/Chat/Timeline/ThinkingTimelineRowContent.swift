@@ -62,6 +62,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private(set) var contentIsTruncated = false
     /// Whether the fade mask is currently applied.
     private var fadeApplied = false
+    /// Render signature to skip redundant text updates.
+    private var renderSignature: Int?
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
     private let fullScreenThinkingStream: ThinkingTraceStream
@@ -283,6 +285,9 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         let text = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         fullScreenThinkingStream.update(text: text, isDone: configuration.isDone)
 
+        let signature = Self.textSignature(text: text, isDone: configuration.isDone)
+        let needsTextUpdate = signature != renderSignature
+
         if configuration.isDone {
             // Done: hide header, show bubble with brain icon + text.
             headerStack.isHidden = true
@@ -293,6 +298,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
             if text.isEmpty {
                 textLabel.attributedText = nil
+                renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
@@ -303,10 +309,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
             bubbleView.isHidden = false
             brainIcon.isHidden = false
             bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.08)
-            textLabel.attributedText = makeThinkingAttributedText(
-                text,
-                color: UIColor(palette.fg).withAlphaComponent(0.94)
-            )
+            if needsTextUpdate {
+                textLabel.attributedText = makeThinkingAttributedText(
+                    text,
+                    color: UIColor(palette.fg).withAlphaComponent(0.94)
+                )
+                renderSignature = signature
+            }
 
             // Done state starts at top of clipped preview.
             scrollView.contentOffset = .zero
@@ -322,21 +331,39 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
             if text.isEmpty {
                 textLabel.attributedText = nil
+                renderSignature = signature
                 bubbleView.isHidden = true
                 bubbleHeightConstraint?.constant = 0
                 removeFadeMask()
             } else {
                 bubbleView.isHidden = false
                 bubbleView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.06)
-                textLabel.attributedText = makeThinkingAttributedText(
-                    text,
-                    color: UIColor(palette.comment).withAlphaComponent(0.88)
-                )
+                if needsTextUpdate {
+                    // Streaming: plain text — skip expensive markdown parsing.
+                    // Full markdown rendering applies once on isDone transition.
+                    textLabel.attributedText = nil
+                    textLabel.text = text
+                    textLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.88)
+                    textLabel.font = .preferredFont(forTextStyle: .callout)
+                    renderSignature = signature
+                }
                 updateBubbleHeight(forWidth: bounds.width)
             }
         }
 
         updateFullScreenAffordances()
+    }
+
+    /// Cheap render signature to skip redundant text updates.
+    private static func textSignature(text: String, isDone: Bool) -> Int {
+        var hasher = Hasher()
+        hasher.combine(text.count)
+        hasher.combine(isDone)
+        // Include prefix + suffix for content-change detection without
+        // hashing the full multi-KB thinking text on every flush.
+        hasher.combine(text.prefix(128))
+        hasher.combine(text.suffix(128))
+        return hasher.finalize()
     }
 
     private func makeThinkingAttributedText(_ text: String, color: UIColor) -> NSAttributedString {

@@ -90,6 +90,141 @@ struct ThinkingRowContentViewTests {
         #expect(hasPinch)
         #expect(hasSingleTap)
     }
+    // MARK: - Streaming plain text optimization
+
+    @Test func streamingPreservesRawMarkdownSyntax() throws {
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Thinking about **bold** and `code`",
+            fullText: nil,
+            themeID: .dark
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        // Streaming skips markdown parsing, so raw ** and ` survive in the label.
+        #expect(
+            label.text?.contains("**bold**") == true,
+            "Streaming should preserve raw markdown syntax (no parsing)"
+        )
+    }
+
+    @Test func doneStripsMarkdownSyntax() throws {
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: "Thinking about **bold** and `code`",
+            themeID: .dark
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        // Done state parses markdown, so ** is stripped and "bold" rendered with font traits.
+        #expect(
+            label.text?.contains("**bold**") != true,
+            "Done state should parse markdown (no raw ** in text)"
+        )
+    }
+
+    @Test func renderSignatureSkipsRedundantStreamingUpdate() throws {
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Initial thought",
+            fullText: nil,
+            themeID: .dark
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        let firstText = label.text
+
+        let sig1 = try #require(privateRenderSignature(in: view))
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Initial thought",
+            fullText: nil,
+            themeID: .dark
+        )
+        let sig2 = try #require(privateRenderSignature(in: view))
+        #expect(sig1 == sig2, "Render signature should not change for identical content")
+        #expect(label.text == firstText)
+    }
+
+    @Test func renderSignatureChangesWhenTextGrows() throws {
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Short",
+            fullText: nil,
+            themeID: .dark
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let sig1 = try #require(privateRenderSignature(in: view))
+
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: "Short thought that grew longer",
+            fullText: nil,
+            themeID: .dark
+        )
+        let sig2 = try #require(privateRenderSignature(in: view))
+        #expect(sig1 != sig2, "Render signature should change when text changes")
+    }
+
+    @Test func transitionFromStreamingToDoneRendersMarkdown() throws {
+        let text = "Thinking about **bold** patterns"
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: text,
+            fullText: nil,
+            themeID: .dark
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        #expect(
+            label.text?.contains("**bold**") == true,
+            "Streaming should preserve raw markdown"
+        )
+
+        // Transition to done — markdown parsed, ** stripped.
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: text,
+            themeID: .dark
+        )
+        _ = fittedTimelineSize(for: view, width: 360)
+        #expect(
+            label.text?.contains("**bold**") != true,
+            "Done transition should parse markdown"
+        )
+    }
+
+    @Test func streamingLargeTextSkipsMarkdownParsing() throws {
+        // 200 lines — representative of a mid-stream thinking burst.
+        // The key assertion: raw markdown survives (no parsing happened).
+        let longText = (0..<200).map { "Line \($0): thinking about **patterns** and `design`" }.joined(separator: "\n")
+        let config = ThinkingTimelineRowConfiguration(
+            isDone: false,
+            previewText: longText,
+            fullText: nil,
+            themeID: .dark
+        )
+
+        let view = ThinkingTimelineRowContentView(configuration: config)
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let label = try #require(privateTextLabel(in: view))
+        #expect(
+            label.text?.contains("**patterns**") == true,
+            "Large streaming text must skip markdown parsing"
+        )
+    }
 }
 
 @MainActor
@@ -100,6 +235,16 @@ private func privateScrollView(in view: ThinkingTimelineRowContentView) -> UIScr
 @MainActor
 private func privateBubbleView(in view: ThinkingTimelineRowContentView) -> UIView? {
     Mirror(reflecting: view).children.first { $0.label == "bubbleView" }?.value as? UIView
+}
+
+@MainActor
+private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UILabel? {
+    Mirror(reflecting: view).children.first { $0.label == "textLabel" }?.value as? UILabel
+}
+
+@MainActor
+private func privateRenderSignature(in view: ThinkingTimelineRowContentView) -> Int? {
+    Mirror(reflecting: view).children.first { $0.label == "renderSignature" }?.value as? Int
 }
 
 @MainActor
