@@ -20,7 +20,18 @@ enum TimelineTurnAssembler {
         currentAssistantID: String?,
         latestAssistantItem: ChatItem?
     ) -> Bool {
-        guard !turnInProgress, currentAssistantID == nil else { return false }
+        // If we're actively streaming a message (currentAssistantID != nil),
+        // let messageEnd finalize it normally — this is the standard path.
+        guard currentAssistantID == nil else { return false }
+
+        // Otherwise, the assistant message was already finalized (e.g., by
+        // toolStart calling finalizeAssistantMessage). If the latest assistant
+        // item matches the messageEnd content, suppress the duplicate.
+        // This covers both:
+        //   1. Mid-turn: text streamed → tool start finalizes → messageEnd
+        //      arrives with same text (turnInProgress == true)
+        //   2. Reconnect: trace already loaded → stale messageEnd arrives
+        //      (turnInProgress == false)
         guard let latestAssistantItem,
               case .assistantMessage(_, let existingText, _) = latestAssistantItem else {
             return false
