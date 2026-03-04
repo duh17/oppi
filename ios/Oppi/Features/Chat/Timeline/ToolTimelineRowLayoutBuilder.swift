@@ -163,8 +163,9 @@ enum ToolTimelineRowLayoutBuilder {
             imagePreviewHeight,
             imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
 
-            expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -10),
-            expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -10),
+            // Position constraints for expandFloatingButton are managed dynamically
+            // by reparentExpandFloatingButton() since the button moves between
+            // expandedContainer and outputContainer depending on tool type.
             expandFloatingButton.widthAnchor.constraint(equalToConstant: 36),
             expandFloatingButton.heightAnchor.constraint(equalToConstant: 36),
         ]
