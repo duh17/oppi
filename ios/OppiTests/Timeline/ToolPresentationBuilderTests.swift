@@ -91,6 +91,73 @@ struct ToolPresentationBuilderTests {
         #expect(config.toolNamePrefix == "$")
     }
 
+    @Test("bash with heredoc inline script shows language badge")
+    func bashHeredocLanguageBadge() {
+        let command = "node - <<'NODE'\nconsole.log('hello');\nNODE"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: \(command)",
+            outputPreview: "hello",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string(command)])
+        )
+
+        #expect(config.languageBadge == "JavaScript")
+    }
+
+    @Test("bash with python inline flag shows language badge")
+    func bashPythonInlineBadge() {
+        let command = "python3 -c 'print(42)'"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: \(command)",
+            outputPreview: "42",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string(command)])
+        )
+
+        #expect(config.languageBadge == "Python")
+    }
+
+    @Test("bash with plain command has no language badge")
+    func bashPlainNoLanguageBadge() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "bash",
+            argsSummary: "command: ls -la",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["command": .string("ls -la")])
+        )
+
+        #expect(config.languageBadge == nil)
+    }
+
+    @Test("read zig file shows Zig language badge")
+    func readZigLanguageBadge() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: build.zig",
+            outputPreview: "const std = @import(\"std\");",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["path": .string("build.zig")])
+        )
+
+        #expect(config.languageBadge == "Zig")
+    }
+
+    @Test("read markdown file shows Markdown language badge")
+    func readMarkdownLanguageBadge() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t1", tool: "read",
+            argsSummary: "path: README.md",
+            outputPreview: "# Hello",
+            isError: false, isDone: true,
+            context: emptyContext(args: ["path": .string("README.md")])
+        )
+
+        #expect(config.languageBadge == "Markdown")
+    }
+
     // MARK: - Read
 
     @Test("read collapsed shows file path")
@@ -907,6 +974,106 @@ struct ToolPresentationBuilderTests {
         // Without segments, falls through to default: tool + argsSummary
         #expect(config.segmentAttributedTitle == nil)
         #expect(config.title.contains("extensions.lookup"))
+    }
+
+    // MARK: - Expanded Text Primitive (details.expandedText)
+
+    @Test("extension expanded uses details.expandedText when present")
+    func extensionExpandedTextFromDetails() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-expanded", tool: "remember",
+            argsSummary: "text: Important discovery",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string("Important discovery about architecture.\n\nTags: oppi, design"),
+                    "presentationFormat": .string("markdown"),
+                ]),
+                expanded: ["t-expanded"],
+                fullOutput: "Saved to journal: 2026-03-04.md"
+            )
+        )
+
+        guard case .markdown(let md) = config.expandedContent else {
+            Issue.record("Expected .markdown content from details.expandedText")
+            return
+        }
+
+        #expect(md.contains("Important discovery about architecture"))
+        #expect(md.contains("Tags: oppi, design"))
+        #expect(!md.contains("Saved to journal"))
+    }
+
+    @Test("extension expanded falls back to raw output when no expandedText")
+    func extensionExpandedTextFallback() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-no-expanded", tool: "extensions.custom",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["t-no-expanded"],
+                fullOutput: "plain output text"
+            )
+        )
+
+        guard case .text(let text, _) = config.expandedContent else {
+            Issue.record("Expected .text content when no expandedText")
+            return
+        }
+        #expect(text == "plain output text")
+    }
+
+    @Test("extension expanded with expandedText and code format renders code")
+    func extensionExpandedTextCodeFormat() {
+        let code = "func hello() { print(\"world\") }"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-code-expanded", tool: "extensions.codegen",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string(code),
+                    "presentationFormat": .string("code"),
+                    "language": .string("swift"),
+                ]),
+                expanded: ["t-code-expanded"],
+                fullOutput: "Generated 1 file"
+            )
+        )
+
+        guard case .code(let text, let language, _, _) = config.expandedContent else {
+            Issue.record("Expected .code content from expandedText + code format")
+            return
+        }
+        #expect(text == code)
+        #expect(language == .swift)
+    }
+
+    @Test("extension expanded with empty expandedText uses raw output")
+    func extensionExpandedTextEmpty() {
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-empty-expanded", tool: "extensions.custom",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object([
+                    "expandedText": .string(""),
+                ]),
+                expanded: ["t-empty-expanded"],
+                fullOutput: "fallback output"
+            )
+        )
+
+        // Empty expandedText should fall through to raw output
+        guard case .text(let text, _) = config.expandedContent else {
+            Issue.record("Expected .text content for empty expandedText")
+            return
+        }
+        #expect(text == "fallback output")
     }
 
     // MARK: - Plot

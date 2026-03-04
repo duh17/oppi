@@ -150,8 +150,17 @@ extension ToolPresentationBuilder {
         toolName: String,
         details: JSONValue?
     ) -> (content: ToolExpandedContent, copyOutput: String) {
-        let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
-        let textOutput = sanitized.isEmpty ? output : sanitized
+        // Server/extension-provided expanded text overrides raw output for display.
+        // The extension sets details.expandedText + details.presentationFormat to
+        // control how the expanded content appears without iOS knowing tool specifics.
+        let textOutput: String
+        if let expandedText = extensionDetailString(details, keys: ["expandedText", "expanded_text"]),
+           !expandedText.isEmpty {
+            textOutput = expandedText
+        } else {
+            let sanitized = sanitizeGenericExtensionOutput(output, toolName: toolName)
+            textOutput = sanitized.isEmpty ? output : sanitized
+        }
         let format = normalizedExtensionPresentationFormat(details)
         let filePathHint = extensionDetailString(details, keys: ["filePath", "file_path", "path", "file"])
         let languageHint = extensionLanguageHint(details: details, filePathHint: filePathHint)
