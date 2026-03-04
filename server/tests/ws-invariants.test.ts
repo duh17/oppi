@@ -8,10 +8,10 @@ import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage } from "../src/types.js";
 import {
-  collectMessages,
   connectStream as connectHarnessStream,
   sendClientMessage,
   waitForMessage,
+  waitForMessages,
 } from "./harness/ws-harness.js";
 import { generateLifecycleProgram } from "./harness/property-generators.js";
 
@@ -143,7 +143,13 @@ describe("websocket invariants", () => {
           send(ws, command);
         }
 
-        const messages = await collectMessages(ws, 1_800);
+        const messages = await waitForMessages(
+          ws,
+          (collected) =>
+            collected.filter((message) => message.type === "command_result").length >=
+            program.length,
+          1_800,
+        );
         const commandResults = messages.filter((message) => message.type === "command_result");
 
         expect(commandResults).toHaveLength(program.length);
@@ -175,7 +181,17 @@ describe("websocket invariants", () => {
         requestId: "ordered-subscribe",
       });
 
-      const messages = await collectMessages(ws, 1_500);
+      const messages = await waitForMessages(
+        ws,
+        (collected) =>
+          collected.some(
+            (message) =>
+              message.type === "command_result" &&
+              message.command === "subscribe" &&
+              message.requestId === "ordered-subscribe",
+          ),
+        1_500,
+      );
       const connectedIndex = messages.findIndex((message) => message.type === "connected");
       const stateIndex = messages.findIndex((message) => message.type === "state");
       const commandResultIndex = messages.findIndex(
@@ -213,7 +229,13 @@ describe("websocket invariants", () => {
         send(ws, command);
       }
 
-      const messages = await collectMessages(ws, 1_500);
+      const messages = await waitForMessages(
+        ws,
+        (collected) =>
+          collected.filter((message) => message.type === "command_result").length >=
+          commands.length,
+        1_500,
+      );
       const results = messages.filter(
         (message): message is Extract<ServerMessage, { type: "command_result" }> =>
           message.type === "command_result",
@@ -275,7 +297,13 @@ describe("websocket invariants", () => {
         send(ws, command);
       }
 
-      const messages = await collectMessages(ws, 1_800);
+      const messages = await waitForMessages(
+        ws,
+        (collected) =>
+          collected.filter((message) => message.type === "command_result").length >=
+          commands.length,
+        1_800,
+      );
       const results = messages.filter(
         (message): message is Extract<ServerMessage, { type: "command_result" }> =>
           message.type === "command_result",

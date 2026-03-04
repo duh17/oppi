@@ -98,6 +98,48 @@ export function collectMessages(ws: WebSocket, durationMs: number): Promise<Serv
   });
 }
 
+export function waitForMessages(
+  ws: WebSocket,
+  predicate: (messages: ServerMessage[]) => boolean,
+  timeoutMs = 3_000,
+): Promise<ServerMessage[]> {
+  return new Promise((resolve, reject) => {
+    const messages: ServerMessage[] = [];
+
+    if (predicate(messages)) {
+      resolve(messages);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      ws.off("message", onMessage);
+      ws.off("error", onError);
+      reject(new Error("Message wait timeout"));
+    }, timeoutMs);
+
+    const onMessage = (data: RawData): void => {
+      messages.push(parseServerMessage(data));
+      if (!predicate(messages)) {
+        return;
+      }
+
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      ws.off("error", onError);
+      resolve(messages);
+    };
+
+    const onError = (error: Error): void => {
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      reject(error);
+    };
+
+    ws.on("message", onMessage);
+    ws.once("error", onError);
+  });
+}
+
 export function sendClientMessage(ws: WebSocket, message: ClientMessage): void {
   ws.send(JSON.stringify(message));
 }

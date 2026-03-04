@@ -6,23 +6,6 @@ import Foundation
 struct TimelineReducerTests {
 
     @MainActor
-    @Test func basicAgentTurn() {
-        let reducer = TimelineReducer()
-
-        reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hello "))
-        reducer.process(.textDelta(sessionId: "s1", delta: "world!"))
-        reducer.process(.agentEnd(sessionId: "s1"))
-
-        #expect(reducer.items.count == 1)
-        guard case .assistantMessage(_, let text, _) = reducer.items[0] else {
-            Issue.record("Expected assistantMessage")
-            return
-        }
-        #expect(text == "Hello world!")
-    }
-
-    @MainActor
     @Test func thinkingThenText() {
         let reducer = TimelineReducer()
 

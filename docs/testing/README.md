@@ -43,8 +43,8 @@ cd server && npm run test:gate:nightly-deep
 
 Current policy (`server/testing-policy.json`):
 
-- `pr-fast`: `check -> test`
-- `nightly-deep`: `check -> test -> test:ios:ui:full -> test:e2e:linux -> test:e2e:linux:https -> test:e2e:lmstudio:contract`
+- `pr-fast`: `check -> test:coverage`
+- `nightly-deep`: `check -> test:coverage -> test:ios:ui:full -> test:e2e:linux -> test:e2e:linux:https -> test:e2e:lmstudio:contract`
 
 UI suite wrapper used by the nightly gate:
 
