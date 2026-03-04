@@ -39,6 +39,11 @@ final class ChatSessionManager {
         case fullReloadScheduled
     }
 
+    private struct PendingTTFTContext {
+        let startedAtMs: Int64
+        let tags: [String: String]
+    }
+
     let sessionId: String
 
     /// Bumped to restart the `.task(id:)` connection loop.
@@ -61,7 +66,7 @@ final class ChatSessionManager {
     private var unexpectedStreamExitCount = 0
     private var wantsAutoReconnect = true
     private var lastSeenSeq: Int
-    private var pendingTTFTStartMs: Int64?
+    private var pendingTTFTContext: PendingTTFTContext?
     private var freshContentLagStartMs: Int64?
     private var freshContentLagRecorded = false
     private var loadedFromCacheAtConnect = false
@@ -150,6 +155,43 @@ final class ChatSessionManager {
 
     private func workspaceIdForState(from sessionStore: SessionStore) -> String {
         resolveWorkspaceId(from: sessionStore) ?? ""
+    }
+
+    private func ttftModelTags(from sessionStore: SessionStore) -> [String: String] {
+        guard let rawModel = sessionStore.session(id: sessionId)?.model?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawModel.isEmpty else {
+            return [
+                "provider": "unknown",
+                "model": "unknown",
+            ]
+        }
+
+        let parts = rawModel.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        if parts.count == 2 {
+            let provider = String(parts[0]).isEmpty ? "unknown" : String(parts[0])
+            let model = String(parts[1]).isEmpty ? "unknown" : String(parts[1])
+            return [
+                "provider": provider,
+                "model": model,
+            ]
+        }
+
+        return [
+            "provider": "unknown",
+            "model": rawModel,
+        ]
+    }
+
+    private func isTTFTCompletionSignal(_ message: ServerMessage) -> Bool {
+        if case .thinkingDelta = message {
+            return true
+        }
+
+        if case .textDelta = message {
+            return true
+        }
+
+        return false
     }
 
     private struct TransitionOptions: OptionSet {
@@ -293,7 +335,7 @@ final class ChatSessionManager {
 
         sessionStore.activeSessionId = sessionId
         ChatTimelinePerf.activeSessionId = sessionId
-        pendingTTFTStartMs = nil
+        pendingTTFTContext = nil
         markSyncStarted()
 
         // Measure stale-cache window: from session entry until first confirmed fresh content.
@@ -475,6 +517,15 @@ final class ChatSessionManager {
                                     "transport": transportTag,
                                 ]
                             )
+                            await ChatMetricsService.shared.record(
+                                metric: .connectedDispatchMs,
+                                value: Double(dispatchLagMs),
+                                unit: .ms,
+                                sessionId: dispatchMetricSessionId,
+                                tags: [
+                                    "transport": transportTag,
+                                ]
+                            )
                         }
 
                         if dispatchLagMs >= 1_000 {
@@ -613,26 +664,31 @@ final class ChatSessionManager {
                 if case .turnAck(let command, _, let stage, _, _) = message,
                    stage == .dispatched,
                    command == "prompt" || command == "steer" || command == "follow_up",
-                   pendingTTFTStartMs == nil {
-                    pendingTTFTStartMs = ChatMetricsService.nowMs()
+                   pendingTTFTContext == nil {
+                    pendingTTFTContext = PendingTTFTContext(
+                        startedAtMs: ChatMetricsService.nowMs(),
+                        tags: ttftModelTags(from: sessionStore)
+                    )
                 }
 
                 if case .agentEnd = message {
-                    pendingTTFTStartMs = nil
+                    pendingTTFTContext = nil
                 }
 
-                if case .textDelta = message,
-                   let startedAt = pendingTTFTStartMs {
-                    pendingTTFTStartMs = nil
+                if isTTFTCompletionSignal(message),
+                   let pendingTTFTContext {
+                    self.pendingTTFTContext = nil
                     let nowMs = ChatMetricsService.nowMs()
-                    let ttftMs = max(0, nowMs - startedAt)
+                    let ttftMs = max(0, nowMs - pendingTTFTContext.startedAtMs)
                     let metricSessionId = sessionId
+                    let ttftTags = pendingTTFTContext.tags
                     Task.detached(priority: .utility) {
                         await ChatMetricsService.shared.record(
                             metric: .ttftMs,
                             value: Double(ttftMs),
                             unit: .ms,
-                            sessionId: metricSessionId
+                            sessionId: metricSessionId,
+                            tags: ttftTags
                         )
                     }
                 }

@@ -433,6 +433,16 @@ actor APIClient {
         return try JSONDecoder().decode(Response.self, from: data).extensions
     }
 
+    /// Discover project directories on the host.
+    ///
+    /// Scans default roots (`~/workspace`, `~/projects`, `~/src`, `~/code`, `~/Developer`)
+    /// and returns directories that look like projects (have `.git`, manifest files, or `AGENTS.md`).
+    func listDirectories() async throws -> [HostDirectory] {
+        let data = try await get("/host/directories")
+        struct Response: Decodable { let directories: [HostDirectory] }
+        return try JSONDecoder().decode(Response.self, from: data).directories
+    }
+
     /// Get full skill detail: metadata, SKILL.md content, and file tree.
     func getSkillDetail(name: String) async throws -> SkillDetail {
         let data = try await get("/skills/\(name)")

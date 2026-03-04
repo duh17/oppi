@@ -31,11 +31,11 @@ struct WorkspaceEditView: View {
     }
 
     private var skills: [SkillInfo] {
-        if let activeServerId,
-           let scoped = connection.workspaceStore.skillsByServer[activeServerId] {
-            return scoped
+        guard let activeServerId,
+              let scoped = connection.workspaceStore.skillsByServer[activeServerId] else {
+            return []
         }
-        return []
+        return scoped
     }
 
     private var enabledSkills: [SkillInfo] {
@@ -47,13 +47,29 @@ struct WorkspaceEditView: View {
     }
 
     private var workspaceForEditing: Workspace {
-        if let activeServerId,
-           let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
-            .first(where: { $0.id == workspace.id }) {
-            return scoped
+        guard let activeServerId,
+              let scoped = connection.workspaceStore.workspacesByServer[activeServerId]?
+                .first(where: { $0.id == workspace.id }) else {
+            return workspace
         }
 
-        return workspace
+        return scoped
+    }
+
+    private var discoveredExtensions: Set<String> {
+        Set(availableExtensions.map(\.name))
+    }
+
+    private var selectedExtensionNames: [String] {
+        parseUniqueNames(extensionNames)
+    }
+
+    private var selectedExtensionSet: Set<String> {
+        Set(selectedExtensionNames)
+    }
+
+    private var manualExtensionNames: [String] {
+        selectedExtensionNames.filter { !discoveredExtensions.contains($0) }
     }
 
     var body: some View {
@@ -137,52 +153,52 @@ struct WorkspaceEditView: View {
                     .foregroundStyle(.themeComment)
 
                 if isLoadingExtensions && availableExtensions.isEmpty {
-                        Text("Loading available extensions…")
-                            .foregroundStyle(.themeComment)
-                    } else if availableExtensions.isEmpty {
-                        Text("No discoverable extensions found.")
-                            .foregroundStyle(.themeComment)
-                    } else {
-                        ForEach(availableExtensions) { ext in
-                            Button {
-                                toggleExtension(ext.name)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(ext.name)
-                                            .font(.body)
-                                        Text(ext.kind)
-                                            .font(.caption2.monospaced())
-                                            .foregroundStyle(.themeComment)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
-                                        .imageScale(.large)
+                    Text("Loading available extensions…")
+                        .foregroundStyle(.themeComment)
+                } else if availableExtensions.isEmpty {
+                    Text("No discoverable extensions found.")
+                        .foregroundStyle(.themeComment)
+                } else {
+                    ForEach(availableExtensions) { ext in
+                        Button {
+                            toggleExtension(ext.name)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(ext.name)
+                                        .font(.body)
+                                    Text(ext.kind)
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.themeComment)
                                 }
+
+                                Spacer()
+
+                                Image(systemName: selectedExtensionSet.contains(ext.name) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedExtensionSet.contains(ext.name) ? .themeBlue : .themeComment)
+                                    .imageScale(.large)
                             }
-                            .foregroundStyle(.themeFg)
                         }
+                        .foregroundStyle(.themeFg)
                     }
+                }
 
-                    if !manualExtensionNames.isEmpty {
-                        Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
-                            .font(.caption2)
-                            .foregroundStyle(.themeComment)
-                    }
+                if !manualExtensionNames.isEmpty {
+                    Text("Manual: \(manualExtensionNames.joined(separator: ", "))")
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                }
 
-                    TextField("Selected names (comma separated)", text: $extensionNames)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .font(.system(.body, design: .monospaced))
+                TextField("Selected names (comma separated)", text: $extensionNames)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .font(.system(.body, design: .monospaced))
 
-                    if let extensionsError {
-                        Text("Extensions API: \(extensionsError)")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
+                if let extensionsError {
+                    Text("Extensions API: \(extensionsError)")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Default Model") {
@@ -278,25 +294,21 @@ struct WorkspaceEditView: View {
         )
     }
 
-    private func parseExtensionNames(_ raw: String) -> [String] {
+    private func parseUniqueNames(_ raw: String) -> [String] {
         var seen = Set<String>()
+
         return raw
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { value in
-                if seen.contains(value) { return false }
+                if seen.contains(value) {
+                    return false
+                }
+
                 seen.insert(value)
                 return true
             }
-    }
-
-    private var selectedExtensionNames: [String] {
-        parseExtensionNames(extensionNames)
-    }
-
-    private var selectedExtensionSet: Set<String> {
-        Set(selectedExtensionNames)
     }
 
     private func setSelectedExtensionNames(_ names: [String]) {
@@ -313,16 +325,14 @@ struct WorkspaceEditView: View {
         setSelectedExtensionNames(names)
     }
 
-    private var discoveredExtensionsSet: Set<String> {
-        Set(availableExtensions.map(\.name))
-    }
-
-    private var manualExtensionNames: [String] {
-        selectedExtensionNames.filter { !discoveredExtensionsSet.contains($0) }
+    private func validSelectedSkillNames() -> [String] {
+        let knownSkillNames = Set(skills.map(\.name))
+        return Array(selectedSkills.intersection(knownSkillNames))
     }
 
     private func loadFromWorkspace() {
         let source = workspaceForEditing
+
         name = source.name
         description = source.description ?? ""
         icon = source.icon ?? ""
@@ -332,7 +342,7 @@ struct WorkspaceEditView: View {
         gitStatusEnabled = source.gitStatusEnabled ?? true
         memoryEnabled = source.memoryEnabled ?? false
         memoryNamespace = source.memoryNamespace ?? ""
-        extensionNames = (source.extensions ?? []).joined(separator: ", ")
+        setSelectedExtensionNames(source.extensions ?? [])
         defaultModel = source.defaultModel ?? ""
     }
 
@@ -347,9 +357,9 @@ struct WorkspaceEditView: View {
 
     private func loadExtensions() async {
         guard let api = connection.apiClient else { return }
+
         isLoadingExtensions = true
         extensionsError = nil
-
         defer { isLoadingExtensions = false }
 
         do {
@@ -361,6 +371,7 @@ struct WorkspaceEditView: View {
 
     private func save() async {
         guard let api = connection.apiClient else { return }
+
         isSaving = true
         error = nil
 
@@ -368,13 +379,13 @@ struct WorkspaceEditView: View {
             name: name,
             description: description.isEmpty ? nil : description,
             icon: icon.isEmpty ? nil : icon,
-            skills: Array(selectedSkills),
+            skills: validSelectedSkillNames(),
             systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
             hostMount: hostMount.isEmpty ? nil : hostMount,
             gitStatusEnabled: gitStatusEnabled,
             memoryEnabled: memoryEnabled,
             memoryNamespace: memoryNamespace.isEmpty ? nil : memoryNamespace,
-            extensions: parseExtensionNames(extensionNames),
+            extensions: selectedExtensionNames,
             defaultModel: defaultModel.isEmpty ? nil : defaultModel
         )
 
