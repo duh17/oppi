@@ -23,30 +23,19 @@ enum TimelineSnapshotApplier {
         snapshot.appendSections([0])
         snapshot.appendItems(nextIDs)
 
-        var changedIDs = changedItemIDs(
+        let nextIDSet = Set(nextIDs)
+        let dedupedChangedIDs = reconfigureItemIDs(
+            nextIDs: nextIDs,
+            nextIDSet: nextIDSet,
             nextItemByID: nextItemByID,
-            previousItemByID: previousItemByID
+            previousItemByID: previousItemByID,
+            hiddenCount: hiddenCount,
+            previousHiddenCount: previousHiddenCount,
+            streamingAssistantID: streamingAssistantID,
+            previousStreamingAssistantID: previousStreamingAssistantID,
+            themeChanged: previousThemeID != themeID
         )
 
-        if hiddenCount != previousHiddenCount,
-           nextIDs.contains(ChatTimelineCollectionHost.loadMoreID) {
-            changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
-        }
-
-        if let streamingAssistantID {
-            changedIDs.append(streamingAssistantID)
-        }
-
-        if let previousStreamingAssistantID,
-           previousStreamingAssistantID != streamingAssistantID {
-            changedIDs.append(previousStreamingAssistantID)
-        }
-
-        if previousThemeID != themeID {
-            changedIDs.append(contentsOf: nextIDs)
-        }
-
-        let dedupedChangedIDs = Array(Set(changedIDs)).filter { nextIDs.contains($0) }
         if !dedupedChangedIDs.isEmpty {
             snapshot.reconfigureItems(dedupedChangedIDs)
         }
@@ -90,20 +79,84 @@ enum TimelineSnapshotApplier {
         ChatTimelinePerf.endLayoutPass(layoutToken)
     }
 
+    // periphery:ignore - used by OppiTests via @testable import
+    static func reconfigureItemIDs(
+        nextIDs: [String],
+        nextIDSet: Set<String>,
+        nextItemByID: [String: ChatItem],
+        previousItemByID: [String: ChatItem],
+        hiddenCount: Int,
+        previousHiddenCount: Int,
+        streamingAssistantID: String?,
+        previousStreamingAssistantID: String?,
+        themeChanged: Bool
+    ) -> [String] {
+        var changedIDs = changedItemIDs(
+            nextIDs: nextIDs,
+            nextItemByID: nextItemByID,
+            previousItemByID: previousItemByID
+        )
+
+        if hiddenCount != previousHiddenCount,
+           nextIDSet.contains(ChatTimelineCollectionHost.loadMoreID) {
+            changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
+        }
+
+        if let streamingAssistantID {
+            changedIDs.append(streamingAssistantID)
+        }
+
+        if let previousStreamingAssistantID,
+           previousStreamingAssistantID != streamingAssistantID {
+            changedIDs.append(previousStreamingAssistantID)
+        }
+
+        if themeChanged {
+            changedIDs.append(contentsOf: nextIDs)
+        }
+
+        return dedupeVisibleChangedIDs(changedIDs, nextIDSet: nextIDSet)
+    }
+
     private static func changedItemIDs(
+        nextIDs: [String],
         nextItemByID: [String: ChatItem],
         previousItemByID: [String: ChatItem]
     ) -> [String] {
         var changed: [String] = []
-        changed.reserveCapacity(nextItemByID.count)
+        changed.reserveCapacity(nextIDs.count)
 
-        for (id, nextItem) in nextItemByID {
-            guard let previous = previousItemByID[id] else { continue }
+        for id in nextIDs {
+            guard let nextItem = nextItemByID[id],
+                  let previous = previousItemByID[id] else {
+                continue
+            }
+
             if previous != nextItem {
                 changed.append(id)
             }
         }
 
         return changed
+    }
+
+    private static func dedupeVisibleChangedIDs(
+        _ changedIDs: [String],
+        nextIDSet: Set<String>
+    ) -> [String] {
+        var seen: Set<String> = []
+        seen.reserveCapacity(changedIDs.count)
+
+        var deduped: [String] = []
+        deduped.reserveCapacity(min(changedIDs.count, nextIDSet.count))
+
+        for id in changedIDs {
+            guard nextIDSet.contains(id) else { continue }
+            if seen.insert(id).inserted {
+                deduped.append(id)
+            }
+        }
+
+        return deduped
     }
 }

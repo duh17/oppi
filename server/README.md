@@ -142,29 +142,23 @@ This stack builds directly on telemetry JSONL files written by oppi-server at:
 
 - `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
 
-### 1) Import JSONL telemetry into SQLite
-
-```bash
-cd server
-npm run telemetry:import
-```
-
-This creates/updates:
-
-- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db`
-
-For live refresh while testing:
-
-```bash
-npm run telemetry:import:watch
-```
-
-### 2) Start Grafana (Mac-local)
+### 1) Start telemetry stack (auto-import + Grafana)
 
 ```bash
 cd server
 npm run telemetry:grafana:up
 ```
+
+This starts two services:
+
+- `telemetry-importer` — watches telemetry JSONL and keeps SQLite in sync.
+- `grafana-telemetry` — serves the dashboard.
+
+Importer behavior:
+
+- writes `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/telemetry.db`
+- runs one import immediately on startup
+- continues in watch mode (poll interval: `OPPI_TELEMETRY_IMPORT_INTERVAL_MS`, default `15000`)
 
 Open:
 
@@ -176,18 +170,28 @@ The datasource and dashboard are provisioned automatically:
 - datasource: `Oppi Telemetry SQLite`
 - dashboard: `Oppi Release Preflight` (folder: `Oppi`)
 
-### 3) Stop Grafana
+### 2) Stop telemetry stack
 
 ```bash
 cd server
 npm run telemetry:grafana:down
 ```
 
+### Optional manual import commands
+
+Use these if you want to import without Docker:
+
+```bash
+cd server
+npm run telemetry:import
+npm run telemetry:import:watch
+```
+
 Notes:
 
-- The Grafana service is defined in `server/docker-compose.telemetry.yml`.
-- It mounts the host telemetry directory read-only.
-- If you use a non-default data dir, export `OPPI_DATA_DIR` before running import/up commands.
+- Services are defined in `server/docker-compose.telemetry.yml`.
+- Grafana mounts telemetry read-only; importer mounts the same directory read-write.
+- If you use a non-default data dir, export `OPPI_DATA_DIR` before running commands.
 
 ## License
 

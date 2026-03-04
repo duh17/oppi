@@ -1,8 +1,29 @@
 services:
+  telemetry-importer:
+    container_name: oppi-telemetry-importer
+    image: node:22-bookworm
+    restart: unless-stopped
+    working_dir: /app
+    command:
+      - node
+      - /app/scripts/manual/telemetry-import-sqlite.mjs
+      - --watch
+      - --interval-ms
+      - ${OPPI_TELEMETRY_IMPORT_INTERVAL_MS:-15000}
+      - --telemetry-dir
+      - /var/lib/oppi-telemetry
+      - --db
+      - /var/lib/oppi-telemetry/telemetry.db
+    volumes:
+      - ./:/app:ro
+      - ${OPPI_DATA_DIR:-${HOME}/.config/oppi}/diagnostics/telemetry:/var/lib/oppi-telemetry
+
   grafana-telemetry:
     container_name: oppi-telemetry-grafana
     image: grafana/grafana-oss:11.1.4
     restart: unless-stopped
+    depends_on:
+      - telemetry-importer
     ports:
       - "${OPPI_GRAFANA_PORT:-13001}:3000"
     environment:

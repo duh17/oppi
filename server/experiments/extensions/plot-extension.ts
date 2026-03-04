@@ -20,6 +20,9 @@ const legendModes = ["auto", "show", "hide", "inline"] as const;
 const gridVerticalModes = ["none", "major"] as const;
 const gridHorizontalModes = ["major"] as const;
 
+export const PLOT_SPEC_HEIGHT_MIN = 120;
+export const PLOT_SPEC_HEIGHT_MAX = 480;
+
 const scalar = Type.Union([Type.Number(), Type.String(), Type.Boolean()]);
 
 const markSchema = Type.Object({
@@ -105,7 +108,9 @@ const plotSpecSchema = Type.Object({
     }),
   ),
   renderHints: Type.Optional(renderHintsSchema),
-  height: Type.Optional(Type.Number({ minimum: 120, maximum: 480 })),
+  height: Type.Optional(
+    Type.Number({ minimum: PLOT_SPEC_HEIGHT_MIN, maximum: PLOT_SPEC_HEIGHT_MAX }),
+  ),
 });
 
 const plotToolParamsSchema = Type.Object({
