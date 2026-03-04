@@ -678,9 +678,10 @@ export class Server {
     this.connections.delete(ws);
   }
 
-  private ensureSkillsInitialized(): void {
+  private async ensureSkillsInitialized(): Promise<void> {
     if (this.skillsInitialized) return;
 
+    await this.skillRegistry.resolvePackageSkills();
     this.skillRegistry.scan();
     this.skillRegistry.watch();
     this.skillsInitialized = true;
@@ -690,8 +691,8 @@ export class Server {
    * Resolve workspace skill names to host directory paths.
    * Checks both built-in skills (SkillRegistry) and user skills (UserSkillStore).
    */
-  private resolveSkillPaths(skillNames: string[]): string[] {
-    this.ensureSkillsInitialized();
+  private async resolveSkillPaths(skillNames: string[]): Promise<string[]> {
+    await this.ensureSkillsInitialized();
     const paths: string[] = [];
     for (const name of skillNames) {
       const builtInPath = this.skillRegistry.getPath(name);
@@ -789,7 +790,7 @@ export class Server {
       return;
     }
 
-    this.ensureSkillsInitialized();
+    await this.ensureSkillsInitialized();
 
     try {
       await this.routes.dispatch(method, path, url, req, res);
