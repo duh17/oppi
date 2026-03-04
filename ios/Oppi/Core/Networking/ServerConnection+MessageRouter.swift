@@ -104,6 +104,7 @@ extension ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
             coalescer.receive(.agentStart(sessionId: sessionId))
             silenceWatchdog.start()
 
@@ -113,6 +114,7 @@ extension ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
 
@@ -149,6 +151,7 @@ extension ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.clearSessionActivity(sessionId: sessionId)
             coalescer.receive(.sessionEnded(sessionId: sessionId, reason: reason))
 
         case .sessionDeleted(let deletedId):
@@ -233,6 +236,7 @@ extension ServerConnection {
         if let previousStatus,
            previousStatus == .busy || previousStatus == .stopping,
            session.status == .ready || session.status == .stopped || session.status == .error {
+            screenAwakeController.setSessionActivity(false, sessionId: session.id)
             coalescer.receive(.agentEnd(sessionId: session.id))
             silenceWatchdog.stop()
         }
@@ -381,6 +385,7 @@ extension ServerConnection {
             updateStopStatus(sessionId, status: .ready, onlyFrom: .stopping)
             // Match TUI behavior: stop-confirmed without agentEnd should still
             // close any in-flight thinking/tool state.
+            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             coalescer.receive(.agentEnd(sessionId: sessionId))
             silenceWatchdog.stop()
             reducer.appendSystemEvent(reason ?? "Stop confirmed")
