@@ -166,7 +166,9 @@ export function startServerPing(
 
   const timer = setInterval(() => {
     if (!alive) {
-      console.log(`${ts()} [ws] Ping timeout — terminating ${label}`);
+      console.log("[ws] Ping timeout — terminating", {
+        label,
+      });
       clearInterval(timer);
       ws.terminate();
       return;
@@ -269,7 +271,9 @@ export class UserStreamMux {
   // ─── WebSocket Handler ───
 
   async handleWebSocket(ws: WebSocket): Promise<void> {
-    console.log(`${ts()} [ws] Connected: ${this.ctx.storage.getOwnerName()} → /stream`);
+    console.log("[ws] Connected: /stream", {
+      owner: this.ctx.storage.getOwnerName(),
+    });
     this.ctx.trackConnection(ws);
 
     const stopPing = startServerPing(ws, `/stream (${this.ctx.storage.getOwnerName()})`);
@@ -282,7 +286,11 @@ export class UserStreamMux {
 
     const send = (msg: ServerMessage): void => {
       if (ws.readyState !== WebSocket.OPEN) {
-        console.warn(`${ts()} [ws] DROP ${msg.type} → /stream (readyState=${ws.readyState})`);
+        console.warn("[ws] Drop message from /stream", {
+          messageType: msg.type,
+          readyState: ws.readyState,
+          owner: this.ctx.storage.getOwnerName(),
+        });
         return;
       }
 
@@ -371,9 +379,11 @@ export class UserStreamMux {
           });
 
           const connectedSentMs = Date.now() - subStartMs;
-          console.log(
-            `${ts()} [stream] subscribe(${sessionId}): startSession=${startSessionMs}ms, connectedSent=${connectedSentMs}ms`,
-          );
+          console.log("[stream] Subscribing to session", {
+            sessionId,
+            startSessionMs,
+            connectedSentMs,
+          });
         }
 
         const callback = (msg: ServerMessage): void => {
@@ -478,9 +488,10 @@ export class UserStreamMux {
           }
 
           const msg = parsed.message;
-          console.log(
-            `${ts()} [ws] RECV ${msg.type} from ${this.ctx.storage.getOwnerName()} → /stream`,
-          );
+          console.log("[ws] Received stream message", {
+            messageType: msg.type,
+            owner: this.ctx.storage.getOwnerName(),
+          });
 
           switch (msg.type) {
             case "subscribe": {
@@ -571,7 +582,9 @@ export class UserStreamMux {
         })
         .catch((err: unknown) => {
           const message = err instanceof Error ? err.message : "Unknown error";
-          console.error(`${ts()} [ws] MSG ERROR /stream: ${message}`);
+          console.error("[ws] Stream message error /stream", {
+            message,
+          });
           send({ type: "error", error: message });
         });
     });
@@ -579,16 +592,23 @@ export class UserStreamMux {
     ws.on("close", (code, reason) => {
       stopPing();
       const reasonStr = reason?.toString() || "";
-      console.log(
-        `${ts()} [ws] Disconnected: ${this.ctx.storage.getOwnerName()} → /stream (code=${code}${reasonStr ? ` reason=${reasonStr}` : ""}, sent=${msgSent} recv=${msgRecv})`,
-      );
+      console.log("[ws] Disconnected /stream", {
+        owner: this.ctx.storage.getOwnerName(),
+        code,
+        reason: reasonStr || undefined,
+        sent: msgSent,
+        recv: msgRecv,
+      });
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);
     });
 
     ws.on("error", (err) => {
       stopPing();
-      console.error(`${ts()} [ws] Error: ${this.ctx.storage.getOwnerName()} → /stream:`, err);
+      console.error("[ws] Stream error /stream", {
+        owner: this.ctx.storage.getOwnerName(),
+        error: err,
+      });
       clearAllSubscriptions();
       this.ctx.untrackConnection(ws);
     });

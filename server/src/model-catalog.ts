@@ -202,9 +202,9 @@ export class ModelCatalog {
     }
 
     if (healedCount > 0) {
-      console.log(
-        `${ts()} [models] healed context windows for ${healedCount} persisted session(s)`,
-      );
+      console.log("[models] healed context windows", {
+        healedCount,
+      });
     }
   }
 }

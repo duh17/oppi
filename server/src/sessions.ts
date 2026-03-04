@@ -139,7 +139,10 @@ export class SessionManager extends EventEmitter {
       .loadAllRenderers()
       .then(({ loaded, errors }) => {
         if (loaded.length > 0) {
-          console.log(`${ts()} [mobile-renderer] loaded: ${loaded.join(", ")}`);
+          console.log("[mobile-renderer] loaded", {
+            count: loaded.length,
+            loaded,
+          });
         }
         for (const err of errors) {
           console.error(`${ts()} [mobile-renderer] ${err}`);

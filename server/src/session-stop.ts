@@ -176,9 +176,9 @@ export class SessionStopCoordinator {
       }
 
       // Phase 1: first abort timed out — retry abort to interrupt running tools
-      console.log(
-        `${ts()} [session] Abort timed out after ${this.stopAbortTimeoutMs}ms; retrying abort`,
-      );
+      console.log("[session] Abort timed out, retrying abort", {
+        timeoutMs: this.stopAbortTimeoutMs,
+      });
       this.deps.broadcast(key, {
         type: "stop_requested",
         source: "server",

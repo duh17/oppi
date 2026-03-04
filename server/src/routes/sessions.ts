@@ -439,9 +439,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       mode: 0o600,
     });
 
-    console.log(
-      `${ts()} [diagnostics] client logs uploaded: user=${ctx.storage.getOwnerName()} session=${sessionId} entries=${entries.length}`,
-    );
+    console.log("[diagnostics] client logs uploaded", {
+      user: ctx.storage.getOwnerName(),
+      sessionId,
+      entries: entries.length,
+    });
     helpers.json(res, { ok: true, accepted: entries.length });
   }
 

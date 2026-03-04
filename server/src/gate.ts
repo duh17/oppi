@@ -132,7 +132,9 @@ export class GateServer extends EventEmitter {
     this.ruleStore.clearSessionRules(sessionId);
 
     this.guards.delete(sessionId);
-    console.log(`[gate] Destroyed guard for ${sessionId}`);
+    console.log("[gate] Destroyed guard", {
+      sessionId,
+    });
   }
 
   /**
@@ -180,10 +182,12 @@ export class GateServer extends EventEmitter {
       if (ruleInput) {
         const rule = this.ruleStore.add(ruleInput);
         learnedRuleId = rule.id;
-        const expiryLabel = expiresAt ? `, expiresAt=${new Date(expiresAt).toISOString()}` : "";
-        console.log(
-          `[gate] Learned rule: ${rule.label || "(no label)"} (scope=${normalizedScope}, id=${rule.id}${expiryLabel})`,
-        );
+        console.log("[gate] Learned rule", {
+          label: rule.label || "(no label)",
+          scope: normalizedScope,
+          id: rule.id,
+          expiresAt,
+        });
       }
     }
 
@@ -215,7 +219,11 @@ export class GateServer extends EventEmitter {
       expiresAt,
     });
 
-    console.log(`[gate] Decision resolved: ${requestId} → ${action} (scope=${normalizedScope})`);
+    console.log("[gate] Decision resolved", {
+      requestId,
+      action,
+      scope: normalizedScope,
+    });
     return true;
   }
 
@@ -287,7 +295,9 @@ export class GateServer extends EventEmitter {
     };
 
     this.guards.set(sessionId, guard);
-    console.log(`[gate] Guard created for ${sessionId}`);
+    console.log("[gate] Guard created", {
+      sessionId,
+    });
     this.emit("guard_ready", { sessionId });
   }
 
