@@ -30,6 +30,8 @@ struct ExpandedComposerView: View {
     let isBusy: Bool
     let busyStreamingBehavior: StreamingBehavior
     let slashCommands: [SlashCommand]
+    let fileSuggestions: [FileSuggestion]
+    let onFileSuggestionQuery: ((String?) -> Void)?
     let session: Session?
     let thinkingLevel: ThinkingLevel
     var voiceInputManager: VoiceInputManager?
@@ -129,6 +131,12 @@ struct ExpandedComposerView: View {
                         .padding(.bottom, 8)
                 }
 
+                if !fileSuggestions.isEmpty, case .atFile = autocompleteContext {
+                    FileSuggestionList(suggestions: fileSuggestions, onSelect: insertFileSuggestion)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
+
                 Divider().overlay(Color.themeComment.opacity(0.2))
 
                 bottomBar
@@ -158,6 +166,9 @@ struct ExpandedComposerView: View {
             }
         }
         .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
+        .onChange(of: text) { _, newText in
+            notifyFileSuggestionContext(for: newText)
+        }
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
         }
@@ -379,6 +390,19 @@ struct ExpandedComposerView: View {
 
     private func insertSlashCommand(_ command: SlashCommand) {
         text = ComposerAutocomplete.insertSlashCommand(command, into: text)
+    }
+
+    private func insertFileSuggestion(_ suggestion: FileSuggestion) {
+        text = ComposerAutocomplete.insertFileSuggestion(suggestion, into: text)
+    }
+
+    private func notifyFileSuggestionContext(for newText: String) {
+        let ctx = ComposerAutocomplete.context(for: newText)
+        if case .atFile(let query) = ctx, !isBusy {
+            onFileSuggestionQuery?(query)
+        } else {
+            onFileSuggestionQuery?(nil)
+        }
     }
 
     private func handlePastedImages(_ images: [UIImage]) {

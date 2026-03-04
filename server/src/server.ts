@@ -303,6 +303,7 @@ export class Server {
       gate: this.gate,
       ensureSessionContextWindow: (targetSession) =>
         this.models.ensureSessionContextWindow(targetSession),
+      resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
     });
 
     // Create the user stream mux (handles /stream WS, event rings, replay)
