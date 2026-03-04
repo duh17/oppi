@@ -5,6 +5,10 @@
  * Built-in skills: Discovered via pi SDK loadSkills(). Workspaces reference
  * skills by name from this pool.
  *
+ * Package skills: Discovered from pi packages installed via `pi install`
+ * (reads ~/.pi/agent/settings.json packages + skills arrays via the SDK's
+ * SettingsManager + DefaultPackageManager).
+ *
  * User skills: Stored in ~/.config/oppi/skills/<name>/ with a
  * SKILL.md file. Saved from session workspaces via REST API. Merged
  * into the registry alongside built-ins (user skills can shadow built-ins).
@@ -25,7 +29,12 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { EventEmitter } from "node:events";
-import { loadSkills, type Skill } from "@mariozechner/pi-coding-agent";
+import {
+  DefaultPackageManager,
+  loadSkills,
+  SettingsManager,
+  type Skill,
+} from "@mariozechner/pi-coding-agent";
 
 // ─── Types ───
 
@@ -68,6 +77,9 @@ export interface SkillsChangedEvent {
 export class SkillRegistry extends EventEmitter {
   private skills: Map<string, SkillInfo> = new Map();
   private scanDirs: string[];
+  /** Skill paths resolved from pi settings packages + skills arrays. */
+  private packageSkillPaths: string[] = [];
+  private packageSkillsResolved = false;
   private watchers: FSWatcher[] = [];
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private debounceMs: number;
@@ -76,6 +88,49 @@ export class SkillRegistry extends EventEmitter {
     super();
     this.scanDirs = [join(homedir(), ".pi", "agent", "skills"), ...(extraDirs || [])];
     this.debounceMs = opts?.debounceMs ?? 500;
+  }
+
+  /**
+   * Resolve skill paths from pi settings (packages + skills arrays).
+   *
+   * Uses the SDK's SettingsManager + DefaultPackageManager to discover
+   * skills from `pi install`-ed packages and settings-declared skill
+   * directories — the same logic pi uses at startup.
+   *
+   * Call once before scan(). Skipped packages that aren't installed
+   * yet (no auto-install in server context).
+   */
+  async resolvePackageSkills(): Promise<void> {
+    if (this.packageSkillsResolved) return;
+    this.packageSkillsResolved = true;
+
+    try {
+      const agentDir = join(homedir(), ".pi", "agent");
+      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+      const packageManager = new DefaultPackageManager({
+        cwd: process.cwd(),
+        agentDir,
+        settingsManager,
+      });
+
+      // Skip missing packages — don't auto-install in server context
+      const resolved = await packageManager.resolve(async () => "skip");
+
+      // Collect enabled skill paths, excluding those already under scanDirs
+      // (those are loaded by scan() directly to avoid double-loading).
+      const paths = resolved.skills
+        .filter((r) => r.enabled)
+        .map((r) => r.path)
+        .filter((p) => !this.scanDirs.some((dir) => p.startsWith(dir + "/")));
+
+      if (paths.length > 0) {
+        this.packageSkillPaths = paths;
+        console.log(`[skills] Resolved ${paths.length} skill path(s) from pi settings/packages`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[skills] Failed to resolve package skills: ${message}`);
+    }
   }
 
   /**
@@ -110,6 +165,26 @@ export class SkillRegistry extends EventEmitter {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[skills] Failed to scan ${dir}: ${message}`);
+      }
+    }
+
+    // Load skills resolved from pi packages/settings.
+    // These are individual file paths (SKILL.md or top-level .md) from
+    // DefaultPackageManager.resolve(). Feed them to loadSkills which
+    // handles both files and directories, validates frontmatter, etc.
+    if (this.packageSkillPaths.length > 0) {
+      try {
+        const result = loadSkills({
+          skillPaths: this.packageSkillPaths,
+          includeDefaults: false,
+        });
+        for (const skill of result.skills) {
+          if (this.skills.has(skill.name)) continue;
+          this.skills.set(skill.name, sdkSkillToInfo(skill));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[skills] Failed to load package skills: ${message}`);
       }
     }
 
