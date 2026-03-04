@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -55,12 +55,22 @@ function makeAllowlist(domains: string[]): string {
   return path;
 }
 
-function bash(command: string): GateRequest {
-  return { tool: "bash", input: { command }, toolCallId: "t1" };
+function bash(command: string, sessionCwd?: string): GateRequest {
+  return {
+    tool: "bash",
+    input: { command },
+    toolCallId: "t1",
+    ...(sessionCwd ? { sessionCwd } : {}),
+  };
 }
 
-function readReq(path: string): GateRequest {
-  return { tool: "read", input: { path }, toolCallId: "t1" };
+function readReq(path: string, sessionCwd?: string): GateRequest {
+  return {
+    tool: "read",
+    input: { path },
+    toolCallId: "t1",
+    ...(sessionCwd ? { sessionCwd } : {}),
+  };
 }
 
 describe("RuleStore (unified)", () => {
@@ -517,12 +527,22 @@ describe("fetch allowlist helpers", () => {
 // ─── Protected paths guard ───
 
 describe("protected paths guard", () => {
-  function editReq(path: string): GateRequest {
-    return { tool: "edit", input: { path, oldText: "a", newText: "b" }, toolCallId: "t1" };
+  function editReq(path: string, sessionCwd?: string): GateRequest {
+    return {
+      tool: "edit",
+      input: { path, oldText: "a", newText: "b" },
+      toolCallId: "t1",
+      ...(sessionCwd ? { sessionCwd } : {}),
+    };
   }
 
-  function writeReq(path: string): GateRequest {
-    return { tool: "write", input: { path, content: "[]" }, toolCallId: "t1" };
+  function writeReq(path: string, sessionCwd?: string): GateRequest {
+    return {
+      tool: "write",
+      input: { path, content: "[]" },
+      toolCallId: "t1",
+      ...(sessionCwd ? { sessionCwd } : {}),
+    };
   }
 
   it("asks when edit targets a protected path", () => {
@@ -559,6 +579,69 @@ describe("protected paths guard", () => {
       "s1",
       "w1",
     );
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("asks when relative edit path resolves to protected rules file", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const sessionCwd = makeTempDir();
+    const rulesPath = join(sessionCwd, "rules.json");
+    writeFileSync(rulesPath, "[]\n", "utf-8");
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(
+      editReq("./rules.json", sessionCwd),
+      store.getAll(),
+      "s1",
+      "w1",
+    );
+
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("asks when bash cd chain redirects into protected rules file", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const sessionCwd = makeTempDir();
+    const rulesPath = join(sessionCwd, "rules.json");
+    const nestedDir = join(sessionCwd, "tmp", "deep");
+
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(rulesPath, "[]\n", "utf-8");
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(
+      bash("cd tmp/deep && echo '[]' > ../../rules.json", sessionCwd),
+      store.getAll(),
+      "s1",
+      "w1",
+    );
+
+    expect(decision.action).toBe("ask");
+    expect(decision.ruleLabel).toBe("config guard");
+  });
+
+  it("asks when bash writes via symlink to protected rules file", () => {
+    const engine = new PolicyEngine("default");
+    const { store } = makeStore();
+    const sessionCwd = makeTempDir();
+    const rulesPath = join(sessionCwd, "rules.json");
+    const linkPath = join(sessionCwd, "rules-link.json");
+
+    writeFileSync(rulesPath, "[]\n", "utf-8");
+    symlinkSync(rulesPath, linkPath);
+    engine.setProtectedPaths([rulesPath]);
+
+    const decision = engine.evaluateWithRules(
+      bash("echo '[]' > ./rules-link.json", sessionCwd),
+      store.getAll(),
+      "s1",
+      "w1",
+    );
+
     expect(decision.action).toBe("ask");
     expect(decision.ruleLabel).toBe("config guard");
   });

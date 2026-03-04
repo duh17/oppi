@@ -47,6 +47,8 @@ export interface GateRequest {
   tool: string;
   input: Record<string, unknown>;
   toolCallId: string;
+  /** Absolute session working directory used to resolve relative tool paths. */
+  sessionCwd?: string;
 }
 
 export interface ParsedCommand {

@@ -66,7 +66,7 @@ export interface SessionCoordinatorBundleDeps {
   stopAbortRetryTimeoutMs: number;
   stopSessionGraceMs: number;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
-  getSkillPathResolver: () => ((skillNames: string[]) => string[]) | null;
+  getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;

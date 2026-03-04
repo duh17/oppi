@@ -34,7 +34,7 @@ export interface SessionStartCoordinatorDeps {
   config: ServerConfig;
   gate: GateServer;
   eventRingCapacity: number;
-  getSkillPathResolver: () => ((skillNames: string[]) => string[]) | null;
+  getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
@@ -61,7 +61,7 @@ export class SessionStartCoordinator {
         const useGate = this.deps.config.permissionGate !== false;
         const skillPathResolver = this.deps.getSkillPathResolver();
         const skillPaths =
-          workspace?.skills && skillPathResolver ? skillPathResolver(workspace.skills) : [];
+          workspace?.skills && skillPathResolver ? await skillPathResolver(workspace.skills) : [];
 
         const sdkBackend = await SdkBackend.create({
           session,

@@ -69,7 +69,7 @@ export class SessionManager extends EventEmitter {
   contextWindowResolver: ((modelId: string) => number) | null = null;
 
   /** Injected by the server to resolve skill names to host directory paths. */
-  skillPathResolver: ((skillNames: string[]) => string[]) | null = null;
+  skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
