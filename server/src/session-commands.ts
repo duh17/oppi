@@ -1,4 +1,4 @@
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import { formatSkillsForPrompt, type AgentSession } from "@mariozechner/pi-coding-agent";
 
 import { ts } from "./log-utils.js";
 import { parsePiStateSnapshot, type PiStateSnapshot } from "./pi-events.js";
@@ -51,6 +51,8 @@ interface SessionContextCompositionSnapshot {
   agentsChars: number;
   agentsTokens: number;
   agentsFiles: ContextFileTokenSnapshot[];
+  skillsListingChars: number;
+  skillsListingTokens: number;
 }
 
 function estimateTokensFromChars(chars: number): number {
@@ -78,12 +80,18 @@ function collectSessionContextComposition(
   const agentsChars = agentsFiles.reduce((sum, file) => sum + file.chars, 0);
   const agentsTokens = agentsFiles.reduce((sum, file) => sum + file.tokens, 0);
 
+  const skillsListing = formatSkillsForPrompt(session.resourceLoader.getSkills().skills);
+  const skillsListingChars = skillsListing.length;
+  const skillsListingTokens = estimateTokensFromChars(skillsListingChars);
+
   return {
     piSystemPromptChars,
     piSystemPromptTokens,
     agentsChars,
     agentsTokens,
     agentsFiles,
+    skillsListingChars,
+    skillsListingTokens,
   };
 }
 
