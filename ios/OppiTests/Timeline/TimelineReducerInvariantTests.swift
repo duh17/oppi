@@ -100,6 +100,31 @@ struct TimelineReducerInvariantTests {
     }
 
     @MainActor
+    @Test func replayingNonDeltaBatchBumpsRenderVersionOnlyOnFirstPass() {
+        let reducer = TimelineReducer()
+        let batch: [AgentEvent] = [
+            .toolStart(
+                sessionId: "s1",
+                toolEventId: "tool-replay",
+                tool: "bash",
+                args: ["command": "pwd"]
+            ),
+        ]
+
+        let baselineVersion = reducer.renderVersion
+        reducer.processBatch(batch)
+
+        let versionAfterFirstPass = reducer.renderVersion
+        #expect(versionAfterFirstPass == baselineVersion + 1)
+
+        let baselineSnapshot = snapshot(of: reducer)
+        reducer.processBatch(batch)
+
+        #expect(reducer.renderVersion == versionAfterFirstPass)
+        #expect(snapshot(of: reducer) == baselineSnapshot)
+    }
+
+    @MainActor
     @Test func reconnectReplayMaintainsSingleToolIdentityAndTerminalInvariants() {
         for terminalEvent in deterministicTerminalEvents() {
             let reducer = TimelineReducer()
