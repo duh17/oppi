@@ -1,4 +1,8 @@
+import { resolve } from "node:path";
+
 import { ts } from "./log-utils.js";
+import { getFileSuggestions } from "./file-suggestions.js";
+import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type {
   ClientMessage,
   ImageAttachment,
@@ -6,6 +10,7 @@ import type {
   MessageQueueState,
   ServerMessage,
   Session,
+  Workspace,
 } from "./types.js";
 
 interface TurnCommandMessage {
@@ -93,6 +98,7 @@ export interface WsMessageHandlerDeps {
   sessions: WsSessionCommands;
   gate: WsGateDecisions;
   ensureSessionContextWindow: (session: Session) => Session;
+  resolveWorkspaceForSession?: (session: Session) => Workspace | undefined;
 }
 
 export class WsMessageHandler {
@@ -182,6 +188,12 @@ export class WsMessageHandler {
         if (!ok) {
           send({ type: "error", error: `UI request not found: ${msg.id}` });
         }
+        return;
+      }
+
+      // ── File suggestions (server-handled, no pi round-trip) ──
+      case "get_file_suggestions": {
+        this.handleFileSuggestions(session, msg.query, msg.requestId, send);
         return;
       }
 
@@ -386,6 +398,51 @@ export class WsMessageHandler {
         return;
       }
       throw err;
+    }
+  }
+
+  private handleFileSuggestions(
+    session: Session,
+    query: string,
+    requestId: string | undefined,
+    send: (msg: ServerMessage) => void,
+  ): void {
+    const command = "get_file_suggestions";
+
+    if (!requestId) {
+      send({ type: "error", error: "get_file_suggestions requires requestId" });
+      return;
+    }
+
+    const sendResult = (
+      payload: Omit<Extract<ServerMessage, { type: "command_result" }>, "type">,
+    ): void => {
+      send({ type: "command_result", ...payload });
+    };
+
+    const workspace = this.deps.resolveWorkspaceForSession?.(session);
+    if (!workspace) {
+      sendResult({ command, requestId, success: false, error: "workspace_unavailable" });
+      return;
+    }
+
+    try {
+      const workspaceRoot = resolveSdkSessionCwd(workspace);
+      const additionalRoots = (workspace.allowedPaths ?? [])
+        .filter((entry) => entry.access === "read" || entry.access === "readwrite")
+        .map((entry) => {
+          const trimmed = entry.path.trim();
+          if (trimmed.startsWith("/") || trimmed.startsWith("~")) {
+            return trimmed;
+          }
+          return resolve(workspaceRoot, trimmed);
+        });
+
+      const result = getFileSuggestions(workspaceRoot, query, additionalRoots);
+      sendResult({ command, requestId, success: true, data: result });
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : String(err);
+      sendResult({ command, requestId, success: false, error });
     }
   }
 }

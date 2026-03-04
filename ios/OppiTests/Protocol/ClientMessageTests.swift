@@ -210,6 +210,21 @@ struct ClientMessageTests {
         #expect(json["mode"] as? String == "one-at-a-time")
     }
 
+    @Test func encodesGetFileSuggestions() throws {
+        let msg = ClientMessage.getFileSuggestions(query: "src/chat", requestId: "req-123")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "get_file_suggestions")
+        #expect(json["query"] as? String == "src/chat")
+        #expect(json["requestId"] as? String == "req-123")
+    }
+
+    @Test func encodesGetFileSuggestionsEmptyQuery() throws {
+        let msg = ClientMessage.getFileSuggestions(query: "")
+        let json = try decode(msg)
+        #expect(json["type"] as? String == "get_file_suggestions")
+        #expect(json["query"] as? String == "")
+    }
+
     // MARK: - Helpers
 
     private enum DecodeError: Error {
