@@ -6,7 +6,7 @@
  * notification-level filtering.
  */
 
-import { WebSocket } from "ws";
+import { WebSocket, type RawData } from "ws";
 import { EventRing } from "./event-ring.js";
 import type { SessionManager } from "./sessions.js";
 import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
@@ -46,6 +46,103 @@ const PING_INTERVAL_MS = 30_000;
 
 /** Typed stream error code: command sent for non-full subscription session. */
 export const STREAM_ERROR_NOT_SUBSCRIBED_FULL = "stream_not_subscribed_full";
+
+const KNOWN_CLIENT_MESSAGE_TYPES = new Set([
+  "subscribe",
+  "unsubscribe",
+  "prompt",
+  "steer",
+  "follow_up",
+  "abort",
+  "stop",
+  "stop_session",
+  "get_state",
+  "get_messages",
+  "get_session_stats",
+  "get_queue",
+  "set_queue",
+  "set_model",
+  "cycle_model",
+  "get_available_models",
+  "set_thinking_level",
+  "cycle_thinking_level",
+  "new_session",
+  "set_session_name",
+  "compact",
+  "set_auto_compaction",
+  "fork",
+  "get_fork_messages",
+  "switch_session",
+  "set_steering_mode",
+  "set_follow_up_mode",
+  "set_auto_retry",
+  "abort_retry",
+  "bash",
+  "abort_bash",
+  "get_commands",
+  "get_file_suggestions",
+  "permission_response",
+  "extension_ui_response",
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function rawDataToText(data: RawData): string {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+
+  return Buffer.from(data).toString("utf8");
+}
+
+function parseIncomingClientMessage(
+  data: RawData,
+):
+  | { ok: true; message: ClientMessage }
+  | { ok: false; error: string; requestId?: string; command?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawDataToText(data));
+  } catch {
+    return { ok: false, error: "Invalid JSON payload" };
+  }
+
+  const record = asRecord(parsed);
+  if (!record) {
+    return { ok: false, error: "Message payload must be a JSON object" };
+  }
+
+  const requestId = typeof record.requestId === "string" ? record.requestId : undefined;
+  const type = record.type;
+
+  if (typeof type !== "string" || type.trim().length === 0) {
+    return { ok: false, error: "Message type is required", requestId };
+  }
+
+  if (!KNOWN_CLIENT_MESSAGE_TYPES.has(type)) {
+    return {
+      ok: false,
+      error: `Unsupported command type: ${type}`,
+      requestId,
+      command: type,
+    };
+  }
+
+  return { ok: true, message: record as ClientMessage };
+}
 
 /**
  * Start a server-initiated ping/pong keepalive for a WebSocket.
@@ -359,8 +456,28 @@ export class UserStreamMux {
     ws.on("message", (data) => {
       queue = queue
         .then(async () => {
-          const msg = JSON.parse(data.toString()) as ClientMessage;
           msgRecv++;
+
+          const parsed = parseIncomingClientMessage(data);
+          if (!parsed.ok) {
+            if (parsed.command) {
+              send({
+                type: "command_result",
+                command: parsed.command,
+                requestId: parsed.requestId,
+                success: false,
+                error: parsed.error,
+              });
+            } else {
+              send({
+                type: "error",
+                error: parsed.error,
+              });
+            }
+            return;
+          }
+
+          const msg = parsed.message;
           console.log(
             `${ts()} [ws] RECV ${msg.type} from ${this.ctx.storage.getOwnerName()} → /stream`,
           );
@@ -418,12 +535,24 @@ export class UserStreamMux {
 
               const sub = subscriptions.get(targetSessionId);
               if (!sub || sub.level !== "full") {
+                const error = `Session ${targetSessionId} is not subscribed at level=full`;
                 send({
                   type: "error",
-                  error: `Session ${targetSessionId} is not subscribed at level=full`,
+                  error,
                   code: STREAM_ERROR_NOT_SUBSCRIBED_FULL,
                   sessionId: targetSessionId,
                 });
+
+                if (typeof msg.requestId === "string" && msg.requestId.length > 0) {
+                  send({
+                    type: "command_result",
+                    command: msg.type,
+                    requestId: msg.requestId,
+                    success: false,
+                    error,
+                    sessionId: targetSessionId,
+                  });
+                }
                 return;
               }
 

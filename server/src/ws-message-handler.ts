@@ -199,6 +199,7 @@ export class WsMessageHandler {
 
       // ── RPC passthrough — forward to pi and return result ──
       case "get_messages":
+      case "get_fork_messages":
       case "get_session_stats":
       case "get_commands":
       case "set_model":
@@ -219,6 +220,19 @@ export class WsMessageHandler {
       case "abort_bash": {
         const command: Record<string, unknown> = { ...msg };
         await this.deps.sessions.forwardClientCommand(session.id, command, msg.requestId);
+        return;
+      }
+
+      default: {
+        const command = typeof msg.type === "string" ? msg.type : "unknown";
+        const requestId = "requestId" in msg ? msg.requestId : undefined;
+        send({
+          type: "command_result",
+          command,
+          requestId,
+          success: false,
+          error: `Unsupported command type: ${command}`,
+        });
         return;
       }
     }
