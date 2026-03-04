@@ -468,7 +468,13 @@ export function translatePiEvent(
       ];
 
     // Pi can deliver final assistant text/thinking only in message_end.
-    // Recover any missing text tail and emit thinking blocks for iOS.
+    // The authoritative text is in the message_end broadcast (see
+    // SessionAgentEventCoordinator). No synthetic text_delta recovery
+    // here — that caused duplicate assistant bubbles when the tail
+    // arrived after the assistant message was already finalized.
+    //
+    // Thinking recovery IS still needed: pi RPC doesn't stream
+    // thinking_delta, so message_end is the only source.
     case "message_end": {
       const message = event.message;
       if (message.role !== "assistant") {
@@ -477,11 +483,6 @@ export function translatePiEvent(
       }
 
       const out: ServerMessage[] = [];
-      const finalizedText = extractAssistantText(message);
-      const tailDelta = computeAssistantTextTailDelta(ctx.streamedAssistantText, finalizedText);
-      if (tailDelta.length > 0) {
-        out.push({ type: "text_delta", delta: tailDelta });
-      }
 
       // Recover thinking only when it wasn't already streamed live.
       // Streaming sets ctx.hasStreamedThinking; recovery is for reconnect

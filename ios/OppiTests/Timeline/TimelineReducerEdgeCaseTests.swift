@@ -517,4 +517,60 @@ struct TimelineReducerEdgeCaseTests {
             "Expected exactly 2 assistant messages, got \(assistantItems.count)"
         )
     }
+
+    @MainActor
+    @Test func messageEndReplacesStreamedTextWhenStillStreaming() {
+        // Normal finalization: text deltas build partial text, messageEnd
+        // replaces with the authoritative full text (no duplicate).
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Partial"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Full final text"))
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(assistantItems.count == 1)
+        guard case .assistantMessage(_, let text, _) = assistantItems[0] else {
+            Issue.record("Expected assistantMessage")
+            return
+        }
+        #expect(text == "Full final text")
+    }
+
+    @MainActor
+    @Test func messageEndAfterAgentEndDoesNotDuplicateWithDifferentText() {
+        // Edge case from reconnect: agentEnd finalizes partial text,
+        // then a stale messageEnd arrives with different (longer) text.
+        // Should suppress the duplicate even if texts differ, because
+        // messageEnd after agentEnd should update in place, not append.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "and installed on Duh Ifone."))
+        reducer.process(.agentEnd(sessionId: "s1"))
+        // Stale messageEnd arrives after turn ended
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Committed and installed on Duh Ifone."
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        // This currently creates a duplicate because the texts don't match.
+        // With the server-side fix (no synthetic text_delta from message_end),
+        // this scenario won't happen. But if it does, the client should handle
+        // it by updating the latest assistant message rather than duplicating.
+        #expect(
+            assistantItems.count == 1,
+            "messageEnd after agentEnd should not create a duplicate, got \(assistantItems.count)"
+        )
+    }
 }
