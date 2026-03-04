@@ -90,6 +90,14 @@ No partial protocol updates.
 - No force unwraps in production code
 - Liquid Glass for navigation chrome only. Never for scrollable content.
 
+### Testing (iOS)
+- Use Swift Testing (`import Testing`, `@Test`, `#expect`) for all unit tests. No XCTest for unit tests.
+- XCTest is only allowed for UI tests (`XCUIApplication` requires it — Swift Testing has no UI testing support).
+- Use `@Suite("Name")` to group related tests in a struct.
+- Use `@MainActor` on the struct (not individual tests) when all tests need main actor isolation.
+- Use `Issue.record()` instead of `XCTFail()`. Use `#expect()` instead of `XCTAssert*`.
+- `#filePath` works in Swift Testing for bundle-free fixture resolution — no need for `Bundle(for:)`.
+
 ## iOS Architecture
 
 **Event pipeline (core data flow):**

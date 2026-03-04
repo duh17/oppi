@@ -220,6 +220,20 @@ enum ToolPresentationBuilder {
             result.toolNamePrefix = "$"
             result.toolNameColor = UIColor(Color.themeGreen)
 
+            // Detect embedded languages (heredocs, inline flags) for badge.
+            // Use the raw command (not compactCommand) because heredoc detection
+            // relies on newlines that whitespace compaction strips.
+            let rawCommand = ToolCallFormatting.bashCommand(args: args, argsSummary: argsSummary)
+            if !rawCommand.isEmpty {
+                let segments = BashEmbeddedLanguageDetector.detect(rawCommand)
+                if let embedded = segments.first(where: {
+                    if case .embeddedCode = $0.kind { return true }
+                    return false
+                }), case .embeddedCode(let lang) = embedded.kind {
+                    result.languageBadge = lang.displayName
+                }
+            }
+
         case "read", "write", "edit":
             let displayPath = ToolCallFormatting.displayFilePath(
                 tool: normalizedTool, args: args, argsSummary: argsSummary

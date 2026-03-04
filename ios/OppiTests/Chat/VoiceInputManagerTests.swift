@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 @testable import Oppi
 
 /// Tests for VoiceInputManager state machine correctness.
@@ -6,172 +7,173 @@ import XCTest
 /// These tests verify the state guards that prevent overlapping operations —
 /// the suspected cause of crashes when tapping the mic button rapidly.
 /// Speech framework calls are not exercised (no mic/NE in simulator).
+@Suite("VoiceInputManager")
 @MainActor
-final class VoiceInputManagerTests: XCTestCase {
+struct VoiceInputManagerTests {
 
     // MARK: - Initial State
 
-    func testInitialState() {
+    @Test func initialState() {
         let manager = VoiceInputManager()
-        XCTAssertEqual(manager.state, .idle)
-        XCTAssertFalse(manager.isRecording)
-        XCTAssertFalse(manager.isProcessing)
-        XCTAssertFalse(manager.isPreparing)
-        XCTAssertEqual(manager.currentTranscript, "")
-        XCTAssertEqual(manager.audioLevel, 0)
+        #expect(manager.state == .idle)
+        #expect(!manager.isRecording)
+        #expect(!manager.isProcessing)
+        #expect(!manager.isPreparing)
+        #expect(manager.currentTranscript == "")
+        #expect(manager.audioLevel == 0)
     }
 
     // MARK: - State Guards
 
-    func testStartRecordingRejectsNonIdleState() async throws {
+    @Test func startRecordingRejectsNonIdleState() async throws {
         let manager = VoiceInputManager()
 
         // Simulate preparing state
         manager._testState = .preparingModel
         try await manager.startRecording()
-        XCTAssertEqual(manager.state, .preparingModel, "Should not change state when not idle")
+        #expect(manager.state == .preparingModel, "Should not change state when not idle")
 
         // Simulate recording state
         manager._testState = .recording
         try await manager.startRecording()
-        XCTAssertEqual(manager.state, .recording, "Should not change state when recording")
+        #expect(manager.state == .recording, "Should not change state when recording")
 
         // Simulate processing state
         manager._testState = .processing
         try await manager.startRecording()
-        XCTAssertEqual(manager.state, .processing, "Should not change state when processing")
+        #expect(manager.state == .processing, "Should not change state when processing")
 
         // Simulate error state
         manager._testState = .error("test")
         try await manager.startRecording()
-        XCTAssertEqual(manager.state, .error("test"), "Should not change state when in error")
+        #expect(manager.state == .error("test"), "Should not change state when in error")
     }
 
-    func testStartRecordingRejectsWhenOperationInFlight() async throws {
+    @Test func startRecordingRejectsWhenOperationInFlight() async throws {
         let manager = VoiceInputManager()
 
         // State is idle but operation lock is held
         manager._testOperationInFlight = true
         try await manager.startRecording()
-        XCTAssertEqual(manager.state, .idle, "Should not proceed when operation is in flight")
+        #expect(manager.state == .idle, "Should not proceed when operation is in flight")
     }
 
-    func testStopRecordingRejectsNonRecordingState() async {
+    @Test func stopRecordingRejectsNonRecordingState() async {
         let manager = VoiceInputManager()
 
         // From idle
         await manager.stopRecording()
-        XCTAssertEqual(manager.state, .idle)
+        #expect(manager.state == .idle)
 
         // From preparing
         manager._testState = .preparingModel
         await manager.stopRecording()
-        XCTAssertEqual(manager.state, .preparingModel)
+        #expect(manager.state == .preparingModel)
 
         // From processing
         manager._testState = .processing
         await manager.stopRecording()
-        XCTAssertEqual(manager.state, .processing)
+        #expect(manager.state == .processing)
     }
 
-    func testStopRecordingRejectsWhenOperationInFlight() async {
+    @Test func stopRecordingRejectsWhenOperationInFlight() async {
         let manager = VoiceInputManager()
         manager._testState = .recording
         manager._testOperationInFlight = true
 
         await manager.stopRecording()
         // Should remain recording — stop was rejected
-        XCTAssertEqual(manager.state, .recording)
+        #expect(manager.state == .recording)
     }
 
-    func testCancelRecordingOnlyFromRecordingOrPreparing() async {
+    @Test func cancelRecordingOnlyFromRecordingOrPreparing() async {
         let manager = VoiceInputManager()
 
         // From idle — rejected
         await manager.cancelRecording()
-        XCTAssertEqual(manager.state, .idle)
+        #expect(manager.state == .idle)
 
         // From preparing — accepted
         manager._testState = .preparingModel
         await manager.cancelRecording()
-        XCTAssertEqual(manager.state, .idle, "Cancel should reset to idle from preparing")
+        #expect(manager.state == .idle, "Cancel should reset to idle from preparing")
 
         // From recording — accepted
         manager._testState = .recording
         await manager.cancelRecording()
-        XCTAssertEqual(manager.state, .idle, "Cancel should reset to idle from recording")
+        #expect(manager.state == .idle, "Cancel should reset to idle from recording")
     }
 
-    func testCancelClearsTranscript() async {
+    @Test func cancelClearsTranscript() async {
         let manager = VoiceInputManager()
         manager._testState = .recording
 
         await manager.cancelRecording()
-        XCTAssertEqual(manager.finalizedTranscript, "")
-        XCTAssertEqual(manager.volatileTranscript, "")
-        XCTAssertEqual(manager.currentTranscript, "")
+        #expect(manager.finalizedTranscript == "")
+        #expect(manager.volatileTranscript == "")
+        #expect(manager.currentTranscript == "")
     }
 
-    func testCancelResetsOperationLock() async {
+    @Test func cancelResetsOperationLock() async {
         let manager = VoiceInputManager()
         manager._testState = .recording
         manager._testOperationInFlight = true
 
         await manager.cancelRecording()
-        XCTAssertFalse(manager._testOperationInFlight, "Cancel must clear operation lock")
-        XCTAssertEqual(manager.state, .idle)
+        #expect(!manager._testOperationInFlight, "Cancel must clear operation lock")
+        #expect(manager.state == .idle)
     }
 
     // MARK: - Computed Properties
 
-    func testIsRecordingOnlyInRecordingState() {
+    @Test func isRecordingOnlyInRecordingState() {
         let manager = VoiceInputManager()
 
         manager._testState = .idle
-        XCTAssertFalse(manager.isRecording)
+        #expect(!manager.isRecording)
 
         manager._testState = .preparingModel
-        XCTAssertFalse(manager.isRecording)
+        #expect(!manager.isRecording)
 
         manager._testState = .recording
-        XCTAssertTrue(manager.isRecording)
+        #expect(manager.isRecording)
 
         manager._testState = .processing
-        XCTAssertFalse(manager.isRecording)
+        #expect(!manager.isRecording)
 
         manager._testState = .error("x")
-        XCTAssertFalse(manager.isRecording)
+        #expect(!manager.isRecording)
     }
 
-    func testIsProcessingOnlyInProcessingState() {
+    @Test func isProcessingOnlyInProcessingState() {
         let manager = VoiceInputManager()
 
         manager._testState = .idle
-        XCTAssertFalse(manager.isProcessing)
+        #expect(!manager.isProcessing)
 
         manager._testState = .processing
-        XCTAssertTrue(manager.isProcessing)
+        #expect(manager.isProcessing)
 
         manager._testState = .recording
-        XCTAssertFalse(manager.isProcessing)
+        #expect(!manager.isProcessing)
     }
 
-    func testIsPreparingOnlyInPreparingState() {
+    @Test func isPreparingOnlyInPreparingState() {
         let manager = VoiceInputManager()
 
         manager._testState = .idle
-        XCTAssertFalse(manager.isPreparing)
+        #expect(!manager.isPreparing)
 
         manager._testState = .preparingModel
-        XCTAssertTrue(manager.isPreparing)
+        #expect(manager.isPreparing)
 
         manager._testState = .recording
-        XCTAssertFalse(manager.isPreparing)
+        #expect(!manager.isPreparing)
     }
 
     // MARK: - Prewarm
 
-    func testPrewarmGuardsWhenAlreadyReady() async {
+    @Test func prewarmGuardsWhenAlreadyReady() async {
         let manager = VoiceInputManager()
         manager._testModelReady = true
 
@@ -180,13 +182,13 @@ final class VoiceInputManagerTests: XCTestCase {
         // No crash = success
     }
 
-    func testPrewarmGuardsWhenNotIdle() async {
+    @Test func prewarmGuardsWhenNotIdle() async {
         let manager = VoiceInputManager()
         manager._testState = .recording
 
         // Should no-op (not idle)
         await manager.prewarm()
-        XCTAssertFalse(manager._testModelReady, "Prewarm should not proceed when not idle")
+        #expect(!manager._testModelReady, "Prewarm should not proceed when not idle")
     }
 
     // MARK: - Rapid Tap Simulation
@@ -194,7 +196,7 @@ final class VoiceInputManagerTests: XCTestCase {
     /// Simulates the button action pattern from ChatInputBar without
     /// actually calling Speech APIs (which crash in simulator).
     /// Verifies the state machine + operation lock prevent double-entry.
-    func testRapidTapButtonActionPattern() async {
+    @Test func rapidTapButtonActionPattern() async {
         let manager = VoiceInputManager()
         var startAttempts = 0
         var stopAttempts = 0
@@ -216,53 +218,53 @@ final class VoiceInputManagerTests: XCTestCase {
         }
 
         // First tap claims state. All subsequent taps are no-ops.
-        XCTAssertEqual(startAttempts, 1, "Only first tap should attempt start")
-        XCTAssertEqual(stopAttempts, 0, "No stops — never reached .recording")
-        XCTAssertEqual(noopAttempts, 4, "All other taps should be no-ops")
+        #expect(startAttempts == 1, "Only first tap should attempt start")
+        #expect(stopAttempts == 0, "No stops — never reached .recording")
+        #expect(noopAttempts == 4, "All other taps should be no-ops")
     }
 
-    /// Simulates a start → stop → start cycle via the state machine.
+    /// Simulates a start -> stop -> start cycle via the state machine.
     /// Verifies the operation lock prevents overlap.
-    func testStartStopStartCycleStateMachine() async {
+    @Test func startStopStartCycleStateMachine() async {
         let manager = VoiceInputManager()
 
-        // Tap 1: start → preparing
-        XCTAssertEqual(manager.state, .idle)
-        XCTAssertFalse(manager._testOperationInFlight)
+        // Tap 1: start -> preparing
+        #expect(manager.state == .idle)
+        #expect(!manager._testOperationInFlight)
         manager._testOperationInFlight = true
         manager._testState = .preparingModel
 
         // Tap 2 during preparing: should be no-op
-        XCTAssertFalse(manager.isRecording)
-        XCTAssertNotEqual(manager.state, .idle)
+        #expect(!manager.isRecording)
+        #expect(manager.state != .idle)
 
-        // Setup completes → recording
+        // Setup completes -> recording
         manager._testState = .recording
         manager._testOperationInFlight = false
 
         // Tap 3: stop
-        XCTAssertTrue(manager.isRecording)
+        #expect(manager.isRecording)
         manager._testOperationInFlight = true
         manager._testState = .processing
 
         // Tap 4 during processing: should be no-op
-        XCTAssertFalse(manager.isRecording)
-        XCTAssertNotEqual(manager.state, .idle)
+        #expect(!manager.isRecording)
+        #expect(manager.state != .idle)
 
-        // Stop completes → idle
+        // Stop completes -> idle
         manager._testState = .idle
         manager._testOperationInFlight = false
 
         // Tap 5: can start again
-        XCTAssertEqual(manager.state, .idle)
-        XCTAssertFalse(manager._testOperationInFlight)
+        #expect(manager.state == .idle)
+        #expect(!manager._testOperationInFlight)
     }
 
     /// Verifies that the operation lock alone prevents re-entry
     /// even if state is technically .idle (belt + suspenders).
-    func testOperationLockPreventsReentryAtIdleState() async throws {
+    @Test func operationLockPreventsReentryAtIdleState() async throws {
         let manager = VoiceInputManager()
-        XCTAssertEqual(manager.state, .idle)
+        #expect(manager.state == .idle)
 
         // Lock is held (e.g., stop just completed but defer hasn't cleared it)
         manager._testOperationInFlight = true
@@ -270,211 +272,211 @@ final class VoiceInputManagerTests: XCTestCase {
         // State is idle but lock prevents start
         try await manager.startRecording()
         // Should still be idle — start was rejected
-        XCTAssertEqual(manager.state, .idle)
+        #expect(manager.state == .idle)
     }
 
     /// Verifies that after an error, the state eventually resets to idle.
-    func testErrorStateResetsToIdle() async {
+    @Test func errorStateResetsToIdle() async {
         let manager = VoiceInputManager()
         manager._testState = .error("test error")
 
         // Error state should not allow start
         try? await manager.startRecording()
-        XCTAssertEqual(manager.state, .error("test error"))
+        #expect(manager.state == .error("test error"))
 
         // After reset
         manager._testState = .idle
-        XCTAssertEqual(manager.state, .idle)
-        XCTAssertFalse(manager.isRecording)
+        #expect(manager.state == .idle)
+        #expect(!manager.isRecording)
     }
 
     // MARK: - State Transitions
 
-    func testStateEquality() {
-        XCTAssertEqual(VoiceInputManager.State.idle, .idle)
-        XCTAssertEqual(VoiceInputManager.State.recording, .recording)
-        XCTAssertEqual(VoiceInputManager.State.error("a"), .error("a"))
-        XCTAssertNotEqual(VoiceInputManager.State.error("a"), .error("b"))
-        XCTAssertNotEqual(VoiceInputManager.State.idle, .recording)
+    @Test func stateEquality() {
+        #expect(VoiceInputManager.State.idle == .idle)
+        #expect(VoiceInputManager.State.recording == .recording)
+        #expect(VoiceInputManager.State.error("a") == .error("a"))
+        #expect(VoiceInputManager.State.error("a") != .error("b"))
+        #expect(VoiceInputManager.State.idle != .recording)
     }
 
     // MARK: - Locale Resolution
 
-    func testResolvedLocaleWithChineseKeyboard() {
+    @Test func resolvedLocaleWithChineseKeyboard() {
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "zh-Hans")
-        XCTAssertEqual(locale.language.languageCode?.identifier, "zh")
+        #expect(locale.language.languageCode?.identifier == "zh")
     }
 
-    func testResolvedLocaleWithEnglishKeyboard() {
+    @Test func resolvedLocaleWithEnglishKeyboard() {
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
-        XCTAssertEqual(locale.language.languageCode?.identifier, "en")
+        #expect(locale.language.languageCode?.identifier == "en")
     }
 
-    func testResolvedLocaleWithJapaneseKeyboard() {
+    @Test func resolvedLocaleWithJapaneseKeyboard() {
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "ja-JP")
-        XCTAssertEqual(locale.language.languageCode?.identifier, "ja")
+        #expect(locale.language.languageCode?.identifier == "ja")
     }
 
-    func testResolvedLocaleWithNilUsesPersistedLanguage() {
+    @Test func resolvedLocaleWithNilUsesPersistedLanguage() {
         // Save a persisted language, then resolve with nil keyboard
         KeyboardLanguageStore.save("zh-Hans")
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
-        XCTAssertEqual(locale.language.languageCode?.identifier, "zh",
-                       "Should fall back to persisted keyboard language")
+        #expect(locale.language.languageCode?.identifier == "zh",
+                "Should fall back to persisted keyboard language")
 
         // Clean up
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
     }
 
-    func testResolvedLocaleIgnoresPseudoKeyboardLanguage() {
+    @Test func resolvedLocaleIgnoresPseudoKeyboardLanguage() {
         KeyboardLanguageStore.save("en-US")
 
         let dictationLocale = VoiceInputManager.resolvedLocale(keyboardLanguage: "dictation")
-        XCTAssertEqual(dictationLocale.language.languageCode?.identifier, "en",
-                       "Dictation pseudo-language should fall back to persisted keyboard")
+        #expect(dictationLocale.language.languageCode?.identifier == "en",
+                "Dictation pseudo-language should fall back to persisted keyboard")
 
         let emojiLocale = VoiceInputManager.resolvedLocale(keyboardLanguage: "emoji")
-        XCTAssertEqual(emojiLocale.language.languageCode?.identifier, "en",
-                       "Emoji pseudo-language should fall back to persisted keyboard")
+        #expect(emojiLocale.language.languageCode?.identifier == "en",
+                "Emoji pseudo-language should fall back to persisted keyboard")
 
         UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
     }
 
-    func testResolvedLocaleActiveKeyboardTakesPriorityOverPersisted() {
+    @Test func resolvedLocaleActiveKeyboardTakesPriorityOverPersisted() {
         // Persisted is Chinese, but active keyboard is English
         KeyboardLanguageStore.save("zh-Hans")
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
-        XCTAssertEqual(locale.language.languageCode?.identifier, "en",
-                       "Active keyboard should take priority over persisted")
+        #expect(locale.language.languageCode?.identifier == "en",
+                "Active keyboard should take priority over persisted")
 
         // Clean up
         UserDefaults.standard.removeObject(
             forKey: "\(AppIdentifiers.subsystem).keyboardLanguage")
     }
 
-    func testResolvedLocaleWithKoreanKeyboard() {
+    @Test func resolvedLocaleWithKoreanKeyboard() {
         let locale = VoiceInputManager.resolvedLocale(keyboardLanguage: "ko-KR")
-        XCTAssertEqual(locale.language.languageCode?.identifier, "ko")
+        #expect(locale.language.languageCode?.identifier == "ko")
     }
 
-    func testPreferredEngineUsesModernForEnglish() {
+    @Test func preferredEngineUsesModernForEnglish() {
         let engine = VoiceInputManager.preferredEngine(for: Locale(identifier: "en-US"))
-        XCTAssertEqual(engine, .modernSpeech)
+        #expect(engine == .modernSpeech)
     }
 
-    func testPreferredEngineUsesClassicForCJK() {
-        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")), .classicDictation)
-        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")), .classicDictation)
-        XCTAssertEqual(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")), .classicDictation)
+    @Test func preferredEngineUsesClassicForCJK() {
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "zh-Hans")) == .classicDictation)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ja-JP")) == .classicDictation)
+        #expect(VoiceInputManager.preferredEngine(for: Locale(identifier: "ko-KR")) == .classicDictation)
     }
 
     // MARK: - Language Label
 
-    func testActiveLanguageLabelNilWhenIdle() {
+    @Test func activeLanguageLabelNilWhenIdle() {
         let manager = VoiceInputManager()
-        XCTAssertNil(manager.activeLanguageLabel)
+        #expect(manager.activeLanguageLabel == nil)
     }
 
-    func testLanguageLabelForCJKLocales() {
+    @Test func languageLabelForCJKLocales() {
         // CJK languages get native script characters
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hans")), "中")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hant")), "中")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "ja-JP")), "あ")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "ko-KR")), "한")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hans")) == "中")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "zh-Hant")) == "中")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "ja-JP")) == "あ")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "ko-KR")) == "한")
     }
 
-    func testLanguageLabelForLatinLocales() {
+    @Test func languageLabelForLatinLocales() {
         // Latin languages get 2-letter uppercase code
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "en-US")), "EN")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "fr-FR")), "FR")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "de-DE")), "DE")
-        XCTAssertEqual(VoiceInputManager.languageLabel(for: Locale(identifier: "es-ES")), "ES")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "en-US")) == "EN")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "fr-FR")) == "FR")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "de-DE")) == "DE")
+        #expect(VoiceInputManager.languageLabel(for: Locale(identifier: "es-ES")) == "ES")
     }
 
     // MARK: - KeyboardLanguageStore Persistence
 
     private let testKey = "\(AppIdentifiers.subsystem).keyboardLanguage"
 
-    func testKeyboardLanguageStoreSaveAndRead() {
+    @Test func keyboardLanguageStoreSaveAndRead() {
         // Clean slate
         UserDefaults.standard.removeObject(forKey: testKey)
-        XCTAssertNil(KeyboardLanguageStore.lastLanguage)
+        #expect(KeyboardLanguageStore.lastLanguage == nil)
 
         KeyboardLanguageStore.save("zh-Hans")
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "zh-Hans")
+        #expect(KeyboardLanguageStore.lastLanguage == "zh-Hans")
 
         KeyboardLanguageStore.save("en-US")
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
 
         // Clean up
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
-    func testKeyboardLanguageStoreIgnoresNil() {
+    @Test func keyboardLanguageStoreIgnoresNil() {
         UserDefaults.standard.removeObject(forKey: testKey)
         KeyboardLanguageStore.save("zh-Hans")
         KeyboardLanguageStore.save(nil)
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "zh-Hans",
-                       "Saving nil should not clear persisted value")
+        #expect(KeyboardLanguageStore.lastLanguage == "zh-Hans",
+                "Saving nil should not clear persisted value")
 
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
-    func testKeyboardLanguageStoreIgnoresDuplicate() {
+    @Test func keyboardLanguageStoreIgnoresDuplicate() {
         UserDefaults.standard.removeObject(forKey: testKey)
         KeyboardLanguageStore.save("en-US")
         // Saving same value again is a no-op (tested via coverage, not assertion)
         KeyboardLanguageStore.save("en-US")
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
 
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
-    func testKeyboardLanguageStoreIgnoresPseudoLanguages() {
+    @Test func keyboardLanguageStoreIgnoresPseudoLanguages() {
         UserDefaults.standard.removeObject(forKey: testKey)
         KeyboardLanguageStore.save("en-US")
 
         KeyboardLanguageStore.save("dictation")
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
 
         KeyboardLanguageStore.save("emoji")
-        XCTAssertEqual(KeyboardLanguageStore.lastLanguage, "en-US")
+        #expect(KeyboardLanguageStore.lastLanguage == "en-US")
 
         UserDefaults.standard.removeObject(forKey: testKey)
     }
 
-    func testKeyboardLanguageNormalizeRejectsMalformedValues() {
-        XCTAssertNil(KeyboardLanguageStore.normalize(nil))
-        XCTAssertNil(KeyboardLanguageStore.normalize(""))
-        XCTAssertNil(KeyboardLanguageStore.normalize(" "))
-        XCTAssertNil(KeyboardLanguageStore.normalize("1"))
-        XCTAssertNil(KeyboardLanguageStore.normalize("x"))
-        XCTAssertNil(KeyboardLanguageStore.normalize("emoji"))
-        XCTAssertEqual(KeyboardLanguageStore.normalize("en-US"), "en-US")
-        XCTAssertEqual(KeyboardLanguageStore.normalize("zh-Hans"), "zh-Hans")
+    @Test func keyboardLanguageNormalizeRejectsMalformedValues() {
+        #expect(KeyboardLanguageStore.normalize(nil) == nil)
+        #expect(KeyboardLanguageStore.normalize("") == nil)
+        #expect(KeyboardLanguageStore.normalize(" ") == nil)
+        #expect(KeyboardLanguageStore.normalize("1") == nil)
+        #expect(KeyboardLanguageStore.normalize("x") == nil)
+        #expect(KeyboardLanguageStore.normalize("emoji") == nil)
+        #expect(KeyboardLanguageStore.normalize("en-US") == "en-US")
+        #expect(KeyboardLanguageStore.normalize("zh-Hans") == "zh-Hans")
     }
 
     // MARK: - Full Fallback Chain
 
-    func testLocaleResolutionFallbackChain() {
+    @Test func localeResolutionFallbackChain() {
         UserDefaults.standard.removeObject(forKey: testKey)
 
         // 1. Active keyboard wins
         KeyboardLanguageStore.save("zh-Hans")
         let locale1 = VoiceInputManager.resolvedLocale(keyboardLanguage: "en-US")
-        XCTAssertEqual(locale1.language.languageCode?.identifier, "en",
-                       "Active keyboard should beat persisted")
+        #expect(locale1.language.languageCode?.identifier == "en",
+                "Active keyboard should beat persisted")
 
-        // 2. No active keyboard → persisted wins
+        // 2. No active keyboard -> persisted wins
         let locale2 = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
-        XCTAssertEqual(locale2.language.languageCode?.identifier, "zh",
-                       "Persisted should be used when no active keyboard")
+        #expect(locale2.language.languageCode?.identifier == "zh",
+                "Persisted should be used when no active keyboard")
 
-        // 3. No active keyboard, no persisted → device locale
+        // 3. No active keyboard, no persisted -> device locale
         UserDefaults.standard.removeObject(forKey: testKey)
         let locale3 = VoiceInputManager.resolvedLocale(keyboardLanguage: nil)
-        XCTAssertEqual(locale3, Locale.current,
-                       "Should fall back to device locale")
+        #expect(locale3 == Locale.current,
+                "Should fall back to device locale")
     }
 }
