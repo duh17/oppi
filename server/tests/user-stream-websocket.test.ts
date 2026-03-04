@@ -249,11 +249,24 @@ describe("/stream websocket behavior", () => {
     await flushQueue();
 
     const beforeOldFullPrompt = ws.sent.length;
-    ws.emitClientMessage({ type: "prompt", sessionId: "s1", message: "should fail" });
+    ws.emitClientMessage({
+      type: "prompt",
+      sessionId: "s1",
+      message: "should fail",
+      requestId: "old-full-1",
+    });
     await flushQueue();
 
     const oldFullError = requireMessageOfType(ws.sent.slice(beforeOldFullPrompt), "error");
     expect(oldFullError.error).toContain("not subscribed at level=full");
+
+    const oldFullResult = requireMessageOfType(
+      ws.sent.slice(beforeOldFullPrompt),
+      "command_result",
+      (msg) => msg.command === "prompt" && msg.requestId === "old-full-1",
+    );
+    expect(oldFullResult.success).toBe(false);
+    expect(oldFullResult.error).toContain("not subscribed at level=full");
 
     const beforeNewFullPrompt = ws.sent.length;
     ws.emitClientMessage({ type: "prompt", sessionId: "s2", message: "should pass" });
@@ -350,6 +363,43 @@ describe("/stream websocket behavior", () => {
     expect(normalize(ws2.sent)).toEqual(normalize(ws1.sent));
 
     expect(harness.getCatchUp).toHaveBeenCalledWith("s1", 5);
+  });
+
+  it("rejects inbound messages without a type field", async () => {
+    const harness = makeHarness();
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
+
+    ws.emitMessage({ requestId: "req-no-type" });
+    await flushQueue();
+
+    const error = requireMessageOfType(ws.sent, "error", (msg) =>
+      msg.error.includes("Message type is required"),
+    );
+    expect(error.error).toContain("Message type is required");
+    expect(harness.handleClientMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown inbound command types with command_result error", async () => {
+    const harness = makeHarness();
+    const ws = new FakeWebSocket();
+
+    await harness.mux.handleWebSocket(ws as unknown as WebSocket);
+
+    ws.emitMessage({ type: "future_command_v99", requestId: "req-unknown" });
+    await flushQueue();
+
+    const result = requireMessageOfType(
+      ws.sent,
+      "command_result",
+      (msg) => msg.requestId === "req-unknown",
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.command).toBe("future_command_v99");
+    expect(result.error).toContain("Unsupported command type");
+    expect(harness.handleClientMessage).not.toHaveBeenCalled();
   });
 });
 
