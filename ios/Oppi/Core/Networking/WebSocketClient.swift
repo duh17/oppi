@@ -400,6 +400,7 @@ final class WebSocketClient {
         webSocket?.cancel(with: .goingAway, reason: nil)
         webSocket = nil
         status = .disconnected
+        resolveConnectionWaiters()
     }
 
     /// Disconnect and clean up.

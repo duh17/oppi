@@ -406,7 +406,12 @@ final class ServerConnection {
     }
 
     private static let resubscribeMaxAttempts = 3
+    private static let resubscribeAckTimeout: Duration = .seconds(6)
     private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
+
+    /// Typed stream error code emitted by server/src/stream.ts when a command
+    /// arrives for a session without full-level subscription.
+    static let missingFullSubscriptionErrorCode = "stream_not_subscribed_full"
 
     private func resubscribeTrackedSessions() async {
         guard wsClient != nil else { return }
@@ -441,23 +446,24 @@ final class ServerConnection {
 
     /// Send a subscribe command with retry.
     ///
-    /// Returns `true` if the send succeeded on any attempt.
-    /// Only retries the WebSocket *send* — server-side subscribe failures
-    /// (session not found, etc.) come back as `command_result` errors and are
-    /// handled by the existing message routing.
+    /// Returns `true` only after the server ACKs subscribe via
+    /// `command_result(success: true)`. WebSocket send success alone is
+    /// insufficient — server-side rejections must fail recovery.
     private func resubscribeWithRetry(
         sessionId: String,
         level: StreamSubscriptionLevel,
         maxAttempts: Int
     ) async -> Bool {
         for attempt in 1...maxAttempts {
-            guard let wsClient else { return false }
+            guard wsClient != nil else { return false }
+
             do {
-                try await wsClient.send(.subscribe(
-                    sessionId: sessionId,
-                    level: level,
-                    requestId: UUID().uuidString
-                ))
+                _ = try await sendCommandAwaitingResult(
+                    command: "subscribe",
+                    timeout: Self.resubscribeAckTimeout
+                ) { requestId in
+                    .subscribe(sessionId: sessionId, level: level, requestId: requestId)
+                }
                 return true
             } catch {
                 let delayMs = Int(500 * attempt)
