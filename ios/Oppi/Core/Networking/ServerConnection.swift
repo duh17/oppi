@@ -36,6 +36,9 @@ final class ServerConnection {
     // Audio
     let audioPlayer = AudioPlayerService()
 
+    // Screen awake — injectable for tests; defaults to the process-wide singleton.
+    var screenAwakeController: ScreenAwakeController = .shared
+
     // Runtime pipeline
     let reducer = TimelineReducer()
     let coalescer = DeltaCoalescer()
@@ -628,6 +631,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
@@ -643,6 +647,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
@@ -666,6 +671,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
@@ -681,6 +687,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.setSessionActivity(true, sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
@@ -700,6 +707,7 @@ final class ServerConnection {
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
             }
+            screenAwakeController.clearSessionActivity(sessionId: sessionId)
             if ReleaseFeatures.liveActivitiesEnabled {
                 LiveActivityManager.shared.recordEvent(
                     connectionId: liveActivityConnectionId,
@@ -712,6 +720,7 @@ final class ServerConnection {
             sessionStore.remove(id: deletedId)
             notificationSessionIds.remove(deletedId)
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
+            screenAwakeController.clearSessionActivity(sessionId: deletedId)
             syncLiveActivityPermissions()
 
         case .error(let message, _, _):
@@ -965,6 +974,7 @@ final class ServerConnection {
             unsubscribeSession(activeSessionId)
             messageQueueStore.clear(sessionId: activeSessionId)
             sessionUsageMetricSnapshots.removeValue(forKey: activeSessionId)
+            screenAwakeController.clearSessionActivity(sessionId: activeSessionId)
         }
 
         activeSessionId = nil
