@@ -18,13 +18,7 @@ import {
   splitBashCommandChain,
   splitPipelineStages,
 } from "./policy-bash.js";
-import {
-  evaluateConfiguredHeuristics,
-  hasSecretEnvExpansionInUrl,
-  hasSecretFileReference,
-  isDataEgress,
-  isSecretFileRead,
-} from "./policy-heuristics.js";
+import { evaluateConfiguredHeuristics, isDataEgress } from "./policy-heuristics.js";
 import {
   addDomainToAllowlist,
   listAllowlistDomains,
@@ -63,10 +57,7 @@ export {
   defaultPresetRules,
   policyRulesFromDeclarativeConfig,
   policyRuntimeConfig,
-  hasSecretEnvExpansionInUrl,
-  hasSecretFileReference,
   isDataEgress,
-  isSecretFileRead,
 };
 
 export type {

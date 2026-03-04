@@ -63,11 +63,13 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "dead-code": "knip",
+    "sweep": "node ./scripts/sweep.mjs",
+    "sweep:quick": "node ./scripts/sweep.mjs --quick",
     "check:testing-policy": "node ./scripts/check-testing-policy.mjs",
     "check:docs": "node ./scripts/check-doc-freshness.mjs",
     "check:architecture": "node ./scripts/check-architecture-boundaries.mjs --scope ios",
     "review": "node ./scripts/ai-review.mjs --staged",
-    "check": "tsc --noEmit && eslint src/ && npm run check:architecture && prettier --check src/ && npm run check:testing-policy && npm run check:docs"
+    "check": "tsc --noEmit && eslint src/ && knip && npm run check:architecture && prettier --check src/ && npm run check:testing-policy && npm run check:docs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.54.0",
