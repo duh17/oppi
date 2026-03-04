@@ -306,7 +306,7 @@ describe("session-protocol translatePiEvent", () => {
     ]);
   });
 
-  it("recovers missing message_end tail and thinking blocks", () => {
+  it("recovers thinking blocks from message_end but not text tail", () => {
     const ctx = makeCtx();
     ctx.streamedAssistantText = "Short answer: ";
 
@@ -324,10 +324,10 @@ describe("session-protocol translatePiEvent", () => {
       ctx,
     );
 
-    expect(messages).toEqual([
-      { type: "text_delta", delta: "plus detail." },
-      { type: "thinking_delta", delta: "chain" },
-    ]);
+    // No text_delta recovery — authoritative text comes via the
+    // message_end broadcast in SessionAgentEventCoordinator.
+    // Only thinking recovery is emitted here.
+    expect(messages).toEqual([{ type: "thinking_delta", delta: "chain" }]);
     expect(ctx.streamedAssistantText).toBe("");
   });
 
