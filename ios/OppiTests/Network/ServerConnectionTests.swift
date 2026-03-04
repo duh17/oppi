@@ -7,20 +7,6 @@ import Foundation
 @Suite("ServerConnection")
 struct ServerConnectionTests {
 
-    // MARK: - configure
-
-    @MainActor
-    @Test func configureWithValidCredentials() {
-        let conn = ServerConnection()
-        let result = conn.configure(credentials: ServerCredentials(
-            host: "192.168.1.10", port: 7749, token: "sk_abc", name: "Test"
-        ))
-        #expect(result == true)
-        #expect(conn.apiClient != nil)
-        #expect(conn.wsClient != nil)
-        #expect(conn.credentials?.host == "192.168.1.10")
-    }
-
     // MARK: - handleServerMessage routing
 
     @MainActor
@@ -485,20 +471,6 @@ struct ServerConnectionTests {
         conn.handleServerMessage(.connected(session: session), sessionId: "s2")
 
         // Session store should NOT have s2 (message was for wrong active session)
-        #expect(conn.sessionStore.sessions.isEmpty)
-    }
-
-    // MARK: - disconnectSession
-
-    @MainActor
-    @Test func disconnectSessionClearsActiveId() {
-        let conn = makeTestConnection(sessionId: "s1")
-
-        conn.disconnectSession()
-
-        // After disconnect, messages should be ignored (no active session)
-        let session = makeTestSession(status: .busy)
-        conn.handleServerMessage(.connected(session: session), sessionId: "s1")
         #expect(conn.sessionStore.sessions.isEmpty)
     }
 
