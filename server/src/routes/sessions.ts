@@ -36,6 +36,7 @@ import {
   type Session,
 } from "../types.js";
 import { ts } from "../log-utils.js";
+import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
@@ -666,7 +667,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       : undefined;
 
     if (workspace?.hostMount) {
-      const resolved = workspace.hostMount.replace(/^~/, homedir());
+      const resolved = resolveSdkSessionCwd(workspace);
       return existsSync(resolved) ? resolved : null;
     }
     return homedir();

@@ -297,6 +297,8 @@ export interface CreateWorkspaceRequest {
   description?: string;
   icon?: string;
   skills: string[];
+  allowedPaths?: { path: string; access: "read" | "readwrite" }[];
+  allowedExecutables?: string[];
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -311,6 +313,8 @@ export interface UpdateWorkspaceRequest {
   description?: string;
   icon?: string;
   skills?: string[];
+  allowedPaths?: { path: string; access: "read" | "readwrite" }[];
+  allowedExecutables?: string[];
   systemPrompt?: string;
   hostMount?: string;
   memoryEnabled?: boolean;
@@ -696,6 +700,8 @@ export type ClientMessage = // ── Stream subscriptions (multiplexed user str
     | { type: "abort_bash"; requestId?: string }
     // ── Commands ──
     | { type: "get_commands"; requestId?: string }
+    // ── File suggestions ──
+    | { type: "get_file_suggestions"; query: string; requestId?: string }
     // ── Permission gate ──
     | {
         type: "permission_response";
@@ -866,11 +872,6 @@ export interface RegisterDeviceTokenRequest {
 }
 
 // ─── Pairing / Invite ───
-
-export interface PairDeviceRequest {
-  pairingToken: string;
-  deviceName?: string;
-}
 
 export type InviteScheme = "http" | "https";
 
