@@ -299,7 +299,7 @@ export class GateServer extends EventEmitter {
    */
   async checkToolCall(
     sessionId: string,
-    req: { tool: string; input: Record<string, unknown>; toolCallId: string },
+    req: GateRequest,
   ): Promise<{ action: "allow" | "deny"; reason?: string }> {
     const guard = this.guards.get(sessionId);
     if (!guard || guard.state !== "guarded") {

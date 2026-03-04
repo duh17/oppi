@@ -10,7 +10,12 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { normalize as pathNormalize, resolve as pathResolve } from "node:path";
+import {
+  basename as pathBasename,
+  dirname as pathDirname,
+  normalize as pathNormalize,
+  resolve as pathResolve,
+} from "node:path";
 import { globMatch } from "./glob.js";
 import {
   matchBashPattern,
@@ -77,9 +82,22 @@ function executableName(raw: string): string {
   return raw.includes("/") ? raw.split("/").pop() || raw : raw;
 }
 
-function normalizePathInput(rawPath: string): { rawNormalized: string; resolvedRealpath?: string } {
+function collectDefinedStrings(values: Array<string | undefined>): string[] {
+  return [
+    ...new Set(
+      values.filter((value): value is string => typeof value === "string" && value.length > 0),
+    ),
+  ];
+}
+
+function normalizePathInput(
+  rawPath: string,
+  baseDir?: string,
+): { rawNormalized: string; resolvedRealpath?: string; resolvedViaParent?: string } {
   const expanded = rawPath.replace(/^~(?=$|\/)/, homedir());
-  const rawNormalized = pathNormalize(pathResolve(expanded));
+  const anchor =
+    typeof baseDir === "string" && baseDir.trim().length > 0 ? pathResolve(baseDir) : process.cwd();
+  const rawNormalized = pathNormalize(pathResolve(anchor, expanded));
 
   try {
     if (existsSync(rawNormalized)) {
@@ -89,7 +107,300 @@ function normalizePathInput(rawPath: string): { rawNormalized: string; resolvedR
     // Best-effort only — use normalized raw path.
   }
 
+  try {
+    const parent = pathDirname(rawNormalized);
+    if (existsSync(parent)) {
+      const parentRealpath = realpathSync(parent);
+      const resolvedViaParent = pathNormalize(
+        pathResolve(parentRealpath, pathBasename(rawNormalized)),
+      );
+      if (resolvedViaParent.length > 0) {
+        return { rawNormalized, resolvedViaParent };
+      }
+    }
+  } catch {
+    // Parent may not exist yet.
+  }
+
   return { rawNormalized };
+}
+
+function normalizedPathCandidates(rawPath: string, baseDir?: string): string[] {
+  const normalized = normalizePathInput(rawPath, baseDir);
+  return collectDefinedStrings([
+    normalized.rawNormalized,
+    normalized.resolvedRealpath,
+    normalized.resolvedViaParent,
+  ]);
+}
+
+function resolveRequestCwd(req: GateRequest): string {
+  if (typeof req.sessionCwd !== "string" || req.sessionCwd.trim().length === 0) {
+    return process.cwd();
+  }
+
+  const normalized = normalizePathInput(req.sessionCwd);
+  return normalized.resolvedRealpath ?? normalized.rawNormalized;
+}
+
+function stripWrappingQuotes(token: string): string {
+  const trimmed = token.trim();
+  if (
+    (trimmed.startsWith(`"`) && trimmed.endsWith(`"`)) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function readShellToken(input: string, startIndex: number): { token: string; nextIndex: number } {
+  let token = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  let index = startIndex;
+
+  while (index < input.length) {
+    const ch = input[index];
+    if (!ch) break;
+
+    if (escaped) {
+      token += ch;
+      escaped = false;
+      index += 1;
+      continue;
+    }
+
+    if (ch === "\\" && !inSingle) {
+      escaped = true;
+      index += 1;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      index += 1;
+      continue;
+    }
+
+    if (ch === `"` && !inSingle) {
+      inDouble = !inDouble;
+      index += 1;
+      continue;
+    }
+
+    if (
+      !inSingle &&
+      !inDouble &&
+      (ch === " " || ch === "\t" || ch === ";" || ch === "|" || ch === "&")
+    ) {
+      break;
+    }
+
+    token += ch;
+    index += 1;
+  }
+
+  return { token, nextIndex: index };
+}
+
+function extractWriteRedirectionTargets(segment: string): string[] {
+  const targets: string[] = [];
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let index = 0; index < segment.length; index += 1) {
+    const ch = segment[index];
+    if (!ch) break;
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\" && !inSingle) {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+
+    if (ch === `"` && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+
+    if (inSingle || inDouble) {
+      continue;
+    }
+
+    let operator: string | null = null;
+    if (ch === ">") {
+      operator = ">";
+      const next = segment[index + 1];
+      if (next === ">" || next === "|" || next === "&") {
+        operator += next;
+        index += 1;
+      }
+    } else if (ch === "<" && segment[index + 1] === ">") {
+      operator = "<>";
+      index += 1;
+    }
+
+    if (!operator || !operator.includes(">")) {
+      continue;
+    }
+
+    while (index + 1 < segment.length && /\s/.test(segment[index + 1] || "")) {
+      index += 1;
+    }
+
+    const { token, nextIndex } = readShellToken(segment, index + 1);
+    const cleaned = stripWrappingQuotes(token);
+    if (cleaned.length > 0 && cleaned !== "-" && !cleaned.startsWith("&")) {
+      targets.push(cleaned);
+    }
+
+    index = Math.max(index, nextIndex - 1);
+  }
+
+  return targets;
+}
+
+function positionalArgs(args: string[]): string[] {
+  const values: string[] = [];
+  let endOfOptions = false;
+
+  for (const arg of args) {
+    if (!endOfOptions && arg === "--") {
+      endOfOptions = true;
+      continue;
+    }
+
+    if (!endOfOptions && arg.startsWith("-")) {
+      continue;
+    }
+
+    values.push(arg);
+  }
+
+  return values;
+}
+
+function findTargetDirectoryArg(args: string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+
+    if (arg === "-t" || arg === "--target-directory") {
+      return args[index + 1];
+    }
+
+    if (arg.startsWith("--target-directory=")) {
+      return arg.slice("--target-directory=".length);
+    }
+  }
+
+  return undefined;
+}
+
+function extractMutatingFileArgs(executable: string, args: string[]): string[] {
+  switch (executable) {
+    case "mv": {
+      const positional = positionalArgs(args);
+      const targetDirectory = findTargetDirectoryArg(args);
+      if (targetDirectory) {
+        return positional.length > 0 ? [...positional, targetDirectory] : [targetDirectory];
+      }
+
+      return positional;
+    }
+
+    case "cp":
+    case "install": {
+      const targetDirectory = findTargetDirectoryArg(args);
+      if (targetDirectory) {
+        return [targetDirectory];
+      }
+
+      const positional = positionalArgs(args);
+      return positional.length > 1 ? [positional[positional.length - 1]] : [];
+    }
+
+    case "ln": {
+      const targetDirectory = findTargetDirectoryArg(args);
+      if (targetDirectory) {
+        return [targetDirectory];
+      }
+
+      const positional = positionalArgs(args);
+      return positional.length >= 2 ? [positional[positional.length - 1]] : [];
+    }
+
+    case "rm":
+    case "rmdir":
+    case "touch":
+    case "truncate":
+    case "chmod":
+    case "chown":
+    case "mkdir":
+      return positionalArgs(args);
+
+    case "tee":
+      return positionalArgs(args).filter((arg) => arg !== "-");
+
+    case "dd":
+      return args
+        .filter((arg) => arg.startsWith("of="))
+        .map((arg) => arg.slice(3))
+        .filter((arg) => arg.length > 0);
+
+    default:
+      return [];
+  }
+}
+
+function extractBashMutationPathCandidates(command: string, initialCwd: string): string[] {
+  if (command.trim().length === 0) {
+    return [];
+  }
+
+  let cwd = initialCwd;
+  const candidates: string[] = [];
+
+  for (const segment of splitBashCommandChain(command)) {
+    for (const stage of splitPipelineStages(segment)) {
+      const parsed = parseBashCommand(stage);
+      const executable = executableName(parsed.executable);
+
+      if (!executable) {
+        continue;
+      }
+
+      if (executable === "cd") {
+        const destination = parsed.args[0] ?? "~";
+        if (destination !== "-") {
+          const normalized = normalizePathInput(destination, cwd);
+          cwd = normalized.resolvedRealpath ?? normalized.rawNormalized;
+        }
+        continue;
+      }
+
+      const redirectionTargets = extractWriteRedirectionTargets(stage);
+      const mutatingArgTargets = extractMutatingFileArgs(executable, parsed.args);
+
+      for (const rawPath of [...redirectionTargets, ...mutatingArgTargets]) {
+        candidates.push(...normalizedPathCandidates(rawPath, cwd));
+      }
+    }
+  }
+
+  return [...new Set(candidates)];
 }
 
 interface ParsedRequestContext {
@@ -286,37 +597,41 @@ export class PolicyEngine {
    * Check if a tool call targets a protected path.
    * Returns the matched path basename for display, or null if no match.
    *
-   * Guards edit/write tools. For bash, checks if the command string
-   * contains a protected path (conservative: catches reads too, but
-   * these config files shouldn't normally appear in agent commands).
+   * Paths are resolved relative to the session working directory.
+   * Bash commands are inspected for mutation targets (redirections and
+   * mutating file arguments) to avoid brittle substring checks.
    */
   private matchesProtectedPath(req: GateRequest): string | null {
     if (this.protectedPaths.length === 0) return null;
 
     const { tool, input } = req;
+    const requestCwd = resolveRequestCwd(req);
 
     if (tool === "edit" || tool === "write") {
       const rawPath = (input as { path?: string }).path;
       if (!rawPath) return null;
 
-      const { rawNormalized, resolvedRealpath } = normalizePathInput(rawPath);
-      const candidates = [rawNormalized, resolvedRealpath].filter(
-        (v): v is string => v !== null && v !== undefined && v.length > 0,
-      );
-
-      for (const protectedPath of this.protectedPaths) {
-        if (candidates.some((c) => c === protectedPath)) {
-          return protectedPath.split("/").pop() || protectedPath;
-        }
-      }
+      return this.findProtectedPathMatch(normalizedPathCandidates(rawPath, requestCwd));
     }
 
     if (tool === "bash") {
       const command = (input as { command?: string }).command || "";
-      for (const protectedPath of this.protectedPaths) {
-        if (command.includes(protectedPath)) {
-          return protectedPath.split("/").pop() || protectedPath;
-        }
+      const candidates = extractBashMutationPathCandidates(command, requestCwd);
+      return this.findProtectedPathMatch(candidates);
+    }
+
+    return null;
+  }
+
+  private findProtectedPathMatch(candidates: string[]): string | null {
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    for (const protectedPath of this.protectedPaths) {
+      const protectedCandidates = normalizedPathCandidates(protectedPath);
+      if (candidates.some((candidate) => protectedCandidates.includes(candidate))) {
+        return pathBasename(protectedPath) || protectedPath;
       }
     }
 
@@ -353,10 +668,11 @@ export class PolicyEngine {
     if (FILE_PATH_TOOLS.has(tool)) {
       const path = (input as { path?: string }).path;
       if (!path) return {};
-      const normalized = normalizePathInput(path);
+
+      const normalized = normalizePathInput(path, resolveRequestCwd(req));
       return {
         pathRawNormalized: normalized.rawNormalized,
-        pathResolved: normalized.resolvedRealpath,
+        pathResolved: normalized.resolvedRealpath ?? normalized.resolvedViaParent,
       };
     }
 
@@ -467,9 +783,9 @@ export class PolicyEngine {
    * (since the rules file itself is a protected path).
    */
   setProtectedPaths(paths: string[]): void {
-    this.protectedPaths = paths.map((p) => {
-      const expanded = p.replace(/^~(?=$|\/)/, homedir());
-      return pathNormalize(pathResolve(expanded));
+    this.protectedPaths = paths.map((path) => {
+      const normalized = normalizePathInput(path);
+      return normalized.resolvedRealpath ?? normalized.rawNormalized;
     });
   }
 

@@ -161,7 +161,7 @@ export class SdkBackend {
     const useGate = config.gate && config.permissionGate !== false;
     if (useGate && config.gate) {
       extensionFactories.push(
-        createPermissionGateFactory(config.gate, session.id, config.workspaceId || ""),
+        createPermissionGateFactory(config.gate, session.id, config.workspaceId || "", cwd),
       );
     }
 
@@ -565,6 +565,7 @@ function createPermissionGateFactory(
   gate: GateServer,
   sessionId: string,
   workspaceId: string,
+  sessionCwd: string,
 ): ExtensionFactory {
   return (extensionApi: unknown) => {
     const pi = extensionApi as {
@@ -591,6 +592,7 @@ function createPermissionGateFactory(
           tool: event.toolName,
           input: event.input,
           toolCallId: event.toolCallId,
+          sessionCwd,
         });
 
         if (result.action === "deny") {
