@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Coordinator")
@@ -43,6 +44,16 @@ final class ConnectionCoordinator {
     private var refreshAllTask: Task<Void, Never>?
 
     private let lanDiscovery = LANDiscovery()
+
+    /// NWPathMonitor detects network interface changes (WiFi→cellular, LAN→Tailscale)
+    /// so we can clear stale LAN endpoints and force-reconnect immediately instead of
+    /// burning reconnect attempts against an unreachable LAN IP.
+    private var pathMonitor: NWPathMonitor?
+    private var lastPathInterfaceSignature: String?
+    private var pathChangeDebounceTask: Task<Void, Never>?
+
+    private static let pathMonitorQueueLabel = "oppi.path-monitor"
+    private static let pathChangeDebounceDelay: Duration = .milliseconds(200)
 
     // periphery:ignore - used by RestorationStateTests via @testable import
     var connection: ServerConnection { activeConnection }
@@ -96,6 +107,117 @@ final class ConnectionCoordinator {
         }
     }
 
+    // MARK: - Network Path Monitoring
+
+    /// Start monitoring network interface changes.
+    ///
+    /// Detects WiFi→cellular, LAN→Tailscale, and other interface transitions
+    /// that make the current WebSocket endpoint unreachable. On change, clears
+    /// stale LAN endpoints and forces an immediate reconnect to the paired
+    /// (Tailscale) address — prevents burning reconnect attempts against a
+    /// dead LAN IP when walking out of WiFi range.
+    func startNetworkPathMonitor() {
+        guard pathMonitor == nil else { return }
+
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                self?.handleNetworkPathUpdate(path)
+            }
+        }
+
+        let queue = DispatchQueue(label: Self.pathMonitorQueueLabel, qos: .utility)
+        monitor.start(queue: queue)
+    }
+
+    func stopNetworkPathMonitor() {
+        pathMonitor?.pathUpdateHandler = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        pathChangeDebounceTask?.cancel()
+        pathChangeDebounceTask = nil
+        lastPathInterfaceSignature = nil
+    }
+
+    private func handleNetworkPathUpdate(_ path: NWPath) {
+        let signature = Self.interfaceSignature(path)
+
+        // Skip the initial callback (just record baseline)
+        guard let previous = lastPathInterfaceSignature else {
+            lastPathInterfaceSignature = signature
+            return
+        }
+
+        guard signature != previous else { return }
+        lastPathInterfaceSignature = signature
+
+        // Can't reconnect without a network
+        guard path.status == .satisfied else {
+            logger.info("Network path unsatisfied (\(previous, privacy: .public) -> \(signature, privacy: .public))")
+            ClientLog.info("Network", "Path unsatisfied", metadata: [
+                "from": previous,
+                "to": signature,
+            ])
+            return
+        }
+
+        logger.info("Network path changed: \(previous, privacy: .public) -> \(signature, privacy: .public)")
+        ClientLog.info("Network", "Path changed", metadata: [
+            "from": previous,
+            "to": signature,
+        ])
+
+        // Debounce rapid interface bounces (WiFi association flicker)
+        pathChangeDebounceTask?.cancel()
+        pathChangeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.pathChangeDebounceDelay)
+            guard !Task.isCancelled else { return }
+            self?.applyNetworkPathChange()
+        }
+    }
+
+    private func applyNetworkPathChange() {
+        // 1. Force reconnect on all connections BEFORE restarting LAN discovery.
+        //    handleNetworkPathChange captures `wasOnLAN` before clearing the
+        //    endpoint, so order matters — call it before lanDiscovery.stop()
+        //    which also clears endpoints via the onUpdate callback.
+        for conn in connections.values {
+            conn.handleNetworkPathChange()
+        }
+
+        // 2. Restart LAN discovery on the new network interface.
+        //    stop() publishes [] which clears LAN endpoints (already done above).
+        //    start() begins a fresh Bonjour search on the current interface.
+        lanDiscovery.stop()
+        lanDiscovery.start()
+    }
+
+    /// Build a signature from non-loopback interface types + names.
+    ///
+    /// Changes when interfaces appear/disappear (WiFi→cellular, VPN up/down).
+    /// Does NOT change for same-interface roaming (AP handoff on same WiFi).
+    nonisolated static func interfaceSignature(_ path: NWPath) -> String {
+        let sig = path.availableInterfaces
+            .filter { $0.type != .loopback }
+            .map { Self.interfaceTypeLabel($0.type) + ":" + $0.name }
+            .sorted()
+            .joined(separator: ",")
+        return sig.isEmpty ? "none" : sig
+    }
+
+    nonisolated private static func interfaceTypeLabel(_ type: NWInterface.InterfaceType) -> String {
+        switch type {
+        case .wifi: return "wifi"
+        case .cellular: return "cell"
+        case .wiredEthernet: return "eth"
+        case .loopback: return "lo"
+        case .other: return "other"
+        @unknown default: return "unknown"
+        }
+    }
+
     // MARK: - LAN Discovery
 
     func startLANDiscovery() {
@@ -120,6 +242,11 @@ final class ConnectionCoordinator {
     // periphery:ignore - used by OppiTests via @testable import
     func _applyLANDiscoveryForTesting(_ endpoints: [LANDiscoveredEndpoint]) {
         applyLANDiscovery(endpoints)
+    }
+
+    // periphery:ignore - used by OppiTests via @testable import
+    func _applyNetworkPathChangeForTesting() {
+        applyNetworkPathChange()
     }
 #endif
 

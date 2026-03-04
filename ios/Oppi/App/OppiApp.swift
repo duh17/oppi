@@ -147,6 +147,7 @@ struct OppiApp: App {
                 mainThreadLagWatchdog.start()
 #endif
                 coordinator.startLANDiscovery()
+                coordinator.startNetworkPathMonitor()
                 await setupNotifications()
                 await reconnectOnLaunch()
             }
