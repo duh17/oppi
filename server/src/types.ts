@@ -479,6 +479,18 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Latency for initial queue snapshot refresh (get_queue command).",
   },
+  "chat.message_queue_ack_ms": {
+    unit: "ms",
+    description: "Latency from message queue send to server acknowledgement.",
+  },
+  "chat.message_queue_stale_drop": {
+    unit: "count",
+    description: "Messages dropped from queue due to stale session state.",
+  },
+  "chat.message_queue_start_miss": {
+    unit: "count",
+    description: "Queue messages sent before session start was confirmed.",
+  },
   "chat.connected_dispatch_ms": {
     unit: "ms",
     description: "Delay from connected message receipt to session-loop consumption.",
