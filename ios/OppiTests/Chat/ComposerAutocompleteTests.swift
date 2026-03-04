@@ -60,72 +60,8 @@ struct ComposerAutocompleteTests {
         #expect(ComposerAutocomplete.context(for: "@src/chat ") == .none)
     }
 
-    @Test func insertFileSuggestionForFile() {
-        let result = ComposerAutocomplete.insertFileSuggestion(
-            FileSuggestion(path: "src/chat/ChatView.swift", isDirectory: false),
-            into: "open @src/chat/Chat"
-        )
-        #expect(result == "open @src/chat/ChatView.swift ")
-    }
-
-    @Test func insertFileSuggestionForDirectory() {
-        let result = ComposerAutocomplete.insertFileSuggestion(
-            FileSuggestion(path: "src/chat/", isDirectory: true),
-            into: "open @src/ch"
-        )
-        #expect(result == "open @src/chat/")
-    }
-
-    @Test func insertFileSuggestionNoOpOutsideAtContext() {
-        let result = ComposerAutocomplete.insertFileSuggestion(
-            FileSuggestion(path: "README.md", isDirectory: false),
-            into: "hello world"
-        )
-        #expect(result == "hello world")
-    }
-
-    @Test func insertFileSuggestionReplacesFullToken() {
-        let result = ComposerAutocomplete.insertFileSuggestion(
-            FileSuggestion(path: "README.md", isDirectory: false),
-            into: "@RE"
-        )
-        #expect(result == "@README.md ")
-    }
-
-    @Test func fileSuggestionDisplayName() {
-        #expect(FileSuggestion(path: "src/chat/ChatView.swift", isDirectory: false).displayName == "ChatView.swift")
-        #expect(FileSuggestion(path: "src/chat/", isDirectory: true).displayName == "chat")
-        #expect(FileSuggestion(path: "README.md", isDirectory: false).displayName == "README.md")
-    }
-
-    @Test func fileSuggestionParentPath() {
-        #expect(FileSuggestion(path: "src/chat/ChatView.swift", isDirectory: false).parentPath == "src/chat/")
-        #expect(FileSuggestion(path: "README.md", isDirectory: false).parentPath == nil)
-    }
-
-    @Test func fileSuggestionResultParsing() {
-        let data: JSONValue = .object([
-            "items": .array([
-                .object(["path": .string("src/chat/ChatView.swift"), "isDirectory": .bool(false)]),
-                .object(["path": .string("src/chat/"), "isDirectory": .bool(true)]),
-            ]),
-            "truncated": .bool(false),
-        ])
-
-        let result = FileSuggestionResult.from(data)
-        #expect(result != nil)
-        #expect(result?.items.count == 2)
-        #expect(result?.items[0].path == "src/chat/ChatView.swift")
-        #expect(result?.items[0].isDirectory == false)
-        #expect(result?.items[1].path == "src/chat/")
-        #expect(result?.items[1].isDirectory == true)
-        #expect(result?.truncated == false)
-    }
-
-    @Test func fileSuggestionResultParsingNilData() {
-        #expect(FileSuggestionResult.from(nil) == nil)
-        #expect(FileSuggestionResult.from(.string("bad")) == nil)
-    }
+    // File suggestion insertion, model, and parsing tests live in
+    // FileSuggestionInsertionTests.swift (27 tests with thorough edge cases).
 
     private func makeSlashCommands(
         _ commands: [(name: String, description: String, source: String)]
