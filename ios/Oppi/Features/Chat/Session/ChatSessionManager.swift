@@ -1066,9 +1066,13 @@ final class ChatSessionManager {
                 } else {
                     // Avoid clobbering in-flight streaming rows (thinking/tool calls)
                     // with a stale trace snapshot while the session is still running.
+                    // Only defer when the reducer was loaded from cache — if items
+                    // came solely from live streaming (fresh install), apply the trace.
+                    let sessionIsActivelyStreaming = session.status == .busy || session.status == .stopping
                     let shouldDeferRebuild =
-                        (session.status == .busy || session.status == .stopping)
+                        sessionIsActivelyStreaming
                         && !reducer.items.isEmpty
+                        && loadedFromCacheAtConnect
 
                     if shouldDeferRebuild {
                         log.info("Trace refresh deferred for \(self.sessionId) while session is \(session.status.rawValue)")
