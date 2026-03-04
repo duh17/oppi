@@ -1,20 +1,83 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { buildWorkspaceGraph } from "../graph.js";
 import { isValidExtensionName } from "../extension-loader.js";
-import { discoverLocalSessions } from "../local-sessions.js";
+import { buildWorkspaceGraph } from "../graph.js";
 import { getGitStatus } from "../git-status.js";
-import type { CreateWorkspaceRequest, UpdateWorkspaceRequest } from "../types.js";
+import { discoverLocalSessions } from "../local-sessions.js";
+import type { CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
+  function removeUnknownSkills(workspace: Workspace): Workspace {
+    const knownSkills = workspace.skills.filter((name) => ctx.skillRegistry.get(name));
+    if (knownSkills.length === workspace.skills.length) {
+      return workspace;
+    }
+
+    return { ...workspace, skills: knownSkills };
+  }
+
+  function unknownSkills(skills: string[]): string[] {
+    return skills.filter((name) => !ctx.skillRegistry.get(name));
+  }
+
+  function extensionValidationError(extensions: unknown): string | undefined {
+    if (extensions === undefined) {
+      return undefined;
+    }
+
+    if (!Array.isArray(extensions)) {
+      return "extensions must be an array";
+    }
+
+    const invalid = extensions.filter(
+      (name) => typeof name !== "string" || !isValidExtensionName(name),
+    );
+
+    if (invalid.length > 0) {
+      return `Invalid extension names: ${invalid.join(", ")}`;
+    }
+
+    return undefined;
+  }
+
+  function allowedPathsValidationError(allowedPaths: unknown): string | undefined {
+    if (allowedPaths === undefined) {
+      return undefined;
+    }
+
+    if (!Array.isArray(allowedPaths)) {
+      return "allowedPaths must be an array";
+    }
+
+    for (const item of allowedPaths) {
+      if (!item || typeof item !== "object") {
+        return "allowedPaths entries must be objects";
+      }
+
+      const candidate = item as { path?: unknown; access?: unknown };
+      if (typeof candidate.path !== "string" || candidate.path.trim().length === 0) {
+        return "allowedPaths entries require a non-empty path";
+      }
+
+      if (candidate.access !== "read" && candidate.access !== "readwrite") {
+        return "allowedPaths access must be read or readwrite";
+      }
+    }
+
+    return undefined;
+  }
+
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
-    // Collect piSessionFile paths already tracked by oppi to filter them out
-    const allSessions = ctx.storage.listSessions();
     const knownFiles = new Set<string>();
-    for (const session of allSessions) {
-      if (session.piSessionFile) knownFiles.add(session.piSessionFile);
-      for (const f of session.piSessionFiles ?? []) knownFiles.add(f);
+    for (const session of ctx.storage.listSessions()) {
+      if (session.piSessionFile) {
+        knownFiles.add(session.piSessionFile);
+      }
+
+      for (const file of session.piSessionFiles ?? []) {
+        knownFiles.add(file);
+      }
     }
 
     const localSessions = await discoverLocalSessions(knownFiles);
@@ -23,22 +86,24 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
   function handleListWorkspaces(res: ServerResponse): void {
     ctx.storage.ensureDefaultWorkspaces();
-    const workspaces = ctx.storage.listWorkspaces();
+    const workspaces = ctx.storage.listWorkspaces().map(removeUnknownSkills);
     helpers.json(res, { workspaces });
   }
 
   async function handleCreateWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await helpers.parseBody<CreateWorkspaceRequest>(req);
+
     if (!body.name) {
       helpers.error(res, 400, "name required");
       return;
     }
+
     if (!body.skills || !Array.isArray(body.skills)) {
       helpers.error(res, 400, "skills array required");
       return;
     }
 
-    const unknown = body.skills.filter((s) => !ctx.skillRegistry.get(s));
+    const unknown = unknownSkills(body.skills);
     if (unknown.length > 0) {
       helpers.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
       return;
@@ -49,19 +114,16 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (body.extensions !== undefined) {
-      if (!Array.isArray(body.extensions)) {
-        helpers.error(res, 400, "extensions must be an array");
-        return;
-      }
+    const extensionsError = extensionValidationError(body.extensions);
+    if (extensionsError) {
+      helpers.error(res, 400, extensionsError);
+      return;
+    }
 
-      const invalid = body.extensions.filter(
-        (name) => typeof name !== "string" || !isValidExtensionName(name),
-      );
-      if (invalid.length > 0) {
-        helpers.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
-        return;
-      }
+    const allowedPathsError = allowedPathsValidationError(body.allowedPaths);
+    if (allowedPathsError) {
+      helpers.error(res, 400, allowedPathsError);
+      return;
     }
 
     const workspace = ctx.storage.createWorkspace(body);
@@ -74,7 +136,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       helpers.error(res, 404, "Workspace not found");
       return;
     }
-    helpers.json(res, { workspace });
+
+    helpers.json(res, { workspace: removeUnknownSkills(workspace) });
   }
 
   async function handleUpdateWorkspace(
@@ -91,7 +154,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const body = await helpers.parseBody<UpdateWorkspaceRequest>(req);
 
     if (body.skills) {
-      const unknown = body.skills.filter((s) => !ctx.skillRegistry.get(s));
+      const unknown = unknownSkills(body.skills);
       if (unknown.length > 0) {
         helpers.error(res, 400, `Unknown skills: ${unknown.join(", ")}`);
         return;
@@ -103,19 +166,16 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (body.extensions !== undefined) {
-      if (!Array.isArray(body.extensions)) {
-        helpers.error(res, 400, "extensions must be an array");
-        return;
-      }
+    const extensionsError = extensionValidationError(body.extensions);
+    if (extensionsError) {
+      helpers.error(res, 400, extensionsError);
+      return;
+    }
 
-      const invalid = body.extensions.filter(
-        (name) => typeof name !== "string" || !isValidExtensionName(name),
-      );
-      if (invalid.length > 0) {
-        helpers.error(res, 400, `Invalid extension names: ${invalid.join(", ")}`);
-        return;
-      }
+    const allowedPathsError = allowedPathsValidationError(body.allowedPaths);
+    if (allowedPathsError) {
+      helpers.error(res, 400, allowedPathsError);
+      return;
     }
 
     const updated = ctx.storage.updateWorkspace(wsId, body);
@@ -124,7 +184,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    helpers.json(res, { workspace: updated });
+    helpers.json(res, { workspace: removeUnknownSkills(updated) });
   }
 
   function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
@@ -210,7 +270,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   }
 
   return async ({ method, path, url, req, res }) => {
-    // Local pi sessions (TUI-started, not managed by oppi)
     if (path === "/local-sessions" && method === "GET") {
       await handleListLocalSessions(res);
       return true;
@@ -232,10 +291,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
         handleGetWorkspace(wsMatch[1], res);
         return true;
       }
+
       if (method === "PUT") {
         await handleUpdateWorkspace(wsMatch[1], req, res);
         return true;
       }
+
       if (method === "DELETE") {
         handleDeleteWorkspace(wsMatch[1], res);
         return true;
