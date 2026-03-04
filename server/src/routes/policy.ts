@@ -369,7 +369,10 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       return;
     }
 
-    console.log(`[policy] Rule ${ruleId} updated: ${updated.label || "(no label)"}`);
+    console.log("[policy] Rule updated", {
+      ruleId,
+      label: updated.label || "(no label)",
+    });
     helpers.json(res, { rule: updated });
   }
 
@@ -399,7 +402,10 @@ export function createPolicyRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       return;
     }
 
-    console.log(`[policy] Rule ${ruleId} deleted: ${rule.label || "(no label)"}`);
+    console.log("[policy] Rule deleted", {
+      ruleId,
+      label: rule.label || "(no label)",
+    });
     helpers.json(res, { ok: true, deleted: ruleId });
   }
 

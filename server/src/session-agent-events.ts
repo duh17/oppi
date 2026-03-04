@@ -68,9 +68,11 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "extension_error") {
-      console.error(
-        `${ts()} [pi:${active.session.id}] extension error: ${data.extensionPath}: ${data.error}`,
-      );
+      console.error("[pi] extension error", {
+        sessionId: active.session.id,
+        extensionPath: data.extensionPath,
+        error: data.error,
+      });
       this.deps.resetIdleTimer(key);
       return;
     }
@@ -78,11 +80,14 @@ export class SessionAgentEventCoordinator {
     const event = data;
 
     if (SessionAgentEventCoordinator.LOGGED_EVENT_TYPES.has(event.type)) {
-      const tool =
-        "toolName" in event && typeof event.toolName === "string" ? ` tool=${event.toolName}` : "";
-      console.log(
-        `${ts()} [pi:${active.session.id}] EVENT ${event.type}${tool} (subs=${active.subscribers.size})`,
-      );
+      const toolName =
+        "toolName" in event && typeof event.toolName === "string" ? event.toolName : undefined;
+      console.log("[pi] event", {
+        sessionId: active.session.id,
+        eventType: event.type,
+        toolName,
+        subscriberCount: active.subscribers.size,
+      });
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
@@ -141,7 +146,10 @@ export class SessionAgentEventCoordinator {
     }
 
     if (SessionAgentEventCoordinator.STATUS_BROADCAST_TYPES.has(event.type)) {
-      console.log(`${ts()} [pi:${active.session.id}] STATUS → ${active.session.status}`);
+      console.log("[pi] status update", {
+        sessionId: active.session.id,
+        status: active.session.status,
+      });
       this.deps.broadcast(key, { type: "state", session: active.session });
     }
 
