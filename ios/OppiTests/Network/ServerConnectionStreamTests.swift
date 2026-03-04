@@ -356,6 +356,63 @@ struct ServerConnectionStreamTests {
         conn.streamConsumptionTask?.cancel()
     }
 
+    /// Regression gate: if get_queue never returns command_result (older server
+    /// behavior during full-subscription races), streamSession must remain
+    /// non-blocking and return quickly while queue sync retries in background.
+    @MainActor
+    @Test func streamSessionDoesNotBlockOnMissingGetQueueAck() async {
+        let conn = makeTestConnection()
+        conn.wsClient?._setStatusForTesting(.connected)
+
+        // Keep consumption task alive so connectStream() is a no-op
+        conn.streamConsumptionTask = Task { try? await Task.sleep(for: .seconds(60)) }
+
+        conn._sendMessageForTesting = { [weak conn] message in
+            guard let conn else { return }
+            guard message.typeLabel == "subscribe" else {
+                // Simulate missing get_queue command_result (legacy server race)
+                return
+            }
+
+            let requestId: String? = {
+                guard let data = try? JSONEncoder().encode(message),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return nil }
+                return dict["requestId"] as? String
+            }()
+
+            guard let requestId else { return }
+            conn.routeStreamMessage(
+                StreamMessage(
+                    sessionId: "s1",
+                    streamSeq: 1,
+                    seq: nil,
+                    currentSeq: nil,
+                    message: .commandResult(
+                        command: "subscribe",
+                        requestId: requestId,
+                        success: true,
+                        data: nil,
+                        error: nil
+                    )
+                )
+            )
+        }
+
+        let start = ContinuousClock.now
+        let stream = await conn.streamSession("s1", workspaceId: "w1")
+        let elapsed = ContinuousClock.now - start
+
+        #expect(stream != nil, "streamSession should still return a stream")
+        #expect(
+            elapsed < .seconds(1),
+            "streamSession should not block on queue sync and should return in <1s when get_queue ack is missing; took \(elapsed)"
+        )
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectSession()
+    }
+
     // MARK: - Pending unsubscribe cancelled on resubscribe
 
     @MainActor

@@ -54,6 +54,9 @@ final class ServerConnection {
     static let turnSendMaxAttempts = 2
     static let turnSendRequiredStage: TurnAckStage = .dispatched
     static let commandRequestTimeoutDefault: Duration = .seconds(8)
+    static let initialQueueSyncTimeout: Duration = .seconds(1)
+    static let deferredQueueSyncTimeout: Duration = .seconds(3)
+    static let deferredQueueSyncDelay: Duration = .milliseconds(250)
 
     struct SessionUsageMetricSnapshot: Equatable {
         let provider: String
@@ -116,6 +119,9 @@ final class ServerConnection {
 
     /// Model prefetch task — eagerly loaded on connect.
     var modelPrefetchTask: Task<Void, Never>?
+
+    /// Deferred queue refresh retry when initial streamSession queue sync times out.
+    var deferredQueueSyncTask: Task<Void, Never>?
 
     /// Silence watchdog — detects zombie WS connections during busy sessions.
     let silenceWatchdog = SilenceWatchdog()
@@ -316,6 +322,7 @@ final class ServerConnection {
 
     /// Disconnect the persistent `/stream` WebSocket.
     func disconnectStream() {
+        cancelDeferredQueueSync()
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         for (_, cont) in sessionContinuations {
@@ -859,43 +866,22 @@ final class ServerConnection {
             )
         }
 
-        let queueSyncStart = ContinuousClock.now
-        var queueSyncStatus = "ok"
-        var queueSyncErrorKind: String?
-        do {
-            try await requestMessageQueue()
-        } catch {
-            queueSyncStatus = "error"
-            queueSyncErrorKind = telemetryErrorKind(from: error)
-            logger.debug("Initial queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
-        let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
-        Task.detached(priority: .utility) {
-            var tags: [String: String] = [
-                "transport": transport,
-                "status": queueSyncStatus,
-            ]
-            if let queueSyncErrorKind {
-                tags["error_kind"] = queueSyncErrorKind
-            }
-            await ChatMetricsService.shared.record(
-                metric: .queueSyncMs,
-                value: Double(queueSyncMs),
-                unit: .ms,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
+        scheduleQueueSync(sessionId: sessionId, transport: transport)
+
+        // Queue sync is now async and no longer blocks streamSession entry.
+        let queueSyncMs = 0
+        let queueSyncStatus = "async"
 
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
         let endpointHost = endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
 
-        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeAck=\(subscribeAckMs)ms queueSync=\(queueSyncMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
+        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeAck=\(subscribeAckMs)ms queueSync=\(queueSyncMs)ms queueSyncStatus=\(queueSyncStatus, privacy: .public) total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
             "wsStatus": String(describing: wsStatus),
             "streamOpenMs": String(streamOpenMs),
             "subscribeAckMs": String(subscribeAckMs),
             "queueSyncMs": String(queueSyncMs),
+            "queueSyncStatus": queueSyncStatus,
             "totalMs": String(totalMs),
             "transport": transport,
             "endpointHost": endpointHost,
@@ -907,6 +893,93 @@ final class ServerConnection {
         syncNotificationSubscriptions()
 
         return perSessionStream
+    }
+
+    private func scheduleQueueSync(sessionId: String, transport: String) {
+        cancelDeferredQueueSync()
+        deferredQueueSyncTask = Task { @MainActor [weak self] in
+            guard let self,
+                  !Task.isCancelled,
+                  self.activeSessionId == sessionId else {
+                return
+            }
+
+            let initialSucceeded = await self.performQueueSyncAttempt(
+                sessionId: sessionId,
+                transport: transport,
+                timeout: Self.initialQueueSyncTimeout,
+                phase: "initial"
+            )
+
+            guard !initialSucceeded else {
+                return
+            }
+
+            try? await Task.sleep(for: Self.deferredQueueSyncDelay)
+            guard !Task.isCancelled,
+                  self.activeSessionId == sessionId else {
+                return
+            }
+
+            _ = await self.performQueueSyncAttempt(
+                sessionId: sessionId,
+                transport: transport,
+                timeout: Self.deferredQueueSyncTimeout,
+                phase: "retry"
+            )
+        }
+    }
+
+    private func performQueueSyncAttempt(
+        sessionId: String,
+        transport: String,
+        timeout: Duration,
+        phase: String
+    ) async -> Bool {
+        let queueSyncStart = ContinuousClock.now
+        var queueSyncStatus = "ok"
+        var queueSyncErrorKind: String?
+
+        do {
+            try await requestMessageQueue(timeout: timeout)
+        } catch {
+            queueSyncStatus = "error"
+            queueSyncErrorKind = telemetryErrorKind(from: error)
+            let phaseLabel = phase == "initial" ? "Initial" : "Deferred"
+            logger.debug("\(phaseLabel, privacy: .public) queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+
+        let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
+        let metricStatus = queueSyncStatus
+        let metricErrorKind = queueSyncErrorKind
+        let metricPhase = phase
+        let metricTransport = transport
+        let metricSessionId = sessionId
+
+        Task.detached(priority: .utility) {
+            var tags: [String: String] = [
+                "transport": metricTransport,
+                "status": metricStatus,
+                "phase": metricPhase,
+            ]
+            if let metricErrorKind {
+                tags["error_kind"] = metricErrorKind
+            }
+            await ChatMetricsService.shared.record(
+                metric: .queueSyncMs,
+                value: Double(queueSyncMs),
+                unit: .ms,
+                sessionId: metricSessionId,
+                tags: tags
+            )
+        }
+
+        return queueSyncStatus == "ok"
+    }
+
+    private func cancelDeferredQueueSync() {
+        deferredQueueSyncTask?.cancel()
+        deferredQueueSyncTask = nil
     }
 
     private func waitForConnectedStream(
@@ -950,6 +1023,36 @@ final class ServerConnection {
         return "other"
     }
 
+    private func recordMessageQueueAckMetric(
+        command: String,
+        startedAt: ContinuousClock.Instant,
+        status: String,
+        errorKind: String? = nil
+    ) {
+        let elapsedMs = Int((ContinuousClock.now - startedAt) / .milliseconds(1))
+        let metricCommand = command
+        let metricStatus = status
+        let metricErrorKind = errorKind
+        let metricSessionId = activeSessionId
+
+        Task.detached(priority: .utility) {
+            var tags: [String: String] = [
+                "command": metricCommand,
+                "status": metricStatus,
+            ]
+            if let metricErrorKind {
+                tags["error_kind"] = metricErrorKind
+            }
+            await ChatMetricsService.shared.record(
+                metric: .messageQueueAckMs,
+                value: Double(elapsedMs),
+                unit: .ms,
+                sessionId: metricSessionId,
+                tags: tags
+            )
+        }
+    }
+
     /// Unsubscribe from a specific session.
     ///
     /// The send is tracked so `streamSession()` can cancel it before
@@ -972,6 +1075,7 @@ final class ServerConnection {
 
     /// Disconnect from the current session stream.
     func disconnectSession() {
+        cancelDeferredQueueSync()
         coalescer.flushNow()
         commands.failAllTurnSends(error: WebSocketError.notConnected)
         commands.failAllCommands(error: WebSocketError.notConnected)
@@ -1044,13 +1148,26 @@ final class ServerConnection {
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(
-            requestId: requestId,
-            clientTurnId: clientTurnId,
-            command: "steer",
-            onAckStage: onAckStage
-        ) {
-            .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+        let startedAt = ContinuousClock.now
+
+        do {
+            try await sendTurnWithAck(
+                requestId: requestId,
+                clientTurnId: clientTurnId,
+                command: "steer",
+                onAckStage: onAckStage
+            ) {
+                .steer(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+            }
+            recordMessageQueueAckMetric(command: "steer", startedAt: startedAt, status: "ok")
+        } catch {
+            recordMessageQueueAckMetric(
+                command: "steer",
+                startedAt: startedAt,
+                status: "error",
+                errorKind: telemetryErrorKind(from: error)
+            )
+            throw error
         }
     }
 
@@ -1062,13 +1179,26 @@ final class ServerConnection {
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = UUID().uuidString
-        try await sendTurnWithAck(
-            requestId: requestId,
-            clientTurnId: clientTurnId,
-            command: "follow_up",
-            onAckStage: onAckStage
-        ) {
-            .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+        let startedAt = ContinuousClock.now
+
+        do {
+            try await sendTurnWithAck(
+                requestId: requestId,
+                clientTurnId: clientTurnId,
+                command: "follow_up",
+                onAckStage: onAckStage
+            ) {
+                .followUp(message: text, images: images, requestId: requestId, clientTurnId: clientTurnId)
+            }
+            recordMessageQueueAckMetric(command: "follow_up", startedAt: startedAt, status: "ok")
+        } catch {
+            recordMessageQueueAckMetric(
+                command: "follow_up",
+                startedAt: startedAt,
+                status: "error",
+                errorKind: telemetryErrorKind(from: error)
+            )
+            throw error
         }
     }
 
@@ -1133,8 +1263,8 @@ final class ServerConnection {
     }
 
     /// Request latest message queue snapshot for the active session.
-    func requestMessageQueue() async throws {
-        _ = try await sendCommandAwaitingResult(command: "get_queue") { requestId in
+    func requestMessageQueue(timeout: Duration = ServerConnection.commandRequestTimeoutDefault) async throws {
+        _ = try await sendCommandAwaitingResult(command: "get_queue", timeout: timeout) { requestId in
             .getQueue(requestId: requestId)
         }
     }

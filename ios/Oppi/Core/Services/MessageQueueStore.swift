@@ -11,6 +11,15 @@ final class MessageQueueStore {
 
     func apply(_ state: MessageQueueState, for sessionId: String) {
         if let current = queuesBySessionId[sessionId], state.version < current.version {
+            recordQueueEventMetric(
+                .messageQueueStaleDrop,
+                sessionId: sessionId,
+                tags: [
+                    "source": "queue_state",
+                    "incoming_version": String(state.version),
+                    "current_version": String(current.version),
+                ]
+            )
             return
         }
 
@@ -76,18 +85,58 @@ final class MessageQueueStore {
     ) {
         var state = queuesBySessionId[sessionId] ?? .empty
         guard queueVersion >= state.version else {
+            recordQueueEventMetric(
+                .messageQueueStaleDrop,
+                sessionId: sessionId,
+                tags: [
+                    "source": "queue_item_started",
+                    "incoming_version": String(queueVersion),
+                    "current_version": String(state.version),
+                ]
+            )
             return
         }
 
+        let removed: Bool
         switch kind {
         case .steer:
-            remove(item: item, from: &state.steering)
+            removed = remove(item: item, from: &state.steering)
         case .followUp:
-            remove(item: item, from: &state.followUp)
+            removed = remove(item: item, from: &state.followUp)
+        }
+
+        if !removed {
+            recordQueueEventMetric(
+                .messageQueueStartMiss,
+                sessionId: sessionId,
+                tags: [
+                    "kind": kind.rawValue,
+                    "queue_version": String(queueVersion),
+                ]
+            )
         }
 
         state.version = queueVersion
         queuesBySessionId[sessionId] = state
+    }
+
+    private func recordQueueEventMetric(
+        _ metric: ChatMetricName,
+        sessionId: String,
+        tags: [String: String]
+    ) {
+        let session = sessionId
+        let metricTags = tags
+
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: metric,
+                value: 1,
+                unit: .count,
+                sessionId: session,
+                tags: metricTags
+            )
+        }
     }
 
     @discardableResult
