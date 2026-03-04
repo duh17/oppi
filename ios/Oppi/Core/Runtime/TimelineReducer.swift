@@ -894,15 +894,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         // Reconnect/history-reload race: trace may already include this
         // finalized assistant text, while in-flight message_end still arrives.
-        // If no turn is in progress and no streaming assistant is active,
-        // suppress duplicate append.
         if shouldSuppressDuplicateMessageEnd(content) {
             finalizeAssistantMessage()
             return
         }
 
-        assistantBuffer = content
-        upsertAssistantMessage()
+        // If we're actively streaming (currentAssistantID != nil), replace
+        // the buffer with the authoritative messageEnd content and finalize.
+        // If no active streaming, update the latest assistant message in-place
+        // to avoid creating a duplicate row with different text.
+        if currentAssistantID == nil, let latestID = latestAssistantItemID() {
+            // Stale messageEnd after finalize — update the existing item
+            // rather than appending a new one.
+            let item = TimelineTurnAssembler.makeAssistantItem(
+                id: latestID,
+                text: content,
+                timestamp: Date()
+            )
+            if let idx = indexForID(latestID) {
+                items[idx] = item
+            }
+        } else {
+            assistantBuffer = content
+            upsertAssistantMessage()
+        }
         finalizeAssistantMessage()
     }
 
@@ -918,6 +933,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             currentAssistantID: currentAssistantID,
             latestAssistantItem: latestAssistantItem
         )
+    }
+
+    /// ID of the most recent assistant message in the timeline.
+    private func latestAssistantItemID() -> String? {
+        for item in items.reversed() {
+            if case .assistantMessage(let id, _, _) = item { return id }
+        }
+        return nil
     }
 
     private func upsertAssistantMessage() {
