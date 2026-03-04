@@ -553,36 +553,42 @@ struct TimelineReducerLoadTests {
     }
 
     @MainActor
-    @Test func fullRebuildDropsLocalUserMessageWhenTraceIncludesIt() {
+    @Test func fullRebuildDropsLocalUserMessageWhenTraceContainsSameTextWithDifferentID() {
         let reducer = TimelineReducer()
 
         // Load initial trace.
         let initialTrace = makeBaseTrace()
         reducer.loadSession(initialTrace)
 
-        // User sends a message.
-        _ = reducer.appendUserMessage("New question")
+        // User sends an optimistic local message (UUID-based client ID).
+        let localMessageId = reducer.appendUserMessage("New question")
         #expect(reducer.items.count == 3)
 
-        // Fresh trace now includes the user message (pi wrote it to JSONL).
+        // Fresh trace includes the same message text, but with a server ID.
         var freshTrace = initialTrace
         freshTrace.append(
-            TraceEvent(id: "e3", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
-                       text: "Fresh trace question", tool: nil, args: nil, output: nil,
+            TraceEvent(id: "server-user-3", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+                       text: "New question", tool: nil, args: nil, output: nil,
                        toolCallId: nil, toolName: nil, isError: nil, thinking: nil)
         )
         reducer.loadSession(freshTrace)
 
-        // Only trace events — the local orphan had a different ID and is dropped
-        // in favor of the canonical trace version (or it was superseded).
-        // The locally-added message (UUID-based) survives because its ID
-        // doesn't match e3. Both appear until the next trace catches up.
-        let userItems = reducer.items.filter {
-            if case .userMessage = $0 { return true }
+        // No duplicate should remain: keep canonical trace version only.
+        let matchingTextUserItems = reducer.items.filter {
+            if case .userMessage(_, let text, _, _) = $0 {
+                return text == "New question"
+            }
             return false
         }
-        // e1 (trace) + e3 (trace) + local UUID (orphan) = 3 user messages
-        #expect(userItems.count == 3)
+        #expect(matchingTextUserItems.count == 1)
+
+        guard let matchingItem = matchingTextUserItems.first,
+              case .userMessage(let finalID, _, _, _) = matchingItem else {
+            Issue.record("Expected userMessage")
+            return
+        }
+        #expect(finalID == "server-user-3")
+        #expect(finalID != localMessageId)
     }
 
     @MainActor
