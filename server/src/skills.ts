@@ -298,9 +298,6 @@ export interface UserSkill {
   path: string;
 }
 
-/** Merged skill type: built-in or user-created. */
-export type MergedSkill = (SkillInfo & { builtIn: true }) | UserSkill;
-
 /** Validation constraints. */
 const SKILL_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_SKILL_SIZE = 100 * 1024; // 100KB total

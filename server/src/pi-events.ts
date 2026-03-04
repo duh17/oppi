@@ -1,4 +1,4 @@
-import type { AgentSessionEvent, SessionStats } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
 export interface PiMessageUsage {
   input?: number;
@@ -15,9 +15,6 @@ export interface PiMessage {
   content?: unknown;
   usage?: PiMessageUsage;
 }
-
-export type PiSessionMessage = Extract<AgentSessionEvent, { type: "message_end" }>["message"];
-export type PiSessionStats = SessionStats;
 
 export interface ExtensionUIRequestEvent {
   type: "extension_ui_request";
