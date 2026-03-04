@@ -13,77 +13,13 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { WebSocket } from "ws";
+import type { WebSocket } from "ws";
 import { UserStreamMux, type StreamContext } from "../src/stream.js";
-import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
+import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
+import { waitForCondition } from "./harness/async.js";
+import { FakeWebSocket, makeSession } from "./harness/stream-test-primitives.js";
 
 // ─── Test Infrastructure ───
-
-function makeSession(id: string, overrides?: Partial<Session>): Session {
-  const now = Date.now();
-  return {
-    id,
-    workspaceId: "w1",
-    status: "ready",
-    createdAt: now,
-    lastActivity: now,
-    messageCount: 0,
-    tokens: { input: 0, output: 0 },
-    cost: 0,
-    ...overrides,
-  };
-}
-
-class FakeWebSocket {
-  readyState = WebSocket.OPEN;
-  bufferedAmount = 0;
-  sent: ServerMessage[] = [];
-
-  private handlers: {
-    message: Array<(data: Buffer) => void>;
-    close: Array<(code: number, reason: Buffer) => void>;
-    error: Array<(err: Error) => void>;
-  } = {
-    message: [],
-    close: [],
-    error: [],
-  };
-
-  on(event: "message" | "close" | "error", handler: (...args: unknown[]) => void): void {
-    if (event === "message") {
-      this.handlers.message.push(handler as (data: Buffer) => void);
-      return;
-    }
-    if (event === "close") {
-      this.handlers.close.push(handler as (code: number, reason: Buffer) => void);
-      return;
-    }
-    this.handlers.error.push(handler as (err: Error) => void);
-  }
-
-  send(data: string, _opts?: { compress?: boolean }): void {
-    this.sent.push(JSON.parse(data) as ServerMessage);
-  }
-
-  ping(): void {
-    // no-op for tests
-  }
-
-  emitMessage(msg: unknown): void {
-    const data = Buffer.from(JSON.stringify(msg));
-    for (const handler of this.handlers.message) {
-      handler(data);
-    }
-  }
-
-  emitClose(code = 1000, reason = ""): void {
-    this.readyState = WebSocket.CLOSED;
-    const reasonBuffer = Buffer.from(reason);
-    for (const handler of this.handlers.close) {
-      handler(code, reasonBuffer);
-    }
-  }
-}
 
 interface Harness {
   mux: UserStreamMux;
@@ -187,15 +123,34 @@ function makeHarness(options?: {
   };
 }
 
-async function flushQueue(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+async function waitForMessages(
+  ws: FakeWebSocket,
+  predicate: (messages: ServerMessage[]) => boolean,
+  timeoutMs = 1_000,
+): Promise<ServerMessage[]> {
+  await waitForCondition(() => predicate(ws.sent), {
+    timeoutMs,
+    intervalMs: 5,
+    description: "ws messages",
+  });
+  return ws.sent;
 }
 
-/** Wait for the promise queue to fully drain (multiple ticks). */
-async function drainQueue(ticks = 5): Promise<void> {
-  for (let i = 0; i < ticks; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
+/** Wait until the message stream has stopped changing for a few polls. */
+async function drainQueue(ws: FakeWebSocket, stablePolls = 5): Promise<void> {
+  let previousLength = ws.sent.length;
+  let unchangedPolls = 0;
+
+  await waitForMessages(ws, (messages) => {
+    const currentLength = messages.length;
+    if (currentLength === previousLength) {
+      unchangedPolls += 1;
+    } else {
+      previousLength = currentLength;
+      unchangedPolls = 0;
+    }
+    return unchangedPolls >= stablePolls;
+  });
 }
 
 function findCommandResults(
@@ -234,7 +189,7 @@ describe("A: queue ordering on a single socket", () => {
       requestId: "prompt-1",
     });
 
-    await drainQueue();
+    await drainQueue(ws);
 
     // Subscribe command_result must appear before prompt result
     const subResult = ws.sent.find(
@@ -276,7 +231,7 @@ describe("A: queue ordering on a single socket", () => {
       level: "full",
       requestId: "sub-1",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -293,7 +248,7 @@ describe("A: queue ordering on a single socket", () => {
       requestId: "prompt-1",
     });
 
-    await drainQueue();
+    await drainQueue(ws);
 
     const newMessages = ws.sent.slice(baseline);
 
@@ -335,7 +290,7 @@ describe("A: queue ordering on a single socket", () => {
       level: "full",
       requestId: "sub-a",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Subscribe to B as full (should demote A)
     ws.emitMessage({
@@ -344,7 +299,7 @@ describe("A: queue ordering on a single socket", () => {
       level: "full",
       requestId: "sub-b",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -355,7 +310,7 @@ describe("A: queue ordering on a single socket", () => {
       message: "demoted session",
       requestId: "prompt-a",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const afterPromptA = ws.sent.slice(baseline);
     const errorA = afterPromptA.find(
@@ -375,7 +330,7 @@ describe("A: queue ordering on a single socket", () => {
       message: "active session",
       requestId: "prompt-b",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const afterPromptB = ws.sent.slice(baseline2);
     const promptResult = afterPromptB.find(
@@ -396,9 +351,9 @@ describe("A: queue ordering on a single socket", () => {
     await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
     ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-a" });
-    await drainQueue();
+    await drainQueue(ws);
     ws.emitMessage({ type: "subscribe", sessionId: "s2", level: "full", requestId: "sub-b" });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -442,7 +397,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
       sinceSeq: 5, // Too old — ring has moved past this
       requestId: "sub-stale",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Should still get a state event (current session state)
     const stateMsg = ws.sent.find(
@@ -483,7 +438,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
       sinceSeq: 42,
       requestId: "sub-exact",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
@@ -534,7 +489,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
       sinceSeq: 10,
       requestId: "sub-replay",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Find ordering: state should come before replay events, which come before command_result
     const s1Messages = ws.sent.filter((msg) => msg.sessionId === "s1");
@@ -568,7 +523,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
       sinceSeq: -5,
       requestId: "sub-neg",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
@@ -592,7 +547,7 @@ describe("C: catch-up boundaries (sinceSeq)", () => {
       sinceSeq: 3.7,
       requestId: "sub-float",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
@@ -620,7 +575,7 @@ describe("D: state transition interleavings", () => {
     ws.emitMessage({ type: "unsubscribe", sessionId: "s1", requestId: "unsub-2" });
     ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-3" });
 
-    await drainQueue(10);
+    await drainQueue(ws, 10);
 
     // Should have exactly 3 subscribe results and 2 unsubscribe results
     const subResults = findCommandResults(ws.sent, "subscribe");
@@ -662,7 +617,7 @@ describe("D: state transition interleavings", () => {
       sinceSeq: 0,
       requestId: "sub-1",
     });
-    await drainQueue();
+    await drainQueue(ws1);
 
     // Verify bootstrap order: stream_connected → connected → state → catch-up → command_result
     const types1 = ws1.sent.map((msg) => msg.type);
@@ -692,7 +647,7 @@ describe("D: state transition interleavings", () => {
       sinceSeq: 0,
       requestId: "sub-1",
     });
-    await drainQueue();
+    await drainQueue(ws2);
 
     const types2 = ws2.sent.map((msg) => msg.type);
     expect(types2[0]).toBe("stream_connected");
@@ -718,7 +673,7 @@ describe("D: state transition interleavings", () => {
       level: "full",
       requestId: "sub-1",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -745,7 +700,7 @@ describe("D: state transition interleavings", () => {
       level: "full",
       requestId: "sub-1",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Save the callback before unsubscribe clears it
     const callback = harness.sessionCallbacks.get("s1");
@@ -756,7 +711,7 @@ describe("D: state transition interleavings", () => {
       sessionId: "s1",
       requestId: "unsub-1",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -775,14 +730,14 @@ describe("D: state transition interleavings", () => {
     await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
     ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
-    await drainQueue();
+    await drainQueue(ws);
     ws.emitMessage({
       type: "subscribe",
       sessionId: "s2",
       level: "notifications",
       requestId: "sub-2",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Verify both sessions have callbacks
     expect(harness.sessionCallbacks.has("s1")).toBe(true);
@@ -808,14 +763,14 @@ describe("edge cases: multi-session ordering", () => {
     await harness.mux.handleWebSocket(ws as unknown as WebSocket);
 
     ws.emitMessage({ type: "subscribe", sessionId: "s1", level: "full", requestId: "sub-1" });
-    await drainQueue();
+    await drainQueue(ws);
     ws.emitMessage({
       type: "subscribe",
       sessionId: "s2",
       level: "notifications",
       requestId: "sub-2",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const baseline = ws.sent.length;
 
@@ -846,7 +801,7 @@ describe("edge cases: multi-session ordering", () => {
       level: "full",
       requestId: "sub-missing",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     const result = ws.sent.find(
       (msg): msg is Extract<ServerMessage, { type: "command_result" }> =>
@@ -867,7 +822,7 @@ describe("edge cases: multi-session ordering", () => {
       sessionId: "s1",
       requestId: "unsub-never",
     });
-    await drainQueue();
+    await drainQueue(ws);
 
     // Should get a success result (idempotent) without crash
     const result = ws.sent.find(
