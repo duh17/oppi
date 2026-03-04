@@ -328,3 +328,35 @@ exit 1
     }
   });
 });
+
+// ── Init ──
+
+describe("oppi init (non-interactive)", () => {
+  it("writes config with self-signed TLS by default", () => {
+    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-"));
+
+    try {
+      const { exitCode } = run(["init", "--yes", "--data-dir", initDir]);
+      expect(exitCode).toBe(0);
+
+      const { stdout: tlsJson } = run(["config", "get", "tls"], { OPPI_DATA_DIR: initDir });
+      const config = JSON.parse(tlsJson) as { mode?: string };
+
+      expect(config.mode).toBe("self-signed");
+    } finally {
+      rmSync(initDir, { recursive: true, force: true });
+    }
+  });
+
+  it("outputs TLS confirmation message", () => {
+    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-tls-msg-"));
+
+    try {
+      const { stdout, exitCode } = run(["init", "--yes", "--data-dir", initDir]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("self-signed");
+    } finally {
+      rmSync(initDir, { recursive: true, force: true });
+    }
+  });
+});
