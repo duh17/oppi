@@ -74,7 +74,9 @@ export class SessionLifecycleCoordinator {
 
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
-      console.log(`${ts()} [session] idle timeout: ${key}`);
+      console.log("[session] idle timeout", {
+        key,
+      });
       const active = this.deps.getActiveSession(key);
       if (!active) {
         return;

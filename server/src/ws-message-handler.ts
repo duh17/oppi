@@ -266,9 +266,12 @@ export class WsMessageHandler {
       mimeType: img.mimeType,
     }));
     const imageCount = images?.length ?? 0;
-    console.log(
-      `${ts()} [ws] ${command.toUpperCase()} ${session.id} (chars=${chars}${imageCount > 0 ? `, images=${imageCount}` : ""})`,
-    );
+    console.log("[ws] Handling turn command", {
+      command: command.toUpperCase(),
+      sessionId: session.id,
+      chars,
+      imageCount,
+    });
 
     try {
       await handler(session.id, msg.message, {
@@ -369,7 +372,9 @@ export class WsMessageHandler {
   ): Promise<void> {
     const requestId = msg.requestId;
     const command = msg.type;
-    console.log(`${ts()} [ws] STOP ${session.id}`);
+    console.log("[ws] STOP command", {
+      sessionId: session.id,
+    });
 
     try {
       await this.deps.sessions.sendAbort(session.id);
@@ -392,7 +397,9 @@ export class WsMessageHandler {
     send: (msg: ServerMessage) => void,
   ): Promise<void> {
     const requestId = msg.requestId;
-    console.log(`${ts()} [ws] STOP_SESSION ${session.id}`);
+    console.log("[ws] STOP_SESSION command", {
+      sessionId: session.id,
+    });
 
     try {
       await this.deps.sessions.stopSession(session.id);

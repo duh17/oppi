@@ -125,7 +125,9 @@ export class SkillRegistry extends EventEmitter {
 
       if (paths.length > 0) {
         this.packageSkillPaths = paths;
-        console.log(`[skills] Resolved ${paths.length} skill path(s) from pi settings/packages`);
+        console.log("[skills] Resolved skill paths from pi settings/packages", {
+          count: paths.length,
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -164,7 +166,10 @@ export class SkillRegistry extends EventEmitter {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[skills] Failed to scan ${dir}: ${message}`);
+        console.warn("[skills] Failed to scan skill directory", {
+          dir,
+          message,
+        });
       }
     }
 
@@ -184,7 +189,9 @@ export class SkillRegistry extends EventEmitter {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[skills] Failed to load package skills: ${message}`);
+        console.warn("[skills] Failed to load package skills", {
+          message,
+        });
       }
     }
 
@@ -200,10 +207,12 @@ export class SkillRegistry extends EventEmitter {
     const event: SkillsChangedEvent = { added, removed, modified };
 
     if (added.length || removed.length || modified.length) {
-      console.log(
-        `[skills] Catalog changed: +${added.length} -${removed.length} ~${modified.length} ` +
-          `(${this.skills.size} total)`,
-      );
+      console.log("[skills] Catalog changed", {
+          added: added.length,
+          removed: removed.length,
+          modified: modified.length,
+          total: this.skills.size,
+        });
       this.emit("skills:changed", event);
     }
 
@@ -226,14 +235,17 @@ export class SkillRegistry extends EventEmitter {
         });
         this.watchers.push(watcher);
       } catch (err) {
-        console.warn(`[skills] Could not watch ${dir}: ${err}`);
+        console.warn("[skills] Could not watch skill directory", {
+          dir,
+          error: String(err),
+        });
       }
     }
 
     if (this.watchers.length > 0) {
-      console.log(
-        `[skills] Watching ${this.watchers.length} director${this.watchers.length === 1 ? "y" : "ies"} for changes`,
-      );
+      console.log("[skills] Watching skill directories for changes", {
+        watcherCount: this.watchers.length,
+      });
     }
   }
 
@@ -518,9 +530,11 @@ export class UserSkillStore {
       );
     }
 
-    console.log(
-      `[skills] Saved user skill "${name}" for owner (${(totalSize / 1024).toFixed(1)}KB, ${fileCount} files)`,
-    );
+    console.log("[skills] Saved user skill for owner", {
+      name,
+      sizeKb: (totalSize / 1024).toFixed(1),
+      fileCount,
+    });
     return skill;
   }
 
@@ -530,7 +544,9 @@ export class UserSkillStore {
     if (!existsSync(skillDir)) return false;
 
     rmSync(skillDir, { recursive: true });
-    console.log(`[skills] Deleted user skill "${name}" for owner`);
+    console.log("[skills] Deleted user skill for owner", {
+      name,
+    });
     return true;
   }
 

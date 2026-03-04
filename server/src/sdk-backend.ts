@@ -147,7 +147,9 @@ export class SdkBackend {
     // Use ModelRegistry so custom providers/models (e.g. LM Studio) work.
     const model = session.model ? resolveRegistryModel(modelRegistry, session.model) : undefined;
     if (session.model && !model) {
-      console.warn(`${ts()} [sdk] Failed to resolve model ${session.model}, using default`);
+      console.warn("[sdk] Failed to resolve model, using default", {
+        model: session.model,
+      });
     }
 
     // Use file-based session manager for persistence
@@ -227,9 +229,13 @@ export class SdkBackend {
     });
 
     const totalMs = Date.now() - createStartMs;
-    console.log(
-      `${ts()} [sdk] Session created: model=${piSession.model?.id ?? piSession.model?.name}, thinking=${piSession.thinkingLevel}, setup=${preBindMs}ms, bindExt=${totalMs - preBindMs}ms, total=${totalMs}ms`,
-    );
+    console.log("[sdk] Session created", {
+      model: piSession.model?.id ?? piSession.model?.name,
+      thinking: piSession.thinkingLevel,
+      setupMs: preBindMs,
+      bindExtensionMs: totalMs - preBindMs,
+      totalMs,
+    });
 
     return backend;
   }
@@ -469,7 +475,9 @@ export class SdkBackend {
         streamingBehavior: opts?.streamingBehavior,
       })
       .catch((err) => {
-        console.error(`${ts()} [sdk] prompt error:`, err);
+        console.error("[sdk] prompt error", {
+          error: err,
+        });
       });
   }
 
@@ -582,7 +590,10 @@ function createPermissionGateFactory(
 
     // Register guard for this session.
     gate.createGuard(sessionId, workspaceId);
-    console.log(`${ts()} [sdk-gate] Virtual guard registered for ${sessionId}`);
+    console.log("[sdk-gate] Virtual guard registered", {
+      sessionId,
+      workspaceId,
+    });
 
     // Gate every tool call through the policy engine
     pi.on(
@@ -606,7 +617,9 @@ function createPermissionGateFactory(
     // Clean up on shutdown
     pi.on("session_shutdown", () => {
       gate.destroySessionGuard(sessionId);
-      console.log(`${ts()} [sdk-gate] Guard destroyed for ${sessionId}`);
+      console.log("[sdk-gate] Guard destroyed", {
+        sessionId,
+      });
     });
   };
 }

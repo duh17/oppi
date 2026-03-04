@@ -141,10 +141,14 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const tokenType = body.tokenType || "apns";
     if (tokenType === "liveactivity") {
       ctx.storage.setLiveActivityToken(body.deviceToken);
-      console.log(`[push] Live Activity token registered for ${ctx.storage.getOwnerName()}`);
+      console.log("[push] Live Activity token registered", {
+        owner: ctx.storage.getOwnerName(),
+      });
     } else {
       ctx.storage.addPushDeviceToken(body.deviceToken);
-      console.log(`[push] Device token registered for ${ctx.storage.getOwnerName()}`);
+      console.log("[push] Device token registered", {
+        owner: ctx.storage.getOwnerName(),
+      });
     }
 
     helpers.json(res, { ok: true });
@@ -154,7 +158,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const body = await helpers.parseBody<{ deviceToken: string }>(req);
     if (body.deviceToken) {
       ctx.storage.removePushDeviceToken(body.deviceToken);
-      console.log(`[push] Device token removed for ${ctx.storage.getOwnerName()}`);
+      console.log("[push] Device token removed", {
+        owner: ctx.storage.getOwnerName(),
+      });
     }
     helpers.json(res, { ok: true });
   }

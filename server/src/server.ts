@@ -461,7 +461,11 @@ export class Server {
       this.httpServer.once("error", reject);
       this.httpServer.listen(config.port, config.host, () => {
         this.httpServer.removeListener("error", reject);
-        console.log(`🚀 oppi listening on ${this.transportScheme}://${config.host}:${this.port}`);
+        console.log("🚀 oppi listening", {
+          scheme: this.transportScheme,
+          host: config.host,
+          port: this.port,
+        });
 
         try {
           this.startBonjourAdvertisement();
@@ -544,9 +548,11 @@ export class Server {
       txt,
     });
 
-    console.log(
-      `[bonjour] advertising ${serviceName}.${OPPI_BONJOUR_SERVICE_TYPE} (${lanHost}:${this.port})`,
-    );
+    console.log("[bonjour] advertising", {
+      serviceName,
+      host: lanHost,
+      port: this.port,
+    });
   }
 
   private stopBonjourAdvertisement(): void {
