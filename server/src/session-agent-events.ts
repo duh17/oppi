@@ -1,6 +1,5 @@
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 
-import { ts } from "./log-utils.js";
 import type { PiMessage, SessionBackendEvent } from "./pi-events.js";
 import {
   extractAssistantText,

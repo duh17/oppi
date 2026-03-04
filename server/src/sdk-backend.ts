@@ -26,7 +26,6 @@ import {
 import type { ImageContent } from "@mariozechner/pi-ai";
 
 import type { GateServer } from "./gate.js";
-import { ts } from "./log-utils.js";
 import type {
   ExtensionErrorEvent,
   ExtensionUIRequestEvent,

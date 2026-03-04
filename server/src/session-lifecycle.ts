@@ -1,4 +1,3 @@
-import { ts } from "./log-utils.js";
 import type { ExtensionUIRequest } from "./session-events.js";
 import type { PendingStop, StopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
