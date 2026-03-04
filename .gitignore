@@ -9,6 +9,17 @@ ios/OppiMac/
 ios/OppiMacTests/
 ios/.env.testflight.local
 
+# Scripts (private build/ops tooling)
+ios/scripts/
+scripts/
+server/scripts/
+!server/docker/entrypoint.sh
+!server/skills/agent-sessions/scripts/
+
+# CI / internal tooling
+.github/
+.reviews/
+
 # Agent
 .internal/
 .pi/

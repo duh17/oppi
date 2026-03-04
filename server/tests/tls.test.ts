@@ -226,7 +226,7 @@ describe("isTailscaleHostname", () => {
   });
 
   it("is case-insensitive", () => {
-    expect(isTailscaleHostname("Mac-Studio.tail00000.TS.NET")).toBe(true);
+    expect(isTailscaleHostname("My-Server.Tail00000.TS.NET")).toBe(true);
   });
 
   it("rejects plain hostnames", () => {
