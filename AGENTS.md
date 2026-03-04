@@ -29,14 +29,14 @@ cd server && npm start
 # iOS
 cd ios && xcodegen generate
 cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' build
-cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test
+cd ios && xcodebuild -scheme Oppi -destination 'platform=iOS Simulator,OS=26.0,name=iPhone 16 Pro' test -only-testing:OppiTests
 
 # iOS device deploy (ALWAYS use this script — never call devicectl directly)
 # Default target: Chen's iPhone UDID (override only when explicitly requested)
 cd ios && bash scripts/install.sh -d 00008140-00161DAC26E3001C --launch
 ```
 
-After code changes: run `npm run check` (server) or `xcodebuild build` + `test` (iOS). Get full output. Fix all errors, warnings, and infos before committing.
+After code changes: run `npm run check` (server) or `xcodebuild build` + `test -only-testing:OppiTests` (iOS unit tests). UI tests run in the nightly gate only. Get full output. Fix all errors, warnings, and infos before committing.
 
 See [`docs/testing/`](docs/testing/) for full test strategy, pyramid, and required gates by change type.
 
@@ -135,6 +135,6 @@ ServerMessage (WebSocket)
 ## Definition of Done
 
 A task is done when:
-1. `npm run check` passes (server) and/or `xcodebuild build` + `test` pass (iOS)
+1. `npm run check` passes (server) and/or `xcodebuild build` + `test -only-testing:OppiTests` pass (iOS)
 2. Protocol changes are mirrored on both sides with tests
 3. `xcodegen generate` was run if iOS file structure changed
