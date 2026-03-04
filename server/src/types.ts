@@ -535,6 +535,11 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Voice first-result latency.",
   },
+  "chat.cell_configure_ms": {
+    unit: "ms",
+    description:
+      "Cell configure latency for tool rows. Tags: expanded, content_type, tool, output_bytes.",
+  },
   "plot.axis_visible_tick_count": {
     unit: "count",
     description: "Visible axis tick count after plot normalization.",

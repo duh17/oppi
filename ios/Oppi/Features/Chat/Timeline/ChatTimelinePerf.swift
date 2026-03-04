@@ -336,7 +336,15 @@ enum ChatTimelinePerf {
         )
     }
 
-    static func recordCellConfigure(rowType: String, durationMs: Int) {
+    /// Tool cell rendering context for telemetry attribution.
+    struct ToolCellContext {
+        let tool: String
+        let isExpanded: Bool
+        let contentType: String
+        let outputBytes: Int
+    }
+
+    static func recordCellConfigure(rowType: String, durationMs: Int, toolContext: ToolCellContext? = nil) {
         cellConfigureLastMs = durationMs
         cellConfigureMaxMs = max(cellConfigureMaxMs, durationMs)
 
@@ -346,6 +354,25 @@ enum ChatTimelinePerf {
 
         if durationMs >= guardrailCellThresholdMs {
             hardGuardrailBreachCount &+= 1
+        }
+
+        // Emit cell_configure_ms for tool rows to telemetry pipeline.
+        if let ctx = toolContext {
+            let sid = activeSessionId
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .cellConfigureMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: sid,
+                    tags: [
+                        "tool": ctx.tool,
+                        "expanded": ctx.isExpanded ? "1" : "0",
+                        "content_type": ctx.contentType,
+                        "output_bytes": outputBytesBucket(ctx.outputBytes),
+                    ]
+                )
+            }
         }
 
         guard durationMs >= slowCellThresholdMs else { return }
@@ -359,6 +386,12 @@ enum ChatTimelinePerf {
             )
             span.setData(value: rowType, key: "rowType")
             span.setData(value: durationMs, key: "durationMs")
+            if let ctx = toolContext {
+                span.setData(value: ctx.tool, key: "tool")
+                span.setData(value: ctx.isExpanded, key: "expanded")
+                span.setData(value: ctx.contentType, key: "contentType")
+                span.setData(value: ctx.outputBytes, key: "outputBytes")
+            }
             span.finish(status: .ok)
         }
 #endif
@@ -373,6 +406,16 @@ enum ChatTimelinePerf {
                 "durationMs": String(durationMs),
             ]
         )
+    }
+
+    private static func outputBytesBucket(_ bytes: Int) -> String {
+        switch bytes {
+        case ..<1_000: return "<1KB"
+        case ..<10_000: return "1-10KB"
+        case ..<50_000: return "10-50KB"
+        case ..<200_000: return "50-200KB"
+        default: return "200KB+"
+        }
     }
 
     static func recordScrollCommand(anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {

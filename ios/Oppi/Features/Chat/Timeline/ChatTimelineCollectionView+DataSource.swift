@@ -347,25 +347,55 @@ extension ChatTimelineCollectionHost.Controller {
             return
         }
 
+        let toolContext: ChatTimelinePerf.ToolCellContext?
+        if let toolConfig = nativeConfig as? ToolTimelineRowConfiguration,
+           case .toolCall(_, let tool, _, _, let outputByteCount, _, _) = item {
+            toolContext = ChatTimelinePerf.ToolCellContext(
+                tool: tool,
+                isExpanded: toolConfig.isExpanded,
+                contentType: toolConfig.expandedContent.map(Self.contentTypeName) ?? "collapsed",
+                outputBytes: outputByteCount
+            )
+        } else {
+            toolContext = nil
+        }
+
         applyNativeRow(
             to: cell,
             configuration: nativeConfig,
             rowType: "\(rowLabel)_native",
-            startNs: configureStartNs
+            startNs: configureStartNs,
+            toolContext: toolContext
         )
+    }
+
+    private static func contentTypeName(
+        _ content: ToolPresentationBuilder.ToolExpandedContent
+    ) -> String {
+        switch content {
+        case .bash: return "bash"
+        case .diff: return "diff"
+        case .code: return "code"
+        case .markdown: return "markdown"
+        case .plot: return "plot"
+        case .readMedia: return "readMedia"
+        case .text: return "text"
+        }
     }
 
     private func applyNativeRow(
         to cell: SafeSizingCell,
         configuration: any UIContentConfiguration,
         rowType: String,
-        startNs: UInt64
+        startNs: UInt64,
+        toolContext: ChatTimelinePerf.ToolCellContext? = nil
     ) {
         cell.contentConfiguration = configuration
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         ChatTimelinePerf.recordCellConfigure(
             rowType: rowType,
-            durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
+            durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
+            toolContext: toolContext
         )
     }
 
