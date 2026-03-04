@@ -45,9 +45,13 @@ enum ToolTimelineRowViewStyler {
         languageBadgeIconView.translatesAutoresizingMaskIntoConstraints = false
         languageBadgeIconView.contentMode = .scaleAspectFit
         languageBadgeIconView.tintColor = UIColor(Color.themeBlue)
-        languageBadgeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        languageBadgeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         languageBadgeIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            languageBadgeIconView.widthAnchor.constraint(equalToConstant: 14),
+            languageBadgeIconView.heightAnchor.constraint(equalToConstant: 14),
+        ])
 
         addedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
         addedLabel.textColor = UIColor(Color.themeDiffAdded)

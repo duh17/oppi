@@ -42,8 +42,7 @@ enum ToolTimelineRowContextMenuBuilder {
                 return nil
             }
 
-            if target == .expanded,
-               canShowFullScreenContent {
+            if canShowFullScreenContent {
                 actions.append(
                     UIAction(
                         title: String(localized: "Open Full Screen"),
