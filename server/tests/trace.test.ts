@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseJsonl, readSessionTrace, buildSessionContext, type TraceEvent } from "../src/trace.js";
+import { parseJsonl, readSessionTrace, buildSessionContext } from "../src/trace.js";
 
 // ─── parseJsonl unit tests ───
 
@@ -251,6 +251,115 @@ describe("parseJsonl", () => {
     const events = parseJsonl(jsonl);
     expect(events).toHaveLength(1);
     expect(events[0].args).toEqual({ path: "test.ts", content: "hello" });
+  });
+
+  it("parses assistant output_text content blocks (Responses API format)", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-output-text",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "output_text", text: "Response via output_text block" }],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("assistant");
+    expect(events[0].text).toBe("Response via output_text block");
+  });
+
+  it("parses mixed output_text and text blocks in assistant message", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-mixed-text",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "output_text", text: "First part" },
+          { type: "text", text: "Second part" },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    const assistantEvents = events.filter((e) => e.type === "assistant");
+    expect(assistantEvents).toHaveLength(2);
+    expect(assistantEvents[0].text).toBe("First part");
+    expect(assistantEvents[1].text).toBe("Second part");
+  });
+
+  it("parses output_text alongside thinking and tool calls", () => {
+    const jsonl = JSON.stringify({
+      type: "message",
+      id: "msg-full-turn",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Let me think..." },
+          { type: "output_text", text: "Here is my answer" },
+          { type: "toolCall", id: "tc-5", name: "bash", arguments: { command: "echo hi" } },
+        ],
+      },
+    });
+
+    const events = parseJsonl(jsonl);
+    expect(events).toHaveLength(3);
+    expect(events[0].type).toBe("thinking");
+    expect(events[1].type).toBe("assistant");
+    expect(events[1].text).toBe("Here is my answer");
+    expect(events[2].type).toBe("toolCall");
+  });
+
+  it("does not drop assistant messages when all blocks are output_text", () => {
+    // Regression: a full conversation where every assistant turn uses output_text
+    // should produce assistant trace events, not just user + tool events.
+    const lines = [
+      JSON.stringify({
+        type: "message",
+        id: "1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: { role: "user", content: "hello" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "2",
+        parentId: "1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "output_text", text: "Hi there!" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "3",
+        parentId: "2",
+        timestamp: "2026-01-01T00:00:02Z",
+        message: { role: "user", content: "how are you?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "4",
+        parentId: "3",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "output_text", text: "I'm doing great!" }],
+        },
+      }),
+    ].join("\n");
+
+    const events = parseJsonl(lines);
+    const userEvents = events.filter((e) => e.type === "user");
+    const assistantEvents = events.filter((e) => e.type === "assistant");
+    expect(userEvents).toHaveLength(2);
+    expect(assistantEvents).toHaveLength(2);
+    expect(assistantEvents[0].text).toBe("Hi there!");
+    expect(assistantEvents[1].text).toBe("I'm doing great!");
   });
 
   it("extracts image content blocks as data URIs in tool results", () => {
@@ -588,6 +697,89 @@ describe("buildSessionContext edge cases", () => {
     const events = parseJsonl(lines);
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("system");
+  });
+
+  it("warns on unknown content block types instead of silently dropping", () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+
+    try {
+      const lines = [
+        JSON.stringify({
+          type: "message",
+          id: "1",
+          timestamp: "2026-01-01T00:00:00Z",
+          message: { role: "user", content: "hello" },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "2",
+          parentId: "1",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "future_block_type", data: "some new format" },
+              { type: "text", text: "I can still answer" },
+            ],
+          },
+        }),
+      ].join("\n");
+
+      const events = parseJsonl(lines);
+      // The known text block should still be emitted
+      expect(events.some((e) => e.type === "assistant" && e.text === "I can still answer")).toBe(true);
+      // The unknown block type should trigger a warning
+      expect(warnings.length).toBeGreaterThanOrEqual(1);
+      expect(warnings[0]).toContain("future_block_type");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("structural: multi-turn conversation preserves assistant responses", () => {
+    // Invariant: in a normal multi-turn conversation, every user message
+    // (except possibly the last) should have a corresponding assistant response.
+    // This catches silent-drop bugs regardless of content block format.
+    const turns = 10;
+    const lines: string[] = [];
+    for (let i = 0; i < turns; i++) {
+      const userId = `user-${i}`;
+      const assistantId = `asst-${i}`;
+      const parentId = i === 0 ? null : `asst-${i - 1}`;
+
+      lines.push(JSON.stringify({
+        type: "message",
+        id: userId,
+        parentId,
+        timestamp: `2026-01-01T00:00:${String(i * 2).padStart(2, "0")}Z`,
+        message: { role: "user", content: `Question ${i}` },
+      }));
+      lines.push(JSON.stringify({
+        type: "message",
+        id: assistantId,
+        parentId: userId,
+        timestamp: `2026-01-01T00:00:${String(i * 2 + 1).padStart(2, "0")}Z`,
+        message: {
+          role: "assistant",
+          // Alternate between text and output_text to cover both formats
+          content: [{ type: i % 2 === 0 ? "text" : "output_text", text: `Answer ${i}` }],
+        },
+      }));
+    }
+
+    const events = parseJsonl(lines.join("\n"));
+    const userEvents = events.filter((e) => e.type === "user");
+    const assistantEvents = events.filter((e) => e.type === "assistant");
+
+    expect(userEvents).toHaveLength(turns);
+    expect(assistantEvents).toHaveLength(turns);
+
+    // Every answer should be present
+    for (let i = 0; i < turns; i++) {
+      expect(assistantEvents[i].text).toBe(`Answer ${i}`);
+    }
   });
 
   it("handles empty lines in JSONL gracefully", () => {
