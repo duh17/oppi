@@ -1,62 +1,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Safe-sizing cell
-
-/// UICollectionViewCell subclass that bypasses UIKit's content-view size
-/// assertion entirely.
-///
-/// **The problem:** `UICollectionViewCell.systemLayoutSizeFitting` internally
-/// calls `systemLayoutSizeFitting` on the *UIContentView*, checks the result,
-/// and throws `NSInternalInconsistencyException` if it's non-finite (DBL_MAX).
-/// This happens when a content view's constraints are momentarily ambiguous
-/// (e.g. during initial cell configuration). Overriding `systemLayoutSizeFitting`
-/// on the cell doesn't help because the assertion fires inside UIKit's private
-/// code path *before* calling the cell's method.
-///
-/// **The fix:** Override `preferredLayoutAttributesFittingAttributes:` — the
-/// method that UIKit calls to get self-sizing dimensions. This is the CALLER
-/// of `systemLayoutSizeFitting`. By overriding it, we compute the size
-/// ourselves (via `contentView.systemLayoutSizeFitting`) and clamp the result,
-/// completely bypassing the assertion path in `UICollectionViewCell`.
-private final class SafeSizingCell: UICollectionViewCell {
-    private static let maxValidHeight: CGFloat = 10_000
-    private static let fallbackHeight: CGFloat = 44
-
-    override func preferredLayoutAttributesFitting(
-        _ layoutAttributes: UICollectionViewLayoutAttributes
-    ) -> UICollectionViewLayoutAttributes {
-        guard let attributes = layoutAttributes.copy() as? UICollectionViewLayoutAttributes else {
-            return layoutAttributes
-        }
-
-        let targetSize = CGSize(
-            width: attributes.size.width,
-            height: UIView.layoutFittingCompressedSize.height
-        )
-
-        // Size the cell's contentView directly. This triggers auto layout on
-        // all subviews (including the UIContentView) without going through
-        // UICollectionViewCell's assertion-guarded systemLayoutSizeFitting.
-        let fitted = contentView.systemLayoutSizeFitting(
-            targetSize,
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .defaultLow
-        )
-
-        let width = attributes.size.width
-        let height: CGFloat
-        if fitted.height.isFinite && fitted.height > 0 {
-            height = min(fitted.height, Self.maxValidHeight)
-        } else {
-            height = Self.fallbackHeight
-        }
-
-        attributes.size = CGSize(width: width, height: height)
-        return attributes
-    }
-}
-
 // swiftlint:disable type_body_length
 struct ChatTimelineScrollCommand: Equatable {
     enum Anchor: Equatable {
@@ -201,51 +145,51 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     final class Controller: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
         // MARK: - Properties + Init
 
-        private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
+        var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
-        private var hiddenCount = 0
-        private var renderWindowStep = 0
-        private var streamingAssistantID: String?
-        private var sessionId = ""
-        private var workspaceId: String?
-        private var onFork: ((String) -> Void)?
+        var hiddenCount = 0
+        var renderWindowStep = 0
+        var streamingAssistantID: String?
+        var sessionId = ""
+        var workspaceId: String?
+        var onFork: ((String) -> Void)?
         private var onOpenFile: ((FileToOpen) -> Void)?
-        private var onShowEarlier: (() -> Void)?
+        var onShowEarlier: (() -> Void)?
 
-        private weak var scrollController: ChatScrollController?
+        weak var scrollController: ChatScrollController?
 
-        private var reducer: TimelineReducer?
-        private var toolOutputStore: ToolOutputStore?
-        private var toolArgsStore: ToolArgsStore?
-        private var toolSegmentStore: ToolSegmentStore?
-        private var toolDetailsStore: ToolDetailsStore?
-        private var connection: ServerConnection?
-        private var audioPlayer: AudioPlayerService?
-        private weak var collectionView: UICollectionView?
-        private var theme: AppTheme = .dark
-        private var currentThemeID: ThemeID = .dark
+        var reducer: TimelineReducer?
+        var toolOutputStore: ToolOutputStore?
+        var toolArgsStore: ToolArgsStore?
+        var toolSegmentStore: ToolSegmentStore?
+        var toolDetailsStore: ToolDetailsStore?
+        var connection: ServerConnection?
+        var audioPlayer: AudioPlayerService?
+        weak var collectionView: UICollectionView?
+        var theme: AppTheme = .dark
+        var currentThemeID: ThemeID = .dark
 
         /// Near-bottom hysteresis to avoid follow/unfollow flicker while
         /// streaming text grows the tail between throttled auto-scroll pulses.
-        private let nearBottomEnterThreshold: CGFloat = 120
-        private let nearBottomExitThreshold: CGFloat = 200
-        private let detachedProgrammaticArmMinDelta: CGFloat = 120
-        private let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
+        let nearBottomEnterThreshold: CGFloat = 120
+        let nearBottomExitThreshold: CGFloat = 200
+        let detachedProgrammaticArmMinDelta: CGFloat = 120
+        let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
-        private var currentIDs: [String] = []
-        private var currentItemByID: [String: ChatItem] = [:]
+        var currentIDs: [String] = []
+        var currentItemByID: [String: ChatItem] = [:]
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
         private var previousThemeID: ThemeID?
         private var lastHandledScrollCommandNonce = 0
-        private var lastObservedContentOffsetY: CGFloat?
-        private var lastObservedContentHeight: CGFloat?
-        private var detachedProgrammaticTargetOffsetY: CGFloat?
-        private var isApplyingDetachedProgrammaticCorrection = false
-        private var isTimelineBusy = false
-        private var lastDistanceFromBottom: CGFloat = 0
-        private let toolOutputLoader = ExpandedToolOutputLoader()
+        var lastObservedContentOffsetY: CGFloat?
+        var lastObservedContentHeight: CGFloat?
+        var detachedProgrammaticTargetOffsetY: CGFloat?
+        var isApplyingDetachedProgrammaticCorrection = false
+        var isTimelineBusy = false
+        var lastDistanceFromBottom: CGFloat = 0
+        let toolOutputLoader = ExpandedToolOutputLoader()
 
         #if DEBUG
             var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
@@ -309,338 +253,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
         }
 
-        // MARK: - Data Source Configuration
-
-        func configureDataSource(collectionView: UICollectionView) {
-            self.collectionView = collectionView
-            collectionView.delegate = self
-
-            let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "assistant"
-                ) { item in
-                    self?.assistantRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let userRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "user"
-                ) { item in
-                    self?.userRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let thinkingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "thinking"
-                ) { item in
-                    self?.thinkingRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let toolRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "tool"
-                ) { item in
-                    self?.toolRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let audioRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "audio"
-                ) { item in
-                    self?.audioRowConfiguration(item: item)
-                }
-            }
-
-            let permissionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "permission"
-                ) { item in
-                    self?.permissionRowConfiguration(item: item)
-                }
-            }
-
-            let systemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "system"
-                ) { item in
-                    self?.systemEventRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let compactionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "compaction"
-                ) { item in
-                    self?.systemEventRowConfiguration(itemID: itemID, item: item)
-                }
-            }
-
-            let errorRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-                self?.configureNativeCell(
-                    cell,
-                    itemID: itemID,
-                    rowLabel: "error"
-                ) { item in
-                    self?.errorRowConfiguration(item: item)
-                }
-            }
-
-            let missingItemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
-                self?.applyNativeFrictionRow(
-                    to: cell,
-                    title: "⚠️ Timeline row unavailable",
-                    detail: "Timeline item missing from snapshot.",
-                    rowType: "placeholder"
-                )
-            }
-
-            let loadMoreRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
-                let configureStartNs = ChatTimelinePerf.timestampNs()
-                guard let self else {
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: "load_more",
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
-                    return
-                }
-
-                cell.contentConfiguration = LoadMoreTimelineRowConfiguration(
-                    hiddenCount: self.hiddenCount,
-                    renderWindowStep: self.renderWindowStep,
-                    onTap: { [weak self] in self?.onShowEarlier?() },
-                    themeID: self.currentThemeID
-                )
-                cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: "load_more",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
-            }
-
-            let workingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
-                let configureStartNs = ChatTimelinePerf.timestampNs()
-                guard let self else {
-                    ChatTimelinePerf.recordCellConfigure(
-                        rowType: "working_indicator",
-                        durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                    )
-                    return
-                }
-
-                cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(themeID: self.currentThemeID)
-                cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: "working_indicator",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
-            }
-
-            let registrations = TimelineCellFactory.Registrations(
-                assistant: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: assistantRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                user: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: userRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                thinking: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: thinkingRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                tool: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: toolRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                audio: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: audioRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                permission: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: permissionRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                system: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: systemRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                compaction: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: compactionRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                error: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: errorRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                missingItem: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: missingItemRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                loadMore: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: loadMoreRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                },
-                working: { collectionView, indexPath, itemID in
-                    collectionView.dequeueConfiguredReusableCell(
-                        using: workingRegistration,
-                        for: indexPath,
-                        item: itemID
-                    )
-                }
-            )
-
-            dataSource = UICollectionViewDiffableDataSource<Int, String>(
-                collectionView: collectionView
-            ) { [weak self] collectionView, indexPath, itemID in
-                TimelineCellFactory.dequeueCell(
-                    collectionView: collectionView,
-                    indexPath: indexPath,
-                    itemID: itemID,
-                    itemByID: self?.currentItemByID ?? [:],
-                    registrations: registrations,
-                    isCompactionMessage: { message in
-                        Self.compactionPresentation(from: message) != nil
-                    }
-                )
-            }
-
-        }
-
-        private func configureNativeCell(
-            _ cell: SafeSizingCell,
-            itemID: String,
-            rowLabel: String,
-            builder: (ChatItem) -> (any UIContentConfiguration)?
-        ) {
-            let configureStartNs = ChatTimelinePerf.timestampNs()
-
-            guard let item = currentItemByID[itemID],
-                  toolOutputStore != nil,
-                  reducer != nil,
-                  toolArgsStore != nil,
-                  toolDetailsStore != nil,
-                  connection != nil,
-                  audioPlayer != nil
-            else {
-                applyNativeFrictionRow(
-                    to: cell,
-                    title: "⚠️ Timeline row unavailable",
-                    detail: "Native timeline dependencies missing.",
-                    rowType: "placeholder",
-                    startNs: configureStartNs
-                )
-                return
-            }
-
-            guard let nativeConfig = builder(item) else {
-                Self.reportNativeRendererGap("Native \(rowLabel) configuration missing.")
-                applyNativeFrictionRow(
-                    to: cell,
-                    title: "⚠️ Native \(rowLabel) row unavailable",
-                    detail: "Native \(rowLabel) renderer gap.",
-                    rowType: "\(rowLabel)_native_failsafe",
-                    startNs: configureStartNs
-                )
-                return
-            }
-
-            applyNativeRow(
-                to: cell,
-                configuration: nativeConfig,
-                rowType: "\(rowLabel)_native",
-                startNs: configureStartNs
-            )
-        }
-
-        private func applyNativeRow(
-            to cell: SafeSizingCell,
-            configuration: any UIContentConfiguration,
-            rowType: String,
-            startNs: UInt64
-        ) {
-            cell.contentConfiguration = configuration
-            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-            ChatTimelinePerf.recordCellConfigure(
-                rowType: rowType,
-                durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
-            )
-        }
-
-        private func applyNativeFrictionRow(
-            to cell: SafeSizingCell,
-            title: String,
-            detail: String,
-            rowType: String,
-            startNs: UInt64 = ChatTimelinePerf.timestampNs()
-        ) {
-            var fallback = UIListContentConfiguration.subtitleCell()
-            fallback.text = title
-            fallback.secondaryText = detail
-            fallback.textProperties.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
-            fallback.textProperties.color = UIColor(Color.themeOrange)
-            fallback.secondaryTextProperties.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
-            cell.contentConfiguration = fallback
-            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-            ChatTimelinePerf.recordCellConfigure(
-                rowType: rowType,
-                durationMs: ChatTimelinePerf.elapsedMs(since: startNs)
-            )
-        }
-
         // MARK: - Diffing
 
         static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
@@ -680,99 +292,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 currentSessionID: currentSessionID,
                 itemExists: itemExists
             )
-        }
-
-        private static func reportNativeRendererGap(_ message: String) {
-            #if DEBUG
-                NSLog("⚠️ [TimelineNativeGap] %@", message)
-            #endif
-        }
-
-        // MARK: - Compaction
-
-        struct CompactionPresentation: Equatable {
-            enum Phase: Equatable {
-                case inProgress
-                case completed
-                case retrying
-                case cancelled
-            }
-
-            let phase: Phase
-            let detail: String?
-            let tokensBefore: Int?
-
-            var canExpand: Bool {
-                guard let detail else { return false }
-                let cleaned = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !cleaned.isEmpty else { return false }
-                return cleaned.count > 140 || cleaned.contains("\n")
-            }
-        }
-
-        static func compactionPresentation(from rawMessage: String) -> CompactionPresentation? {
-            let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !message.isEmpty else { return nil }
-
-            if message.hasPrefix("Context overflow — compacting")
-                || message.hasPrefix("Compacting context") {
-                return CompactionPresentation(phase: .inProgress, detail: nil, tokensBefore: nil)
-            }
-
-            if message.hasPrefix("Compaction cancelled") {
-                return CompactionPresentation(phase: .cancelled, detail: nil, tokensBefore: nil)
-            }
-
-            if message.hasPrefix("Context compacted — retrying") {
-                return CompactionPresentation(phase: .retrying, detail: nil, tokensBefore: nil)
-            }
-
-            guard message.hasPrefix("Context compacted") else {
-                return nil
-            }
-
-            let detail = compactionDetail(from: message)
-            let tokensBefore = compactionTokensBefore(from: message)
-
-            return CompactionPresentation(
-                phase: .completed,
-                detail: detail,
-                tokensBefore: tokensBefore
-            )
-        }
-
-        private static func compactionDetail(from message: String) -> String? {
-            guard let separator = message.firstIndex(of: ":") else {
-                return nil
-            }
-
-            let start = message.index(after: separator)
-            let detail = message[start...].trimmingCharacters(in: .whitespacesAndNewlines)
-            return detail.isEmpty ? nil : detail
-        }
-
-        private static func compactionTokensBefore(from message: String) -> Int? {
-            guard let compactedRange = message.range(of: "Context compacted") else {
-                return nil
-            }
-
-            let suffix = message[compactedRange.upperBound...]
-            guard let openParen = suffix.firstIndex(of: "("),
-                  let closeParen = suffix[openParen...].firstIndex(of: ")") else {
-                return nil
-            }
-
-            let inside = suffix[suffix.index(after: openParen)..<closeParen]
-            guard String(inside).localizedCaseInsensitiveContains("token") else {
-                return nil
-            }
-
-            let digits = inside.filter { $0.isNumber }
-            guard !digits.isEmpty else {
-                return nil
-            }
-
-            return Int(String(digits))
         }
 
         // MARK: - Audio State Observation
@@ -976,138 +495,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
         }
 
-        // MARK: - UIScrollViewDelegate
-
-        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            scrollController?.setUserInteracting(true)
-            lastObservedContentOffsetY = scrollView.contentOffset.y
-        }
-
-        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            if !decelerate {
-                scrollController?.setUserInteracting(false)
-            }
-        }
-
-        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            scrollController?.setUserInteracting(false)
-        }
-
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard let collectionView = scrollView as? UICollectionView else { return }
-
-            defer {
-                lastObservedContentHeight = scrollView.contentSize.height
-            }
-
-            let previousContentHeight = lastObservedContentHeight ?? scrollView.contentSize.height
-            let contentHeightDelta = scrollView.contentSize.height - previousContentHeight
-
-            // Always track distance for hint visibility, even when
-            // updateScrollState is skipped.
-            updateLastDistanceFromBottom(scrollView)
-
-            let isUserDriven = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
-            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
-            let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
-            let deltaY = scrollView.contentOffset.y - previousOffset
-
-            if isApplyingDetachedProgrammaticCorrection {
-                lastObservedContentOffsetY = scrollView.contentOffset.y
-                return
-            }
-
-            if isUserDriven {
-                if deltaY < -0.5 {
-                    // User is scrolling up: detach and skip position-based
-                    // re-evaluation so updateScrollState cannot immediately
-                    // re-attach within the same callback.
-                    scrollController?.detachFromBottomForUserScroll()
-                    detachedProgrammaticTargetOffsetY = nil
-                    lastObservedContentOffsetY = scrollView.contentOffset.y
-                    updateDetachedStreamingHintVisibility()
-                    return
-                }
-
-                detachedProgrammaticTargetOffsetY = nil
-            } else if !alreadyAttached,
-                      !(collectionView is AnchoredCollectionView) {
-                // Detached + programmatic offset changes can trigger UIKit
-                // offset jumps while self-sizing settles. For detached users,
-                // preserve viewport stability across large passive jumps caused
-                // by busy timeline growth (append/reflow), but still allow
-                // intentional programmatic navigation jumps.
-                if isTimelineBusy,
-                   abs(contentHeightDelta) > 0.5,
-                   abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
-                    isApplyingDetachedProgrammaticCorrection = true
-                    scrollView.contentOffset.y = previousOffset
-                    isApplyingDetachedProgrammaticCorrection = false
-                    detachedProgrammaticTargetOffsetY = nil
-                    lastObservedContentOffsetY = previousOffset
-                    updateLastDistanceFromBottom(scrollView)
-                    updateDetachedStreamingHintVisibility()
-                    return
-                }
-
-                // Keep the large jump target and ignore a single small
-                // follow-up snap (estimated -> actual heights).
-                if let targetOffsetY = detachedProgrammaticTargetOffsetY,
-                   abs(deltaY) > 0.5,
-                   abs(deltaY) < detachedProgrammaticCorrectionMaxDelta {
-                    isApplyingDetachedProgrammaticCorrection = true
-                    scrollView.contentOffset.y = targetOffsetY
-                    isApplyingDetachedProgrammaticCorrection = false
-                    detachedProgrammaticTargetOffsetY = nil
-                    lastObservedContentOffsetY = targetOffsetY
-                    updateLastDistanceFromBottom(scrollView)
-                    updateDetachedStreamingHintVisibility()
-                    return
-                }
-
-                if abs(deltaY) >= detachedProgrammaticArmMinDelta {
-                    detachedProgrammaticTargetOffsetY = scrollView.contentOffset.y
-                } else if abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
-                    detachedProgrammaticTargetOffsetY = nil
-                }
-            } else {
-                detachedProgrammaticTargetOffsetY = nil
-            }
-
-            if !isUserDriven,
-               !isTimelineBusy,
-               streamingAssistantID == nil,
-               alreadyAttached,
-               contentHeightDelta > 0.5,
-               abs(deltaY) < 2 {
-                let insets = scrollView.adjustedContentInset
-                let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
-                if visibleHeight > 0 {
-                    // Keep the viewport pinned to the bottom for passive,
-                    // idle layout growth (e.g. post-stream markdown reflow).
-                    let desiredBottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
-                    if abs(desiredBottomOffsetY - scrollView.contentOffset.y) > 0.5 {
-                        scrollView.contentOffset.y = desiredBottomOffsetY
-                        lastDistanceFromBottom = 0
-                    }
-                }
-            }
-
-            lastObservedContentOffsetY = scrollView.contentOffset.y
-
-            // For user-driven scrolls (scrolling back down toward bottom),
-            // always update state so re-attach can happen.
-            //
-            // For programmatic offset changes (layout invalidation during
-            // snapshot apply), only update when already attached. This prevents
-            // a detached user from being re-attached by a layout-triggered
-            // contentOffset adjustment.
-            if isUserDriven || alreadyAttached {
-                updateScrollState(collectionView)
-            }
-            updateDetachedStreamingHintVisibility()
-        }
-
         // MARK: - UICollectionViewDelegate
 
         @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
@@ -1213,172 +600,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 }
             }
             return nil
-        }
-
-        // MARK: - Row Configuration Builders
-
-        private func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
-            guard case .assistantMessage(_, let text, _) = item else { return nil }
-
-            let isStreaming = itemID == streamingAssistantID
-
-            // Unified native markdown renderer — handles all content (plain
-            // text, rich markdown, code blocks, tables) via
-            // AssistantMarkdownContentView.
-            return AssistantTimelineRowConfiguration(
-                text: text,
-                isStreaming: isStreaming,
-                canFork: false,
-                onFork: nil,
-                themeID: currentThemeID
-            )
-        }
-
-        private func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
-            guard case .userMessage(_, let text, let images, _) = item else { return nil }
-
-            let canFork = UUID(uuidString: itemID) == nil && onFork != nil
-            let forkAction: (() -> Void)?
-            if canFork {
-                forkAction = { [weak self] in
-                    self?.onFork?(itemID)
-                }
-            } else {
-                forkAction = nil
-            }
-
-            // Unified native user row — handles both text-only and image messages.
-            return UserTimelineRowConfiguration(
-                text: text,
-                images: images,
-                canFork: canFork,
-                onFork: forkAction,
-                themeID: currentThemeID
-            )
-        }
-
-        private func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
-            guard case .thinking(_, let preview, _, let isDone) = item else { return nil }
-
-            return ThinkingTimelineRowConfiguration(
-                isDone: isDone,
-                previewText: preview,
-                fullText: toolOutputStore?.fullOutput(for: itemID),
-                themeID: currentThemeID
-            )
-        }
-
-        private func audioRowConfiguration(item: ChatItem) -> AudioClipTimelineRowConfiguration? {
-            guard case .audioClip(let id, let title, let fileURL, _) = item,
-                  let audioPlayer else {
-                return nil
-            }
-
-            return AudioClipTimelineRowConfiguration(
-                id: id,
-                title: title,
-                fileURL: fileURL,
-                audioPlayer: audioPlayer,
-                themeID: currentThemeID
-            )
-        }
-
-        private func permissionRowConfiguration(item: ChatItem) -> PermissionTimelineRowConfiguration? {
-            switch item {
-            case .permission(let request):
-                return PermissionTimelineRowConfiguration(
-                    outcome: .expired,
-                    tool: request.tool,
-                    summary: request.displaySummary,
-                    themeID: currentThemeID
-                )
-
-            case .permissionResolved(_, let outcome, let tool, let summary):
-                return PermissionTimelineRowConfiguration(
-                    outcome: outcome,
-                    tool: tool,
-                    summary: summary,
-                    themeID: currentThemeID
-                )
-
-            default:
-                return nil
-            }
-        }
-
-        private func systemEventRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
-            guard case .systemEvent(_, let message) = item else { return nil }
-
-            if let compaction = Self.compactionPresentation(from: message) {
-                let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
-                let onToggleExpand: (() -> Void)?
-                if compaction.canExpand {
-                    onToggleExpand = { [weak self] in
-                        self?.toggleCompactionExpansion(itemID: itemID)
-                    }
-                } else {
-                    onToggleExpand = nil
-                }
-
-                return CompactionTimelineRowConfiguration(
-                    presentation: compaction,
-                    isExpanded: isExpanded,
-                    themeID: currentThemeID,
-                    onToggleExpand: onToggleExpand
-                )
-            }
-
-            return SystemTimelineRowConfiguration(message: message, themeID: currentThemeID)
-        }
-
-        private func toggleCompactionExpansion(itemID: String) {
-            guard let reducer,
-                  let collectionView,
-                  let item = currentItemByID[itemID],
-                  case .systemEvent(_, let message) = item,
-                  let compaction = Self.compactionPresentation(from: message),
-                  compaction.canExpand else {
-                return
-            }
-
-            if reducer.expandedItemIDs.contains(itemID) {
-                reducer.expandedItemIDs.remove(itemID)
-            } else {
-                reducer.expandedItemIDs.insert(itemID)
-            }
-
-            reconfigureItems([itemID], in: collectionView)
-        }
-
-        private func errorRowConfiguration(item: ChatItem) -> ErrorTimelineRowConfiguration? {
-            guard case .error(_, let message) = item else { return nil }
-            return ErrorTimelineRowConfiguration(message: message, themeID: currentThemeID)
-        }
-
-        func toolRowConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
-            guard case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
-                return nil
-            }
-
-            let context = ToolPresentationBuilder.Context(
-                args: toolArgsStore?.args(for: itemID),
-                details: toolDetailsStore?.details(for: itemID),
-                expandedItemIDs: reducer?.expandedItemIDs ?? [],
-                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
-                isLoadingOutput: toolOutputLoader.isLoading(itemID),
-                callSegments: toolSegmentStore?.callSegments(for: itemID),
-                resultSegments: toolSegmentStore?.resultSegments(for: itemID)
-            )
-
-            return ToolPresentationBuilder.build(
-                itemID: itemID,
-                tool: tool,
-                argsSummary: argsSummary,
-                outputPreview: outputPreview,
-                isError: isError,
-                isDone: isDone,
-                context: context
-            )
         }
 
         // MARK: - Tool Output Loading
@@ -1513,7 +734,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             reconfigureItems([itemID], in: collectionView)
         }
 
-        private func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
+        func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
             TimelineSnapshotApplier.reconfigureItems(
                 itemIDs,
                 dataSource: dataSource,
@@ -1544,37 +765,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         /// Minimum distance from bottom before showing the jump-to-bottom
         /// button. One viewport height prevents flash from bounce/small scrolls.
-        private let jumpToBottomMinDistance: CGFloat = 500
-
-        private func updateLastDistanceFromBottom(_ scrollView: UIScrollView) {
-            let insets = scrollView.adjustedContentInset
-            let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
-            guard visibleHeight > 0 else { return }
-
-            let bottomY = scrollView.contentOffset.y + insets.top + visibleHeight
-            lastDistanceFromBottom = max(0, scrollView.contentSize.height - bottomY)
-        }
-
-        private func updateDetachedStreamingHintVisibility() {
-            TimelineScrollCoordinator.updateDetachedStreamingHintVisibility(
-                scrollController: scrollController,
-                streamingAssistantID: streamingAssistantID,
-                distanceFromBottom: lastDistanceFromBottom,
-                jumpToBottomMinDistance: jumpToBottomMinDistance
-            )
-        }
-
-        private func updateScrollState(_ collectionView: UICollectionView) {
-            if let distanceFromBottom = TimelineScrollCoordinator.updateScrollState(
-                collectionView: collectionView,
-                scrollController: scrollController,
-                currentIDs: currentIDs,
-                nearBottomEnterThreshold: nearBottomEnterThreshold,
-                nearBottomExitThreshold: nearBottomExitThreshold
-            ) {
-                lastDistanceFromBottom = distanceFromBottom
-            }
-        }
+        let jumpToBottomMinDistance: CGFloat = 500
     }
 }
 
