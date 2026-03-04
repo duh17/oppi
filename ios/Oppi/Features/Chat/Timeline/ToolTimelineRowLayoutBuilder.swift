@@ -89,6 +89,9 @@ enum ToolTimelineRowLayoutBuilder {
         let outputViewportHeight = outputContainer.heightAnchor.constraint(equalToConstant: minOutputViewportHeight)
         let expandedViewportHeight = expandedContainer.heightAnchor.constraint(equalToConstant: minDiffViewportHeight)
 
+        let expandButtonInset: CGFloat = 10
+        let expandButtonSize: CGFloat = 36
+
         let all: [NSLayoutConstraint] = [
             borderView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             borderView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
@@ -163,11 +166,10 @@ enum ToolTimelineRowLayoutBuilder {
             imagePreviewHeight,
             imagePreviewImageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
 
-            // Position constraints for expandFloatingButton are managed dynamically
-            // by reparentExpandFloatingButton() since the button moves between
-            // expandedContainer and outputContainer depending on tool type.
-            expandFloatingButton.widthAnchor.constraint(equalToConstant: 36),
-            expandFloatingButton.heightAnchor.constraint(equalToConstant: 36),
+            expandFloatingButton.trailingAnchor.constraint(equalTo: expandedContainer.trailingAnchor, constant: -expandButtonInset),
+            expandFloatingButton.bottomAnchor.constraint(equalTo: expandedContainer.bottomAnchor, constant: -expandButtonInset),
+            expandFloatingButton.widthAnchor.constraint(equalToConstant: expandButtonSize),
+            expandFloatingButton.heightAnchor.constraint(equalToConstant: expandButtonSize),
         ]
 
         return Constraints(

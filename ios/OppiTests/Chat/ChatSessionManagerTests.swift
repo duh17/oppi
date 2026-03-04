@@ -723,25 +723,24 @@ struct ChatSessionManagerTests {
         let manager = ChatSessionManager(sessionId: sessionId)
         let streams = ScriptedStreamFactory()
 
+        // Seed cache so loadedFromCacheAtConnect is true — deferral only applies
+        // when the reducer was loaded from a meaningful source (cache), not from
+        // live stream items alone.
+        await TimelineCache.shared.saveTrace(sessionId, events: [
+            makeTraceEvent(
+                id: "cached-old",
+                text: "cached content",
+                timestamp: "2026-02-10T00:00:00Z"
+            ),
+        ])
+
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._fetchSessionTraceForTesting = { _, _ in
             try await Task.sleep(for: .milliseconds(120))
             return (
                 makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
                 [
-                    TraceEvent(
-                        id: "trace-assistant",
-                        type: .assistant,
-                        timestamp: "2026-02-11T00:00:00Z",
-                        text: "TRACE_RELOAD_MARKER",
-                        tool: nil,
-                        args: nil,
-                        output: nil,
-                        toolCallId: nil,
-                        toolName: nil,
-                        isError: nil,
-                        thinking: nil
-                    ),
+                    makeTraceEvent(id: "trace-assistant", text: "TRACE_RELOAD_MARKER"),
                 ]
             )
         }
@@ -794,6 +793,7 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
+        await TimelineCache.shared.removeTrace(sessionId)
     }
 
     @MainActor
@@ -1013,6 +1013,86 @@ struct ChatSessionManagerTests {
         await connectTask.value
     }
 
+    /// Reproduces blank-timeline bug after fresh install.
+    ///
+    /// Scenario: no cache, session is busy, live stream populates a few reducer
+    /// items before the history trace fetch completes. The old code deferred the
+    /// trace rebuild because `session.status == .busy && !reducer.items.isEmpty`,
+    /// leaving only the last streamed message visible.
+    ///
+    /// Fix: only defer when the reducer was previously loaded from cache — live
+    /// stream items alone are not a valid reason to skip history.
+    @MainActor
+    @Test func noCacheBusySessionAppliesHistoryDespiteLiveStreamItems() async {
+        let sessionId = "no-cache-busy-\(UUID().uuidString)"
+        let workspaceId = "w-fresh"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+
+        // Trace fetch returns busy session with full history.
+        // Add a small delay so live stream items arrive first.
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(150))
+            return (
+                makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy),
+                [
+                    makeTraceEvent(
+                        id: "trace-user-1",
+                        type: .user,
+                        text: "HISTORY_USER_MSG"
+                    ),
+                    makeTraceEvent(
+                        id: "trace-assistant-1",
+                        text: "HISTORY_ASSISTANT_MSG",
+                        timestamp: "2026-02-11T00:00:01Z"
+                    ),
+                ]
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let reducer = connection.reducer
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
+
+        // No cache → scheduleHistoryReload fires before WS
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, reducer: reducer, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+
+        // Deliver .connected then live stream events (before trace fetch completes)
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)))
+        streams.yield(index: 0, message: .agentStart)
+        streams.yield(index: 0, message: .thinkingDelta(delta: "live thinking"))
+
+        // Wait for reducer to have live items
+        #expect(await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { !reducer.items.isEmpty }
+        })
+
+        // Wait for history trace fetch to complete (150ms delay + margin)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // History MUST be applied despite busy status + non-empty reducer,
+        // because there was no cache — only live stream items.
+        let hasHistoryContent = reducer.items.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("HISTORY_ASSISTANT_MSG")
+            }
+            return false
+        }
+        #expect(hasHistoryContent, "Fresh install with busy session must apply history trace, not defer it")
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
     @MainActor
     @Test func cleanupIsSafe() {
         let manager = ChatSessionManager(sessionId: "s1")
@@ -1115,12 +1195,17 @@ struct ChatSessionManagerTests {
 
     // MARK: - Helpers
 
-    private func makeTraceEvent(id: String) -> TraceEvent {
+    private func makeTraceEvent(
+        id: String,
+        type: TraceEventType = .assistant,
+        text: String = "offline snapshot",
+        timestamp: String = "2026-02-11T00:00:00Z"
+    ) -> TraceEvent {
         TraceEvent(
             id: id,
-            type: .assistant,
-            timestamp: "2026-02-11T00:00:00Z",
-            text: "offline snapshot",
+            type: type,
+            timestamp: timestamp,
+            text: text,
             tool: nil,
             args: nil,
             output: nil,
