@@ -208,11 +208,11 @@ export class SkillRegistry extends EventEmitter {
 
     if (added.length || removed.length || modified.length) {
       console.log("[skills] Catalog changed", {
-          added: added.length,
-          removed: removed.length,
-          modified: modified.length,
-          total: this.skills.size,
-        });
+        added: added.length,
+        removed: removed.length,
+        modified: modified.length,
+        total: this.skills.size,
+      });
       this.emit("skills:changed", event);
     }
 
