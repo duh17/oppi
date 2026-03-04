@@ -12,7 +12,6 @@ import type { SessionManager } from "./sessions.js";
 import { buildPermissionMessage, type GateServer, type PendingDecision } from "./gate.js";
 import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
-import { ts } from "./log-utils.js";
 
 // ─── Types ───
 

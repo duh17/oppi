@@ -1,4 +1,3 @@
-import { ts } from "./log-utils.js";
 import { appendSessionMessage } from "./session-protocol.js";
 import type { TurnSessionState } from "./session-turns.js";
 import type { Session, TurnCommand } from "./types.js";
