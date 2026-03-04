@@ -39,7 +39,7 @@ enum ToolTimelineRowExpandedRenderer {
             let signature = ToolTimelineRowRenderMetrics.commandSignature(displayCommand: displayCmd)
             if signature != commandRenderSignature {
                 if displayCmd.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
-                    commandLabel.attributedText = ToolRowTextRenderer.shellHighlighted(displayCmd)
+                    commandLabel.attributedText = ToolRowTextRenderer.bashCommandHighlighted(displayCmd)
                 } else {
                     commandLabel.attributedText = nil
                     commandLabel.text = displayCmd

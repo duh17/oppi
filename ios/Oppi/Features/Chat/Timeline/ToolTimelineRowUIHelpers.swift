@@ -75,6 +75,49 @@ enum ToolTimelineRowUIHelpers {
         }
     }
 
+    /// Resolve a language badge string to either an asset catalog image or an SF Symbol.
+    ///
+    /// Prefers custom language icons from the asset catalog (`lang-*`),
+    /// falls back to SF Symbols for languages without a custom icon.
+    static func languageBadgeImage(for badge: String?) -> UIImage? {
+        guard let badge, !badge.isEmpty else {
+            return nil
+        }
+
+        let normalized = badge.lowercased()
+        if normalized.contains("⚠︎media") || normalized.contains("media") {
+            return UIImage(systemName: "exclamationmark.triangle")
+        }
+
+        // Check for a custom asset catalog icon first (lang-javascript, lang-python, etc.)
+        let assetMap: [String: String] = [
+            "javascript": "lang-nodejs",
+            "typescript": "lang-typescript",
+            "python": "lang-python",
+            "ruby": "lang-ruby",
+            "go": "lang-go",
+            "rust": "lang-rust",
+            "swift": "lang-swift",
+            "zig": "lang-zig",
+            "markdown": "lang-markdown",
+        ]
+        if let assetName = assetMap[normalized],
+           let image = UIImage(named: assetName) {
+            return image
+        }
+
+        // SF Symbol fallbacks
+        if normalized == "swift", let img = UIImage(systemName: "swift") {
+            return img
+        }
+        if normalized == "sql" {
+            return UIImage(systemName: "cylinder")
+        }
+
+        return UIImage(systemName: genericLanguageBadgeSymbolName)
+    }
+
+    /// Legacy convenience — returns an SF Symbol name only (for tests).
     static func languageBadgeSymbolName(for badge: String?) -> String? {
         guard let badge, !badge.isEmpty else {
             return nil
