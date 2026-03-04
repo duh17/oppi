@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  PLOT_SPEC_HEIGHT_MAX,
+  PLOT_SPEC_HEIGHT_MIN,
   buildFallbackSummary,
   executePlotTool,
   normalizeForMobile,
 } from "../experiments/extensions/plot-extension.js";
+import { CHART_HEIGHT_MAX, CHART_HEIGHT_MIN } from "../src/visual-schema.js";
 
 describe("plot extension mobile normalization", () => {
+  it("keeps extension and sanitizer height caps aligned", () => {
+    expect(PLOT_SPEC_HEIGHT_MIN).toBe(CHART_HEIGHT_MIN);
+    expect(PLOT_SPEC_HEIGHT_MAX).toBe(CHART_HEIGHT_MAX);
+    expect(PLOT_SPEC_HEIGHT_MAX).toBe(480);
+  });
+
   it("enables horizontal scroll defaults for dense sequential domains", () => {
     const spec = {
       dataset: {

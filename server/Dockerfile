@@ -42,6 +42,6 @@ ENV PI_AGENT_SEED_DIR=/seed/pi-agent
 ENV PI_AGENT_SYNC_MODE=copy-once
 ENV SEARXNG_URL=http://host.docker.internal:8888
 
-EXPOSE 7749
+EXPOSE 7750
 
 ENTRYPOINT ["/usr/local/bin/oppi-entrypoint.sh"]

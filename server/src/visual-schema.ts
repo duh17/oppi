@@ -17,6 +17,9 @@ const MAX_FIELD_NAME_LENGTH = 64;
 const MAX_ROW_STRING_LENGTH = 256;
 const MAX_DATA_URI_LENGTH = 512 * 1024;
 
+export const CHART_HEIGHT_MIN = 120;
+export const CHART_HEIGHT_MAX = 480;
+
 const CHART_MARK_TYPES = new Set(["line", "area", "bar", "point", "rectangle", "rule", "sector"]);
 
 const CHART_INTERPOLATIONS = new Set([
@@ -664,7 +667,7 @@ function sanitizeChartSpec(value: unknown, warnings: string[]): Record<string, u
   }
 
   const height = finiteNumber(record.height);
-  if (height !== undefined && height >= 120 && height <= 640) {
+  if (height !== undefined && height >= CHART_HEIGHT_MIN && height <= CHART_HEIGHT_MAX) {
     spec.height = height;
   }
 

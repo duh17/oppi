@@ -56,7 +56,7 @@
     "telemetry:import:watch": "node ./scripts/manual/telemetry-import-sqlite.mjs --watch",
     "telemetry:grafana:up": "docker compose -f docker-compose.telemetry.yml up -d",
     "telemetry:grafana:down": "docker compose -f docker-compose.telemetry.yml down",
-    "telemetry:grafana:logs": "docker compose -f docker-compose.telemetry.yml logs -f grafana-telemetry",
+    "telemetry:grafana:logs": "docker compose -f docker-compose.telemetry.yml logs -f",
     "tool:gate-client": "tsx ./scripts/manual/gate-client.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",

@@ -9,6 +9,7 @@ from typing import Any
 CORE_METRICS = [
     "chat.timeline_apply_ms",
     "chat.timeline_layout_ms",
+    "chat.cell_configure_ms",
     "chat.inbound_queue_depth",
     "chat.coalescer_flush_events",
     "chat.coalescer_flush_bytes",
@@ -154,6 +155,33 @@ def scorecard(samples: list[dict[str, Any]]) -> str:
         lines.append(
             f"{bucket:7s} {len(values):6d} {fmt(percentile(values, 95)):>7s} {fmt(max(values)):>6s}"
         )
+
+    # Cell configure breakdown by content type
+    cell_configure_groups: dict[str, list[float]] = defaultdict(list)
+    for sample in samples:
+        if sample.get("metric") != "chat.cell_configure_ms":
+            continue
+        value = sample.get("value")
+        if not isinstance(value, (int, float)):
+            continue
+        tags = sample.get("tags")
+        if not isinstance(tags, dict):
+            tags = {}
+        content_type = tags.get("content_type", "collapsed")
+        expanded = tags.get("expanded", "0")
+        key = f"{content_type}({'expanded' if expanded == '1' else 'collapsed'})"
+        cell_configure_groups[key].append(float(value))
+
+    if cell_configure_groups:
+        lines.append("\nCell configure cost by content type")
+        lines.append("content_type             n      p50    p95    max")
+        lines.append("--------------------------------------------------")
+        for key, values in sorted(
+            cell_configure_groups.items(), key=lambda kv: max(kv[1]), reverse=True
+        ):
+            lines.append(
+                f"{key:23s} {len(values):6d} {fmt(percentile(values, 50)):>6s} {fmt(percentile(values, 95)):>6s} {fmt(max(values)):>6s}"
+            )
 
     lines.append("\nTop ws_decode types")
     decode_types = metric_tags.get("chat.ws_decode_ms", {}).get("type", Counter())
