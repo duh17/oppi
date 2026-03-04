@@ -409,11 +409,8 @@ export class WsMessageHandler {
   ): void {
     const command = "get_file_suggestions";
 
-    if (!requestId) {
-      send({ type: "error", error: "get_file_suggestions requires requestId" });
-      return;
-    }
-
+    // requestId is optional in protocol: still return command_result even when
+    // absent so older/broken clients receive a typed response shape.
     const sendResult = (
       payload: Omit<Extract<ServerMessage, { type: "command_result" }>, "type">,
     ): void => {

@@ -44,6 +44,9 @@ export interface StreamContext {
 /** Default server-side ping interval (seconds). */
 const PING_INTERVAL_MS = 30_000;
 
+/** Typed stream error code: command sent for non-full subscription session. */
+export const STREAM_ERROR_NOT_SUBSCRIBED_FULL = "stream_not_subscribed_full";
+
 /**
  * Start a server-initiated ping/pong keepalive for a WebSocket.
  *
@@ -418,6 +421,7 @@ export class UserStreamMux {
                 send({
                   type: "error",
                   error: `Session ${targetSessionId} is not subscribed at level=full`,
+                  code: STREAM_ERROR_NOT_SUBSCRIBED_FULL,
                   sessionId: targetSessionId,
                 });
                 return;

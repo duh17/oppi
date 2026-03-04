@@ -161,8 +161,10 @@ extension ServerConnection {
             sessionUsageMetricSnapshots.removeValue(forKey: deletedId)
             syncLiveActivityPermissions()
 
-        case .error(let msg, _, let fatal):
-            if msg.contains("is not subscribed at level=full") {
+        case .error(let msg, let code, let fatal):
+            if code == Self.missingFullSubscriptionErrorCode
+                // Backward compatibility for older servers that don't emit code yet.
+                || (code == nil && msg.contains("is not subscribed at level=full")) {
                 triggerFullSubscriptionRecovery(sessionId: sessionId, serverError: msg)
                 break
             }
