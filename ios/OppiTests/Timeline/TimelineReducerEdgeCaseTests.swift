@@ -446,4 +446,75 @@ struct TimelineReducerEdgeCaseTests {
         let error = ChatItem.error(id: "8", message: "x")
         #expect(error.timestamp == nil)
     }
+
+    // MARK: - Duplicate assistant message during streaming turn
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateStreamedTextBeforeToolCall() {
+        // Reproduces: text deltas stream → toolStart finalizes → messageEnd
+        // arrives with same text → should NOT create a second assistant message.
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+        reducer.process(.textDelta(sessionId: "s1", delta: "Let me look at the spans"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash",
+            args: ["command": "cd /sentry && run"]
+        ))
+        // messageEnd for the API message that contained text + tool_use
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Let me look at the spans"
+        ))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(
+            assistantItems.count == 1,
+            "messageEnd should not duplicate the already-finalized assistant text"
+        )
+    }
+
+    @MainActor
+    @Test func messageEndDoesNotDuplicateAcrossMultipleToolRoundtrips() {
+        // Full multi-turn scenario: text → tool → messageEnd → text → tool → messageEnd
+        let reducer = TimelineReducer()
+
+        reducer.process(.agentStart(sessionId: "s1"))
+
+        // First API message: text + tool_use
+        reducer.process(.textDelta(sessionId: "s1", delta: "Let me look at the spans"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t1", tool: "bash",
+            args: ["command": "cmd1"]
+        ))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "Let me look at the spans"))
+
+        // Second API message: text + tool_use
+        reducer.process(.textDelta(sessionId: "s1", delta: "That's fast. Let me find a slow one"))
+        reducer.process(.toolStart(
+            sessionId: "s1", toolEventId: "t2", tool: "bash",
+            args: ["command": "cmd2"]
+        ))
+        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t2", output: "ok\n", isError: false))
+        reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t2"))
+        reducer.process(.messageEnd(sessionId: "s1", content: "That's fast. Let me find a slow one"))
+
+        reducer.process(.agentEnd(sessionId: "s1"))
+
+        let assistantItems = reducer.items.filter {
+            if case .assistantMessage = $0 { return true }
+            return false
+        }
+
+        #expect(
+            assistantItems.count == 2,
+            "Expected exactly 2 assistant messages, got \(assistantItems.count)"
+        )
+    }
 }
