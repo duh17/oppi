@@ -28,6 +28,7 @@ enum SyntaxLanguage: Sendable, Hashable {
     case cpp
     case java
     case kotlin
+    case zig
     case unknown
 
     /// Detect language from file extension or code fence name.
@@ -51,6 +52,7 @@ enum SyntaxLanguage: Sendable, Hashable {
         case "cpp", "cc", "cxx", "hpp", "hxx", "c++": return .cpp
         case "java": return .java
         case "kt", "kts", "kotlin": return .kotlin
+        case "zig": return .zig
         default: return .unknown
         }
     }
@@ -75,13 +77,14 @@ enum SyntaxLanguage: Sendable, Hashable {
         case .cpp: return "C++"
         case .java: return "Java"
         case .kotlin: return "Kotlin"
+        case .zig: return "Zig"
         case .unknown: return "Text"
         }
     }
 
     var lineCommentPrefix: [Character]? {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .css:
+        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css:
             return ["/", "/"]
         case .python, .ruby, .shell, .yaml, .toml:
             return ["#"]
@@ -94,7 +97,7 @@ enum SyntaxLanguage: Sendable, Hashable {
 
     var hasBlockComments: Bool {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .css:
+        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css:
             return true
         default:
             return false
@@ -125,6 +128,8 @@ enum SyntaxLanguage: Sendable, Hashable {
             return javaKeywords
         case .kotlin:
             return kotlinKeywords
+        case .zig:
+            return zigKeywords
         case .html, .css, .json, .yaml, .toml, .unknown:
             return []
         }
@@ -239,6 +244,15 @@ private let kotlinKeywords: Set<String> = [
     "public", "internal", "import", "package", "this", "super",
     "null", "true", "false", "is", "as", "in", "throw", "try",
     "catch", "finally", "suspend",
+]
+
+private let zigKeywords: Set<String> = [
+    "const", "var", "fn", "pub", "return", "if", "else", "while",
+    "for", "switch", "break", "continue", "struct", "enum", "union",
+    "error", "try", "catch", "defer", "errdefer", "comptime",
+    "inline", "export", "extern", "test", "unreachable", "undefined",
+    "null", "true", "false", "orelse", "and", "or", "async", "await",
+    "import", "usingnamespace", "threadlocal", "volatile",
 ]
 
 // MARK: - SyntaxHighlighter

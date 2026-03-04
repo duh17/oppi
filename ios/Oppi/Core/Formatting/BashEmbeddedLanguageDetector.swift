@@ -259,6 +259,7 @@ enum BashEmbeddedLanguageDetector {
         ("swift", .swift),
         ("go", .go),
         ("rustc", .rust),
+        ("zig", .zig),
         ("perl", .unknown), // no perl highlighting yet
         ("sqlite3", .sql),
         ("psql", .sql),

@@ -614,6 +614,42 @@ enum ToolRowTextRenderer {
         )
     }
 
+    /// Highlight a bash command with language-aware embedded code detection.
+    ///
+    /// When the command contains a heredoc (`node - <<'NODE' ...`) or inline
+    /// script flag (`python3 -c '...'`), the embedded code body receives
+    /// language-specific syntax highlighting while the shell portions keep
+    /// bash highlighting. Falls back to plain shell highlighting when no
+    /// embedded language is detected.
+    static func bashCommandHighlighted(_ text: String) -> NSAttributedString {
+        let segments = BashEmbeddedLanguageDetector.detect(text)
+
+        // Fast path: no embedded language detected
+        guard segments.count > 1 else {
+            return shellHighlighted(text)
+        }
+
+        let font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let result = NSMutableAttributedString()
+
+        for segment in segments {
+            switch segment.kind {
+            case .shell:
+                result.append(withMonospaceFont(
+                    NSAttributedString(SyntaxHighlighter.highlight(segment.text, language: .shell)),
+                    font: font
+                ))
+            case .embeddedCode(let language):
+                result.append(withMonospaceFont(
+                    NSAttributedString(SyntaxHighlighter.highlight(segment.text, language: language)),
+                    font: font
+                ))
+            }
+        }
+
+        return result
+    }
+
     static func ansiHighlighted(
         _ text: String,
         baseForeground: Color = .themeFg
