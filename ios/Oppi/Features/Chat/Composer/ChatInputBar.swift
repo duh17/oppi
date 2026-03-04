@@ -30,6 +30,8 @@ struct ChatInputBar<ActionRow: View>: View {
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     let slashCommands: [SlashCommand]
+    let fileSuggestions: [FileSuggestion]
+    let onFileSuggestionQuery: ((String?) -> Void)?
     let onSend: () -> Void
     let onStop: () -> Void
     let onForceStop: () -> Void
@@ -166,6 +168,10 @@ struct ChatInputBar<ActionRow: View>: View {
                 SlashCommandSuggestionList(suggestions: slashSuggestions, onSelect: insertSlashCommand)
             }
 
+            if !fileSuggestions.isEmpty, case .atFile = autocompleteContext {
+                FileSuggestionList(suggestions: fileSuggestions, onSelect: insertFileSuggestion)
+            }
+
             if let sendProgressText {
                 HStack(spacing: 6) {
                     if isSending {
@@ -190,6 +196,7 @@ struct ChatInputBar<ActionRow: View>: View {
             if newValue.isEmpty {
                 inlineVisualLineCount = 1
             }
+            notifyFileSuggestionContext(for: newValue)
         }
         .onChange(of: photoSelection) { _, items in
             loadSelectedPhotos(items)
@@ -627,6 +634,19 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private func insertSlashCommand(_ command: SlashCommand) {
         text = ComposerAutocomplete.insertSlashCommand(command, into: text)
+    }
+
+    private func insertFileSuggestion(_ suggestion: FileSuggestion) {
+        text = ComposerAutocomplete.insertFileSuggestion(suggestion, into: text)
+    }
+
+    private func notifyFileSuggestionContext(for newText: String) {
+        let ctx = ComposerAutocomplete.context(for: newText)
+        if case .atFile(let query) = ctx, !isBusy {
+            onFileSuggestionQuery?(query)
+        } else {
+            onFileSuggestionQuery?(nil)
+        }
     }
 
     private func handlePastedImages(_ images: [UIImage]) {

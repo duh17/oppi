@@ -297,6 +297,10 @@ struct ChatView: View {
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     slashCommands: connection.slashCommands,
+                    fileSuggestions: connection.fileSuggestions,
+                    onFileSuggestionQuery: { query in
+                        updateFileSuggestions(query: query)
+                    },
                     onSend: sendPrompt,
                     onStop: {
                         actionHandler.stop(
@@ -418,6 +422,14 @@ struct ChatView: View {
     }
 
     // MARK: - Actions
+
+    private func updateFileSuggestions(query: String?) {
+        if let query {
+            connection.fetchFileSuggestions(query: query)
+        } else {
+            connection.clearFileSuggestions()
+        }
+    }
 
     private func presentComposer() {
         showComposer = true
@@ -636,6 +648,10 @@ struct ChatView: View {
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,
             slashCommands: connection.slashCommands,
+            fileSuggestions: connection.fileSuggestions,
+            onFileSuggestionQuery: { query in
+                updateFileSuggestions(query: query)
+            },
             session: session,
             thinkingLevel: connection.thinkingLevel,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
