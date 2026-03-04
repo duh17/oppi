@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 
-import { ts } from "./log-utils.js";
 import { getFileSuggestions } from "./file-suggestions.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
 import type {
