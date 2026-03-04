@@ -20,6 +20,7 @@ struct CreateWorkspaceRequest: Encodable {
     let skills: [String]
     var systemPrompt: String?
     var hostMount: String?
+    var gitStatusEnabled: Bool?
     var memoryEnabled: Bool?
     var memoryNamespace: String?
     var extensions: [String]?
