@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable local/structured-log-format */
 /**
  * oppi CLI
  *

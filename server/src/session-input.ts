@@ -91,9 +91,10 @@ export class SessionInputCoordinator {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 
-    console.log(
-      `${ts()} [sdk] prompt → pi (session=${active.session.id}, status=${active.session.status})`,
-    );
+    console.log("[sdk] prompt sent to pi", {
+      sessionId: active.session.id,
+      status: active.session.status,
+    });
 
     this.deps.sendCommand(key, cmd);
     this.deps.markTurnDispatched(key, active, "prompt", turn, opts?.requestId);

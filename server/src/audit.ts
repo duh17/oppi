@@ -145,7 +145,10 @@ export class AuditLog {
 
       const backup = this.path + ".1";
       renameSync(this.path, backup);
-      console.log(`[audit] Rotated log (${(size / 1024 / 1024).toFixed(1)}MB) → ${backup}`);
+      console.log("[audit] Rotated log", {
+        sizeMb: (size / 1024 / 1024).toFixed(1),
+        backup,
+      });
     } catch {
       // Non-critical — rotation failure shouldn't break anything
     }
