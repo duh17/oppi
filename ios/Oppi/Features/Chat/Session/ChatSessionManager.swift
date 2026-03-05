@@ -858,6 +858,61 @@ final class ChatSessionManager {
 
         let catchupStartMs = ChatMetricsService.nowMs()
         let metricSessionId = sessionId
+
+        // Local helper: record catch-up latency with a result tag.
+        let recordCatchupMs = { (result: String) in
+            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .catchupMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: metricSessionId,
+                    tags: ["result": result]
+                )
+            }
+        }
+
+        // ── Re-entry with cache: seed seq, skip ring ──────────────────────
+        //
+        // When entering a chat with cached history (awaitingConnected),
+        // skip the ring-based catch-up entirely. The cached timeline is
+        // already rendered; seeding lastSeenSeq from the subscribe ack's
+        // currentSeq lets live WSS events flow immediately. A background
+        // trace refresh updates any stale cache.
+        //
+        // Ring catch-up is reserved for brief WS drops during active
+        // streaming (.streaming state) where the timeline is already live
+        // and only the incremental delta is needed.
+        if loadedFromCacheAtConnect, case .awaitingConnected = entryState {
+            await connection.sessionStreamCoordinator.seedLastSeenSeq(
+                sessionId: sessionId,
+                value: currentSeq
+            )
+            persistLastSeenSeq(currentSeq)
+
+            log.info("Re-entry with cache: seeded seq=\(currentSeq) for \(self.sessionId), skipping ring catch-up")
+
+            // Clear the flag so the background trace reload is NOT deferred
+            // when the session is actively streaming. The deferral logic in
+            // loadHistory() skips rebuilds when loadedFromCacheAtConnect is
+            // true + session busy + reducer non-empty. But this reload was
+            // explicitly scheduled to fill the gap between stale cache and
+            // live events — deferring it leaves the gap unfilled.
+            loadedFromCacheAtConnect = false
+
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                reducer: reducer,
+                sessionStore: sessionStore,
+                cachedSignature: latestTraceSignature
+            )
+
+            recordCatchupMs("cache_seeded")
+            return .fullReloadScheduled
+        }
+
         let trackedBeforeDecision = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
         let decision = await connection.sessionStreamCoordinator.catchUpDecision(
             sessionId: sessionId,
@@ -878,29 +933,11 @@ final class ChatSessionManager {
                 cachedSignature: nil
             )
 
-            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .catchupMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    tags: ["result": "seq_regression"]
-                )
-            }
+            recordCatchupMs("seq_regression")
             return .fullReloadScheduled
 
         case .noGap:
-            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .catchupMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    tags: ["result": "no_gap"]
-                )
-            }
+            recordCatchupMs("no_gap")
             return .noGap
 
         case .fetchSince(let since):
@@ -933,16 +970,7 @@ final class ChatSessionManager {
                     sessionStore: sessionStore,
                     cachedSignature: nil
                 )
-                let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
-                Task.detached(priority: .utility) {
-                    await ChatMetricsService.shared.record(
-                        metric: .catchupMs,
-                        value: Double(durationMs),
-                        unit: .ms,
-                        sessionId: metricSessionId,
-                        tags: ["result": "fetch_failed"]
-                    )
-                }
+                recordCatchupMs("fetch_failed")
                 return .fullReloadScheduled
             }
 
@@ -963,22 +991,16 @@ final class ChatSessionManager {
                     sessionStore: sessionStore,
                     cachedSignature: nil
                 )
-                let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
+                let ringMissSessionId = sessionId
                 Task.detached(priority: .utility) {
                     await ChatMetricsService.shared.record(
                         metric: .catchupRingMiss,
                         value: 1,
                         unit: .count,
-                        sessionId: self.sessionId
-                    )
-                    await ChatMetricsService.shared.record(
-                        metric: .catchupMs,
-                        value: Double(durationMs),
-                        unit: .ms,
-                        sessionId: metricSessionId,
-                        tags: ["result": "ring_miss"]
+                        sessionId: ringMissSessionId
                     )
                 }
+                recordCatchupMs("ring_miss")
                 return .fullReloadScheduled
             }
 
@@ -1015,17 +1037,7 @@ final class ChatSessionManager {
             let persistedSeq = await connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
             persistLastSeenSeq(persistedSeq)
 
-            let durationMs = max(0, ChatMetricsService.nowMs() - catchupStartMs)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .catchupMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: metricSessionId,
-                    tags: ["result": appliedCatchUp ? "applied" : "no_gap"]
-                )
-            }
-
+            recordCatchupMs(appliedCatchUp ? "applied" : "no_gap")
             return appliedCatchUp ? .applied : .noGap
         }
     }
