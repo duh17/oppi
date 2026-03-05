@@ -361,17 +361,17 @@ final class VoiceInputManager {
         return Locale.current
     }
 
-    /// Locale-driven engine routing:
-    /// - English / most Latin locales -> modern SpeechTranscriber
-    /// - Chinese/Japanese/Korean -> classic DictationTranscriber
+    /// On-device engine routing. DictationTranscriber (classic keyboard dictation
+    /// model) is used for all locales — it's faster, adds punctuation, and has
+    /// years of Apple tuning for short-form dictation. SpeechTranscriber (new
+    /// model) is designed for long-form/meeting/lecture transcription and trades
+    /// short-form latency for broader context handling.
     static func preferredEngine(for locale: Locale) -> TranscriptionEngine {
-        let langCode = locale.language.languageCode?.identifier ?? "en"
-        switch langCode {
-        case "zh", "ja", "ko":
-            return .classicDictation
-        default:
-            return .modernSpeech
-        }
+        // All locales use the classic dictation engine. The new SpeechTranscriber
+        // model is optimized for long-form audio (Notes, Voice Memos) and has
+        // worse latency/accuracy for short chat dictation.
+        _ = locale
+        return .classicDictation
     }
 
     private static func remoteChunkProfile(for locale: Locale) -> RemoteChunkProfile {
