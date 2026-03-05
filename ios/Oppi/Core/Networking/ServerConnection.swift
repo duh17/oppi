@@ -46,6 +46,7 @@ final class ServerConnection {
 
     // Stream lifecycle
     var activeSessionId: String?
+    let sessionStreamCoordinator = SessionStreamCoordinator()
 
     /// Command correlation tracker — owns pending turn sends and command requests.
     let commands = CommandTracker()
@@ -398,6 +399,9 @@ final class ServerConnection {
     /// Disconnect the persistent `/stream` WebSocket.
     func disconnectStream() {
         cancelDeferredQueueSync()
+        Task {
+            await sessionStreamCoordinator.noteStreamDisconnected()
+        }
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
         for (_, cont) in sessionContinuations {
@@ -447,14 +451,6 @@ final class ServerConnection {
         }
     }
 
-    /// Commands sent from `streamSession()` before the per-session stream
-    /// consumer starts. These must be resolved eagerly in `routeStreamMessage`
-    /// because the per-session `AsyncStream` isn't being consumed yet — the
-    /// consumer loop starts only after `streamSession()` returns.
-    private static let eagerResolveCommands: Set<String> = [
-        "subscribe", "unsubscribe", "get_queue",
-    ]
-
     /// Eagerly resolve command results from stream routing for commands
     /// sent during `streamSession()` setup.
     ///
@@ -464,7 +460,7 @@ final class ServerConnection {
     private func resolveEagerCommands(_ message: ServerMessage) {
         guard case .commandResult(let command, let requestId, let success, let data, let error) = message,
               let requestId,
-              Self.eagerResolveCommands.contains(command) else {
+              sessionStreamCoordinator.shouldResolveEagerly(command: command) else {
             return
         }
         _ = commands.resolveCommandResult(
@@ -473,213 +469,39 @@ final class ServerConnection {
         )
     }
 
-    /// Handle `/stream` (re)connection — re-subscribe all tracked sessions.
-    ///
-    /// Retries the active session subscribe with backoff. If all retries
-    /// fail, surfaces a system event so the user can tap to reconnect.
-    /// Notification-level sessions are best-effort (single attempt).
+    /// Handle `/stream` (re)connection — coordinator re-subscribes tracked sessions.
     private func handleStreamReconnected() {
-        guard wsClient != nil else { return }
-
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
-            await self.resubscribeTrackedSessions()
+            await self.sessionStreamCoordinator.handleStreamReconnected(connection: self)
         }
     }
 
-    private static let resubscribeMaxAttempts = 3
-    private static let resubscribeAckTimeout: Duration = .seconds(6)
-    private static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
+    static let resubscribeMaxAttempts = 3
+    static let resubscribeAckTimeout: Duration = .seconds(6)
+    static let fullSubscriptionRecoveryCooldown: TimeInterval = 1.5
 
     /// Typed stream error code emitted by server/src/stream.ts when a command
     /// arrives for a session without full-level subscription.
     static let missingFullSubscriptionErrorCode = "stream_not_subscribed_full"
 
-    private func resubscribeTrackedSessions() async {
-        guard wsClient != nil else { return }
-
-        // Re-subscribe active session at full level (most important)
-        if let activeSessionId {
-            let ok = await resubscribeWithRetry(
-                sessionId: activeSessionId,
-                level: .full,
-                maxAttempts: Self.resubscribeMaxAttempts
-            )
-            if !ok {
-                logger.error("Resubscription failed for active session \(activeSessionId, privacy: .public)")
-                ClientLog.error(
-                    "WebSocket",
-                    "Resubscription failed for active session",
-                    metadata: ["sessionId": activeSessionId]
-                )
-                reducer.appendSystemEvent("Connection recovered but session sync failed")
-            }
-        }
-
-        // Re-subscribe notification-level sessions (best-effort, single attempt)
-        for sessionId in notificationSessionIds where sessionId != activeSessionId {
-            _ = await resubscribeWithRetry(
-                sessionId: sessionId,
-                level: .notifications,
-                maxAttempts: 1
-            )
-        }
-    }
-
-    /// Send a subscribe command with retry.
-    ///
-    /// Returns `true` only after the server ACKs subscribe via
-    /// `command_result(success: true)`. WebSocket send success alone is
-    /// insufficient — server-side rejections must fail recovery.
-    private func resubscribeWithRetry(
-        sessionId: String,
-        level: StreamSubscriptionLevel,
-        maxAttempts: Int
-    ) async -> Bool {
-        for attempt in 1...maxAttempts {
-            guard wsClient != nil else { return false }
-
-            do {
-                _ = try await sendCommandAwaitingResult(
-                    command: "subscribe",
-                    timeout: Self.resubscribeAckTimeout
-                ) { requestId in
-                    .subscribe(sessionId: sessionId, level: level, requestId: requestId)
-                }
-                return true
-            } catch {
-                let delayMs = Int(500 * attempt)
-                logger.warning(
-                    "Resubscribe attempt \(attempt)/\(maxAttempts) failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-                if attempt < maxAttempts {
-                    try? await Task.sleep(for: .milliseconds(delayMs))
-                }
-            }
-        }
-        return false
-    }
-
     /// Keep non-active sessions subscribed at notification level so cross-session
     /// state transitions (agent_start/agent_end/permissions) continue flowing.
     func syncNotificationSubscriptions() {
-        guard wsClient != nil else { return }
-
-        if let activeSessionId {
-            notificationSessionIds.remove(activeSessionId)
-            pendingNotificationSubscriptionIds.remove(activeSessionId)
+        Task { [weak self] in
+            guard let self else { return }
+            await self.sessionStreamCoordinator.syncNotificationSubscriptions(connection: self)
         }
-
-        let desired = desiredNotificationSessionIds()
-        let toRemove = notificationSessionIds.subtracting(desired)
-
-        for sessionId in toRemove {
-            notificationSessionIds.remove(sessionId)
-            pendingNotificationSubscriptionIds.remove(sessionId)
-            Task { [weak self] in
-                try? await self?.wsClient?.send(
-                    .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
-                )
-            }
-        }
-
-        let toAdd = desired
-            .subtracting(notificationSessionIds)
-            .subtracting(pendingNotificationSubscriptionIds)
-
-        for sessionId in toAdd {
-            if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
-                pendingUnsub.cancel()
-            }
-
-            pendingNotificationSubscriptionIds.insert(sessionId)
-
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                defer { self.pendingNotificationSubscriptionIds.remove(sessionId) }
-
-                do {
-                    _ = try await self.sendCommandAwaitingResult(
-                        command: "subscribe",
-                        timeout: .seconds(6)
-                    ) { requestId in
-                        .subscribe(
-                            sessionId: sessionId,
-                            level: .notifications,
-                            requestId: requestId
-                        )
-                    }
-
-                    if self.desiredNotificationSessionIds().contains(sessionId) {
-                        self.notificationSessionIds.insert(sessionId)
-                    } else {
-                        try? await self.wsClient?.send(
-                            .unsubscribe(sessionId: sessionId, requestId: UUID().uuidString)
-                        )
-                        self.notificationSessionIds.remove(sessionId)
-                    }
-                } catch {
-                    logger.warning(
-                        "Notification subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-        }
-    }
-
-    private func desiredNotificationSessionIds() -> Set<String> {
-        let active = activeSessionId
-        return Set(
-            sessionStore.sessions
-                .filter { $0.status != .stopped }
-                .map(\.id)
-                .filter { $0 != active }
-        )
     }
 
     func triggerFullSubscriptionRecovery(sessionId: String, serverError: String) {
-        guard activeSessionId == sessionId else { return }
-
-        if let inFlight = fullSubscriptionRecoveryTask, !inFlight.isCancelled {
-            return
-        }
-
-        if let lastAttempt = lastFullSubscriptionRecoveryAt,
-           Date().timeIntervalSince(lastAttempt) < Self.fullSubscriptionRecoveryCooldown {
-            return
-        }
-
-        fullSubscriptionRecoveryTask = Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
-            defer {
-                self.lastFullSubscriptionRecoveryAt = Date()
-                self.fullSubscriptionRecoveryTask = nil
-            }
-
-            logger.warning(
-                "Detected missing full subscription for \(sessionId, privacy: .public): \(serverError, privacy: .public). Attempting auto-recover"
+            await self.sessionStreamCoordinator.triggerFullSubscriptionRecovery(
+                connection: self,
+                sessionId: sessionId,
+                serverError: serverError
             )
-
-            do {
-                _ = try await self.sendCommandAwaitingResult(
-                    command: "subscribe",
-                    timeout: .seconds(6)
-                ) { requestId in
-                    .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
-                }
-
-                try? await self.requestState()
-                ClientLog.info(
-                    "WebSocket",
-                    "Recovered full subscription",
-                    metadata: ["sessionId": sessionId]
-                )
-            } catch {
-                logger.error(
-                    "Auto-recover subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-                self.reducer.appendSystemEvent("Connection hiccup — trying to resync session")
-            }
         }
     }
 
@@ -843,221 +665,19 @@ final class ServerConnection {
     /// subsequent commands (prompt, stop, etc.) never race ahead of the
     /// subscription on the server side.
     func streamSession(_ sessionId: String, workspaceId: String) async -> AsyncStream<ServerMessage>? {
-        guard wsClient != nil else { return nil }
-
-        let streamStart = ContinuousClock.now
-
-        // Unsubscribe previous full session (if any)
-        if let previousSessionId = activeSessionId, previousSessionId != sessionId {
-            unsubscribeSession(previousSessionId)
-        }
-
-        // Cancel any pending unsubscribe for THIS session to prevent a
-        // fire-and-forget unsubscribe (from disconnectSession) from racing
-        // past the subscribe we're about to send.
-        if let pendingUnsub = pendingUnsubscribeTasks.removeValue(forKey: sessionId) {
-            pendingUnsub.cancel()
-        }
-
-        activeSessionId = sessionId
-        toolCallCorrelator.reset()
-        thinkingLevel = .medium  // Reset to default; overwritten by session.thinkingLevel on connect
-        Task {
-            await SentryService.shared.setSessionContext(sessionId: sessionId, workspaceId: workspaceId)
-        }
-
-        // Ensure /stream is connected.
-        let wsStatus = wsClient?.status
-        let transport = transportPath.rawValue
-
-        connectStream()
-
-        let streamOpenStart = ContinuousClock.now
-        let streamOpenStatus: String
-        if wsClient?.status == .connected {
-            streamOpenStatus = "already_connected"
-        } else if await waitForConnectedStream(timeout: .seconds(10)) {
-            streamOpenStatus = "connected"
-        } else {
-            streamOpenStatus = "timeout"
-        }
-        let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .streamOpenMs,
-                value: Double(streamOpenMs),
-                unit: .ms,
-                sessionId: sessionId,
-                tags: [
-                    "transport": transport,
-                    "status": streamOpenStatus,
-                ]
-            )
-        }
-
-        // Create per-session stream
-        let perSessionStream = AsyncStream<ServerMessage> { continuation in
-            self.sessionContinuations[sessionId] = continuation
-
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in
-                    self?.sessionContinuations.removeValue(forKey: sessionId)
-                }
-            }
-        }
-
-        // Subscribe at full level — await server confirmation before returning
-        // so commands sent after this call don't race the subscription.
-        let subscribeStart = ContinuousClock.now
-        var subscribeStatus = "ok"
-        var subscribeErrorKind: String?
-        do {
-            _ = try await sendCommandAwaitingResult(
-                command: "subscribe",
-                timeout: .seconds(10)
-            ) { requestId in
-                .subscribe(sessionId: sessionId, level: .full, requestId: requestId)
-            }
-        } catch {
-            subscribeStatus = "error"
-            subscribeErrorKind = telemetryErrorKind(from: error)
-            logger.error("Subscribe failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
-        let subscribeAckMs = Int((ContinuousClock.now - subscribeStart) / .milliseconds(1))
-        Task.detached(priority: .utility) {
-            var tags: [String: String] = [
-                "transport": transport,
-                "status": subscribeStatus,
-            ]
-            if let subscribeErrorKind {
-                tags["error_kind"] = subscribeErrorKind
-            }
-            await ChatMetricsService.shared.record(
-                metric: .subscribeAckMs,
-                value: Double(subscribeAckMs),
-                unit: .ms,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
-
-        scheduleQueueSync(sessionId: sessionId, transport: transport)
-
-        // Queue sync is now async and no longer blocks streamSession entry.
-        let queueSyncMs = 0
-        let queueSyncStatus = "async"
-
-        let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
-        let endpointHost = endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
-
-        logger.info("streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms subscribeAck=\(subscribeAckMs)ms queueSync=\(queueSyncMs)ms queueSyncStatus=\(queueSyncStatus, privacy: .public) total=\(totalMs)ms transport=\(transport, privacy: .public) host=\(endpointHost, privacy: .public)")
-        ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
-            "wsStatus": String(describing: wsStatus),
-            "streamOpenMs": String(streamOpenMs),
-            "subscribeAckMs": String(subscribeAckMs),
-            "queueSyncMs": String(queueSyncMs),
-            "queueSyncStatus": queueSyncStatus,
-            "totalMs": String(totalMs),
-            "transport": transport,
-            "endpointHost": endpointHost,
-            // Keep legacy keys for compatibility with existing local analysis scripts.
-            "connectMs": String(streamOpenMs),
-            "subscribeMs": String(subscribeAckMs),
-        ])
-
-        syncNotificationSubscriptions()
-
-        return perSessionStream
+        await sessionStreamCoordinator.streamSession(
+            connection: self,
+            sessionId: sessionId,
+            workspaceId: workspaceId
+        )
     }
 
-    private func scheduleQueueSync(sessionId: String, transport: String) {
-        cancelDeferredQueueSync()
-        deferredQueueSyncTask = Task { @MainActor [weak self] in
-            guard let self,
-                  !Task.isCancelled,
-                  self.activeSessionId == sessionId else {
-                return
-            }
-
-            let initialSucceeded = await self.performQueueSyncAttempt(
-                sessionId: sessionId,
-                transport: transport,
-                timeout: Self.initialQueueSyncTimeout,
-                phase: "initial"
-            )
-
-            guard !initialSucceeded else {
-                return
-            }
-
-            try? await Task.sleep(for: Self.deferredQueueSyncDelay)
-            guard !Task.isCancelled,
-                  self.activeSessionId == sessionId else {
-                return
-            }
-
-            _ = await self.performQueueSyncAttempt(
-                sessionId: sessionId,
-                transport: transport,
-                timeout: Self.deferredQueueSyncTimeout,
-                phase: "retry"
-            )
-        }
-    }
-
-    private func performQueueSyncAttempt(
-        sessionId: String,
-        transport: String,
-        timeout: Duration,
-        phase: String
-    ) async -> Bool {
-        let queueSyncStart = ContinuousClock.now
-        var queueSyncStatus = "ok"
-        var queueSyncErrorKind: String?
-
-        do {
-            try await requestMessageQueue(timeout: timeout)
-        } catch {
-            queueSyncStatus = "error"
-            queueSyncErrorKind = telemetryErrorKind(from: error)
-            let phaseLabel = phase == "initial" ? "Initial" : "Deferred"
-            logger.debug("\(phaseLabel, privacy: .public) queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
-
-        let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
-        let metricStatus = queueSyncStatus
-        let metricErrorKind = queueSyncErrorKind
-        let metricPhase = phase
-        let metricTransport = transport
-        let metricSessionId = sessionId
-
-        Task.detached(priority: .utility) {
-            var tags: [String: String] = [
-                "transport": metricTransport,
-                "status": metricStatus,
-                "phase": metricPhase,
-            ]
-            if let metricErrorKind {
-                tags["error_kind"] = metricErrorKind
-            }
-            await ChatMetricsService.shared.record(
-                metric: .queueSyncMs,
-                value: Double(queueSyncMs),
-                unit: .ms,
-                sessionId: metricSessionId,
-                tags: tags
-            )
-        }
-
-        return queueSyncStatus == "ok"
-    }
-
-    private func cancelDeferredQueueSync() {
+    func cancelDeferredQueueSync() {
         deferredQueueSyncTask?.cancel()
         deferredQueueSyncTask = nil
     }
 
-    private func waitForConnectedStream(
+    func waitForConnectedStream(
         timeout: Duration,
         pollInterval: Duration = .milliseconds(50)
     ) async -> Bool {
@@ -1078,7 +698,7 @@ final class ServerConnection {
         return true
     }
 
-    private func telemetryErrorKind(from error: Error) -> String {
+    func telemetryErrorKind(from error: Error) -> String {
         if error is CommandRequestError {
             return "command_request"
         }
@@ -1096,6 +716,10 @@ final class ServerConnection {
         }
 
         return "other"
+    }
+
+    func streamEndpointHostForMetrics() -> String {
+        endpointSelection?.baseURL.host ?? credentials?.host ?? "unknown"
     }
 
     private func recordMessageQueueAckMetric(
@@ -1133,7 +757,7 @@ final class ServerConnection {
     /// The send is tracked so `streamSession()` can cancel it before
     /// resubscribing the same session — preventing the fire-and-forget
     /// unsubscribe from arriving after a newer subscribe.
-    private func unsubscribeSession(_ sessionId: String) {
+    func unsubscribeSession(_ sessionId: String) {
         sessionContinuations[sessionId]?.finish()
         sessionContinuations.removeValue(forKey: sessionId)
 
@@ -1164,6 +788,7 @@ final class ServerConnection {
 
         activeSessionId = nil
         Task {
+            await sessionStreamCoordinator.noteStreamDisconnected()
             await SentryService.shared.setSessionContext(sessionId: nil, workspaceId: nil)
         }
         // Clear stale extension dialog — it's tied to the active session stream
