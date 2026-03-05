@@ -739,19 +739,28 @@ export class Server {
 
   // ─── Auth ───
 
-  private authenticate(req: IncomingMessage): boolean {
+  private authenticate(req: IncomingMessage, url?: URL): boolean {
+    // Bearer header (primary auth)
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) return false;
+    if (auth?.startsWith("Bearer ")) {
+      if (this.matchToken(auth.slice(7))) return true;
+    }
 
-    const token = auth.slice(7);
+    // Query-param token — for browser-loadable content (applet HTML, etc.)
+    if (url) {
+      const queryToken = url.searchParams.get("token");
+      if (queryToken && this.matchToken(queryToken)) return true;
+    }
 
-    // Check main server token
+    return false;
+  }
+
+  private matchToken(candidate: string): boolean {
     const configToken = this.storage.getToken();
-    if (configToken && secureTokenEquals(configToken, token)) return true;
+    if (configToken && secureTokenEquals(configToken, candidate)) return true;
 
-    // Check auth device tokens (issued during pairing)
     for (const dt of this.storage.getAuthDeviceTokens()) {
-      if (secureTokenEquals(dt, token)) return true;
+      if (secureTokenEquals(dt, candidate)) return true;
     }
 
     return false;
@@ -791,7 +800,7 @@ export class Server {
       return;
     }
 
-    const authenticated = this.authenticate(req);
+    const authenticated = this.authenticate(req, url);
     if (!authenticated) {
       console.log(
         formatUnauthorizedAuthLog({

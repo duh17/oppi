@@ -30,6 +30,7 @@ final class ServerConnection {
     let sessionStore = SessionStore()
     let permissionStore = PermissionStore()
     let workspaceStore = WorkspaceStore()
+    let appletStore = AppletStore()
     let gitStatusStore = GitStatusStore()
     let messageQueueStore = MessageQueueStore()
 

@@ -25,6 +25,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
 
+import { createAppletExtensionFactory } from "./applet-extension.js";
 import type { GateServer } from "./gate.js";
 import type {
   ExtensionErrorEvent,
@@ -32,6 +33,7 @@ import type {
   PiStateSnapshot,
   SessionBackendEvent,
 } from "./pi-events.js";
+import type { Storage } from "./storage.js";
 import type { Session, Workspace } from "./types.js";
 
 /** Parse an oppi model string like "anthropic/claude-sonnet-4-20250514" into { provider, model }. */
@@ -90,6 +92,8 @@ export interface SdkBackendConfig {
   permissionGate?: boolean;
   /** Resolved skill directory paths for this workspace. */
   skillPaths?: string[];
+  /** Storage for server-managed extensions (applets, etc.). */
+  storage?: Storage;
 }
 
 interface ExtensionUIResponsePayload {
@@ -157,12 +161,19 @@ export class SdkBackend {
       ? PiSessionManager.open(piSessionFile)
       : PiSessionManager.create(cwd);
 
-    // Build extension factories for in-process gate
+    // Build extension factories for in-process tools
     const extensionFactories: ExtensionFactory[] = [];
     const useGate = config.gate && config.permissionGate !== false;
     if (useGate && config.gate) {
       extensionFactories.push(
         createPermissionGateFactory(config.gate, session.id, config.workspaceId || "", cwd),
+      );
+    }
+
+    // Applet extension — create/update/list applets via server storage
+    if (config.storage && config.workspaceId) {
+      extensionFactories.push(
+        createAppletExtensionFactory(config.storage, session.id, config.workspaceId),
       );
     }
 
