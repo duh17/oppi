@@ -8,6 +8,7 @@
     "nightly-deep": [
       "check",
       "test:coverage",
+      "test:ios:coverage",
       "test:ios:ui:full",
       "test:e2e:linux",
       "test:e2e:linux:https",

@@ -82,11 +82,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     });
   }
 
-  function handleGetServerInfo(res: ServerResponse): void {
+  async function handleGetServerInfo(res: ServerResponse): Promise<void> {
     const config = ctx.storage.getConfig();
     const workspaces = ctx.storage.listWorkspaces();
     const sessions = ctx.storage.listSessions();
     const activeSessions = sessions.filter((s) => s.status !== "stopped" && s.status !== "error");
+    const runtimeUpdate = await ctx.getRuntimeUpdateStatus();
 
     const uptimeSeconds = Math.floor((Date.now() - ctx.serverStartedAt) / 1000);
 
@@ -113,6 +114,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       piVersion: ctx.piVersion,
       configVersion: config.configVersion ?? 1,
       identity,
+      runtimeUpdate,
       stats: {
         workspaceCount: workspaces.length,
         activeSessionCount: activeSessions.length,
@@ -126,6 +128,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   async function handleListModels(res: ServerResponse): Promise<void> {
     await ctx.refreshModelCatalog();
     helpers.json(res, { models: ctx.getModelCatalog() });
+  }
+
+  async function handleRuntimeUpdate(res: ServerResponse): Promise<void> {
+    const result = await ctx.runRuntimeUpdate();
+    const status = await ctx.getRuntimeUpdateStatus({ force: true });
+    helpers.json(res, { ok: result.ok, result, status });
   }
 
   async function handleRegisterDeviceToken(
@@ -175,7 +183,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
     if (path === "/server/info" && method === "GET") {
-      handleGetServerInfo(res);
+      await handleGetServerInfo(res);
+      return true;
+    }
+    if (path === "/server/runtime/update" && method === "POST") {
+      await handleRuntimeUpdate(res);
       return true;
     }
     if (path === "/models" && method === "GET") {

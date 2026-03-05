@@ -252,18 +252,21 @@ enum ChatTimelinePerf {
         // are background artifacts, not real rendering cost.
         guard durationMs < suspensionCeilingMs else { return }
 
-        let applySid = activeSessionId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .timelineApplyMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: applySid,
-                tags: [
-                    "items": String(token.itemCount),
-                    "changed": String(token.changedCount),
-                ]
-            )
+        // Emit to telemetry only when above noise floor (skip the 99% that are 0-1ms).
+        if durationMs >= 4 {
+            let applySid = activeSessionId
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .timelineApplyMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: applySid,
+                    tags: [
+                        "items": String(token.itemCount),
+                        "changed": String(token.changedCount),
+                    ]
+                )
+            }
         }
 
         guard durationMs >= slowApplyThresholdMs else { return }
@@ -324,15 +327,18 @@ enum ChatTimelinePerf {
 
         guard durationMs < suspensionCeilingMs else { return }
 
-        let layoutSid = activeSessionId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .timelineLayoutMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: layoutSid,
-                tags: ["items": String(token.itemCount)]
-            )
+        // Emit to telemetry only when above noise floor.
+        if durationMs >= 2 {
+            let layoutSid = activeSessionId
+            Task.detached(priority: .utility) {
+                await ChatMetricsService.shared.record(
+                    metric: .timelineLayoutMs,
+                    value: Double(durationMs),
+                    unit: .ms,
+                    sessionId: layoutSid,
+                    tags: ["items": String(token.itemCount)]
+                )
+            }
         }
 
         guard durationMs >= slowLayoutThresholdMs else { return }
@@ -368,23 +374,23 @@ enum ChatTimelinePerf {
             hardGuardrailBreachCount &+= 1
         }
 
-        // Emit cell_configure_ms for tool rows to telemetry pipeline.
-        if let ctx = toolContext {
-            let sid = activeSessionId
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .cellConfigureMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: sid,
-                    tags: [
-                        "tool": ctx.tool,
-                        "expanded": ctx.isExpanded ? "1" : "0",
-                        "content_type": ctx.contentType,
-                        "output_bytes": outputBytesBucket(ctx.outputBytes),
-                    ]
-                )
+        // Emit cell_configure_ms for all row types to telemetry pipeline.
+        let sid = activeSessionId
+        Task.detached(priority: .utility) {
+            var tags: [String: String] = ["row_type": rowType]
+            if let ctx = toolContext {
+                tags["tool"] = ctx.tool
+                tags["expanded"] = ctx.isExpanded ? "1" : "0"
+                tags["content_type"] = ctx.contentType
+                tags["output_bytes"] = outputBytesBucket(ctx.outputBytes)
             }
+            await ChatMetricsService.shared.record(
+                metric: .cellConfigureMs,
+                value: Double(durationMs),
+                unit: .ms,
+                sessionId: sid,
+                tags: tags
+            )
         }
 
         guard durationMs >= slowCellThresholdMs else { return }

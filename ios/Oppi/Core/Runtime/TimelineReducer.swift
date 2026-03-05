@@ -336,8 +336,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let output = event.output ?? ""
             let matchId = event.toolCallId ?? event.id
             toolOutputStore.append(output, to: matchId)
-            // Store structured details (expandedText, presentationFormat, etc.)
-            // so extension tools render the same way on catch-up as streaming.
+            // Store structured details so catch-up rendering matches streaming.
             if let details = event.details {
                 toolDetailsStore.set(details, for: matchId)
             }
@@ -897,8 +896,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return
         }
 
-        // Reconnect/history-reload race: trace may already include this
-        // finalized assistant text, while in-flight message_end still arrives.
+        // Reconnect/history-reload race: suppress stale in-flight message_end duplicates.
         if shouldSuppressDuplicateMessageEnd(content) {
             finalizeAssistantMessage()
             return
