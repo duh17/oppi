@@ -530,8 +530,8 @@ private struct PlainTextView: View {
             }
         }
         .sheet(isPresented: $showFullScreen) {
-            FullScreenCodeView(content: .code(
-                content: content, language: nil, filePath: nil, startLine: startLine
+            FullScreenCodeView(content: .plainText(
+                content: content, filePath: nil
             ))
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
