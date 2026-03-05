@@ -88,6 +88,41 @@ struct KeyboardSuppressionTests {
         #expect(tap.isEnabled == false, "Gesture disabled after suppression ends")
     }
 
+    @Test("Restore gesture can be disabled while suppression is active")
+    func restoreGestureCanBeDisabled() {
+        let textView = PastableUITextView()
+        textView.installKeyboardRestoreGesture()
+        textView.setKeyboardSuppressed(true)
+
+        let tap = textView.keyboardRestoreTap
+        #expect(tap.isEnabled == true)
+
+        textView.setAllowKeyboardRestoreOnTap(false)
+        #expect(!textView.allowsKeyboardRestoreOnTap)
+        #expect(tap.isEnabled == false, "Gesture should disable when restore-on-tap is disallowed")
+
+        textView.setAllowKeyboardRestoreOnTap(true)
+        #expect(textView.allowsKeyboardRestoreOnTap)
+        #expect(tap.isEnabled == true, "Gesture should re-enable when restore-on-tap is allowed")
+    }
+
+    @Test("Tap restore is ignored when restore-on-tap is disabled")
+    func restoreTapIgnoredWhenDisabled() {
+        let textView = PastableUITextView()
+        textView.installKeyboardRestoreGesture()
+        textView.setKeyboardSuppressed(true)
+        textView.setAllowKeyboardRestoreOnTap(false)
+
+        var callbackFired = false
+        textView.onKeyboardRestoreRequest = { callbackFired = true }
+
+        textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
+
+        #expect(!callbackFired, "Callback must not fire when restore-on-tap is disabled")
+        #expect(textView.isKeyboardSuppressed, "Suppression should remain active")
+        #expect(textView.inputView != nil, "Keyboard should stay hidden")
+    }
+
     @Test("Restore callback fires when tap occurs during suppression")
     func restoreCallbackFires() {
         let textView = PastableUITextView()

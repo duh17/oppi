@@ -100,6 +100,9 @@ struct RemoteASRTranscriberTests {
         #expect(config.sampleRate == 16_000)
         #expect(config.requestTimeout == 10.0)
         #expect(config.responseFormat == "json")
+        #expect(config.sttProfile == nil)
+        #expect(config.dictationCleanup == nil)
+        #expect(config.overlapTextWordCount == 20)
     }
 
     @Test func configurationCustomValues() {
@@ -113,7 +116,10 @@ struct RemoteASRTranscriberTests {
             overlapDuration: 0.3,
             sampleRate: 16_000,
             requestTimeout: 15.0,
-            responseFormat: "verbose_json"
+            responseFormat: "verbose_json",
+            sttProfile: "dictation",
+            dictationCleanup: true,
+            overlapTextWordCount: 24
         )
         #expect(config.model == "mlx-community/whisper-large-v3-turbo")
         #expect(config.language == "en")
@@ -123,6 +129,9 @@ struct RemoteASRTranscriberTests {
         #expect(config.overlapDuration == 0.3)
         #expect(config.requestTimeout == 15.0)
         #expect(config.responseFormat == "verbose_json")
+        #expect(config.sttProfile == "dictation")
+        #expect(config.dictationCleanup == true)
+        #expect(config.overlapTextWordCount == 24)
     }
 
     // MARK: - Engine Selection
@@ -141,6 +150,7 @@ struct RemoteASRTranscriberTests {
 
         // Engine preference should be stored
         #expect(manager.enginePreference == .remoteASR)
+        #expect(manager.engineMode == .remote)
         #expect(manager.remoteASREndpoint != nil)
     }
 
@@ -153,13 +163,57 @@ struct RemoteASRTranscriberTests {
         let manager = VoiceInputManager()
         manager.setEnginePreference(nil)
         #expect(manager.enginePreference == nil)
+        #expect(manager.engineMode == .auto)
     }
 
-    @Test @MainActor func remoteASRWithoutEndpointFallsBackToLocale() {
+    @Test @MainActor func managerLoadsPersistedVoicePreferences() {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let endpoint = URL(string: "http://localhost:8321")
+        #expect(endpoint != nil)
+
+        VoiceInputPreferences.setEngineMode(.remote)
+        VoiceInputPreferences.setRemoteEndpoint(endpoint)
+
         let manager = VoiceInputManager()
-        // Prefer remote but don't set endpoint
-        manager.setEnginePreference(.remoteASR)
-        // Endpoint is nil — effective engine should fall back
-        #expect(manager.remoteASREndpoint == nil)
+        #expect(manager.engineMode == .remote)
+        #expect(manager.remoteASREndpoint?.absoluteString == "http://localhost:8321")
+    }
+
+    @Test func voiceInputPreferenceEndpointValidation() {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        #expect(VoiceInputPreferences.setRemoteEndpoint(from: "http://localhost:8321"))
+        #expect(VoiceInputPreferences.remoteEndpoint?.absoluteString == "http://localhost:8321")
+
+        #expect(!VoiceInputPreferences.setRemoteEndpoint(from: "localhost:8321"))
+        #expect(VoiceInputPreferences.remoteEndpoint?.absoluteString == "http://localhost:8321")
+    }
+
+    @Test func remoteVoiceInputErrorDescriptions() {
+        #expect(VoiceInputError.remoteEndpointNotConfigured.errorDescription?.contains("not configured") == true)
+        #expect(
+            VoiceInputError.remoteEndpointUnreachable("localhost").errorDescription?.contains("localhost")
+                == true
+        )
+        #expect(VoiceInputError.remoteRequestTimedOut.errorDescription?.contains("timed out") == true)
+        #expect(
+            VoiceInputError.remoteBadResponseStatus(503).errorDescription?.contains("HTTP 503") == true
+        )
+    }
+
+    @Test func remoteVoiceInputErrorTelemetryCategories() {
+        #expect(VoiceInputError.remoteEndpointNotConfigured.telemetryCategory == "misconfigured")
+        #expect(VoiceInputError.remoteEndpointUnreachable("localhost").telemetryCategory == "network")
+        #expect(VoiceInputError.remoteRequestTimedOut.telemetryCategory == "timeout")
+        #expect(VoiceInputError.remoteBadResponseStatus(500).telemetryCategory == "http_status")
+        #expect(VoiceInputError.remoteDecodeFailed.telemetryCategory == "decode")
+    }
+
+    private func resetVoicePreferences() {
+        VoiceInputPreferences.setEngineMode(.auto)
+        VoiceInputPreferences.setRemoteEndpoint(nil)
     }
 }

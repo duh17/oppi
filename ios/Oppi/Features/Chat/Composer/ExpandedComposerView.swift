@@ -315,6 +315,7 @@ struct ExpandedComposerView: View {
         let isRecording = manager.isRecording
         let isPreparing = manager.isPreparing
         let isProcessing = manager.isProcessing
+        let engineBadge = micEngineBadge(for: manager)
 
         return Button {
             Task {
@@ -351,6 +352,7 @@ struct ExpandedComposerView: View {
                 audioLevel: manager.audioLevel,
                 languageLabel: manager.activeLanguageLabel,
                 accentColor: accentColor,
+                engineBadge: engineBadge,
                 diameter: 32
             )
         }
@@ -358,9 +360,25 @@ struct ExpandedComposerView: View {
         .disabled(isProcessing)
         .accessibilityIdentifier("expanded.voiceInput")
         .accessibilityLabel(accessibilityLabel(isRecording: isRecording, isPreparing: isPreparing))
+        .accessibilityValue(voiceRouteAccessibilityValue(for: manager))
     }
 
     // MARK: - Actions
+
+    private func micEngineBadge(for manager: VoiceInputManager) -> MicButtonLabel.EngineBadge {
+        switch manager.routeIndicator {
+        case .auto:
+            return .auto
+        case .onDevice:
+            return .onDevice
+        case .remote:
+            return .remote
+        }
+    }
+
+    private func voiceRouteAccessibilityValue(for manager: VoiceInputManager) -> String {
+        manager.routeIndicator.accessibilityLabel
+    }
 
     private func accessibilityLabel(isRecording: Bool, isPreparing: Bool) -> String {
         if isRecording {

@@ -114,6 +114,87 @@ enum ScreenAwakePreferences {
     }
 }
 
+/// User-facing preferences for voice input engine selection.
+enum VoiceInputPreferences {
+    enum EngineMode: String, CaseIterable, Identifiable {
+        case auto
+        case onDevice
+        case remote
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .auto: return "Automatic"
+            case .onDevice: return "On-device"
+            case .remote: return "Remote ASR"
+            }
+        }
+    }
+
+    private static let engineModeDefaultsKey = "\(AppIdentifiers.subsystem).voice.engineMode"
+    private static let remoteEndpointDefaultsKey = "\(AppIdentifiers.subsystem).voice.remoteEndpoint"
+
+    static var engineMode: EngineMode {
+        guard let raw = UserDefaults.standard.string(forKey: engineModeDefaultsKey),
+              let mode = EngineMode(rawValue: raw)
+        else {
+            return .auto
+        }
+        return mode
+    }
+
+    static var remoteEndpoint: URL? {
+        guard let raw = UserDefaults.standard.string(forKey: remoteEndpointDefaultsKey) else {
+            return nil
+        }
+        return normalizedEndpointURL(from: raw)
+    }
+
+    @discardableResult
+    static func setRemoteEndpoint(from raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            setRemoteEndpoint(nil)
+            return true
+        }
+
+        guard let url = normalizedEndpointURL(from: trimmed) else {
+            return false
+        }
+
+        setRemoteEndpoint(url)
+        return true
+    }
+
+    static func setEngineMode(_ mode: EngineMode) {
+        UserDefaults.standard.set(mode.rawValue, forKey: engineModeDefaultsKey)
+    }
+
+    static func setRemoteEndpoint(_ url: URL?) {
+        guard let url else {
+            UserDefaults.standard.removeObject(forKey: remoteEndpointDefaultsKey)
+            return
+        }
+        UserDefaults.standard.set(url.absoluteString, forKey: remoteEndpointDefaultsKey)
+    }
+
+    static func normalizedEndpointURL(from raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              let host = components.host,
+              !host.isEmpty
+        else {
+            return nil
+        }
+
+        return components.url
+    }
+}
+
 /// Persisted keyboard language for voice input locale detection.
 ///
 /// `UITextView.textInputMode` only reports the active keyboard when the text
