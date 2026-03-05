@@ -1,9 +1,9 @@
-import SwiftUI
+import SwiftUI // Theme color resolution (Color.theme* → UIColor)
 import UIKit
 
 // MARK: - ANSIParser
 
-/// Parses ANSI escape sequences into `AttributedString` with Tokyo Night colors.
+/// Parses ANSI escape sequences into `NSAttributedString` with Tokyo Night colors.
 ///
 /// Handles SGR (Select Graphic Rendition) codes:
 /// - Reset (0), Bold (1), Dim (2), Italic (3), Underline (4)
@@ -11,6 +11,9 @@ import UIKit
 /// - 256-color (38;5;n) and RGB (38;2;r;g;b) foreground
 ///
 /// Unknown sequences are silently stripped.
+///
+/// Builds `NSMutableAttributedString` directly for O(n) construction,
+/// consistent with `SyntaxHighlighter`.
 enum ANSIParser {
 
     /// Strip all ANSI escape sequences, returning plain text.
@@ -18,30 +21,30 @@ enum ANSIParser {
         input.replacing(Self.escapePattern, with: "")
     }
 
-    /// Parse ANSI escape sequences into an `AttributedString`.
+    /// Parse ANSI escape sequences into an `NSAttributedString`.
     ///
     /// Maps ANSI colors to the Tokyo Night palette for visual consistency.
     static func attributedString(
         from input: String,
-        baseFont: Font = .caption.monospaced(),
         baseForeground: Color = .themeFg
-    ) -> AttributedString {
-        var result = AttributedString()
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
         var state = SGRState()
+        let baseFg = UIColor(baseForeground)
+        let baseFont = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
         let scanner = Scanner(input)
         for segment in scanner {
             switch segment {
             case .text(let str):
-                var attrs = AttributedString(str)
-                attrs.font = state.font(base: baseFont)
-                let foreground = state.foreground ?? baseForeground
-                attrs.foregroundColor = foreground
-                attrs[AttributeScopes.UIKitAttributes.ForegroundColorAttribute.self] = UIColor(foreground)
+                var attrs: [NSAttributedString.Key: Any] = [
+                    .font: state.uiFont(base: baseFont),
+                    .foregroundColor: state.foregroundUIColor ?? baseFg,
+                ]
                 if state.underline {
-                    attrs.underlineStyle = .single
+                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
                 }
-                result.append(attrs)
+                result.append(NSAttributedString(string: str, attributes: attrs))
 
             case .sgr(let codes):
                 state.apply(codes)
@@ -123,13 +126,25 @@ private struct SGRState {
     var dim = false
     var italic = false
     var underline = false
-    var foreground: Color?
+    var foregroundUIColor: UIColor?
 
-    func font(base: Font) -> Font {
-        var f = base
-        if bold { f = f.bold() }
-        if italic { f = f.italic() }
-        return f
+    func uiFont(base: UIFont) -> UIFont {
+        if !bold && !italic { return base }
+
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+
+        // Preserve monospaced trait from base font.
+        let baseTraits = base.fontDescriptor.symbolicTraits
+        if baseTraits.contains(.traitMonoSpace) {
+            traits.insert(.traitMonoSpace)
+        }
+
+        guard let descriptor = base.fontDescriptor.withSymbolicTraits(traits) else {
+            return base
+        }
+        return UIFont(descriptor: descriptor, size: base.pointSize)
     }
 
     mutating func apply(_ codes: [Int]) {
@@ -139,7 +154,7 @@ private struct SGRState {
             switch code {
             case 0: // Reset
                 bold = false; dim = false; italic = false
-                underline = false; foreground = nil
+                underline = false; foregroundUIColor = nil
 
             case 1: bold = true
             case 2: dim = true
@@ -148,39 +163,40 @@ private struct SGRState {
             case 22: bold = false; dim = false
             case 23: italic = false
             case 24: underline = false
-            case 39: foreground = nil // default fg
+            case 39: foregroundUIColor = nil // default fg
 
             // Standard colors (30-37)
-            case 30: foreground = .themeFgDim       // black → dim
-            case 31: foreground = .themeRed
-            case 32: foreground = .themeGreen
-            case 33: foreground = .themeYellow
-            case 34: foreground = .themeBlue
-            case 35: foreground = .themePurple
-            case 36: foreground = .themeCyan
-            case 37: foreground = .themeFg           // white → fg
+            case 30: foregroundUIColor = UIColor(Color.themeFgDim)       // black → dim
+            case 31: foregroundUIColor = UIColor(Color.themeRed)
+            case 32: foregroundUIColor = UIColor(Color.themeGreen)
+            case 33: foregroundUIColor = UIColor(Color.themeYellow)
+            case 34: foregroundUIColor = UIColor(Color.themeBlue)
+            case 35: foregroundUIColor = UIColor(Color.themePurple)
+            case 36: foregroundUIColor = UIColor(Color.themeCyan)
+            case 37: foregroundUIColor = UIColor(Color.themeFg)           // white → fg
 
             // Bright colors (90-97)
-            case 90: foreground = .themeComment      // bright black → comment
-            case 91: foreground = .themeRed
-            case 92: foreground = .themeGreen
-            case 93: foreground = .themeYellow
-            case 94: foreground = .themeBlue
-            case 95: foreground = .themePurple
-            case 96: foreground = .themeCyan
-            case 97: foreground = .themeFg
+            case 90: foregroundUIColor = UIColor(Color.themeComment)      // bright black → comment
+            case 91: foregroundUIColor = UIColor(Color.themeRed)
+            case 92: foregroundUIColor = UIColor(Color.themeGreen)
+            case 93: foregroundUIColor = UIColor(Color.themeYellow)
+            case 94: foregroundUIColor = UIColor(Color.themeBlue)
+            case 95: foregroundUIColor = UIColor(Color.themePurple)
+            case 96: foregroundUIColor = UIColor(Color.themeCyan)
+            case 97: foregroundUIColor = UIColor(Color.themeFg)
 
             // 256-color: 38;5;n
             case 38:
                 if i + 1 < codes.count, codes[i + 1] == 5, i + 2 < codes.count {
-                    foreground = color256(codes[i + 2])
+                    foregroundUIColor = color256(codes[i + 2])
                     i += 2
                 } else if i + 1 < codes.count, codes[i + 1] == 2, i + 4 < codes.count {
                     // RGB: 38;2;r;g;b
-                    foreground = Color(
-                        red: Double(codes[i + 2]) / 255,
-                        green: Double(codes[i + 3]) / 255,
-                        blue: Double(codes[i + 4]) / 255
+                    foregroundUIColor = UIColor(
+                        red: CGFloat(codes[i + 2]) / 255,
+                        green: CGFloat(codes[i + 3]) / 255,
+                        blue: CGFloat(codes[i + 4]) / 255,
+                        alpha: 1
                     )
                     i += 4
                 }
@@ -192,27 +208,27 @@ private struct SGRState {
     }
 
     /// Map 256-color palette to Tokyo Night approximations.
-    private func color256(_ n: Int) -> Color {
+    private func color256(_ n: Int) -> UIColor {
         switch n {
-        case 0: return .themeFgDim
-        case 1: return .themeRed
-        case 2: return .themeGreen
-        case 3: return .themeYellow
-        case 4: return .themeBlue
-        case 5: return .themePurple
-        case 6: return .themeCyan
-        case 7: return .themeFg
+        case 0: return UIColor(Color.themeFgDim)
+        case 1: return UIColor(Color.themeRed)
+        case 2: return UIColor(Color.themeGreen)
+        case 3: return UIColor(Color.themeYellow)
+        case 4: return UIColor(Color.themeBlue)
+        case 5: return UIColor(Color.themePurple)
+        case 6: return UIColor(Color.themeCyan)
+        case 7: return UIColor(Color.themeFg)
         case 8...15: return color256(n - 8) // bright = same mapping
         case 232...255: // grayscale ramp
-            let gray = Double(n - 232) / 23.0
-            return Color(white: gray)
+            let gray = CGFloat(n - 232) / 23.0
+            return UIColor(white: gray, alpha: 1)
         default:
             // 216-color cube (16-231): approximate with hue
             let idx = n - 16
-            let r = Double((idx / 36) % 6) / 5.0
-            let g = Double((idx / 6) % 6) / 5.0
-            let b = Double(idx % 6) / 5.0
-            return Color(red: r, green: g, blue: b)
+            let r = CGFloat((idx / 36) % 6) / 5.0
+            let g = CGFloat((idx / 6) % 6) / 5.0
+            let b = CGFloat(idx % 6) / 5.0
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
         }
     }
 }

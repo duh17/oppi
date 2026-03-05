@@ -151,7 +151,7 @@ private struct CodeFileView: View {
             let lang = language
             let text = displayContent
             let result = await Task.detached(priority: .userInitiated) {
-                SyntaxHighlighter.highlight(text, language: lang)
+                AttributedString(SyntaxHighlighter.highlight(text, language: lang))
             }.value
             highlighted = result
         }
@@ -466,7 +466,7 @@ private struct JSONPrepared: Sendable {
         let lines = pretty.split(separator: "\n", omittingEmptySubsequences: false)
         let lineCount = min(lines.count, FileContentView.maxDisplayLines)
         let displayText = lines.prefix(lineCount).joined(separator: "\n")
-        let highlighted = SyntaxHighlighter.highlight(displayText, language: .json)
+        let highlighted = AttributedString(SyntaxHighlighter.highlight(displayText, language: .json))
 
         return Self(displayText: displayText, displayLineCount: lineCount, totalLines: lines.count, highlighted: highlighted)
     }

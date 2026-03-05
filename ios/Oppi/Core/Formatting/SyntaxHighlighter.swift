@@ -1,4 +1,4 @@
-import SwiftUI
+import SwiftUI // Theme color resolution (Color.themeSyntax* → UIColor)
 import UIKit
 
 // swiftlint:disable large_tuple
@@ -262,34 +262,128 @@ private let zigKeywords: Set<String> = [
 ///
 /// Uses a fast scanner (comments/strings/numbers/keywords) with predictable
 /// performance and no external parser dependencies.
+///
+/// Returns `NSAttributedString` built via `NSMutableAttributedString` internally
+/// to avoid the O(n^2) cost of SwiftUI `AttributedString` concatenation.
 enum SyntaxHighlighter {
 
     /// Maximum lines to process (performance bound).
     static let maxLines = 500
 
+    // MARK: - Pre-computed Token Attributes
+
+    /// Resolved UIColor attribute dictionaries for each token type.
+    /// Created once per top-level highlight call to avoid repeated
+    /// `UIColor(Color)` conversions per token.
+    private struct TokenAttrs {
+        let comment: [NSAttributedString.Key: Any]
+        let keyword: [NSAttributedString.Key: Any]
+        let string: [NSAttributedString.Key: Any]
+        let number: [NSAttributedString.Key: Any]
+        let type: [NSAttributedString.Key: Any]
+        let variable: [NSAttributedString.Key: Any]
+        let punctuation: [NSAttributedString.Key: Any]
+        let function: [NSAttributedString.Key: Any]
+        let `operator`: [NSAttributedString.Key: Any]
+
+        static func current() -> TokenAttrs {
+            TokenAttrs(
+                comment: [.foregroundColor: UIColor(Color.themeSyntaxComment)],
+                keyword: [.foregroundColor: UIColor(Color.themeSyntaxKeyword)],
+                string: [.foregroundColor: UIColor(Color.themeSyntaxString)],
+                number: [.foregroundColor: UIColor(Color.themeSyntaxNumber)],
+                type: [.foregroundColor: UIColor(Color.themeSyntaxType)],
+                variable: [.foregroundColor: UIColor(Color.themeSyntaxVariable)],
+                punctuation: [.foregroundColor: UIColor(Color.themeSyntaxPunctuation)],
+                function: [.foregroundColor: UIColor(Color.themeSyntaxFunction)],
+                operator: [.foregroundColor: UIColor(Color.themeSyntaxOperator)]
+            )
+        }
+    }
+
+    // MARK: - Public API
+
     /// Highlight a single line independently (no cross-line block comment state).
     /// Suitable for short snippets like diff lines where each line is rendered separately.
-    static func highlightLine(_ line: String, language: SyntaxLanguage) -> AttributedString {
+    static func highlightLine(_ line: String, language: SyntaxLanguage) -> NSAttributedString {
+        let attrs = TokenAttrs.current()
+        let result = NSMutableAttributedString()
         var unused = false
-        return highlightLine(Array(line), language: language, inBlockComment: &unused)
+        appendHighlightedLine(Array(line), language: language, inBlockComment: &unused, attrs: attrs, to: result)
+        return result
+    }
+
+    /// Highlight source code and return per-line attributed strings.
+    ///
+    /// Shares a single `TokenAttrs` allocation and tracks block-comment state
+    /// across lines, making it much cheaper than N × `highlightLine()` calls.
+    /// Used by `makeCodeAttributedText` to interleave gutter numbers.
+    static func highlightLines(_ code: String, language: SyntaxLanguage) -> [NSAttributedString] {
+        let truncated = truncatedCode(code)
+        let attrs = TokenAttrs.current()
+        let rawLines = truncated.split(separator: "\n", omittingEmptySubsequences: false)
+
+        if language == .json {
+            // JSON highlighter doesn't track block comments; highlight whole then split.
+            let full = highlightJSON(truncated, attrs: attrs)
+            return splitAttributedStringByNewlines(full)
+        }
+
+        var inBlockComment = false
+        var results: [NSAttributedString] = []
+        results.reserveCapacity(rawLines.count)
+
+        for line in rawLines {
+            let lineResult = NSMutableAttributedString()
+            appendHighlightedLine(
+                Array(line), language: language, inBlockComment: &inBlockComment, attrs: attrs, to: lineResult
+            )
+            results.append(lineResult)
+        }
+        return results
+    }
+
+    /// Split a single `NSAttributedString` by newline characters into per-line strings.
+    private static func splitAttributedStringByNewlines(_ source: NSAttributedString) -> [NSAttributedString] {
+        let string = source.string as NSString
+        var results: [NSAttributedString] = []
+        var searchStart = 0
+
+        while searchStart <= string.length {
+            let remaining = NSRange(location: searchStart, length: string.length - searchStart)
+            let newlineRange = string.range(of: "\n", range: remaining)
+
+            if newlineRange.location == NSNotFound {
+                // Last line (or only line)
+                let lineRange = NSRange(location: searchStart, length: string.length - searchStart)
+                results.append(source.attributedSubstring(from: lineRange))
+                break
+            } else {
+                let lineRange = NSRange(location: searchStart, length: newlineRange.location - searchStart)
+                results.append(source.attributedSubstring(from: lineRange))
+                searchStart = newlineRange.location + newlineRange.length
+            }
+        }
+        return results
     }
 
     /// Highlight source code.
-    static func highlight(_ code: String, language: SyntaxLanguage) -> AttributedString {
+    static func highlight(_ code: String, language: SyntaxLanguage) -> NSAttributedString {
         let truncated = truncatedCode(code)
+        let attrs = TokenAttrs.current()
 
         if language == .json {
-            return highlightJSON(truncated)
+            return highlightJSON(truncated, attrs: attrs)
         }
 
-        var result = AttributedString()
+        let result = NSMutableAttributedString()
         var inBlockComment = false
         let lines = truncated.split(separator: "\n", omittingEmptySubsequences: false)
 
         for (i, line) in lines.enumerated() {
-            if i > 0 { result += AttributedString("\n") }
-            result += highlightLine(
-                Array(line), language: language, inBlockComment: &inBlockComment
+            if i > 0 { result.mutableString.append("\n") }
+            appendHighlightedLine(
+                Array(line), language: language, inBlockComment: &inBlockComment, attrs: attrs, to: result
             )
         }
         return result
@@ -305,17 +399,19 @@ enum SyntaxHighlighter {
 
     // MARK: - Line Scanner
 
-    private static func highlightLine(
+    private static func appendHighlightedLine(
         _ chars: [Character],
         language: SyntaxLanguage,
-        inBlockComment: inout Bool
-    ) -> AttributedString {
-        guard !chars.isEmpty else { return AttributedString("") }
+        inBlockComment: inout Bool,
+        attrs: TokenAttrs,
+        to result: NSMutableAttributedString
+    ) {
+        guard !chars.isEmpty else { return }
         if language == .shell {
-            return highlightShellLine(chars)
+            appendHighlightedShellLine(chars, attrs: attrs, to: result)
+            return
         }
 
-        var result = AttributedString()
         var i = 0
         let keywords = language.keywords
         let commentPrefix = language.lineCommentPrefix
@@ -324,11 +420,11 @@ enum SyntaxHighlighter {
             // Inside block comment — scan for close
             if inBlockComment {
                 if i + 1 < chars.count, chars[i] == "*", chars[i + 1] == "/" {
-                    result += colored("*/", .themeSyntaxComment)
+                    result.append(NSAttributedString(string: "*/", attributes: attrs.comment))
                     i += 2
                     inBlockComment = false
                 } else {
-                    result += colored(String(chars[i]), .themeSyntaxComment)
+                    result.append(NSAttributedString(string: String(chars[i]), attributes: attrs.comment))
                     i += 1
                 }
                 continue
@@ -338,21 +434,21 @@ enum SyntaxHighlighter {
             if language.hasBlockComments,
                i + 1 < chars.count, chars[i] == "/", chars[i + 1] == "*" {
                 inBlockComment = true
-                result += colored("/*", .themeSyntaxComment)
+                result.append(NSAttributedString(string: "/*", attributes: attrs.comment))
                 i += 2
                 continue
             }
 
             // Line comment
             if let prefix = commentPrefix, matchesAt(chars, offset: i, pattern: prefix) {
-                result += colored(String(chars[i...]), .themeSyntaxComment)
-                return result
+                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.comment))
+                return
             }
 
             // Preprocessor (#include, #define) for C/C++
             if chars[i] == "#", language == .c || language == .cpp {
-                result += colored(String(chars[i...]), .themeSyntaxKeyword)
-                return result
+                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.keyword))
+                return
             }
 
             // Decorator (@Observable, @property, etc.)
@@ -362,7 +458,7 @@ enum SyntaxHighlighter {
                 while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
                     i += 1
                 }
-                result += colored(String(chars[start..<i]), .themeSyntaxType)
+                result.append(NSAttributedString(string: String(chars[start..<i]), attributes: attrs.type))
                 continue
             }
 
@@ -370,7 +466,7 @@ enum SyntaxHighlighter {
             let ch = chars[i]
             if ch == "\"" || ch == "'" || ch == "`" {
                 let (text, end) = scanString(chars, from: i, quote: ch)
-                result += colored(text, .themeSyntaxString)
+                result.append(NSAttributedString(string: text, attributes: attrs.string))
                 i = end
                 continue
             }
@@ -378,7 +474,7 @@ enum SyntaxHighlighter {
             // Number
             if ch.isNumber {
                 let (text, end) = scanNumber(chars, from: i)
-                result += colored(text, .themeSyntaxNumber)
+                result.append(NSAttributedString(string: text, attributes: attrs.number))
                 i = end
                 continue
             }
@@ -387,28 +483,29 @@ enum SyntaxHighlighter {
             if ch.isLetter || ch == "_" {
                 let (word, end) = scanWord(chars, from: i)
                 if keywords.contains(word) {
-                    result += colored(word, .themeSyntaxKeyword)
+                    result.append(NSAttributedString(string: word, attributes: attrs.keyword))
                 } else if isTypeLike(word) {
-                    result += colored(word, .themeSyntaxType)
+                    result.append(NSAttributedString(string: word, attributes: attrs.type))
                 } else {
-                    result += colored(word, .themeSyntaxVariable)
+                    result.append(NSAttributedString(string: word, attributes: attrs.variable))
                 }
                 i = end
                 continue
             }
 
             // Punctuation / operators
-            result += colored(String(ch), .themeSyntaxPunctuation)
+            result.append(NSAttributedString(string: String(ch), attributes: attrs.punctuation))
             i += 1
         }
-
-        return result
     }
 
     // MARK: - Shell Scanner
 
-    private static func highlightShellLine(_ chars: [Character]) -> AttributedString {
-        var result = AttributedString()
+    private static func appendHighlightedShellLine(
+        _ chars: [Character],
+        attrs: TokenAttrs,
+        to result: NSMutableAttributedString
+    ) {
         var i = 0
         var expectCommand = true
 
@@ -416,19 +513,19 @@ enum SyntaxHighlighter {
             let ch = chars[i]
 
             if ch.isWhitespace {
-                result += colored(String(ch), .themeSyntaxVariable)
+                result.append(NSAttributedString(string: String(ch), attributes: attrs.variable))
                 i += 1
                 continue
             }
 
             if ch == "#", isShellCommentStart(chars, at: i) {
-                result += colored(String(chars[i...]), .themeSyntaxComment)
-                return result
+                result.append(NSAttributedString(string: String(chars[i...]), attributes: attrs.comment))
+                return
             }
 
             if ch == "\"" || ch == "'" || ch == "`" {
                 let (text, end) = scanString(chars, from: i, quote: ch)
-                result += colored(text, .themeSyntaxString)
+                result.append(NSAttributedString(string: text, attributes: attrs.string))
                 i = end
                 expectCommand = false
                 continue
@@ -436,14 +533,14 @@ enum SyntaxHighlighter {
 
             if ch == "$" {
                 let (variable, end) = scanShellVariable(chars, from: i)
-                result += colored(variable, .themeSyntaxType)
+                result.append(NSAttributedString(string: variable, attributes: attrs.type))
                 i = end
                 expectCommand = false
                 continue
             }
 
             if let (op, end, resetsCommand) = scanShellOperator(chars, from: i) {
-                result += colored(op, .themeSyntaxOperator)
+                result.append(NSAttributedString(string: op, attributes: attrs.operator))
                 i = end
                 if resetsCommand {
                     expectCommand = true
@@ -453,7 +550,7 @@ enum SyntaxHighlighter {
 
             if ch == "-", isShellOptionStart(chars, at: i) {
                 let (option, end) = scanShellToken(chars, from: i)
-                result += colored(option, .themeSyntaxVariable)
+                result.append(NSAttributedString(string: option, attributes: attrs.variable))
                 i = end
                 expectCommand = false
                 continue
@@ -461,34 +558,32 @@ enum SyntaxHighlighter {
 
             let (token, end) = scanShellToken(chars, from: i)
             if token.isEmpty {
-                result += colored(String(ch), .themeSyntaxVariable)
+                result.append(NSAttributedString(string: String(ch), attributes: attrs.variable))
                 i += 1
                 continue
             }
 
             if expectCommand, isShellAssignment(token) {
-                result += colored(token, .themeSyntaxType)
+                result.append(NSAttributedString(string: token, attributes: attrs.type))
                 i = end
                 continue
             }
 
             if shellKeywords.contains(token) {
-                result += colored(token, .themeSyntaxKeyword)
+                result.append(NSAttributedString(string: token, attributes: attrs.keyword))
                 expectCommand = shellCommandStarterKeywords.contains(token)
                 i = end
                 continue
             }
 
             if expectCommand {
-                result += colored(token, .themeSyntaxFunction)
+                result.append(NSAttributedString(string: token, attributes: attrs.function))
                 expectCommand = false
             } else {
-                result += colored(token, .themeSyntaxVariable)
+                result.append(NSAttributedString(string: token, attributes: attrs.variable))
             }
             i = end
         }
-
-        return result
     }
 
     private static func isShellCommentStart(_ chars: [Character], at index: Int) -> Bool {
@@ -762,9 +857,9 @@ enum SyntaxHighlighter {
 
     // MARK: - JSON Highlighting
 
-    private static func highlightJSON(_ code: String) -> AttributedString {
+    private static func highlightJSON(_ code: String, attrs: TokenAttrs) -> NSAttributedString {
         let chars = Array(code)
-        var result = AttributedString()
+        let result = NSMutableAttributedString()
         var i = 0
 
         while i < chars.count {
@@ -776,23 +871,23 @@ enum SyntaxHighlighter {
                 var j = end
                 while j < chars.count, chars[j] == " " || chars[j] == "\t" { j += 1 }
                 let isKey = j < chars.count && chars[j] == ":"
-                result += colored(text, isKey ? .themeSyntaxType : .themeSyntaxString)
+                result.append(NSAttributedString(string: text, attributes: isKey ? attrs.type : attrs.string))
                 i = end
             } else if ch.isNumber || (ch == "-" && i + 1 < chars.count && chars[i + 1].isNumber) {
                 let (text, end) = scanJSONNumber(chars, from: i)
-                result += colored(text, .themeSyntaxNumber)
+                result.append(NSAttributedString(string: text, attributes: attrs.number))
                 i = end
             } else if matchesWord(chars, at: i, word: "true") {
-                result += colored("true", .themeSyntaxKeyword)
+                result.append(NSAttributedString(string: "true", attributes: attrs.keyword))
                 i += 4
             } else if matchesWord(chars, at: i, word: "false") {
-                result += colored("false", .themeSyntaxKeyword)
+                result.append(NSAttributedString(string: "false", attributes: attrs.keyword))
                 i += 5
             } else if matchesWord(chars, at: i, word: "null") {
-                result += colored("null", .themeSyntaxComment)
+                result.append(NSAttributedString(string: "null", attributes: attrs.comment))
                 i += 4
             } else {
-                result += colored(String(ch), .themeSyntaxPunctuation)
+                result.append(NSAttributedString(string: String(ch), attributes: attrs.punctuation))
                 i += 1
             }
         }
@@ -823,12 +918,4 @@ enum SyntaxHighlighter {
         return true
     }
 
-    // MARK: - Helpers
-
-    private static func colored(_ text: String, _ color: Color) -> AttributedString {
-        var attr = AttributedString(text)
-        attr.foregroundColor = color
-        attr[AttributeScopes.UIKitAttributes.ForegroundColorAttribute.self] = UIColor(color)
-        return attr
-    }
 }

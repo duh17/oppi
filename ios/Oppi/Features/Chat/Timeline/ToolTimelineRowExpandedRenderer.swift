@@ -17,8 +17,8 @@ enum ToolTimelineRowExpandedRenderer {
         outputColor: UIColor,
         commandTextColor: UIColor,
         wasOutputVisible: Bool,
-        commandLabel: UILabel,
-        outputLabel: UILabel,
+        commandLabel: UITextView,
+        outputLabel: UITextView,
         outputScrollView: UIScrollView,
         commandRenderSignature: inout Int?,
         outputRenderSignature: inout Int?,
@@ -91,12 +91,12 @@ enum ToolTimelineRowExpandedRenderer {
             }
 
             if unwrapped {
-                outputLabel.lineBreakMode = .byClipping
+                outputLabel.textContainer.lineBreakMode = .byClipping
                 outputScrollView.alwaysBounceHorizontal = true
                 outputScrollView.showsHorizontalScrollIndicator = true
                 outputUsesUnwrappedLayout = true
             } else {
-                outputLabel.lineBreakMode = .byCharWrapping
+                outputLabel.textContainer.lineBreakMode = .byCharWrapping
                 outputScrollView.alwaysBounceHorizontal = false
                 outputScrollView.showsHorizontalScrollIndicator = false
                 outputUsesUnwrappedLayout = false
@@ -124,7 +124,7 @@ enum ToolTimelineRowExpandedRenderer {
         lines: [DiffLine],
         path: String?,
         isStreaming: Bool,
-        expandedLabel: UILabel,
+        expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
         expandedRenderedText: inout String?,
@@ -169,7 +169,7 @@ enum ToolTimelineRowExpandedRenderer {
             expandedRenderSignature = signature
         }
 
-        expandedLabel.lineBreakMode = .byClipping
+        expandedLabel.textContainer.lineBreakMode = .byClipping
         expandedScrollView.alwaysBounceHorizontal = true
         expandedScrollView.showsHorizontalScrollIndicator = true
         setModeDiff()
@@ -190,7 +190,7 @@ enum ToolTimelineRowExpandedRenderer {
         language: SyntaxLanguage?,
         startLine: Int?,
         isStreaming: Bool,
-        expandedLabel: UILabel,
+        expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
         expandedRenderedText: inout String?,
@@ -236,7 +236,7 @@ enum ToolTimelineRowExpandedRenderer {
             expandedRenderSignature = signature
         }
 
-        expandedLabel.lineBreakMode = .byClipping
+        expandedLabel.textContainer.lineBreakMode = .byClipping
         expandedScrollView.alwaysBounceHorizontal = true
         expandedScrollView.showsHorizontalScrollIndicator = true
         setModeCode()
@@ -292,11 +292,13 @@ enum ToolTimelineRowExpandedRenderer {
         setModeText()
         showExpandedViewport()
 
+        let isStreamingContinuation = previousRenderedText.map { !$0.isEmpty && text.hasPrefix($0) } ?? false
+
         if !wasExpandedVisible {
             expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
         } else if !shouldAutoFollowOnFirstRender,
                   shouldRerender,
-                  !(previousRenderedText.map { !$0.isEmpty && text.hasPrefix($0) } ?? false) {
+                  !isStreamingContinuation {
             // Cell reuse can carry over a stale auto-follow state + non-zero
             // contentOffset from a previous expanded row. For finalized
             // markdown that does not continue prior streaming content, reset
@@ -415,7 +417,7 @@ enum ToolTimelineRowExpandedRenderer {
         isError: Bool,
         isStreaming: Bool,
         outputColor: UIColor,
-        expandedLabel: UILabel,
+        expandedLabel: UITextView,
         expandedScrollView: UIScrollView,
         expandedRenderSignature: inout Int?,
         expandedRenderedText: inout String?,
@@ -476,18 +478,20 @@ enum ToolTimelineRowExpandedRenderer {
             expandedRenderSignature = signature
         }
 
-        expandedLabel.lineBreakMode = .byCharWrapping
+        expandedLabel.textContainer.lineBreakMode = .byCharWrapping
         expandedScrollView.alwaysBounceHorizontal = false
         expandedScrollView.showsHorizontalScrollIndicator = false
         setModeText()
         updateExpandedLabelWidthIfNeeded()
         showExpandedViewport()
 
+        let isStreamingContinuation = previousRenderedText.map { !$0.isEmpty && displayText.hasPrefix($0) } ?? false
+
         if !wasExpandedVisible {
             expandedShouldAutoFollow = shouldAutoFollowOnFirstRender
         } else if !shouldAutoFollowOnFirstRender,
                   shouldRerender,
-                  !(previousRenderedText.map { !$0.isEmpty && displayText.hasPrefix($0) } ?? false) {
+                  !isStreamingContinuation {
             // Cell reuse can leave expanded text rows at a stale bottom offset.
             // Finalized content that is not a continuation of prior streaming
             // output should reopen at top.

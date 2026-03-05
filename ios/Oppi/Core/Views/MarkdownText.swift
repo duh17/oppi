@@ -843,7 +843,7 @@ struct CodeBlockView: View {
             let lang = language.map { SyntaxLanguage.detect($0) } ?? .unknown
             guard lang != .unknown else { return }
             let result = await Task.detached(priority: .userInitiated) {
-                SyntaxHighlighter.highlight(code, language: lang)
+                AttributedString(SyntaxHighlighter.highlight(code, language: lang))
             }.value
             highlighted = result
         }
