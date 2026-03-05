@@ -547,10 +547,39 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ms",
     description: "Voice first-result latency.",
   },
+  "chat.voice_remote_probe_ms": {
+    unit: "ms",
+    description: "Remote ASR endpoint reachability probe latency.",
+  },
+  "chat.voice_remote_chunk_upload_ms": {
+    unit: "ms",
+    description: "Remote ASR chunk upload/request latency.",
+  },
+  "chat.voice_remote_chunk_audio_ms": {
+    unit: "ms",
+    description: "Audio duration covered by each uploaded remote ASR chunk.",
+  },
+  "chat.voice_remote_chunk_bytes": {
+    unit: "count",
+    description: "Encoded WAV byte size for each remote ASR chunk.",
+  },
+  "chat.voice_remote_chunk_chars": {
+    unit: "count",
+    description: "Character count returned per successful remote ASR chunk.",
+  },
+  "chat.voice_remote_chunk_error": {
+    unit: "count",
+    description: "Count of remote ASR chunk upload/transcription errors.",
+  },
   "chat.cell_configure_ms": {
     unit: "ms",
     description:
       "Cell configure latency for tool rows. Tags: expanded, content_type, tool, output_bytes.",
+  },
+  "chat.render_strategy_ms": {
+    unit: "ms",
+    description:
+      "Internal render strategy time for tool row content. Tags: mode, input_bytes, language.",
   },
   "plot.axis_visible_tick_count": {
     unit: "count",

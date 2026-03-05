@@ -238,8 +238,8 @@ private func privateBubbleView(in view: ThinkingTimelineRowContentView) -> UIVie
 }
 
 @MainActor
-private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UILabel? {
-    Mirror(reflecting: view).children.first { $0.label == "textLabel" }?.value as? UILabel
+private func privateTextLabel(in view: ThinkingTimelineRowContentView) -> UITextView? {
+    Mirror(reflecting: view).children.first { $0.label == "textLabel" }?.value as? UITextView
 }
 
 @MainActor

@@ -51,7 +51,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
     private let bubbleView = UIView()
     private let brainIcon = UIImageView()
     private let scrollView = UIScrollView()
-    private let textLabel = UILabel()
+    private let textLabel = UITextView()
     private let fadeMask = CAGradientLayer()
     private let expandFloatingButton = UIButton(type: .system)
     private var bubbleHeightConstraint: NSLayoutConstraint?
@@ -184,9 +184,14 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
 
         textLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.font = .preferredFont(forTextStyle: .callout)
-        textLabel.numberOfLines = 0
-        textLabel.lineBreakMode = .byWordWrapping
+        textLabel.isEditable = false
+        textLabel.isScrollEnabled = false
+        textLabel.isSelectable = false
+        textLabel.textContainerInset = .zero
+        textLabel.textContainer.lineFragmentPadding = 0
+        textLabel.textContainer.lineBreakMode = .byWordWrapping
         textLabel.adjustsFontForContentSizeCategory = true
+        textLabel.backgroundColor = .clear
 
         ToolTimelineRowViewStyler.styleExpandFloatingButton(expandFloatingButton)
         expandFloatingButton.accessibilityIdentifier = "thinking.expand-full-screen"
@@ -428,7 +433,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView {
         } else if isDone {
             // Done + overflow: snap to complete lines + fade mask.
             contentIsTruncated = true
-            let lineHeight = ceil(textLabel.font.lineHeight)
+            let lineHeight = ceil(textLabel.font?.lineHeight ?? 18)
             let maxTextHeight = Self.maxBubbleHeight - Self.bubblePadding * 2
             let visibleLines = floor(maxTextHeight / lineHeight)
             let snappedHeight = visibleLines * lineHeight + Self.bubblePadding * 2

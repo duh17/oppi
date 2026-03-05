@@ -44,6 +44,20 @@ Mechanical invariants that keep Oppi legible, safe, and agent-friendly.
   Why: Eliminating force unwraps turns latent runtime crashes into explicit, testable failure handling.  
   Verify: `AGENTS.md` (Swift rules) and `ios/.swiftlint.yml` (`force_unwrapping` opt-in rule).
 
+## Rendering
+
+- **Use `UITextView` (non-editable, non-scrollable) for multi-line text that can grow unbounded. Use `UILabel` for short fixed-size text (titles, badges, 1-2 lines).**  
+  Why: `UILabel` computes full CoreText layout upfront — O(n^2) for multi-line attributed strings (577ms at 300 lines). `UITextView` uses TextKit lazy layout — O(viewport) regardless of content size (13ms at 300 lines). `UITextView` is heavier per instance, so it's wasteful for short text.  
+  Verify: `UITextView` usage in `ToolTimelineRowContent.swift` (`expandedLabel`, `outputLabel`, `commandLabel`), `ThinkingTimelineRowContent.swift` (`textLabel`), `AssistantMarkdownContentView.swift` (`codeLabel`, `tableLabel`). `UILabel` retained for title/icon/badge labels.
+
+- **Build attributed strings with `NSMutableAttributedString`, never SwiftUI `AttributedString` concatenation.**  
+  Why: `AttributedString` `+` is O(n) per append, making N appends O(n^2). `NSMutableAttributedString.append()` is amortized O(1). For a 500-line file this is 64ms vs 12ms.  
+  Verify: `SyntaxHighlighter.highlight()` and `ANSIParser.attributedString()` return `NSAttributedString`. SwiftUI sites convert via `AttributedString(nsResult)` at the `Task.detached` boundary.
+
+- **Cache rendered output across streaming ticks. Never reset `attributedText` to plain text if content hasn't changed.**  
+  Why: Streaming ticks re-call `apply()` at 33ms intervals. Resetting highlighted text to plain on each tick causes visible flicker and wastes the async highlight work.  
+  Verify: `NativeCodeBlockView.highlightedText` cache in `AssistantMarkdownContentView.swift`. `ToolRowRenderCache` in tool row strategies.
+
 ## Server conventions
 
 - **Avoid `any` in TypeScript and model uncertain values as explicit boundary types.**  

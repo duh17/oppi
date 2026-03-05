@@ -79,7 +79,7 @@ enum ToolTimelineRowViewStyler {
 
     static func styleCommand(
         commandContainer: UIView,
-        commandLabel: UILabel
+        commandLabel: UITextView
     ) {
         commandContainer.layer.cornerRadius = 6
         commandContainer.backgroundColor = UIColor(Color.themeBgHighlight.opacity(0.9))
@@ -88,15 +88,20 @@ enum ToolTimelineRowViewStyler {
 
         commandLabel.translatesAutoresizingMaskIntoConstraints = false
         commandLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        commandLabel.numberOfLines = 0
-        commandLabel.lineBreakMode = .byCharWrapping
+        commandLabel.isEditable = false
+        commandLabel.isScrollEnabled = false
+        commandLabel.isSelectable = false
+        commandLabel.textContainerInset = .zero
+        commandLabel.textContainer.lineFragmentPadding = 0
+        commandLabel.textContainer.lineBreakMode = .byCharWrapping
+        commandLabel.backgroundColor = .clear
         commandLabel.textColor = UIColor(Color.themeFg)
     }
 
     static func styleOutput(
         outputContainer: UIView,
         outputScrollView: UIScrollView,
-        outputLabel: UILabel,
+        outputLabel: UITextView,
         delegate: UIScrollViewDelegate
     ) {
         outputContainer.layer.cornerRadius = 6
@@ -117,15 +122,20 @@ enum ToolTimelineRowViewStyler {
 
         outputLabel.translatesAutoresizingMaskIntoConstraints = false
         outputLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        outputLabel.numberOfLines = 0
-        outputLabel.lineBreakMode = .byCharWrapping
+        outputLabel.isEditable = false
+        outputLabel.isScrollEnabled = false
+        outputLabel.isSelectable = false
+        outputLabel.textContainerInset = .zero
+        outputLabel.textContainer.lineFragmentPadding = 0
+        outputLabel.textContainer.lineBreakMode = .byCharWrapping
+        outputLabel.backgroundColor = .clear
         outputLabel.textColor = UIColor(Color.themeFg)
     }
 
     static func styleExpanded(
         expandedContainer: UIView,
         expandedScrollView: UIScrollView,
-        expandedLabel: UILabel,
+        expandedLabel: UITextView,
         expandedMarkdownView: AssistantMarkdownContentView,
         expandedReadMediaContainer: UIView,
         delegate: UIScrollViewDelegate
@@ -146,8 +156,13 @@ enum ToolTimelineRowViewStyler {
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
         expandedLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        expandedLabel.numberOfLines = 0
-        expandedLabel.lineBreakMode = .byCharWrapping
+        expandedLabel.isEditable = false
+        expandedLabel.isScrollEnabled = false
+        expandedLabel.isSelectable = false
+        expandedLabel.textContainerInset = .zero
+        expandedLabel.textContainer.lineFragmentPadding = 0
+        expandedLabel.textContainer.lineBreakMode = .byCharWrapping
+        expandedLabel.backgroundColor = .clear
 
         expandedMarkdownView.translatesAutoresizingMaskIntoConstraints = false
         expandedMarkdownView.backgroundColor = .clear

@@ -64,7 +64,7 @@ enum ToolRowTextRenderer {
 
         return ANSIOutputPresentation(
             attributedText: withMonospaceFont(
-                NSAttributedString(SyntaxHighlighter.highlight(text, language: language)),
+                SyntaxHighlighter.highlight(text, language: language),
                 font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
             ),
             plainText: nil
@@ -85,6 +85,22 @@ enum ToolRowTextRenderer {
         label.attributedText = nil
         label.text = presentation.plainText
         label.textColor = plainTextColor
+    }
+
+    @MainActor
+    static func applyANSIOutputPresentation(
+        _ presentation: ANSIOutputPresentation,
+        to textView: UITextView,
+        plainTextColor: UIColor
+    ) {
+        if let attributed = presentation.attributedText {
+            textView.attributedText = attributed
+            return
+        }
+
+        textView.attributedText = nil
+        textView.text = presentation.plainText
+        textView.textColor = plainTextColor
     }
 
     // MARK: - Markdown
@@ -163,6 +179,15 @@ enum ToolRowTextRenderer {
             .paragraphStyle: paragraph,
         ]
 
+        // Batch-highlight all lines with shared TokenAttrs + block comment state.
+        // This replaces N separate highlightLine() calls (each creating its own TokenAttrs).
+        let highlightedLines: [NSAttributedString]?
+        if let language, language != .unknown {
+            highlightedLines = SyntaxHighlighter.highlightLines(text, language: language)
+        } else {
+            highlightedLines = nil
+        }
+
         let result = NSMutableAttributedString()
         for (index, rawLine) in lines.enumerated() {
             let lineNumber = safeStartLine + index
@@ -173,13 +198,11 @@ enum ToolRowTextRenderer {
             result.append(NSAttributedString(string: "│ ", attributes: separatorAttrs))
 
             let displayLine = rawLine.isEmpty ? " " : rawLine
-            if let language,
-               language != .unknown,
+            if let highlightedLines,
+               index < highlightedLines.count,
                displayLine.utf8.count <= maxDiffSyntaxHighlightBytes {
                 let highlighted = NSMutableAttributedString(
-                    attributedString: NSAttributedString(
-                        SyntaxHighlighter.highlightLine(displayLine, language: language)
-                    )
+                    attributedString: highlightedLines[index]
                 )
                 let fullRange = NSRange(location: 0, length: highlighted.length)
                 highlighted.addAttributes(
@@ -339,9 +362,7 @@ enum ToolRowTextRenderer {
                 // (≈20% opacity) provide enough add/remove context while
                 // token colors keep the code readable.
                 let highlighted = NSMutableAttributedString(
-                    attributedString: NSAttributedString(
-                        SyntaxHighlighter.highlight(displayText, language: language)
-                    )
+                    attributedString: SyntaxHighlighter.highlight(displayText, language: language)
                 )
                 let fullRange = NSRange(location: 0, length: highlighted.length)
                 highlighted.addAttributes(
@@ -609,7 +630,7 @@ enum ToolRowTextRenderer {
 
     static func shellHighlighted(_ text: String) -> NSAttributedString {
         withMonospaceFont(
-            NSAttributedString(SyntaxHighlighter.highlight(text, language: .shell)),
+            SyntaxHighlighter.highlight(text, language: .shell),
             font: UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         )
     }
@@ -636,12 +657,12 @@ enum ToolRowTextRenderer {
             switch segment.kind {
             case .shell:
                 result.append(withMonospaceFont(
-                    NSAttributedString(SyntaxHighlighter.highlight(segment.text, language: .shell)),
+                    SyntaxHighlighter.highlight(segment.text, language: .shell),
                     font: font
                 ))
             case .embeddedCode(let language):
                 result.append(withMonospaceFont(
-                    NSAttributedString(SyntaxHighlighter.highlight(segment.text, language: language)),
+                    SyntaxHighlighter.highlight(segment.text, language: language),
                     font: font
                 ))
             }
@@ -654,8 +675,7 @@ enum ToolRowTextRenderer {
         _ text: String,
         baseForeground: Color = .themeFg
     ) -> NSAttributedString {
-        let highlighted = ANSIParser.attributedString(from: text, baseForeground: baseForeground)
-        return NSAttributedString(highlighted)
+        ANSIParser.attributedString(from: text, baseForeground: baseForeground)
     }
 
     // MARK: - Title

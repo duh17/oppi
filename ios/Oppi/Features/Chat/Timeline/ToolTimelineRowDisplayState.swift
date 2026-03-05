@@ -98,7 +98,7 @@ enum ToolTimelineRowDisplayState {
     }
 
     static func resetCommandState(
-        commandLabel: UILabel,
+        commandLabel: UITextView,
         commandRenderSignature: inout Int?
     ) {
         commandLabel.attributedText = nil
@@ -108,7 +108,7 @@ enum ToolTimelineRowDisplayState {
     }
 
     static func resetOutputState(
-        outputLabel: UILabel,
+        outputLabel: UITextView,
         outputScrollView: UIScrollView,
         outputViewportHeightConstraint: NSLayoutConstraint?,
         outputColor: UIColor,
@@ -121,7 +121,7 @@ enum ToolTimelineRowDisplayState {
         outputLabel.attributedText = nil
         outputLabel.text = nil
         outputLabel.textColor = outputColor
-        outputLabel.lineBreakMode = .byCharWrapping
+        outputLabel.textContainer.lineBreakMode = .byCharWrapping
         outputScrollView.alwaysBounceHorizontal = false
         outputScrollView.showsHorizontalScrollIndicator = false
         outputUsesUnwrappedLayout = false

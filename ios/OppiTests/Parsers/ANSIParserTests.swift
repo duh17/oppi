@@ -37,33 +37,32 @@ struct ANSIParserTests {
     @Test("attributedString preserves plain text")
     func attrPlain() {
         let result = ANSIParser.attributedString(from: "Hello")
-        #expect(String(result.characters) == "Hello")
+        #expect(result.string == "Hello")
     }
 
     @Test("attributedString strips codes from character content")
     func attrCharacters() {
         let input = "\u{1B}[1mBold\u{1B}[0m Normal"
         let result = ANSIParser.attributedString(from: input)
-        #expect(String(result.characters) == "Bold Normal")
+        #expect(result.string == "Bold Normal")
     }
 
-    @Test("attributedString bridges foreground colors for UIKit rendering")
+    @Test("attributedString applies foreground colors as UIColor")
     func attrUIKitForegroundColors() {
         let input = "\u{1B}[32mFresh\u{1B}[0m plain"
-        let attributed = ANSIParser.attributedString(from: input)
-        let bridged = NSAttributedString(attributed)
-        let text = bridged.string as NSString
+        let result = ANSIParser.attributedString(from: input)
+        let text = result.string as NSString
 
         let freshRange = text.range(of: "Fresh")
         let plainRange = text.range(of: "plain")
         guard freshRange.location != NSNotFound,
               plainRange.location != NSNotFound else {
-            Issue.record("Expected token ranges in bridged ANSI attributed string")
+            Issue.record("Expected token ranges in ANSI attributed string")
             return
         }
 
-        let freshColor = bridged.attribute(.foregroundColor, at: freshRange.location, effectiveRange: nil) as? UIColor
-        let plainColor = bridged.attribute(.foregroundColor, at: plainRange.location, effectiveRange: nil) as? UIColor
+        let freshColor = result.attribute(.foregroundColor, at: freshRange.location, effectiveRange: nil) as? UIColor
+        let plainColor = result.attribute(.foregroundColor, at: plainRange.location, effectiveRange: nil) as? UIColor
 
         #expect(freshColor == UIColor(Color.themeGreen))
         #expect(plainColor == UIColor(Color.themeFg))
@@ -83,7 +82,7 @@ struct ANSIParserTests {
         #expect(stripped.contains("Fresh ████████████░░░"))
 
         let attr = ANSIParser.attributedString(from: input)
-        #expect(String(attr.characters).contains("Status 2026-02-07"))
+        #expect(attr.string.contains("Status 2026-02-07"))
     }
 
     @Test("handles 256-color codes")
@@ -117,6 +116,6 @@ struct ANSIParserTests {
     @Test("empty input")
     func emptyInput() {
         #expect(ANSIParser.strip("").isEmpty)
-        #expect(String(ANSIParser.attributedString(from: "").characters).isEmpty)
+        #expect(ANSIParser.attributedString(from: "").string.isEmpty)
     }
 }

@@ -102,25 +102,25 @@ struct SyntaxHighlighterTests {
 
     @Test func highlightEmptyString() {
         let result = SyntaxHighlighter.highlight("", language: .swift)
-        #expect(String(result.characters).isEmpty)
+        #expect(result.string.isEmpty)
     }
 
     @Test func highlightPreservesText() {
         let code = "let x = 42"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightMultiLine() {
         let code = "let x = 1\nlet y = 2"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightLinePreservesText() {
         let line = "func hello() -> String {"
         let result = SyntaxHighlighter.highlightLine(line, language: .swift)
-        #expect(String(result.characters) == line)
+        #expect(result.string == line)
     }
 
     @Test func highlightJSONPreservesText() {
@@ -128,74 +128,74 @@ struct SyntaxHighlighterTests {
         {"key": "value", "num": 42, "flag": true, "n": null}
         """
         let result = SyntaxHighlighter.highlight(json, language: .json)
-        #expect(String(result.characters) == json)
+        #expect(result.string == json)
     }
 
     @Test func highlightStringLiteral() {
         let code = #"let s = "hello""#
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightLineComment() {
         let code = "x = 1 // comment"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightHashComment() {
         let code = "x = 1 # comment"
         let result = SyntaxHighlighter.highlight(code, language: .python)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightBlockComment() {
         let code = "a /* block */ b"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightMultiLineBlockComment() {
         let code = "a /* start\ncontinue */ b"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightDecorator() {
         let code = "@Observable class Foo"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightHexNumber() {
         let code = "let n = 0xFF"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightFloat() {
         let code = "let pi = 3.14"
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func highlightEscapedString() {
         let code = #"let s = "hello \"world\"""#
         let result = SyntaxHighlighter.highlight(code, language: .swift)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @Test func maxLinesEnforced() {
         let lines = (0..<600).map { "line \($0)" }.joined(separator: "\n")
         let result = SyntaxHighlighter.highlight(lines, language: .swift)
-        let outputLines = String(result.characters).split(separator: "\n", omittingEmptySubsequences: false)
+        let outputLines = result.string.split(separator: "\n", omittingEmptySubsequences: false)
         #expect(outputLines.count <= SyntaxHighlighter.maxLines)
     }
 
     @Test func unknownLanguagePassesThrough() {
         let code = "just some text"
         let result = SyntaxHighlighter.highlight(code, language: .unknown)
-        #expect(String(result.characters) == code)
+        #expect(result.string == code)
     }
 
     @MainActor
@@ -203,50 +203,49 @@ struct SyntaxHighlighterTests {
         let command = "xcodebuild -scheme Oppi"
         let result = SyntaxHighlighter.highlight(command, language: .shell)
 
-        #expect(String(result.characters) == command)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
-        #expect(foregroundColor(of: "-scheme", in: result) == .themeSyntaxVariable)
+        #expect(result.string == command)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "-scheme", in: result) == UIColor(Color.themeSyntaxVariable))
     }
 
     @Test func shellHighlightingUsesShellHeuristics() {
         let line = "xcodebuild -scheme OppiUIReliability 2>&1 | grep -E '(passed|skipped)'"
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
-        #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
-        #expect(foregroundColor(of: "-scheme", in: result) == .themeSyntaxVariable)
-        #expect(foregroundColor(of: "OppiUIReliability", in: result) == .themeSyntaxVariable)
-        #expect(foregroundColor(of: "2>&1", in: result) == .themeSyntaxOperator)
-        #expect(foregroundColor(of: "grep", in: result) == .themeSyntaxFunction)
-        #expect(foregroundColor(of: "-E", in: result) == .themeSyntaxVariable)
-        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == .themeSyntaxString)
+        #expect(result.string == line)
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "-scheme", in: result) == UIColor(Color.themeSyntaxVariable))
+        #expect(foregroundColor(of: "OppiUIReliability", in: result) == UIColor(Color.themeSyntaxVariable))
+        #expect(foregroundColor(of: "2>&1", in: result) == UIColor(Color.themeSyntaxOperator))
+        #expect(foregroundColor(of: "grep", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "-E", in: result) == UIColor(Color.themeSyntaxVariable))
+        #expect(foregroundColor(of: "'(passed|skipped)'", in: result) == UIColor(Color.themeSyntaxString))
     }
 
     @Test func shellCommentDetectionRespectsTokenBoundaries() {
         let line = "echo foo#bar # trailing comment"
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
-        #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "foo#bar", in: result) == .themeSyntaxVariable)
-        #expect(foregroundColor(of: "# trailing comment", in: result) == .themeSyntaxComment)
+        #expect(result.string == line)
+        #expect(foregroundColor(of: "foo#bar", in: result) == UIColor(Color.themeSyntaxVariable))
+        #expect(foregroundColor(of: "# trailing comment", in: result) == UIColor(Color.themeSyntaxComment))
     }
 
     @Test func shellAssignmentsKeepCommandPosition() {
         let line = "FOO=bar xcodebuild --scheme $SCHEME"
         let result = SyntaxHighlighter.highlightLine(line, language: .shell)
 
-        #expect(String(result.characters) == line)
-        #expect(foregroundColor(of: "FOO=bar", in: result) == .themeSyntaxType)
-        #expect(foregroundColor(of: "xcodebuild", in: result) == .themeSyntaxFunction)
-        #expect(foregroundColor(of: "--scheme", in: result) == .themeSyntaxVariable)
-        #expect(foregroundColor(of: "$SCHEME", in: result) == .themeSyntaxType)
+        #expect(result.string == line)
+        #expect(foregroundColor(of: "FOO=bar", in: result) == UIColor(Color.themeSyntaxType))
+        #expect(foregroundColor(of: "xcodebuild", in: result) == UIColor(Color.themeSyntaxFunction))
+        #expect(foregroundColor(of: "--scheme", in: result) == UIColor(Color.themeSyntaxVariable))
+        #expect(foregroundColor(of: "$SCHEME", in: result) == UIColor(Color.themeSyntaxType))
     }
 
     @Test func shellHighlightingBridgesToUIKitForegroundColors() {
         let line = "xcodebuild -scheme Oppi"
-        let highlighted = SyntaxHighlighter.highlightLine(line, language: .shell)
-        let bridged = NSAttributedString(highlighted)
-        let text = bridged.string as NSString
+        let result = SyntaxHighlighter.highlightLine(line, language: .shell)
+        let text = result.string as NSString
 
         let commandRange = text.range(of: "xcodebuild")
         let optionRange = text.range(of: "-scheme")
@@ -256,30 +255,19 @@ struct SyntaxHighlighterTests {
             return
         }
 
-        let commandColor = bridged.attribute(.foregroundColor, at: commandRange.location, effectiveRange: nil) as? UIColor
-        let optionColor = bridged.attribute(.foregroundColor, at: optionRange.location, effectiveRange: nil) as? UIColor
+        let commandColor = result.attribute(.foregroundColor, at: commandRange.location, effectiveRange: nil) as? UIColor
+        let optionColor = result.attribute(.foregroundColor, at: optionRange.location, effectiveRange: nil) as? UIColor
 
         #expect(commandColor == UIColor(Color.themeSyntaxFunction))
         #expect(optionColor == UIColor(Color.themeSyntaxVariable))
     }
 
-    private func foregroundColor(of substring: String, in attributed: AttributedString) -> Color? {
-        let text = String(attributed.characters)
-        guard let offset = characterOffset(of: substring, in: text) else { return nil }
-        return foregroundColor(at: offset, in: attributed)
-    }
+    // MARK: - Helpers
 
-    private func foregroundColor(at offset: Int, in attributed: AttributedString) -> Color? {
-        guard offset >= 0, offset < attributed.characters.count else { return nil }
-        let index = attributed.characters.index(attributed.characters.startIndex, offsetBy: offset)
-        for run in attributed.runs where run.range.contains(index) {
-            return run.foregroundColor
-        }
-        return nil
-    }
-
-    private func characterOffset(of substring: String, in text: String) -> Int? {
-        guard let range = text.range(of: substring) else { return nil }
-        return text.distance(from: text.startIndex, to: range.lowerBound)
+    private func foregroundColor(of substring: String, in attributed: NSAttributedString) -> UIColor? {
+        let text = attributed.string
+        guard let range = (text as NSString).range(of: substring) as NSRange?,
+              range.location != NSNotFound else { return nil }
+        return attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
     }
 }
