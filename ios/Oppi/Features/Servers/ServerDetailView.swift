@@ -16,6 +16,8 @@ struct ServerDetailView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var showRemoveConfirmation = false
+    @State private var isUpdatingRuntime = false
+    @State private var runtimeUpdateMessage: String?
 
     private var pairedServer: PairedServer {
         serverStore.server(for: server.id) ?? server
@@ -56,6 +58,50 @@ struct ServerDetailView: View {
                     LabeledContent("Skills", value: String(info.stats.skillCount))
                 }
 
+                if let runtime = info.runtimeUpdate {
+                    Section("Runtime Updates") {
+                        LabeledContent("Current", value: runtime.currentVersion)
+                        LabeledContent("Latest", value: runtime.latestVersion ?? "Unknown")
+                        LabeledContent("Status", value: runtimeStatusLabel(runtime))
+
+                        if let checkError = runtime.checkError, !checkError.isEmpty {
+                            Text(checkError)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+
+                        if let lastUpdateError = runtime.lastUpdateError, !lastUpdateError.isEmpty {
+                            Text(lastUpdateError)
+                                .font(.caption)
+                                .foregroundStyle(.themeRed)
+                        }
+
+                        if runtime.canUpdate {
+                            Button(isUpdatingRuntime ? "Updating Runtime…" : "Update Runtime") {
+                                Task {
+                                    await updateRuntime()
+                                }
+                            }
+                            .disabled(isUpdatingRuntime || runtime.updateInProgress)
+                        } else {
+                            Text("Runtime updates are unavailable on this host.")
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+
+                        if runtime.restartRequired {
+                            Text("Restart server required to apply installed runtime update.")
+                                .font(.caption)
+                                .foregroundStyle(.themeOrange)
+                        }
+
+                        if let runtimeUpdateMessage {
+                            Text(runtimeUpdateMessage)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        }
+                    }
+                }
             }
 
             Section("Badge") {
@@ -175,6 +221,52 @@ struct ServerDetailView: View {
         }
 
         dismiss()
+    }
+
+    private func runtimeStatusLabel(_ runtime: ServerInfo.RuntimeUpdateInfo) -> String {
+        if isUpdatingRuntime || runtime.updateInProgress {
+            return "Updating…"
+        }
+        if runtime.restartRequired {
+            return "Restart required"
+        }
+        if runtime.checking {
+            return "Checking…"
+        }
+        if runtime.updateAvailable {
+            return "Update available"
+        }
+        if runtime.checkError != nil {
+            return "Check failed"
+        }
+        return "Up to date"
+    }
+
+    private func updateRuntime() async {
+        guard let baseURL = pairedServer.baseURL else {
+            runtimeUpdateMessage = "Invalid server address"
+            return
+        }
+
+        let api = APIClient(
+            baseURL: baseURL,
+            token: pairedServer.token,
+            tlsCertFingerprint: pairedServer.tlsCertFingerprint
+        )
+
+        isUpdatingRuntime = true
+        defer { isUpdatingRuntime = false }
+
+        do {
+            let response = try await api.updateRuntime()
+            runtimeUpdateMessage = response.result.message
+            if !response.ok || !response.result.ok, let error = response.result.error {
+                runtimeUpdateMessage = error
+            }
+            await load()
+        } catch {
+            runtimeUpdateMessage = error.localizedDescription
+        }
     }
 
     private func load() async {

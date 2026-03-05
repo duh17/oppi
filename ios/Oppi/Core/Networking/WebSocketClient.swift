@@ -516,7 +516,6 @@ final class WebSocketClient {
                         continue
                     }
 
-                    let decodeStartNs = DispatchTime.now().uptimeNanoseconds
                     let streamMessage: StreamMessage
                     do {
                         streamMessage = try StreamMessage.decode(from: text)
@@ -534,20 +533,6 @@ final class WebSocketClient {
 
                     let transportTag = self?.preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
                     let messageType = streamMessage.message.typeLabel
-                    let decodeDurationMs = Double((DispatchTime.now().uptimeNanoseconds &- decodeStartNs) / 1_000_000)
-                    Task.detached(priority: .utility) {
-                        await ChatMetricsService.shared.record(
-                            metric: .wsDecodeMs,
-                            value: decodeDurationMs,
-                            unit: .ms,
-                            sessionId: streamMessage.sessionId,
-                            tags: [
-                                "type": messageType,
-                                "stage": "decode",
-                                "transport": transportTag,
-                            ]
-                        )
-                    }
 
                     let inboundReceivedAtMs = ChatMetricsService.nowMs()
                     let inboundMeta = InboundMeta(
@@ -588,21 +573,6 @@ final class WebSocketClient {
                         }
                     }
                     let mainActorHopDurationMs = max(0, ChatMetricsService.nowMs() - mainActorHopStartedAtMs)
-                    if messageType == "connected" || mainActorHopDurationMs >= 200 {
-                        Task.detached(priority: .utility) {
-                            await ChatMetricsService.shared.record(
-                                metric: .wsDecodeMs,
-                                value: Double(mainActorHopDurationMs),
-                                unit: .ms,
-                                sessionId: streamMessage.sessionId,
-                                tags: [
-                                    "type": messageType,
-                                    "stage": "main_actor_hop",
-                                    "transport": transportTag,
-                                ]
-                            )
-                        }
-                    }
                     if mainActorHopDurationMs >= 1_000 {
                         self?.wsLogError(
                             "WS main-actor hop lag",

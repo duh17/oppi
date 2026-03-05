@@ -12,6 +12,7 @@
  */
 
 import { dirname } from "node:path";
+import { AppletStore } from "./storage/applet-store.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
   ConfigStore,
@@ -22,9 +23,13 @@ import { PreferenceStore } from "./storage/preference-store.js";
 import { SessionStore } from "./storage/session-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
 import type {
+  Applet,
+  AppletVersion,
+  CreateAppletRequest,
   CreateWorkspaceRequest,
   ServerConfig,
   Session,
+  UpdateAppletRequest,
   UpdateWorkspaceRequest,
   Workspace,
 } from "./types.js";
@@ -37,6 +42,7 @@ export class Storage {
   private readonly preferenceStore: PreferenceStore;
   private readonly sessionStore: SessionStore;
   private readonly workspaceStore: WorkspaceStore;
+  private readonly appletStore: AppletStore;
 
   constructor(dataDir?: string) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
@@ -44,6 +50,7 @@ export class Storage {
     this.preferenceStore = new PreferenceStore(this.configStore);
     this.sessionStore = new SessionStore(this.configStore);
     this.workspaceStore = new WorkspaceStore(this.configStore);
+    this.appletStore = new AppletStore(this.configStore);
   }
 
   // ─── Config ───
@@ -202,6 +209,51 @@ export class Storage {
 
   ensureDefaultWorkspaces(): void {
     this.workspaceStore.ensureDefaultWorkspaces();
+  }
+
+  // ─── Applets ───
+
+  createApplet(
+    workspaceId: string,
+    req: CreateAppletRequest,
+  ): { applet: Applet; version: AppletVersion } {
+    return this.appletStore.createApplet(workspaceId, req);
+  }
+
+  updateApplet(
+    workspaceId: string,
+    appletId: string,
+    req: UpdateAppletRequest,
+  ): { applet: Applet; version: AppletVersion } | undefined {
+    return this.appletStore.updateApplet(workspaceId, appletId, req);
+  }
+
+  getApplet(workspaceId: string, appletId: string): Applet | undefined {
+    return this.appletStore.getApplet(workspaceId, appletId);
+  }
+
+  listApplets(workspaceId: string): Applet[] {
+    return this.appletStore.listApplets(workspaceId);
+  }
+
+  getAppletVersion(
+    workspaceId: string,
+    appletId: string,
+    version: number,
+  ): (AppletVersion & { html: string }) | undefined {
+    return this.appletStore.getVersion(workspaceId, appletId, version);
+  }
+
+  getAppletVersionHtml(workspaceId: string, appletId: string, version: number): string | undefined {
+    return this.appletStore.getVersionHtml(workspaceId, appletId, version);
+  }
+
+  listAppletVersions(workspaceId: string, appletId: string): AppletVersion[] {
+    return this.appletStore.listVersions(workspaceId, appletId);
+  }
+
+  deleteApplet(workspaceId: string, appletId: string): boolean {
+    return this.appletStore.deleteApplet(workspaceId, appletId);
   }
 
   // ─── Helpers ───

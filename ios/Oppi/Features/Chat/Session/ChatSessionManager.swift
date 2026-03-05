@@ -505,17 +505,6 @@ final class ChatSessionManager {
                         let dispatchMetricSessionId = sessionId
                         Task.detached(priority: .utility) {
                             await ChatMetricsService.shared.record(
-                                metric: .wsDecodeMs,
-                                value: Double(dispatchLagMs),
-                                unit: .ms,
-                                sessionId: dispatchMetricSessionId,
-                                tags: [
-                                    "type": "connected",
-                                    "stage": "session_loop_dispatch",
-                                    "transport": transportTag,
-                                ]
-                            )
-                            await ChatMetricsService.shared.record(
                                 metric: .connectedDispatchMs,
                                 value: Double(dispatchLagMs),
                                 unit: .ms,
