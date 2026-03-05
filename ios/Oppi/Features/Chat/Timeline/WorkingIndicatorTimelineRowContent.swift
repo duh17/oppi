@@ -26,6 +26,19 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         super.init(frame: .zero)
         setupViews()
         apply(configuration: configuration)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
     }
 
     @available(*, unavailable)
@@ -147,6 +160,16 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         for dot in dotViews {
             dot.layer.removeAnimation(forKey: "pulse")
             dot.alpha = 0.58
+        }
+    }
+
+    @objc private func appDidEnterBackground() {
+        stopDotAnimations()
+    }
+
+    @objc private func appWillEnterForeground() {
+        if window != nil {
+            startDotAnimationsIfNeeded()
         }
     }
 }

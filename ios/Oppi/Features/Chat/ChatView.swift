@@ -218,10 +218,16 @@ struct ChatView: View {
                 }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .background {
+                switch phase {
+                case .background:
+                    connection.coalescer.pause()
                     Task {
                         await sessionManager.flushSnapshotIfNeeded(connection: connection)
                     }
+                case .active:
+                    connection.coalescer.resume()
+                default:
+                    break
                 }
             }
             .onDisappear {
